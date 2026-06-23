@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: task_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: task_portal
+      POSTGRES_USER: task_user
+      POSTGRES_PASSWORD: MyPass2026
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U task_user -d task_portal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: task_redis
+    restart: unless-stopped
+    command: redis-server --requirepass MyPassRedis2026 --appendonly yes --maxmemory 512mb
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "MyPassRedis2026", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    image: task-portal-backend:latest
+    container_name: task_backend
+    restart: unless-stopped
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: task-portal-backend:latest
+    container_name: task_worker
+    restart: unless-stopped
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.worker.celery_app:celery_app worker --loglevel=info --concurrency=2
+    env_file:
+      - .env
+    volumes:
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    image: task-portal-backend:latest
+    container_name: task_scheduler
+    restart: unless-stopped
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.worker.celery_app:celery_app beat --loglevel=info
+    env_file:
+      - .env
+    volumes:
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: task-portal-frontend:latest
+    container_name: task_frontend
+    restart: unless-stopped
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:

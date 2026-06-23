@@ -1,0 +1,40 @@
+# Environment & secrets
+.env
+secrets/
+google-service-account.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Node.js
+node_modules/
+.next/
+out/
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

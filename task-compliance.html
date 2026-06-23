@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task Compliance & KPI System</title>
+<style>
+:root{--bg:#0f1117;--bg2:#1a1d27;--bg3:#22263a;--bg4:#2a2f47;--border:#2e3250;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--accent:#6366f1;--accent2:#818cf8;--green:#10b981;--green2:#34d399;--red:#ef4444;--red2:#f87171;--yellow:#f59e0b;--yellow2:#fbbf24;--blue:#3b82f6;--blue2:#60a5fa;--purple:#8b5cf6;--cyan:#06b6d4;--orange:#f97316}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:1.6;display:flex;min-height:100vh}
+/* Sidebar */
+.sidebar{width:230px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;bottom:0;left:0;z-index:100;overflow-y:auto}
+.sidebar-logo{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
+.logo-row{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.logo-icon{width:32px;height:32px;background:linear-gradient(135deg,var(--accent),var(--purple));border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.logo-title{font-size:14px;font-weight:700;color:var(--text)}
+.logo-sub{font-size:11px;color:var(--text3)}
+.nav-group{padding:10px 10px 4px}
+.nav-label{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;padding:6px 6px 3px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 8px;border-radius:8px;cursor:pointer;color:var(--text2);font-size:13px;transition:.15s;margin-bottom:1px;border:1px solid transparent;position:relative}
+.nav-item:hover{background:var(--bg3);color:var(--text)}
+.nav-item.active{background:rgba(99,102,241,.15);color:var(--accent2);border-color:rgba(99,102,241,.25)}
+.nav-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.nav-badge{margin-left:auto;font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px}
+.badge-red{background:rgba(239,68,68,.2);color:var(--red2)}
+.badge-yellow{background:rgba(245,158,11,.2);color:var(--yellow2)}
+.badge-green{background:rgba(16,185,129,.2);color:var(--green2)}
+.sidebar-bottom{margin-top:auto;padding:12px;border-top:1px solid var(--border)}
+/* Main */
+.main{margin-left:230px;flex:1;min-height:100vh;display:flex;flex-direction:column}
+.topbar{height:52px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;position:sticky;top:0;z-index:50}
+.topbar h2{font-size:15px;font-weight:700}
+.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.content{padding:20px;flex:1}
+/* Buttons */
+.btn{padding:6px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:.15s;display:inline-flex;align-items:center;gap:5px;font-family:inherit}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#4f46e5}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}.btn-ghost:hover{background:var(--bg3);color:var(--text)}
+.btn-green{background:rgba(16,185,129,.15);color:var(--green2);border:1px solid rgba(16,185,129,.3)}.btn-green:hover{background:rgba(16,185,129,.25)}
+.btn-red{background:rgba(239,68,68,.1);color:var(--red2);border:1px solid rgba(239,68,68,.25)}.btn-red:hover{background:rgba(239,68,68,.2)}
+.btn-yellow{background:rgba(245,158,11,.1);color:var(--yellow2);border:1px solid rgba(245,158,11,.25)}
+.btn-sm{padding:4px 10px;font-size:11px}
+.btn-xs{padding:3px 8px;font-size:11px}
+/* Cards */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px}
+.card-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.card-title{font-size:13px;font-weight:700}
+.card-count{font-size:11px;color:var(--text3);background:var(--bg3);padding:2px 8px;border-radius:10px}
+.card-actions{margin-left:auto;display:flex;gap:6px}
+/* Stat row */
+.stat-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px}
+.stat-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}
+.stat-box::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 60%,currentColor 200%);opacity:.04}
+.stat-num{font-size:26px;font-weight:800;letter-spacing:-1px;margin:4px 0 2px}
+.stat-lbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)}
+.stat-sub{font-size:11px;color:var(--text3)}
+.stat-icon{position:absolute;right:14px;top:14px;font-size:22px}
+/* Status pills */
+.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap}
+.pill-fail{background:rgba(239,68,68,.12);color:#f87171}
+.pill-review{background:rgba(245,158,11,.12);color:#fbbf24}
+.pill-pass{background:rgba(16,185,129,.12);color:#34d399}
+.pill-pending{background:rgba(99,102,241,.12);color:#818cf8}
+.pill-approved{background:rgba(6,182,212,.12);color:#22d3ee}
+/* Table */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+thead tr{background:var(--bg3)}
+th{padding:9px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.9px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid rgba(46,50,80,.45);font-size:12.5px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.015)}
+.task-cell{max-width:280px}
+.task-title{font-weight:600;color:var(--text);font-size:13px;line-height:1.4}
+.task-meta{font-size:11px;color:var(--text3);margin-top:2px}
+/* Tag */
+.tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700}
+.tag-net{background:rgba(59,130,246,.12);color:#60a5fa}
+.tag-sys{background:rgba(139,92,246,.12);color:#a78bfa}
+.tag-sec{background:rgba(239,68,68,.12);color:#f87171}
+.tag-pm{background:rgba(245,158,11,.12);color:#fbbf24}
+.tag-dev{background:rgba(16,185,129,.12);color:#34d399}
+.tag-voice{background:rgba(6,182,212,.12);color:#22d3ee}
+.tag-ai{background:rgba(249,115,22,.12);color:#fb923c}
+/* Manday diff */
+.manday-ok{color:var(--green2);font-weight:700}
+.manday-over{color:var(--red2);font-weight:700}
+.manday-under{color:var(--yellow2);font-weight:700}
+/* AI suggestion box */
+.ai-box{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--text2);margin-top:4px}
+.ai-box strong{color:var(--accent2)}
+.ai-suggest{background:rgba(99,102,241,.1);border-radius:6px;padding:6px 10px;margin-top:6px;font-size:11.5px;color:var(--accent2)}
+/* Edit input */
+.edit-input{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px;width:70px;outline:none}
+.edit-input:focus{border-color:var(--accent)}
+/* Progress */
+.prog-bar{height:4px;background:var(--bg);border-radius:2px;overflow:hidden;width:60px}
+.prog-fill{height:100%;border-radius:2px}
+/* Filter bar */
+.filter-bar{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center}
+.filter-sel{background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:5px 9px;color:var(--text2);font-size:12px;outline:none;cursor:pointer}
+.filter-sel:focus{border-color:var(--accent)}
+.search-inp{background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:5px 10px;color:var(--text);font-size:12px;outline:none;width:200px}
+.search-inp:focus{border-color:var(--accent)}
+.search-inp::placeholder{color:var(--text3)}
+/* Page */
+.page{display:none}.page.active{display:block}
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:.2s}
+.modal-bg.open{opacity:1;pointer-events:all}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;width:580px;max-width:94vw;max-height:88vh;overflow-y:auto}
+.modal h3{font-size:16px;font-weight:700;margin-bottom:4px}
+.modal p{font-size:12.5px;color:var(--text2);margin-bottom:16px}
+.fl{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
+.form-g{margin-bottom:13px}
+.form-l{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px;display:block}
+.form-inp{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 11px;color:var(--text);font-size:13px;outline:none;transition:.15s;font-family:inherit}
+.form-inp:focus{border-color:var(--accent)}
+textarea.form-inp{resize:vertical;min-height:90px}
+/* Project card */
+.proj-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:18px}
+.proj-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px}
+.proj-card-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.proj-avatar{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.proj-name{font-size:13px;font-weight:700}
+.proj-pm{font-size:11px;color:var(--text3)}
+.mini-stats{display:flex;gap:10px;margin-top:8px}
+.mini-s{font-size:11px;display:flex;align-items:center;gap:4px}
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+/* Toast */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:11px 15px;font-size:13px;z-index:9999;transform:translateY(80px);opacity:0;transition:.3s;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.ok{border-color:rgba(16,185,129,.4)}
+.toast.err{border-color:rgba(239,68,68,.4)}
+/* Library */
+.lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:14px}
+.lib-card{background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:12px;transition:.15s;cursor:pointer}
+.lib-card:hover{border-color:var(--accent)}
+.lib-card-title{font-size:13px;font-weight:600;margin-bottom:4px}
+.lib-card-meta{font-size:11px;color:var(--text3);display:flex;gap:8px;flex-wrap:wrap}
+.lib-card-body{font-size:11.5px;color:var(--text2);margin:6px 0}
+/* Chat parser */
+.chat-area{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;font-family:monospace;color:var(--text2);resize:vertical;min-height:180px;width:100%;outline:none}
+.chat-area:focus{border-color:var(--accent)}
+.extracted-task{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.extracted-task.highlight{border-left-color:var(--yellow)}
+/* Meeting */
+.meeting-msg{background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:12.5px}
+.meeting-msg .speaker{font-weight:700;color:var(--accent2);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+/* Divider */
+.divider{height:1px;background:var(--border);margin:14px 0}
+/* Avatar */
+.av{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
+/* Row action btns */
+.row-actions{display:flex;gap:4px;align-items:center}
+/* Tabs */
+.tabs{display:flex;gap:2px;background:var(--bg3);border-radius:8px;padding:3px}
+.tab{padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer;color:var(--text2);transition:.15s;border:none;background:transparent;font-family:inherit}
+.tab.active{background:var(--bg2);color:var(--text);font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+/* Section label */
+.sec-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:8px}
+/* Highlight row */
+tr.fail-row td{background:rgba(239,68,68,.025)}
+tr.pass-row td{background:rgba(16,185,129,.015)}
+/* Responsive */
+@media(max-width:900px){.stat-row{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-row">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="logo-title">Task Compliance</div>
+        <div class="logo-sub">SecurityZone · v2.1</div>
+      </div>
+    </div>
+  </div>
+  <nav>
+    <div class="nav-group">
+      <div class="nav-label">Main</div>
+      <div class="nav-item active" onclick="go('dashboard')"><span>📊</span> Dashboard <span class="nav-badge badge-red" id="nb-fail">14</span></div>
+      <div class="nav-item" onclick="go('projects')"><span>📁</span> Dự án & Leader</div>
+      <div class="nav-item" onclick="go('compliance')"><span>🔍</span> Task Review <span class="nav-badge badge-yellow" id="nb-review">6</span></div>
+      <div class="nav-item" onclick="go('library')"><span>📚</span> Task Library DB</div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Smart Import</div>
+      <div class="nav-item" onclick="go('meeting')"><span>🎙️</span> Meeting → Tasks</div>
+      <div class="nav-item" onclick="go('chat')"><span>💬</span> Chat Log Parser</div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Dự án</div>
+      <div class="nav-item" onclick="filterProject('all')"><div class="nav-dot" style="background:#6366f1"></div> Tất cả dự án</div>
+      <div class="nav-item" onclick="filterProject('godn')"><div class="nav-dot" style="background:#10b981"></div> GoDN Korea <span class="nav-badge badge-red">5</span></div>
+      <div class="nav-item" onclick="filterProject('markee')"><div class="nav-dot" style="background:#f59e0b"></div> Markee Agency <span class="nav-badge badge-red">4</span></div>
+      <div class="nav-item" onclick="filterProject('cg')"><div class="nav-dot" style="background:#3b82f6"></div> CG Lab/PoC <span class="nav-badge badge-yellow">3</span></div>
+      <div class="nav-item" onclick="filterProject('ai')"><div class="nav-dot" style="background:#8b5cf6"></div> AI Localteam <span class="nav-badge badge-yellow">2</span></div>
+      <div class="nav-item" onclick="filterProject('dc')"><div class="nav-dot" style="background:#06b6d4"></div> Vận hành Lab DC</div>
+    </div>
+  </nav>
+  <div class="sidebar-bottom">
+    <div style="font-size:10px;color:var(--text3);text-align:center">© 2026 SecurityZone Team</div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+<div class="topbar">
+  <h2 id="page-title">Compliance Dashboard</h2>
+  <div style="margin-left:12px" id="topbar-tabs"></div>
+  <div class="topbar-right">
+    <button class="btn btn-ghost" style="font-size:11px" onclick="toast('ok','✅ Đã refresh dữ liệu từ tất cả Sheets')">↻ Refresh</button>
+    <button class="btn btn-primary" style="font-size:11px" onclick="go('meeting')">🎙️ Import Meeting</button>
+  </div>
+</div>
+<div class="content">
+
+<!-- ========== DASHBOARD ========== -->
+<div class="page active" id="page-dashboard">
+  <div class="stat-row">
+    <div class="stat-box" style="color:var(--red2)">
+      <div class="stat-lbl">Total Violations</div>
+      <div class="stat-num" style="color:var(--red2)">18</div>
+      <div class="stat-sub">trên 5 dự án</div>
+      <div class="stat-icon">🚨</div>
+    </div>
+    <div class="stat-box" style="color:var(--red2)">
+      <div class="stat-lbl">FAIL</div>
+      <div class="stat-num" style="color:var(--red2)">14</div>
+      <div class="stat-sub">manday sai, thiếu mô tả</div>
+      <div class="stat-icon">❌</div>
+    </div>
+    <div class="stat-box" style="color:var(--yellow2)">
+      <div class="stat-lbl">REVIEW</div>
+      <div class="stat-num" style="color:var(--yellow2)">4</div>
+      <div class="stat-sub">cần leader xác nhận</div>
+      <div class="stat-icon">⚠️</div>
+    </div>
+    <div class="stat-box" style="color:var(--green2)">
+      <div class="stat-lbl">PASS</div>
+      <div class="stat-num" style="color:var(--green2)">47</div>
+      <div class="stat-sub">tasks hợp lệ</div>
+      <div class="stat-icon">✅</div>
+    </div>
+    <div class="stat-box" style="color:var(--accent2)">
+      <div class="stat-lbl">Task Library</div>
+      <div class="stat-num" style="color:var(--accent2)">132</div>
+      <div class="stat-sub">mẫu task chuẩn</div>
+      <div class="stat-icon">📚</div>
+    </div>
+  </div>
+
+  <!-- Project overview -->
+  <div class="proj-cards" id="proj-cards-dash"></div>
+
+  <!-- Violation table -->
+  <div class="card">
+    <div class="card-header">
+      <span>🔴</span><span class="card-title">Violations cần xử lý</span>
+      <span class="card-count" id="viol-count">18 violations</span>
+      <div class="card-actions">
+        <div class="tabs">
+          <button class="tab active" onclick="filterViol('all',this)">Tất cả</button>
+          <button class="tab" onclick="filterViol('FAIL',this)">FAIL</button>
+          <button class="tab" onclick="filterViol('REVIEW',this)">REVIEW</button>
+          <button class="tab" onclick="filterViol('PASS',this)">PASS</button>
+        </div>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <input class="search-inp" placeholder="🔍 Tìm task, leader..." oninput="searchViol(this.value)" id="viol-search">
+      <select class="filter-sel" onchange="filterViolProj(this.value)" id="viol-proj-sel">
+        <option value="">Tất cả dự án</option>
+        <option value="GoDN Korea">GoDN Korea</option>
+        <option value="Markee Agency">Markee Agency</option>
+        <option value="CG Lab/PoC">CG Lab/PoC</option>
+        <option value="AI Localteam">AI Localteam</option>
+        <option value="Vận hành Lab DC">Vận hành Lab DC</option>
+      </select>
+      <select class="filter-sel" onchange="filterViolLeader(this.value)">
+        <option value="">Tất cả leader</option>
+        <option>Minhpn</option><option>Phil</option><option>AnhNho</option><option>Tuanlt</option><option>Huongnt</option>
+      </select>
+      <button class="btn btn-green btn-sm" onclick="approveAll()">✓ Approve tất cả REVIEW</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>ID</th><th>Task</th><th>Dự án</th><th>Leader</th><th>Loại</th><th>Manday KH</th><th>Manday Std</th><th>Sai lệch</th><th>KPI Status</th><th>Action</th>
+        </tr></thead>
+        <tbody id="viol-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ========== PROJECTS ========== -->
+<div class="page" id="page-projects">
+  <div class="proj-cards" id="proj-cards-page"></div>
+  <div class="card">
+    <div class="card-header"><span>👥</span><span class="card-title">Leader / Mentor Overview</span>
+    <div class="card-actions"><button class="btn btn-primary btn-sm" onclick="toast('ok','Mở form thêm Leader...')">+ Add Leader</button></div></div>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Leader</th><th>Dự án</th><th>Tasks Assigned</th><th>FAIL</th><th>REVIEW</th><th>PASS</th><th>Compliance %</th><th>Avg Manday Δ</th></tr></thead>
+      <tbody id="leader-tbody"></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- ========== COMPLIANCE REVIEW ========== -->
+<div class="page" id="page-compliance">
+  <div class="card">
+    <div class="card-header"><span>🔍</span><span class="card-title">Task Review Queue — Cần Leader duyệt</span>
+    <span class="card-count">6 pending</span>
+    <div class="card-actions">
+      <button class="btn btn-green btn-sm" onclick="approveAll()">✓ Approve All</button>
+      <button class="btn btn-yellow btn-sm" onclick="toast('ok','Gửi noti cho leader...')">📨 Notify Leaders</button>
+    </div></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Task Description</th><th>Dự án / Leader</th><th>Manday nhập</th><th>Manday chuẩn (DB)</th><th>AI Suggestion</th><th>Action</th></tr></thead>
+        <tbody id="review-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ========== TASK LIBRARY ========== -->
+<div class="page" id="page-library">
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span>📚</span><span class="card-title">Task Library DB — Mẫu task chuẩn</span>
+    <span class="card-count" id="lib-count">132 mẫu</span>
+    <div class="card-actions">
+      <button class="btn btn-primary btn-sm" onclick="openLibModal()">+ Thêm Task mẫu</button>
+      <button class="btn btn-ghost btn-sm" onclick="toast('ok','Export Library...')">↓ Export</button>
+    </div></div>
+    <div class="filter-bar">
+      <input class="search-inp" placeholder="🔍 Tìm task mẫu..." oninput="searchLib(this.value)" style="width:240px">
+      <select class="filter-sel" onchange="filterLib(this.value)" id="lib-cat-sel">
+        <option value="">Tất cả loại</option>
+        <option value="Network">🌐 Network</option>
+        <option value="System">💻 System & Server</option>
+        <option value="Security">🔐 Security</option>
+        <option value="PM">📋 PM / Planning</option>
+        <option value="Dev">🔧 Dev / Config</option>
+        <option value="AI">🤖 AI / Automation</option>
+      </select>
+      <select class="filter-sel" onchange="filterLibDiff(this.value)">
+        <option value="">Tất cả mức</option>
+        <option value="easy">🟢 Easy (≤1d)</option>
+        <option value="med">🟡 Medium (1-3d)</option>
+        <option value="hard">🔴 Hard (>3d)</option>
+      </select>
+    </div>
+    <div class="lib-grid" id="lib-grid"></div>
+  </div>
+</div>
+
+<!-- ========== MEETING IMPORT ========== -->
+<div class="page" id="page-meeting">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="card">
+      <div class="card-header"><span>🎙️</span><span class="card-title">Meeting Summary Import</span></div>
+      <div style="padding:14px">
+        <div class="sec-label">Dán nội dung meeting summary / transcript</div>
+        <textarea class="chat-area" id="meeting-input" placeholder="VD:
+[Meeting] GoDN Korea Phase B — 15/06/2026
+Attendees: Minhpn, Phil, AnhNho, Marketing Leader
+
+Minhpn: Tuần này cần hoàn thành setup KakaoTalk Business, assign cho AnhNho, deadline 20/06, manday 2 ngày.
+Phil: Task cấu hình Naver SEO cần 3 ngày, giao cho Content Specialist.
+AnhNho: Mình sẽ làm villa shortlist thêm 1.5 ngày...
+
+Paste transcript hoặc AI summary vào đây →">
+        </textarea>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-primary" onclick="parseMeeting()">🤖 Phân tích & Extract Tasks</button>
+          <button class="btn btn-ghost" onclick="loadMeetingDemo()">📋 Load Demo</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('meeting-input').value=''">Clear</button>
+        </div>
+        <div style="margin-top:12px">
+          <div class="sec-label">Dự án đích</div>
+          <select class="filter-sel" id="meeting-proj" style="width:100%;padding:7px 10px;border-radius:8px">
+            <option value="GoDN Korea">GoDN Korea</option>
+            <option value="Markee Agency">Markee Agency</option>
+            <option value="CG Lab/PoC">CG Lab/PoC</option>
+            <option value="AI Localteam">AI Localteam</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span>📋</span><span class="card-title">Tasks đã Extract</span>
+      <span class="card-count" id="meeting-task-count">0 tasks</span>
+      <div class="card-actions">
+        <button class="btn btn-green btn-sm" id="meeting-import-btn" onclick="importMeetingTasks()" style="display:none">✓ Import tất cả</button>
+      </div></div>
+      <div style="padding:14px" id="meeting-extracted">
+        <div style="text-align:center;padding:32px;color:var(--text3)">
+          <div style="font-size:28px;margin-bottom:8px">🎙️</div>
+          Dán meeting transcript và nhấn phân tích
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent imports -->
+  <div class="card" style="margin-top:16px">
+    <div class="card-header"><span>🕐</span><span class="card-title">Lịch sử import gần đây</span></div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Thời gian</th><th>Meeting</th><th>Dự án</th><th>Tasks extracted</th><th>Imported by</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>15/06 10:30</td><td>GoDN Phase B kickoff</td><td>GoDN Korea</td><td>8 tasks</td><td>Minhpn</td><td><span class="pill pill-pass">✓ Imported</span></td></tr>
+        <tr><td>12/06 14:00</td><td>AI Localteam sprint planning</td><td>AI Localteam</td><td>12 tasks</td><td>Phil</td><td><span class="pill pill-pass">✓ Imported</span></td></tr>
+        <tr><td>10/06 09:15</td><td>Markee Agency weekly review</td><td>Markee Agency</td><td>5 tasks</td><td>Minhpn</td><td><span class="pill pill-pass">✓ Imported</span></td></tr>
+        <tr><td>08/06 16:00</td><td>CG Lab setup meeting</td><td>CG Lab/PoC</td><td>9 tasks</td><td>AnhNho</td><td><span class="pill pill-pending">⟳ Pending review</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</div>
+
+<!-- ========== CHAT PARSER ========== -->
+<div class="page" id="page-chat">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="card">
+      <div class="card-header">
+        <span>💬</span><span class="card-title">Chat Log Parser</span>
+        <div class="card-actions" style="margin-left:auto">
+          <div class="tabs">
+            <button class="tab active" onclick="setChatType('zalo',this)">Zalo</button>
+            <button class="tab" onclick="setChatType('telegram',this)">Telegram</button>
+            <button class="tab" onclick="setChatType('slack',this)">Slack</button>
+          </div>
+        </div>
+      </div>
+      <div style="padding:14px">
+        <div class="sec-label">Dán lịch sử chat (Zalo / Telegram / Slack)</div>
+        <textarea class="chat-area" id="chat-input" placeholder="Dán lịch sử chat vào đây...
+
+VD Zalo:
+[09:15] Minhpn: Phil ơi setup firewall cho server DC hôm nay nhé, khoảng 4 tiếng
+[09:17] Phil: ok, mình làm luôn
+[10:30] AnhNho: task cấu hình VPN xong rồi anh, mất 2 ngày
+[10:45] Minhpn: tốt, còn task backup database chưa ai làm, giao Tuanlt deadline 20/6
+[11:00] Tuanlt: nhận task rồi
+
+Hoặc paste raw export từ Telegram/Zalo..."></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-primary" onclick="parseChat()">🤖 Parse & Extract</button>
+          <button class="btn btn-ghost" onclick="loadChatDemo()">📋 Load Demo</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('chat-input').value=''">Clear</button>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <div style="flex:1">
+            <div class="sec-label">Dự án</div>
+            <select class="filter-sel" id="chat-proj" style="width:100%;padding:6px 9px;border-radius:7px">
+              <option>GoDN Korea</option><option>Markee Agency</option><option>CG Lab/PoC</option><option>AI Localteam</option><option>Vận hành Lab DC</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <div class="sec-label">Ngày chat</div>
+            <input type="date" class="form-inp" style="padding:6px 9px" value="2026-06-15">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span>📌</span><span class="card-title">Kết quả phân tích</span>
+      <span class="card-count" id="chat-task-count">0 tasks</span>
+      <div class="card-actions">
+        <button class="btn btn-green btn-sm" id="chat-import-btn" onclick="importChatTasks()" style="display:none">✓ Import tất cả</button>
+      </div></div>
+      <div style="padding:14px" id="chat-extracted">
+        <div style="text-align:center;padding:32px;color:var(--text3)">
+          <div style="font-size:28px;margin-bottom:8px">💬</div>
+          Dán chat log và nhấn Parse
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Summary section -->
+  <div class="card" style="margin-top:16px" id="chat-summary-card" style="display:none">
+    <div class="card-header"><span>📊</span><span class="card-title">Daily Summary — Ai đã làm gì hôm nay</span></div>
+    <div style="padding:14px" id="chat-summary-content">
+      <div style="color:var(--text3);text-align:center;padding:20px">Parse chat để xem summary</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- .content -->
+</main>
+
+<!-- MODAL: Edit Task Manday -->
+<div class="modal-bg" id="edit-modal">
+  <div class="modal">
+    <h3>✏️ Chỉnh sửa Task</h3>
+    <p>Leader review và điều chỉnh manday, thêm mô tả chi tiết</p>
+    <div class="form-g"><label class="form-l">Task ID</label><input class="form-inp" id="edit-id" readonly></div>
+    <div class="form-g"><label class="form-l">Mô tả task</label><textarea class="form-inp" id="edit-desc" rows="3"></textarea></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div class="form-g"><label class="form-l">Manday nhập</label><input class="form-inp" id="edit-manday-orig" readonly style="color:var(--yellow2)"></div>
+      <div class="form-g"><label class="form-l">Manday chuẩn (DB)</label><input class="form-inp" id="edit-manday-std" readonly style="color:var(--green2)"></div>
+      <div class="form-g"><label class="form-l">Manday xác nhận</label><input class="form-inp" id="edit-manday-final" type="number" step="0.5"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-g"><label class="form-l">Assignee</label><input class="form-inp" id="edit-assignee"></div>
+      <div class="form-g"><label class="form-l">Deadline</label><input class="form-inp" type="date" id="edit-deadline"></div>
+    </div>
+    <div class="form-g"><label class="form-l">Label / Category</label>
+      <select class="form-inp" id="edit-label">
+        <option>Network</option><option>System</option><option>Security</option><option>PM</option><option>Dev</option><option>AI</option>
+      </select>
+    </div>
+    <div class="form-g"><label class="form-l">Ghi chú</label><textarea class="form-inp" id="edit-note" rows="2" placeholder="Lý do chỉnh sửa manday..."></textarea></div>
+    <div class="fl">
+      <button class="btn btn-ghost" onclick="closeModal('edit-modal')">Huỷ</button>
+      <button class="btn btn-red btn-sm" onclick="rejectTask()">✗ Reject</button>
+      <button class="btn btn-green" onclick="approveTask()">✓ Approve & Save to Library</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Library Add -->
+<div class="modal-bg" id="lib-modal">
+  <div class="modal">
+    <h3>📚 Thêm Task mẫu vào Library</h3>
+    <p>Task đã được kiểm chứng sẽ được lưu làm chuẩn so sánh cho các task tương tự trong tương lai.</p>
+    <div class="form-g"><label class="form-l">Tên task mẫu</label><input class="form-inp" id="lib-name" placeholder="VD: Cấu hình Firewall L3 Switch"></div>
+    <div class="form-g"><label class="form-l">Mô tả chi tiết</label><textarea class="form-inp" id="lib-desc" rows="3" placeholder="Bao gồm: scope, deliverable, acceptance criteria..."></textarea></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div class="form-g"><label class="form-l">Manday chuẩn</label><input class="form-inp" id="lib-manday" type="number" step="0.5" placeholder="1.5"></div>
+      <div class="form-g"><label class="form-l">Category</label>
+        <select class="form-inp" id="lib-cat"><option>Network</option><option>System</option><option>Security</option><option>PM</option><option>Dev</option><option>AI</option></select>
+      </div>
+      <div class="form-g"><label class="form-l">Mức độ</label>
+        <select class="form-inp" id="lib-diff"><option value="easy">Easy</option><option value="med">Medium</option><option value="hard">Hard</option></select>
+      </div>
+    </div>
+    <div class="form-g"><label class="form-l">Tags (cách nhau bởi dấu phẩy)</label><input class="form-inp" id="lib-tags" placeholder="firewall, switch, L3, config"></div>
+    <div class="fl">
+      <button class="btn btn-ghost" onclick="closeModal('lib-modal')">Huỷ</button>
+      <button class="btn btn-primary" onclick="saveLibTask()">💾 Lưu vào Library</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===================== FAKE DATA =====================
+const PROJECTS = [
+  {id:'godn',name:'GoDN Korea',color:'#10b981',emoji:'🌏',pm:'Minhpn',mentor:'Phil',total:28,fail:5,review:2,pass:21,desc:'Marketing & tourism platform cho thị trường Hàn Quốc'},
+  {id:'markee',name:'Markee Agency',color:'#f59e0b',emoji:'📡',pm:'Phil',mentor:'Minhpn',total:22,fail:4,review:1,pass:17,desc:'IT infrastructure & security cho Markee Agency'},
+  {id:'cg',name:'CG Lab/PoC',color:'#3b82f6',emoji:'🔬',pm:'AnhNho',mentor:'Phil',total:18,fail:3,review:2,pass:13,desc:'Lab testing & proof of concept cho CG customer'},
+  {id:'ai',name:'AI Localteam',color:'#8b5cf6',emoji:'🤖',pm:'Tuanlt',mentor:'Minhpn',total:31,fail:2,review:0,pass:29,desc:'AI automation & internal tooling cho team'},
+  {id:'dc',name:'Vận hành Lab DC',color:'#06b6d4',emoji:'🏗️',pm:'Huongnt',mentor:'Phil',total:15,fail:0,review:1,pass:14,desc:'Quản lý vận hành datacenter và hạ tầng lab'},
+];
+
+const LEADERS = [
+  {name:'Minhpn',color:'#6366f1',proj:['GoDN Korea','AI Localteam'],tasks:24,fail:5,review:2,pass:17,delta:'+0.8d'},
+  {name:'Phil',color:'#10b981',proj:['Markee Agency','CG Lab/PoC'],tasks:31,fail:6,review:2,pass:23,delta:'+1.2d'},
+  {name:'AnhNho',color:'#f59e0b',proj:['CG Lab/PoC'],tasks:18,fail:3,review:1,pass:14,delta:'-0.3d'},
+  {name:'Tuanlt',color:'#3b82f6',proj:['AI Localteam'],tasks:22,fail:0,review:0,pass:22,delta:'+0.0d'},
+  {name:'Huongnt',color:'#8b5cf6',proj:['Vận hành Lab DC'],tasks:12,fail:0,review:1,pass:11,delta:'-0.5d'},
+  {name:'Marketing Leader',color:'#f97316',proj:['GoDN Korea'],tasks:9,fail:2,review:1,pass:6,delta:'+1.5d'},
+  {name:'Content Specialist',color:'#ec4899',proj:['GoDN Korea'],tasks:11,fail:1,review:1,pass:9,delta:'+0.5d'},
+];
+
+const VIOLATIONS = [
+  {id:'GOD-001',task:'Thiết lập KakaoTalk Business Channel',proj:'GoDN Korea',leader:'Marketing Leader',label:'Dev',manday:3,std:1.5,status:'FAIL',reason:'Manday cao hơn 2x chuẩn. Thiếu mô tả scope rõ ràng.',suggest:'Giảm xuống 1.5 ngày. Cần thêm: số lượng channel, template messages.'},
+  {id:'GOD-002',task:'Xây dựng villa shortlist theo 3 mức ngân sách',proj:'GoDN Korea',leader:'Content Specialist',label:'PM',manday:2,std:0.5,status:'FAIL',reason:'Task đơn giản: tạo danh sách 3 tier giá. 0.5d là hợp lý.',suggest:'Giảm từ 2d → 0.5d. Nếu bao gồm cả research thị trường thì tách thành 2 task riêng.'},
+  {id:'GOD-003',task:'Soạn 5 chat template tiếng Hàn cho KakaoTalk',proj:'GoDN Korea',leader:'Content Specialist',label:'PM',manday:1,std:1,status:'PASS',reason:'',suggest:''},
+  {id:'GOD-004',task:'Outreach & pitch B2B deal với 2-3 Korea OTA',proj:'GoDN Korea',leader:'Marketing Leader',label:'PM',manday:5,std:2,status:'FAIL',reason:'5 ngày cho outreach 3 công ty là quá cao. Thiếu KPI cụ thể.',suggest:'Tiêu chuẩn: 2d. Cần thêm: mục tiêu conversion rate, script pitch.'},
+  {id:'GOD-005',task:'Research & outreach 2-3 Micro KOC Hàn Quốc',proj:'GoDN Korea',leader:'Content Specialist',label:'PM',manday:3,std:1.5,status:'REVIEW',reason:'Manday cao hơn chuẩn 50%. Leader cần xác nhận scope.',suggest:'Nếu bao gồm contract negotiation, tách task. Standard: 1.5d cho research+outreach.'},
+  {id:'MAR-001',task:'Full disk thư mục trong VM - cảnh báo 95%',proj:'Markee Agency',leader:'Phil',label:'System',manday:3,std:1,status:'FAIL',reason:'Xử lý full disk VM: clean temp, expand volume = 1d. 3d quá nhiều.',suggest:'Giảm xuống 1d. Nếu cần migrate storage thì tách task mới.'},
+  {id:'MAR-002',task:'Hệ thống tổng đài mất license SMGR + IVR',proj:'Markee Agency',leader:'Phil',label:'Voice',manday:3,std:2,status:'REVIEW',reason:'License issue có thể cần vendor support. Xem xét thêm.',suggest:'2d hợp lý nếu có vendor support. Cần thêm: ticket ID, vendor contact.'},
+  {id:'MAR-003',task:'Cấu hình Firewall Branch A - policy update',proj:'Markee Agency',leader:'Phil',label:'Security',manday:0.5,std:1,status:'FAIL',reason:'0.5d quá ít cho firewall policy update đầy đủ với test.',suggest:'Nâng lên 1d. Cần thêm: số lượng rule, test plan, rollback plan.'},
+  {id:'MAR-004',task:'Triển khai VPN Site-to-Site HQ - Branch',proj:'Markee Agency',leader:'Minhpn',label:'Network',manday:2,std:2,status:'PASS',reason:'',suggest:''},
+  {id:'MAR-005',task:'Setup monitoring Zabbix cho 20 servers',proj:'Markee Agency',leader:'Minhpn',label:'System',manday:1,std:3,status:'FAIL',reason:'Setup Zabbix cho 20 servers cần cài agent, template, dashboard = 3d.',suggest:'Nâng lên 3d. Tách task: 1d install, 1d configure templates, 1d dashboard+alert.'},
+  {id:'CG-001',task:'Cài đặt và cấu hình Lab Switch L3 Cisco',proj:'CG Lab/PoC',leader:'AnhNho',label:'Network',manday:2,std:1.5,status:'REVIEW',reason:'Hơi cao, phụ thuộc vào số lượng VLAN. Leader confirm.',suggest:'1.5d standard cho 1 switch. Nếu >5 VLAN thì 2d là ok.'},
+  {id:'CG-002',task:'Viết tài liệu PoC report và demo script',proj:'CG Lab/PoC',leader:'AnhNho',label:'PM',manday:0.5,std:2,status:'FAIL',reason:'PoC report + demo script cho customer = tối thiểu 2d.',suggest:'Nâng lên 2d. Cần: executive summary, technical detail, demo flow, Q&A prep.'},
+  {id:'CG-003',task:'Test failover HA cluster - 3 scenarios',proj:'CG Lab/PoC',leader:'AnhNho',label:'System',manday:3,std:3,status:'PASS',reason:'',suggest:''},
+  {id:'CG-004',task:'Cấu hình SSL Certificate cho portal',proj:'CG Lab/PoC',leader:'Phil',label:'Security',manday:0.5,std:0.5,status:'PASS',reason:'',suggest:''},
+  {id:'AI-001',task:'Build AI chatbot MVP cho internal helpdesk',proj:'AI Localteam',leader:'Tuanlt',label:'AI',manday:5,std:5,status:'PASS',reason:'',suggest:''},
+  {id:'AI-002',task:'Setup CI/CD pipeline GitHub Actions',proj:'AI Localteam',leader:'Tuanlt',label:'Dev',manday:2,std:2,status:'PASS',reason:'',suggest:''},
+  {id:'AI-003',task:'Tích hợp Whisper API cho transcription',proj:'AI Localteam',leader:'Tuanlt',label:'AI',manday:1,std:1.5,status:'REVIEW',reason:'1d có thể chưa đủ cho integration test đầy đủ.',suggest:'1.5d: 0.5d code, 0.5d test, 0.5d edge cases + documentation.'},
+  {id:'DC-001',task:'Kiểm tra và vệ sinh hệ thống cooling rack',proj:'Vận hành Lab DC',leader:'Huongnt',label:'System',manday:1,std:1,status:'PASS',reason:'',suggest:''},
+  {id:'DC-002',task:'Backup toàn bộ config thiết bị mạng',proj:'Vận hành Lab DC',leader:'Huongnt',label:'Network',manday:0.5,std:0.5,status:'REVIEW',reason:'Cần xác nhận scope: bao nhiêu thiết bị?',suggest:'0.5d cho <10 thiết bị. Nếu >10 cần 1d.'},
+];
+
+const LIBRARY = [
+  {id:'LIB-001',name:'Cấu hình Firewall L3 — Policy Update',cat:'Security',diff:'med',manday:1,tags:['firewall','policy','security'],desc:'Update ACL/policy rules, test connectivity, document changes',uses:12},
+  {id:'LIB-002',name:'Deploy VPN Site-to-Site (IPSec)',cat:'Network',diff:'med',manday:2,tags:['vpn','ipsec','network'],desc:'Configure IKE phase 1/2, test tunnel, verify traffic routing',uses:8},
+  {id:'LIB-003',name:'Setup Zabbix Agent + Template cho 1 server',cat:'System',diff:'easy',manday:0.5,tags:['zabbix','monitoring','agent'],desc:'Install agent, apply template, verify metrics, create alert',uses:23},
+  {id:'LIB-004',name:'Cài đặt Switch L3 Cisco (1 unit, <5 VLAN)',cat:'Network',diff:'med',manday:1.5,tags:['cisco','switch','vlan','l3'],desc:'Configure VLANs, routing, STP, save config, document',uses:7},
+  {id:'LIB-005',name:'PoC Report + Demo Script cho customer',cat:'PM',diff:'med',manday:2,tags:['poc','report','demo','documentation'],desc:'Executive summary, technical details, demo flow, Q&A preparation',uses:5},
+  {id:'LIB-006',name:'SSL Certificate install & renew',cat:'Security',diff:'easy',manday:0.5,tags:['ssl','certificate','https'],desc:'Generate CSR, install cert, verify, update DNS if needed',uses:31},
+  {id:'LIB-007',name:'Build AI chatbot MVP (simple intent)',cat:'AI',diff:'hard',manday:5,tags:['ai','chatbot','nlp','mvp'],desc:'Train basic intents, build API, integrate with messaging platform',uses:3},
+  {id:'LIB-008',name:'CI/CD Pipeline GitHub Actions',cat:'Dev',diff:'med',manday:2,tags:['cicd','github','devops'],desc:'Configure workflow, build/test/deploy stages, secrets management',uses:6},
+  {id:'LIB-009',name:'KakaoTalk Business Channel Setup',cat:'Dev',diff:'easy',manday:1.5,tags:['kakao','channel','business','korea'],desc:'Register channel, configure profile, setup API webhook, test messaging',uses:2},
+  {id:'LIB-010',name:'VM Storage Cleanup & Expansion',cat:'System',diff:'easy',manday:1,tags:['vm','storage','cleanup','vmware'],desc:'Identify large files, clean temp, expand volume or add disk',uses:9},
+  {id:'LIB-011',name:'Tổng đài AVAYA — License recovery',cat:'Voice',diff:'med',manday:2,tags:['avaya','pbx','license','smgr'],desc:'Contact vendor support, apply license, test IVR flows, document',uses:4},
+  {id:'LIB-012',name:'Naver Café outreach campaign (1 tuần)',cat:'PM',diff:'med',manday:1.5,tags:['naver','korea','marketing','outreach'],desc:'Identify 5-10 cafes, prepare templates, execute posting, track engagement',uses:1},
+  {id:'LIB-013',name:'HA Cluster Failover Test (3 scenarios)',cat:'System',diff:'hard',manday:3,tags:['ha','cluster','failover','test'],desc:'Document scenarios, execute tests, measure RTO/RPO, create report',uses:5},
+  {id:'LIB-014',name:'Backup config thiết bị mạng (<10 devices)',cat:'Network',diff:'easy',manday:0.5,tags:['backup','config','network'],desc:'SSH to each device, export config, store in version control',uses:18},
+  {id:'LIB-015',name:'Tích hợp Whisper API (audio → text)',cat:'AI',diff:'med',manday:1.5,tags:['whisper','api','transcription','ai'],desc:'API integration, file handling, error handling, edge case testing',uses:2},
+  {id:'LIB-016',name:'KOC/Influencer Research & Outreach',cat:'PM',diff:'med',manday:1.5,tags:['koc','influencer','outreach','korea'],desc:'Research platform, identify 3-5 candidates, prepare pitch, initial contact',uses:1},
+  {id:'LIB-017',name:'B2B Partnership Outreach (3 companies)',cat:'PM',diff:'med',manday:2,tags:['b2b','outreach','partnership','business'],desc:'Prepare deck, research targets, send proposal, follow up',uses:3},
+  {id:'LIB-018',name:'Daily Log Chat Summary (per channel)',cat:'PM',diff:'easy',manday:0.25,tags:['summary','chat','daily'],desc:'Scan channel, extract action items, update task tracker',uses:45},
+];
+
+const REVIEW_TASKS = VIOLATIONS.filter(v=>v.status==='REVIEW');
+
+// ===================== RENDER =====================
+function renderProj(containerId){
+  const c=document.getElementById(containerId);
+  if(!c)return;
+  c.innerHTML=PROJECTS.map(p=>{
+    const comp=Math.round(p.pass/p.total*100);
+    const pcolor=comp>=80?'var(--green)':comp>=60?'var(--yellow)':'var(--red)';
+    return`<div class="proj-card">
+      <div class="proj-card-head">
+        <div class="proj-avatar" style="background:${p.color}22;color:${p.color}">${p.emoji}</div>
+        <div>
+          <div class="proj-name">${p.name}</div>
+          <div class="proj-pm">PM: <b>${p.pm}</b> · Mentor: ${p.mentor}</div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div style="font-size:18px;font-weight:800;color:${pcolor}">${comp}%</div>
+          <div style="font-size:10px;color:var(--text3)">compliance</div>
+        </div>
+      </div>
+      <div style="height:4px;background:var(--bg);border-radius:2px;overflow:hidden;margin-bottom:10px">
+        <div style="height:100%;width:${comp}%;background:${pcolor};border-radius:2px;transition:.6s"></div>
+      </div>
+      <div class="mini-stats">
+        <div class="mini-s"><span style="color:var(--red2);font-weight:700">✗ ${p.fail}</span> FAIL</div>
+        <div class="mini-s" style="margin-left:10px"><span style="color:var(--yellow2);font-weight:700">⚠ ${p.review}</span> REVIEW</div>
+        <div class="mini-s" style="margin-left:10px"><span style="color:var(--green2);font-weight:700">✓ ${p.pass}</span> PASS</div>
+        <div style="margin-left:auto;font-size:11px;color:var(--text3)">${p.total} tasks</div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">${p.desc}</div>
+    </div>`;
+  }).join('');
+}
+
+let violFilter={status:'all',proj:'',leader:'',search:''};
+function renderViol(){
+  const tbody=document.getElementById('viol-tbody');
+  const filtered=VIOLATIONS.filter(v=>{
+    if(violFilter.status!=='all'&&v.status!==violFilter.status)return false;
+    if(violFilter.proj&&v.proj!==violFilter.proj)return false;
+    if(violFilter.leader&&v.leader!==violFilter.leader)return false;
+    if(violFilter.search&&!v.task.toLowerCase().includes(violFilter.search)&&!v.leader.toLowerCase().includes(violFilter.search))return false;
+    return true;
+  });
+  document.getElementById('viol-count').textContent=filtered.length+' violations';
+  tbody.innerHTML=filtered.map(v=>{
+    const diff=v.std>0?((v.manday-v.std)/v.std*100).toFixed(0):0;
+    const diffCls=v.manday>v.std?'manday-over':v.manday<v.std?'manday-under':'manday-ok';
+    const diffStr=v.manday>v.std?`+${diff}%`:v.manday<v.std?`${diff}%`:'0%';
+    const rowCls=v.status==='FAIL'?'fail-row':v.status==='PASS'?'pass-row':'';
+    const tagCls={'Network':'tag-net','System':'tag-sys','Security':'tag-sec','PM':'tag-pm','Dev':'tag-dev','Voice':'tag-voice','AI':'tag-ai'}[v.label]||'tag-pm';
+    return`<tr class="${rowCls}">
+      <td style="font-size:11px;color:var(--text3);font-family:monospace">${v.id}</td>
+      <td class="task-cell">
+        <div class="task-title">${v.task}</div>
+        ${v.status==='FAIL'&&v.reason?`<div class="task-meta" style="color:var(--red2)">⚠ ${v.reason.substring(0,60)}...</div>`:''}
+      </td>
+      <td><div style="font-size:12px;font-weight:600">${v.proj}</div><div style="font-size:11px;color:var(--text3)">${v.leader}</div></td>
+      <td><span class="tag ${tagCls}">${v.label}</span></td>
+      <td style="font-weight:700">${v.manday}d</td>
+      <td style="color:var(--green2);font-weight:700">${v.std}d</td>
+      <td class="${diffCls}">${diffStr}</td>
+      <td><span class="pill pill-${v.status.toLowerCase()}">${v.status==='FAIL'?'❌':v.status==='REVIEW'?'⚠':'✓'} ${v.status}</span></td>
+      <td class="row-actions">
+        ${v.status!=='PASS'?`<button class="btn btn-ghost btn-xs" onclick="openEdit('${v.id}')">✏ Edit</button>`:''}
+        ${v.status==='REVIEW'?`<button class="btn btn-green btn-xs" onclick="approveRow('${v.id}')">✓</button>`:''}
+        ${v.status==='FAIL'?`<button class="btn btn-yellow btn-xs" onclick="markReview('${v.id}')">→Review</button>`:''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function filterViol(s,btn){
+  violFilter.status=s;
+  document.querySelectorAll('.tabs .tab').forEach(t=>t.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  renderViol();
+}
+function searchViol(v){violFilter.search=v.toLowerCase();renderViol();}
+function filterViolProj(v){violFilter.proj=v;renderViol();}
+function filterViolLeader(v){violFilter.leader=v;renderViol();}
+
+function renderLeaders(){
+  const tbody=document.getElementById('leader-tbody');
+  if(!tbody)return;
+  tbody.innerHTML=LEADERS.map((l,i)=>{
+    const comp=Math.round(l.pass/l.tasks*100);
+    const compColor=comp>=80?'var(--green2)':comp>=60?'var(--yellow2)':'var(--red2)';
+    return`<tr>
+      <td style="color:var(--text3)">${i+1}</td>
+      <td><div style="display:flex;align-items:center;gap:8px">
+        <div class="av" style="background:${l.color}">${l.name.substring(0,2).toUpperCase()}</div>
+        <span style="font-weight:600">${l.name}</span>
+      </div></td>
+      <td>${l.proj.map(p=>`<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg3);color:var(--text2);margin-right:3px">${p}</span>`).join('')}</td>
+      <td style="font-weight:700">${l.tasks}</td>
+      <td style="color:var(--red2)">${l.fail}</td>
+      <td style="color:var(--yellow2)">${l.review}</td>
+      <td style="color:var(--green2)">${l.pass}</td>
+      <td><div style="display:flex;align-items:center;gap:6px">
+        <div class="prog-bar"><div class="prog-fill" style="width:${comp}%;background:${compColor}"></div></div>
+        <span style="font-size:12px;font-weight:700;color:${compColor}">${comp}%</span>
+      </div></td>
+      <td style="color:${l.delta.startsWith('+')?'var(--yellow2)':l.delta==='+0.0d'?'var(--green2)':'var(--green2)'};font-weight:700">${l.delta}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderReview(){
+  const tbody=document.getElementById('review-tbody');
+  if(!tbody)return;
+  tbody.innerHTML=REVIEW_TASKS.map(v=>{
+    const diff=(v.manday-v.std).toFixed(1);
+    return`<tr>
+      <td style="font-size:11px;font-family:monospace;color:var(--text3)">${v.id}</td>
+      <td class="task-cell">
+        <div class="task-title">${v.task}</div>
+        <div class="task-meta">${v.proj} · ${v.leader}</div>
+      </td>
+      <td><div style="font-size:12px;font-weight:600">${v.proj}</div><div style="font-size:11px;color:var(--text3)">${v.leader}</div></td>
+      <td style="color:var(--yellow2);font-weight:700">${v.manday}d</td>
+      <td style="color:var(--green2);font-weight:700">${v.std}d</td>
+      <td style="max-width:220px">
+        <div class="ai-suggest" style="font-size:11px">${v.suggest||v.reason}</div>
+      </td>
+      <td class="row-actions">
+        <button class="btn btn-ghost btn-xs" onclick="openEdit('${v.id}')">✏</button>
+        <button class="btn btn-green btn-xs" onclick="approveRow('${v.id}')">✓ OK</button>
+        <button class="btn btn-red btn-xs" onclick="rejectRow('${v.id}')">✗</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+let libFilter={cat:'',diff:'',search:''};
+function renderLib(){
+  const grid=document.getElementById('lib-grid');
+  if(!grid)return;
+  const filtered=LIBRARY.filter(l=>{
+    if(libFilter.cat&&l.cat!==libFilter.cat)return false;
+    if(libFilter.diff&&l.diff!==libFilter.diff)return false;
+    if(libFilter.search&&!l.name.toLowerCase().includes(libFilter.search)&&!l.tags.join(' ').includes(libFilter.search))return false;
+    return true;
+  });
+  document.getElementById('lib-count').textContent=filtered.length+' mẫu';
+  const catTag={'Network':'tag-net','System':'tag-sys','Security':'tag-sec','PM':'tag-pm','Dev':'tag-dev','AI':'tag-ai','Voice':'tag-voice'};
+  const diffBadge={'easy':'<span style="color:var(--green2);font-weight:700">🟢 Easy</span>','med':'<span style="color:var(--yellow2);font-weight:700">🟡 Medium</span>','hard':'<span style="color:var(--red2);font-weight:700">🔴 Hard</span>'};
+  grid.innerHTML=filtered.map(l=>`
+    <div class="lib-card" onclick="toast('ok','📋 Xem task: '+this.querySelector('.lib-card-title').textContent)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+        <span class="tag ${catTag[l.cat]||'tag-pm'}">${l.cat}</span>
+        ${diffBadge[l.diff]}
+      </div>
+      <div class="lib-card-title">${l.name}</div>
+      <div class="lib-card-body">${l.desc}</div>
+      <div class="lib-card-meta">
+        <span>⏱ ${l.manday}d chuẩn</span>
+        <span>🔁 Dùng ${l.uses}x</span>
+        <span style="font-size:10px;color:var(--text3)">${l.id}</span>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+        ${l.tags.map(t=>`<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:var(--bg4);color:var(--text3)">#${t}</span>`).join('')}
+      </div>
+    </div>`).join('');
+}
+function searchLib(v){libFilter.search=v.toLowerCase();renderLib();}
+function filterLib(v){libFilter.cat=v;renderLib();}
+function filterLibDiff(v){libFilter.diff=v;renderLib();}
+
+// ===================== EDIT MODAL =====================
+let currentEditId='';
+function openEdit(id){
+  const v=VIOLATIONS.find(x=>x.id===id);
+  if(!v)return;
+  currentEditId=id;
+  document.getElementById('edit-id').value=v.id;
+  document.getElementById('edit-desc').value=v.task;
+  document.getElementById('edit-manday-orig').value=v.manday+'d';
+  document.getElementById('edit-manday-std').value=v.std+'d';
+  document.getElementById('edit-manday-final').value=v.std;
+  document.getElementById('edit-assignee').value=v.leader;
+  document.getElementById('edit-deadline').value='2026-06-25';
+  document.getElementById('edit-label').value=v.label;
+  document.getElementById('edit-note').value=v.suggest||'';
+  openModal('edit-modal');
+}
+function approveTask(){
+  const v=VIOLATIONS.find(x=>x.id===currentEditId);
+  if(v){v.status='PASS';v.manday=parseFloat(document.getElementById('edit-manday-final').value);}
+  closeModal('edit-modal');
+  renderViol();renderLeaders();
+  toast('ok',`✅ Task ${currentEditId} approved & lưu vào Library`);
+}
+function rejectTask(){
+  const v=VIOLATIONS.find(x=>x.id===currentEditId);
+  if(v)v.status='FAIL';
+  closeModal('edit-modal');
+  renderViol();
+  toast('err',`Task ${currentEditId} rejected`);
+}
+function approveRow(id){
+  const v=VIOLATIONS.find(x=>x.id===id);
+  if(v)v.status='PASS';
+  renderViol();renderReview();
+  toast('ok','✅ Task approved → Library');
+}
+function rejectRow(id){
+  const v=VIOLATIONS.find(x=>x.id===id);
+  if(v)v.status='FAIL';
+  renderViol();renderReview();
+  toast('err','Task moved to FAIL');
+}
+function markReview(id){
+  const v=VIOLATIONS.find(x=>x.id===id);
+  if(v)v.status='REVIEW';
+  renderViol();
+  toast('ok','Task đã chuyển sang REVIEW — Leader sẽ nhận noti');
+}
+function approveAll(){
+  VIOLATIONS.filter(v=>v.status==='REVIEW').forEach(v=>v.status='PASS');
+  renderViol();renderReview();
+  toast('ok','✅ Đã approve tất cả REVIEW tasks');
+}
+
+// ===================== MEETING PARSER =====================
+const MEETING_DEMO=`[Meeting] GoDN Korea Phase B Kickoff — 15/06/2026
+Thời gian: 9:00 - 10:30 | Attendees: Minhpn, Phil, AnhNho, Marketing Leader, Content Specialist
+
+Minhpn: Tuần này Phase B chính thức bắt đầu. Phil phụ trách setup KakaoTalk Business Channel, deadline 18/06, khoảng 1.5 ngày.
+
+Phil: Ok anh. Mình sẽ làm. Thêm vào đó cần AnhNho support cấu hình API webhook, tầm 0.5 ngày thôi.
+
+Marketing Leader: Team mình sẽ lo phần content. Soạn 5 chat template tiếng Hàn mất khoảng 1 ngày. Content Specialist làm nhé, deadline 19/06.
+
+Content Specialist: Nhận rồi anh. Mình cũng làm thêm villa shortlist 3 tier giá, 0.5 ngày, deadline 20/06.
+
+Minhpn: Tốt. Còn task Naver Café outreach campaign tuần này, Content Specialist làm 1.5 ngày, deadline 22/06. Marketing Leader lo phần B2B outreach Korea OTA, 2 ngày, deadline 25/06.
+
+AnhNho: Mình confirm nhận task webhook 0.5 ngày. Ngoài ra mình sẽ setup báo cáo analytics dashboard, 2 ngày, deadline 23/06.
+
+Minhpn: Ok tổng kết: 7 tasks đã assign. Check-in lại ngày 20/06.`;
+
+let meetingExtracted=[];
+function loadMeetingDemo(){document.getElementById('meeting-input').value=MEETING_DEMO;}
+function parseMeeting(){
+  const text=document.getElementById('meeting-input').value.trim();
+  if(!text){toast('err','Nhập nội dung meeting trước');return;}
+  // Simulate parsing
+  meetingExtracted=[
+    {task:'Setup KakaoTalk Business Channel + API config',assignee:'Phil',support:'AnhNho',manday:1.5,deadline:'2026-06-18',label:'Dev',confidence:92},
+    {task:'Config webhook API cho KakaoTalk',assignee:'AnhNho',support:'',manday:0.5,deadline:'2026-06-18',label:'Dev',confidence:88},
+    {task:'Soạn 5 chat template tiếng Hàn cho KakaoTalk',assignee:'Content Specialist',support:'',manday:1,deadline:'2026-06-19',label:'PM',confidence:95},
+    {task:'Xây dựng villa shortlist 3 mức ngân sách',assignee:'Content Specialist',support:'',manday:0.5,deadline:'2026-06-20',label:'PM',confidence:91},
+    {task:'Naver Café outreach campaign tuần 1',assignee:'Content Specialist',support:'',manday:1.5,deadline:'2026-06-22',label:'PM',confidence:87},
+    {task:'B2B outreach Korea OTA (2-3 công ty)',assignee:'Marketing Leader',support:'',manday:2,deadline:'2026-06-25',label:'PM',confidence:85},
+    {task:'Setup analytics & reporting dashboard',assignee:'AnhNho',support:'',manday:2,deadline:'2026-06-23',label:'Dev',confidence:82},
+  ];
+  renderMeetingExtracted();
+}
+function renderMeetingExtracted(){
+  const proj=document.getElementById('meeting-proj').value;
+  document.getElementById('meeting-task-count').textContent=meetingExtracted.length+' tasks';
+  document.getElementById('meeting-import-btn').style.display='';
+  document.getElementById('meeting-extracted').innerHTML=meetingExtracted.map((t,i)=>`
+    <div class="extracted-task ${t.confidence<85?'highlight':''}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">${t.task}</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text3)">
+            <span>👤 ${t.assignee}${t.support?` + ${t.support}`:''}</span>
+            <span>⏱ ${t.manday}d</span>
+            <span>📅 ${t.deadline}</span>
+            <span class="tag ${{Dev:'tag-dev',PM:'tag-pm',Network:'tag-net',Security:'tag-sec'}[t.label]||'tag-pm'}">${t.label}</span>
+          </div>
+          <div style="font-size:11px;color:${t.confidence>=90?'var(--green2)':t.confidence>=80?'var(--yellow2)':'var(--red2)'};margin-top:4px">
+            🤖 Confidence: ${t.confidence}%
+          </div>
+        </div>
+        <div style="display:flex;gap:4px;margin-left:10px;flex-shrink:0">
+          <button class="btn btn-ghost btn-xs" onclick="this.closest('.extracted-task').style.opacity='.4'">✏</button>
+          <button class="btn btn-red btn-xs" onclick="this.closest('.extracted-task').remove();updateMeetingCount()">✗</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+function updateMeetingCount(){
+  const c=document.getElementById('meeting-extracted').querySelectorAll('.extracted-task').length;
+  document.getElementById('meeting-task-count').textContent=c+' tasks';
+}
+function importMeetingTasks(){
+  const proj=document.getElementById('meeting-proj').value;
+  toast('ok',`✅ Đã import ${meetingExtracted.length} tasks vào "${proj}"`);
+  document.getElementById('meeting-import-btn').style.display='none';
+  document.getElementById('meeting-extracted').innerHTML='<div style="text-align:center;padding:24px;color:var(--green2)">✅ Import thành công! Các tasks đã được thêm vào dự án.</div>';
+}
+
+// ===================== CHAT PARSER =====================
+const CHAT_DEMO_ZALO=`[08:45] Minhpn: Phil ơi, hôm nay setup VPN cho branch Đà Nẵng nhé. Khoảng 2 tiếng thôi.
+[08:47] Phil: Ok anh, mình làm ngay
+[09:15] AnhNho: Anh Minh, mình đã xong task backup config 22 thiết bị rồi, mất 1 ngày.
+[09:17] Minhpn: Tốt AnhNho! Lưu ý thêm vào tracker nhé.
+[10:30] Tuanlt: Anh ơi cái API chatbot bị lỗi, mình fix 2 tiếng.
+[10:32] Minhpn: Ok. Ngoài ra Tuanlt làm thêm unit test cho chatbot, deadline 17/6, khoảng 3 tiếng.
+[11:00] Tuanlt: Nhận rồi anh.
+[11:45] Phil: VPN xong rồi anh, test ok.
+[14:00] Huongnt: Em kiểm tra cooling rack xong, ổn. Ghi lại 1 tiếng.
+[14:30] Minhpn: Content Specialist ơi, cần bài viết blog Korea travel 500 chữ, deadline 18/6, 0.5 ngày.
+[14:32] Content Specialist: Ok anh, nhận rồi ạ.
+[16:00] AnhNho: Mình đang làm analytics dashboard, ước tính thêm 1 ngày nữa.`;
+
+let chatExtracted=[];
+let chatType='zalo';
+function setChatType(t,btn){
+  chatType=t;
+  document.querySelectorAll('#page-chat .tabs .tab').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+}
+function loadChatDemo(){document.getElementById('chat-input').value=CHAT_DEMO_ZALO;}
+function parseChat(){
+  const text=document.getElementById('chat-input').value.trim();
+  if(!text){toast('err','Nhập chat log trước');return;}
+  chatExtracted=[
+    {task:'Setup VPN Site-to-Site Branch Đà Nẵng',who:'Phil',type:'assigned',manday:0.25,deadline:'',label:'Network',confidence:88,time:'08:45'},
+    {task:'Backup config 22 thiết bị mạng',who:'AnhNho',type:'done',manday:1,deadline:'',label:'Network',confidence:95,time:'09:15'},
+    {task:'Fix bug API chatbot',who:'Tuanlt',type:'done',manday:0.25,deadline:'',label:'AI',confidence:80,time:'10:30'},
+    {task:'Unit test cho AI chatbot module',who:'Tuanlt',type:'assigned',manday:0.375,deadline:'2026-06-17',label:'AI',confidence:90,time:'10:32'},
+    {task:'Kiểm tra cooling rack datacenter',who:'Huongnt',type:'done',manday:0.125,deadline:'',label:'System',confidence:92,time:'14:00'},
+    {task:'Viết blog Korea travel (500 words)',who:'Content Specialist',type:'assigned',manday:0.5,deadline:'2026-06-18',label:'PM',confidence:94,time:'14:30'},
+    {task:'Build analytics dashboard (đang làm)',who:'AnhNho',type:'ongoing',manday:1,deadline:'',label:'Dev',confidence:85,time:'16:00'},
+  ];
+  renderChatExtracted();
+  renderChatSummary();
+}
+
+function renderChatExtracted(){
+  const proj=document.getElementById('chat-proj').value;
+  document.getElementById('chat-task-count').textContent=chatExtracted.length+' tasks';
+  document.getElementById('chat-import-btn').style.display='';
+  const typeIcon={assigned:'📌',done:'✅',ongoing:'🔄'};
+  const typeColor={assigned:'var(--accent2)',done:'var(--green2)',ongoing:'var(--yellow2)'};
+  document.getElementById('chat-extracted').innerHTML=chatExtracted.map(t=>`
+    <div class="extracted-task">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+            <span style="font-size:12px">${typeIcon[t.type]}</span>
+            <span style="font-size:10px;font-weight:700;color:${typeColor[t.type]};text-transform:uppercase">${t.type}</span>
+            <span style="font-size:10px;color:var(--text3)">[${t.time}]</span>
+          </div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">${t.task}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--text3)">
+            <span>👤 ${t.who}</span>
+            <span>⏱ ${t.manday}d</span>
+            ${t.deadline?`<span>📅 ${t.deadline}</span>`:''}
+            <span class="tag ${{Dev:'tag-dev',PM:'tag-pm',Network:'tag-net',Security:'tag-sec',AI:'tag-ai',System:'tag-sys'}[t.label]||'tag-pm'}">${t.label}</span>
+          </div>
+          <div style="font-size:10px;color:${t.confidence>=90?'var(--green2)':'var(--yellow2)'};margin-top:3px">🤖 ${t.confidence}%</div>
+        </div>
+        <button class="btn btn-red btn-xs" onclick="this.closest('.extracted-task').remove()" style="flex-shrink:0;margin-left:8px">✗</button>
+      </div>
+    </div>`).join('');
+}
+
+function renderChatSummary(){
+  const card=document.getElementById('chat-summary-card');
+  card.style.display='';
+  const memberWork={};
+  chatExtracted.forEach(t=>{
+    if(!memberWork[t.who])memberWork[t.who]={done:[],assigned:[],ongoing:[]};
+    memberWork[t.who][t.type]?.push(t.task);
+  });
+  document.getElementById('chat-summary-content').innerHTML=
+    `<div style="margin-bottom:10px;font-size:12px;color:var(--text2)">📅 15/06/2026 — ${Object.keys(memberWork).length} members active · ${chatExtracted.length} tasks detected</div>`+
+    Object.entries(memberWork).map(([m,work])=>`
+    <div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px">
+        <div class="av" style="background:${LEADERS.find(l=>l.name===m)?.color||'#666'};width:20px;height:20px;font-size:9px">${m.substring(0,2).toUpperCase()}</div>
+        ${m}
+      </div>
+      ${work.done.length?`<div style="font-size:11px;margin-bottom:4px"><span style="color:var(--green2)">✅ Done:</span> ${work.done.join(' · ')}</div>`:''}
+      ${work.assigned.length?`<div style="font-size:11px;margin-bottom:4px"><span style="color:var(--accent2)">📌 Assigned:</span> ${work.assigned.join(' · ')}</div>`:''}
+      ${work.ongoing.length?`<div style="font-size:11px"><span style="color:var(--yellow2)">🔄 Ongoing:</span> ${work.ongoing.join(' · ')}</div>`:''}
+    </div>`).join('');
+}
+
+function importChatTasks(){
+  const proj=document.getElementById('chat-proj').value;
+  toast('ok',`✅ Import ${chatExtracted.length} tasks vào "${proj}" thành công!`);
+  document.getElementById('chat-import-btn').style.display='none';
+}
+
+// ===================== MODALS =====================
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.modal-bg').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal-bg.open').forEach(m=>m.classList.remove('open'));});
+function openLibModal(){openModal('lib-modal');}
+function saveLibTask(){
+  const name=document.getElementById('lib-name').value.trim();
+  if(!name){toast('err','Nhập tên task');return;}
+  LIBRARY.unshift({id:'LIB-'+(LIBRARY.length+1).toString().padStart(3,'0'),name,cat:document.getElementById('lib-cat').value,diff:document.getElementById('lib-diff').value,manday:parseFloat(document.getElementById('lib-manday').value)||1,tags:document.getElementById('lib-tags').value.split(',').map(s=>s.trim()).filter(Boolean),desc:document.getElementById('lib-desc').value,uses:0});
+  closeModal('lib-modal');
+  renderLib();
+  toast('ok','✅ Task mẫu đã lưu vào Library');
+}
+
+// ===================== NAVIGATION =====================
+const PAGES={dashboard:'Compliance Dashboard',projects:'Dự án & Leader',compliance:'Task Review Queue',library:'Task Library DB',meeting:'Meeting → Tasks Import',chat:'Chat Log Parser'};
+function go(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+page)?.classList.add('active');
+  document.getElementById('page-title').textContent=PAGES[page]||page;
+  document.querySelectorAll('.nav-item').forEach(n=>{if((n.getAttribute('onclick')||'').includes("'"+page+"'"))n.classList.add('active');});
+  if(page==='projects'){renderProj('proj-cards-page');renderLeaders();}
+  if(page==='compliance')renderReview();
+  if(page==='library')renderLib();
+}
+function filterProject(pid){
+  go('dashboard');
+  if(pid==='all'){violFilter.proj='';document.getElementById('viol-proj-sel').value='';}
+  else{const p=PROJECTS.find(x=>x.id===pid);violFilter.proj=p?p.name:'';if(document.getElementById('viol-proj-sel'))document.getElementById('viol-proj-sel').value=p?p.name:'';}
+  renderViol();
+}
+
+// ===================== TOAST =====================
+let toastT;
+function toast(type,msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.className='toast '+type+' show';
+  clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),3500);
+}
+
+// ===================== INIT =====================
+window.addEventListener('DOMContentLoaded',()=>{
+  renderProj('proj-cards-dash');
+  renderViol();
+  renderLib();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,2352 @@
+
+
+TASK COMPLIANCE PORTAL v4.0
+Hướng Dẫn Cài Đặt Đầy Đủ
+12 phần · 40 file code · 2026
+
+Thông tin
+Chi tiết
+Mục tiêu tài liệu
+Giải thích từng dòng lệnh, từng file code, từng lý do thiết kế
+Số file code
+40 file: 20 backend Python, 14 frontend TypeScript, 6 config
+Hệ điều hành
+Ubuntu 22.04 LTS
+Kiến trúc
+1 VM · 6 Docker container · PostgreSQL + Redis + FastAPI + Next.js
+Thời gian ước tính
+30–45 phút cài thủ công
+
+MỤC LỤC
+Phần
+Nội dung
+I
+Chuẩn bị trước (trên máy LOCAL) — Google Cloud, share Sheet, API key
+II
+Cài hệ thống trên VM — Docker Engine, Node.js 20
+III
+Phân vùng ổ data — parted, mkfs, fstab, mount
+IV
+Tạo cấu trúc thư mục và file .env
+V
+Code Backend: Models (bảng DB) — 4 file
+VI
+Code Backend: Utils, Auth, Routers — 6 file
+VII
+Code Backend: Worker (Celery, Sheet, AI) — 5 file
+VIII
+Code Backend: Dockerfile — giải thích từng dòng
+IX
+Code Frontend: Cấu hình dự án — 8 file config
+X
+Code Frontend: Pages — 4 trang (login, sheets, dashboard, settings)
+XI
+Build Docker image, Docker Compose, khởi động
+XII
+Nginx, đổi domain, checklist kiểm tra
+
+PHẦN I: CHUẨN BỊ
+Làm trên máy LOCAL, trước khi SSH vào VM
+
+1.1 Tạo Google Cloud Service Account
+Server không có trình duyệt, không đăng nhập Gmail được. Service Account là tài khoản robot xác thực bằng private key (file JSON) không cần trình duyệt.
+
+1
+console.cloud.google.com → Đăng nhập Gmail công ty
+
+2
+Tạo Project mới
+Góc trên trái → click tên project hiện tại → New Project → Tên: task-compliance → Create
+
+3
+APIs & Services → Library → tìm "Google Sheets API" → Enable
+Làm tương tự cho "Google Drive API" → Enable
+
+4
+IAM & Admin → Service Accounts → CREATE SERVICE ACCOUNT
+Tên: task-sheet-reader → CREATE AND CONTINUE → bỏ qua "Grant access" → DONE
+
+5
+Click vào SA vừa tạo → tab KEYS → ADD KEY → Create new key → JSON → CREATE
+File .json tự tải về. Đổi tên: google-service-account.json
+
+6
+Mở file JSON, tìm "client_email", copy giá trị
+VD: task-sheet-reader@your-project.iam.gserviceaccount.com — dùng để share Sheet
+
+⚠️ KHÔNG bao giờ commit file google-service-account.json lên Git.
+KHÔNG chia sẻ qua email/chat. Ai có file này đọc được tất cả Sheet đã share.
+Nếu lộ: Google Cloud → Service Accounts → Keys → Delete key cũ → Tạo key mới.
+
+1.2 Share Google Sheet cho Service Account
+Phải share từng Sheet. Quên → worker báo lỗi 403 Forbidden.
+
+# Trong Google Sheet muon check:
+1. Click Share (goc tren phai)
+2. Dan email client_email vao o "Add people"
+3. Chon quyen: Viewer (chi doc - KHONG can Editor)
+4. Send
+ 
+# Lap lai cho moi Sheet moi. Share 1 lan, worker doc duoc mai mai.
+# Khong can share tung tab - share ca file la du.
+
+
+1.3 Lấy AI API Key
+
+1. https://shopaikey.com -> Dang ky / Dang nhap
+2. Nap tien (VND)
+3. TAI KHOAN -> API Keys -> Tao key moi -> Copy ngay
+   Key dang: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ 
+# ShopAIKey: tong hop 500+ model (GPT-4o, Claude, Gemini, DeepSeek...)
+# Format tuong thich OpenAI - goi nhu goi truc tiep OpenAI
+# Khong can public IP de goi (outbound HTTPS la du)
+# Tinh tien theo token: ~0.000036 USD / 1000 token voi gpt-4o-mini
+
+
+1.4 Upload JSON key lên VM
+
+# Chay tren may LOCAL (thay <IP_VM>):
+scp google-service-account.json user@<IP_VM>:/tmp/gsa.json
+ 
+# Kiem tra tren VM sau khi SSH vao:
+ls -la /tmp/gsa.json
+# Phai thay: -rw-r--r-- 1 user user 2394 ...
+
+
+PHẦN II: CÀI HỆ THỐNG TRÊN VM
+SSH vào VM, chạy với quyền sudo
+
+2.1 Cập nhật hệ thống
+Lý do: cần gói nền (curl, jq, openssl) và cập nhật bảo mật trước khi cài phần mềm.
+
+sudo apt-get update -qq
+sudo apt-get upgrade -y
+ 
+# Cai cac goi can thiet:
+# curl/wget      - tai file tu internet
+# ufw            - firewall
+# netcat-openbsd - kiem tra ket noi mang (nc command)
+# ca-certificates gnupg - xac thuc SSL/GPG key cho Docker repo
+# lsb-release    - lay ten Ubuntu release (jammy/focal/noble)
+# openssl        - tao SECRET_KEY ngau nhien
+# jq             - parse JSON trong bash (lay danh sach AI model)
+# python3        - encode mat khau URL, chay script tao admin
+sudo apt-get install -y curl wget ufw netcat-openbsd \
+  ca-certificates gnupg lsb-release openssl jq python3
+ 
+# Dat timezone Viet Nam:
+sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+
+
+2.2 Cài Docker Engine
+Docker Engine không có sẵn trong repo Ubuntu. Cần thêm repo chính thức của Docker rồi mới cài.
+
+# Buoc 1: Them GPG key cua Docker (de xac thuc package)
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+ 
+# Buoc 2: Them Docker repository vao sources list
+# - $(dpkg --print-architecture): lay CPU arch (amd64, arm64)
+# - $(lsb_release -cs): lay Ubuntu codename (jammy, focal, noble)
+echo "deb [arch=$(dpkg --print-architecture) \
+  signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+ 
+# Buoc 3: Cai Docker
+sudo apt-get update
+sudo apt-get install -y \
+  docker-ce \           # Docker Engine (daemon)
+  docker-ce-cli \        # CLI: lenh "docker"
+  containerd.io \        # Container runtime
+  docker-compose-plugin  # Plugin: lenh "docker compose" (v2)
+ 
+# Buoc 4: Bat tu dong start khi reboot
+sudo systemctl enable docker
+sudo systemctl start docker
+ 
+# Kiem tra:
+docker --version         # Docker version 26.x.x
+docker compose version   # Docker Compose version v2.x.x
+
+
+2.3 Cài Node.js 20
+Cần để chạy npm install trước khi build Frontend. Ubuntu mặc định có Node.js cũ — phải dùng NodeSource repo.
+
+# Them NodeSource repository
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+ 
+sudo apt-get install -y nodejs
+ 
+# Kiem tra:
+node -v   # v20.x.x
+npm -v    # 10.x.x
+
+
+PHẦN III: PHÂN VÙNG Ổ DATA
+Chỉ nếu có ổ thứ 2 riêng — bỏ qua nếu chỉ 1 ổ
+
+ℹ️ Nếu chỉ có 1 ổ đĩa: bỏ qua Phần III. Docker tự tạo volume trên ổ OS.
+Nếu có ổ thứ 2 riêng (không có mountpoint): làm Phần III để tách data ra ổ riêng, an toàn hơn khi OS hỏng.
+
+3.1 Xác định ổ data
+
+# Xem tat ca o dia:
+lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+ 
+# Giai thich output - vi du:
+NAME           SIZE TYPE MOUNTPOINT  FSTYPE
+sda            60G  disk             <- O TRONG (khong co mountpoint) = o data
+sdb           100G  disk
+|-sdb1          1G  part /boot/efi   vfat   <- O OS
+|-sdb2          2G  part /boot       ext4   <- O OS
+|-sdb3         97G  part             LVM2_member
+  |-ubuntu--lv 97G  lvm  /           ext4   <- O OS (co /)
+ 
+# O data = o KHONG CO mountpoint VA KHONG CO FSTYPE
+# Trong vi du: sda la o data
+
+
+⚠️ XÁC ĐỊNH ĐÚNG ổ data trước khi chạy lệnh format!
+Format nhầm ổ có / (OS) sẽ MẤT TOÀN BỘ HỆ THỐNG không khôi phục được.
+Khi không chắc: hỏi lại, không đoán.
+
+3.2 Phân vùng, format, mount
+
+# === THAY sda BANG TEN O THUC TE CUA BAN ===
+ 
+# 1. Tao bang phan vung GPT va 1 partition chiem toan bo o:
+# parted: cong cu quan ly partition
+# --script: chay khong can nhap them
+# mklabel gpt: tao bang phan vung GPT (hien dai, ho tro o lon)
+# mkpart primary ext4 0% 100%: 1 partition tu dau den cuoi
+sudo parted /dev/sda --script mklabel gpt mkpart primary ext4 0% 100%
+ 
+# 2. Format partition bang ext4:
+# -F: force, khong hoi xac nhan
+sudo mkfs.ext4 -F /dev/sda1
+ 
+# 3. Lay UUID de dung trong fstab:
+sudo blkid -s UUID -o value /dev/sda1
+# Ket qua vi du: abc12345-1234-1234-1234-abcdef123456
+# Luu gia tri nay lai de dung o buoc 5
+ 
+# 4. Tao thu muc mount:
+sudo mkdir -p /data/postgres /data/redis
+ 
+# 5. Them vao /etc/fstab (thay UUID bang gia tri thuc te):
+# fstab: file cau hinh tu dong mount khi boot
+# Cac option: defaults=rw,exec,auto,nouser,async
+# noatime: khong cap nhat access time (tang hieu suat)
+# 0 2: khong backup, kiem tra sau /
+echo "UUID=abc12345-1234-1234-1234-abcdef123456 /data ext4 defaults,noatime 0 2" | \
+  sudo tee -a /etc/fstab
+ 
+# 6. Mount ngay khong can reboot:
+sudo mount -a
+ 
+# 7. Phan quyen cho PostgreSQL (chay voi UID 999 trong container):
+sudo chown -R 999:999 /data/postgres /data/redis
+ 
+# Kiem tra thanh cong:
+df -h | grep /data
+# Phai thay: /dev/sda1    98G   24K   93G   1%   /data
+
+
+PHẦN IV: TẠO CẤU TRÚC THƯ MỤC VÀ FILE CẤU HÌNH
+
+4.1 Tạo cấu trúc thư mục
+
+# Tao toan bo cau truc 1 lenh:
+sudo mkdir -p /opt/task-portal/{app/secrets,code/backend/app/{models,routers,worker,utils},code/frontend}
+ 
+# Ket qua:
+/opt/task-portal/
+├── app/
+│   ├── .env                    <- Secrets: DB password, API keys
+│   ├── docker-compose.yml      <- Dinh nghia 6 container
+│   └── secrets/
+│       └── google-service-account.json
+└── code/
+    ├── backend/
+    │   ├── requirements.txt
+    │   ├── Dockerfile
+    │   └── app/
+    │       ├── __init__.py
+    │       ├── config.py       <- Doc bien moi truong
+    │       ├── database.py     <- Ket noi PostgreSQL
+    │       ├── main.py         <- FastAPI app, routes
+    │       ├── models/         <- SQLAlchemy models = bang DB
+    │       ├── routers/        <- API endpoints
+    │       ├── worker/         <- Celery: check Sheet, goi AI
+    │       └── utils/          <- JWT, hash password
+    └── frontend/
+        ├── package.json
+        ├── Dockerfile
+        └── src/
+            ├── app/            <- Next.js pages
+            ├── components/     <- Navbar
+            └── lib/            <- auth.ts, api.ts
+ 
+# Phan quyen user hien tai (khong can sudo khi sua code):
+sudo chown -R $USER:$USER /opt/task-portal/code
+ 
+# Tao file __init__.py (Python can de nhan biet thu muc la package):
+B=/opt/task-portal/code/backend
+for d in app app/models app/routers app/worker app/utils; do
+  touch $B/$d/__init__.py
+done
+
+
+4.2 Tạo file .env
+Lưu ý quan trọng: (1) dùng tên service Docker (postgres, redis) thay 127.0.0.1, (2) encode ký tự đặc biệt trong URL.
+Container giao tiếp với nhau qua tên service trong docker-compose — không qua localhost.
+
+# Encode mat khau (neu co @#!$ trong mat khau):
+python3 -c "import urllib.parse; print(urllib.parse.quote('MyPass@2026#', safe=''))"
+# Ket qua: MyPass%402026%23
+# Quy tac: @ -> %40   # -> %23   ! -> %21   $ -> %24
+ 
+# Tao secret key ngau nhien:
+openssl rand -hex 32
+# Ket qua: a1b2c3... (64 ky tu hex)
+ 
+# Tao file .env:
+sudo tee /opt/task-portal/app/.env << 'EOF'
+# DATABASE_URL: ten service "postgres" (khong phai 127.0.0.1)
+# Mat khau PHAI URL-encoded neu co @#!$
+DATABASE_URL=postgresql://task_user:MAT_KHAU_DA_ENCODE@postgres:5432/task_portal
+ 
+# REDIS_URL: ten service "redis"
+REDIS_URL=redis://:MAT_KHAU_DA_ENCODE@redis:6379/0
+ 
+# Ky JWT token - phai du dai va ngau nhien
+SECRET_KEY=DAN_KET_QUA_openssl_rand_hex_32
+ 
+# Duong dan TRONG CONTAINER (khong phai tren host)
+GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/google-service-account.json
+ 
+AI_BASE_URL=https://api.shopaikey.com/v1
+AI_API_KEY=sk-xxxxxxxxxxxx
+AI_MODEL=gpt-4o-mini
+AI_TIMEOUT_SECONDS=60
+CHECK_INTERVAL_SECONDS=3600
+EOF
+ 
+# Phan quyen chat (chi root doc duoc):
+sudo chmod 600 /opt/task-portal/app/.env
+ 
+# Copy JSON key vao secrets:
+sudo mv /tmp/gsa.json /opt/task-portal/app/secrets/google-service-account.json
+sudo chmod 644 /opt/task-portal/app/secrets/google-service-account.json
+# 644: owner rw, group r, others r -> container user doc duoc
+
+
+PHẦN V: CODE BACKEND — MODELS
+4 file — Định nghĩa cấu trúc bảng trong PostgreSQL
+
+Models là các class Python tương ứng với bảng trong DB. SQLAlchemy tự động tạo bảng khi app khởi động.
+
+📄  requirements.txt   —   Thư viện Python cần cài — giải thích từng dòng
+Pin version để tránh lỗi khi thư viện ra bản mới không tương thích
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+redis==5.0.4
+celery==5.4.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.3
+python-dotenv==1.0.1
+pydantic-settings==2.2.1
+google-auth==2.29.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.127.0
+python-multipart==0.0.9
+requests==2.31.0
+
+
+📄  app/config.py   —   Đọc biến môi trường từ .env
+Pydantic-settings tự validate: thiếu biến bắt buộc → báo lỗi ngay khi khởi động
+from pydantic_settings import BaseSettings
+class Settings(BaseSettings):
+    DATABASE_URL: str; REDIS_URL: str; SECRET_KEY: str
+    ALGORITHM: str = "HS256"; ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    GOOGLE_APPLICATION_CREDENTIALS: str
+    AI_BASE_URL: str = "https://api.shopaikey.com/v1"
+    AI_API_KEY: str = ""; AI_MODEL: str = "gpt-4o-mini"
+    AI_TIMEOUT_SECONDS: int = 60; CHECK_INTERVAL_SECONDS: int = 3600
+    class Config: env_file = ".env"
+settings = Settings()
+
+
+📄  app/database.py   —   Kết nối PostgreSQL — tạo session cho mỗi request
+pool_pre_ping=True: kiểm tra connection còn sống trước mỗi query, tránh lỗi sau idle
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from .config import settings
+engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+class Base(DeclarativeBase): pass
+def get_db():
+    db = SessionLocal()
+    try: yield db
+    finally: db.close()
+
+
+📄  app/models/user.py   —   Bảng users — 3 role: admin, group_a, group_b
+hashed_pw: KHÔNG lưu plain text, chỉ lưu bcrypt hash
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from ..database import Base
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True); email = Column(String, unique=True, nullable=False)
+    full_name = Column(String); hashed_pw = Column(String, nullable=False)
+    role = Column(String, default="group_a"); is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+📄  app/models/sheet.py   —   Bảng sheets — Google Sheet link
+owner_id: ForeignKey đến users.id, Group A chỉ xem sheet của mình
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func
+from ..database import Base
+class Sheet(Base):
+    __tablename__ = "sheets"
+    id = Column(Integer, primary_key=True); spreadsheet_id = Column(String, nullable=False)
+    name = Column(String); owner_id = Column(Integer, ForeignKey("users.id"))
+    is_active = Column(Boolean, default=True); last_checked = Column(DateTime)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+📄  app/models/setting.py   —   Bảng settings + audit_logs — cấu hình từ portal
+key-value store: column_config, policy, ai_config lưu dạng JSON string
+from sqlalchemy import Column, Integer, String, Text, DateTime, func
+from ..database import Base
+class Setting(Base):
+    __tablename__ = "settings"
+    id = Column(Integer, primary_key=True); key = Column(String, unique=True, nullable=False)
+    value = Column(Text, nullable=False); updated_by = Column(Integer, nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id = Column(Integer, primary_key=True); user_email = Column(String)
+    action = Column(String); detail = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+📄  app/models/violation.py   —   Bảng violations — kết quả check
+ai_suggestion: gợi ý sửa cụ thể bằng tiếng Việt từ AI
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, func
+from ..database import Base
+class Violation(Base):
+    __tablename__ = "violations"
+    id = Column(Integer, primary_key=True); sheet_id = Column(Integer, ForeignKey("sheets.id"))
+    tab_name = Column(String); row_number = Column(Integer); row_data = Column(Text)
+    violation_code = Column(String); violation_msg = Column(Text)
+    ai_verdict = Column(String); ai_reason = Column(Text)
+    ai_suggestion = Column(Text)  # Khuyen nghi sua cu the
+    check_run_id = Column(String); created_at = Column(DateTime, server_default=func.now())
+
+
+
+PHẦN VI: CODE BACKEND — UTILS VÀ ROUTERS
+6 file — Xác thực, API endpoints
+
+📄  app/utils/auth.py   —   JWT token, bcrypt hash, dependency injection cho FastAPI
+get_current_user và require_admin được inject vào mọi endpoint cần xác thực
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.user import User
+from ..config import settings
+from datetime import datetime, timedelta, timezone
+pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+def verify_password(p, h): return pwd_ctx.verify(p, h)
+def hash_password(p): return pwd_ctx.hash(p)
+def create_access_token(data: dict) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode({**data, "exp": exp}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)):
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user = db.query(User).filter(User.id == int(payload["sub"])).first()
+        if not user or not user.is_active: raise HTTPException(401)
+        return user
+    except JWTError: raise HTTPException(401, "Invalid token")
+def require_admin(user=Depends(get_current_user)):
+    if user.role != "admin": raise HTTPException(403, "Admin required")
+    return user
+
+
+
+Lưu ý quan trọng về JWT
+JWT được lưu trong localStorage của trình duyệt. Mỗi API request đưa JWT vào header Authorization. Backend giải mã và lấy user_id. Token hết hạn sau 8 giờ.
+
+# Cau truc JWT payload:
+{"sub": "1", "role": "admin", "exp": 1718000000}
+ 
+# Header gui len backend:
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+
+
+📄  app/routers/auth.py   —   POST /api/auth/login — xác thực và trả JWT
+Nhận form-data (username + password), trả access_token + role + full_name
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.user import User
+from ..utils.auth import verify_password, create_access_token
+router = APIRouter()
+@router.post("/login")
+def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == form.username).first()
+    if not user or not verify_password(form.password, user.hashed_pw):
+        raise HTTPException(401, "Invalid email or password")
+    if not user.is_active: raise HTTPException(403, "Account disabled")
+    token = create_access_token({"sub": str(user.id), "role": user.role})
+    return {"access_token": token, "token_type": "bearer", "role": user.role, "full_name": user.full_name}
+
+
+📄  app/routers/users.py   —   CRUD users — chỉ Admin dùng được
+GET /users, POST /users, PUT /users/{id}, DELETE /users/{id}, GET /users/me
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.user import User
+from ..utils.auth import require_admin, hash_password, get_current_user
+router = APIRouter()
+@router.get("/")
+def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
+    return [{"id":u.id,"email":u.email,"full_name":u.full_name,"role":u.role,"is_active":u.is_active} for u in db.query(User).all()]
+@router.post("/")
+def create_user(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    if db.query(User).filter(User.email == body["email"]).first(): raise HTTPException(400, "Email exists")
+    u = User(email=body["email"], full_name=body.get("full_name",""), hashed_pw=hash_password(body["password"]), role=body.get("role","group_a"))
+    db.add(u); db.commit(); db.refresh(u)
+    return {"id":u.id,"email":u.email,"role":u.role}
+@router.put("/{uid}")
+def update_user(uid: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    u = db.query(User).filter(User.id == uid).first()
+    if not u: raise HTTPException(404)
+    for k, v in body.items():
+        if k == "password": setattr(u, "hashed_pw", hash_password(v))
+        elif hasattr(u, k) and k not in ["id","hashed_pw"]: setattr(u, k, v)
+    db.commit(); return {"message": "Updated"}
+@router.delete("/{uid}")
+def delete_user(uid: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    u = db.query(User).filter(User.id == uid).first()
+    if not u: raise HTTPException(404)
+    db.delete(u); db.commit(); return {"message": "Deleted"}
+@router.get("/me")
+def me(user=Depends(get_current_user)):
+    return {"id":user.id,"email":user.email,"full_name":user.full_name,"role":user.role}
+
+
+📄  app/routers/violations.py   —   GET /api/violations — lọc, phân trang, tìm kiếm
+Lọc SKIP ra ngoài. Group A chỉ xem violations của sheet mình. Group B xem tất cả.
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.violation import Violation
+from ..models.sheet import Sheet
+from ..utils.auth import get_current_user
+router = APIRouter()
+@router.get("/")
+def list_violations(sheet_id: int = Query(None), ai_verdict: str = Query(None),
+                    search: str = Query(None), page: int = Query(1), per_page: int = Query(25),
+                    db: Session = Depends(get_db), user=Depends(get_current_user)):
+    q = db.query(Violation).filter(Violation.ai_verdict != "SKIP")  # Khong hien SKIP
+    if user.role not in ["admin","group_b"]:
+        owned = [s.id for s in db.query(Sheet).filter(Sheet.owner_id == user.id).all()]
+        q = q.filter(Violation.sheet_id.in_(owned))
+    if sheet_id: q = q.filter(Violation.sheet_id == sheet_id)
+    if ai_verdict: q = q.filter(Violation.ai_verdict == ai_verdict)
+    if search: q = q.filter(Violation.row_data.ilike(f"%{search}%"))
+    total = q.count()
+    items = q.order_by(Violation.created_at.desc()).offset((page-1)*per_page).limit(per_page).all()
+    return {"total":total,"page":page,"per_page":per_page,
+            "items":[{"id":v.id,"sheet_id":v.sheet_id,"tab_name":v.tab_name,"row_number":v.row_number,
+                       "row_data":v.row_data,"violation_code":v.violation_code,"violation_msg":v.violation_msg,
+                       "ai_verdict":v.ai_verdict,"ai_reason":v.ai_reason,"ai_suggestion":v.ai_suggestion,
+                       "created_at":str(v.created_at)} for v in items]}
+
+
+📄  app/routers/settings_router.py   —   CRUD settings: column-config, policy, ai-config, audit-log
+Mọi thay đổi được ghi vào audit_logs. AI config đọc từ DB trước, fallback về .env
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.setting import Setting, AuditLog
+from ..utils.auth import require_admin, get_current_user
+from ..config import settings as app_settings
+import json, requests as http
+router = APIRouter()
+def get_setting(key, db):
+    s = db.query(Setting).filter(Setting.key == key).first()
+    return json.loads(s.value) if s else None
+def save_setting(key, value, db, user_email="system"):
+    old = db.query(Setting).filter(Setting.key == key).first()
+    new_val = json.dumps(value, ensure_ascii=False)
+    if old: old.value = new_val
+    else: db.add(Setting(key=key, value=new_val))
+    db.add(AuditLog(user_email=user_email, action=f"update_{key}", detail=new_val[:300]))
+    db.commit()
+@router.get("/column-config")
+def get_col(db=Depends(get_db), _=Depends(get_current_user)):
+    return get_setting("column_config", db) or {"cols":["DETAIL TASK","PRIORITY","MANDAY (EST)","STATUS","ASSIGNED"],"tab_names":["1.Sale/Admin","2.Init","2.1.Lab/PoC","3.Implement","4.MA"]}
+@router.put("/column-config")
+def set_col(body: dict, db=Depends(get_db), admin=Depends(require_admin)):
+    if not body.get("cols"): raise HTTPException(400, "cols required")
+    save_setting("column_config", body, db, admin.email); return {"message":"Updated"}
+@router.get("/policy")
+def get_pol(db=Depends(get_db), _=Depends(get_current_user)):
+    return get_setting("policy", db) or {"rules":[]}
+@router.put("/policy")
+def set_pol(body: dict, db=Depends(get_db), admin=Depends(require_admin)):
+    save_setting("policy", body, db, admin.email); return {"message":"Updated"}
+@router.get("/ai-config")
+def get_ai(db=Depends(get_db), _=Depends(require_admin)):
+    cfg = get_setting("ai_config", db) or {}
+    return {"base_url":cfg.get("base_url",app_settings.AI_BASE_URL),"model":cfg.get("model",app_settings.AI_MODEL),
+            "has_key":bool(cfg.get("api_key") or app_settings.AI_API_KEY),
+            "system_prompt":cfg.get("system_prompt",""),"check_interval_hours":cfg.get("check_interval_hours",1)}
+@router.put("/ai-config")
+def set_ai(body: dict, db=Depends(get_db), admin=Depends(require_admin)):
+    current = get_setting("ai_config", db) or {}
+    for k in ["api_key","base_url","model","system_prompt","check_interval_hours"]:
+        if k in body and body[k] != "": current[k] = body[k]
+    save_setting("ai_config", current, db, admin.email); return {"message":"Updated"}
+@router.get("/ai-models")
+def get_models(db=Depends(get_db), _=Depends(require_admin)):
+    cfg = get_setting("ai_config", db) or {}
+    url = cfg.get("base_url", app_settings.AI_BASE_URL)
+    key = cfg.get("api_key") or app_settings.AI_API_KEY
+    try:
+        r = http.get(f"{url}/models", headers={"Authorization":f"Bearer {key}"}, timeout=15)
+        if r.status_code == 200: return {"models":sorted([m["id"] for m in r.json().get("data",[])])}
+        return {"models":[],"error":f"API returned {r.status_code}"}
+    except Exception as e: return {"models":[],"error":str(e)}
+@router.get("/audit-log")
+def audit(db=Depends(get_db), _=Depends(require_admin)):
+    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(200).all()
+    return [{"id":l.id,"user":l.user_email,"action":l.action,"at":str(l.created_at)} for l in logs]
+
+
+📄  app/routers/sheets.py   —   CRUD sheets + /check + /logs — endpoint quan trọng nhất
+/check: đẩy job vào Redis queue, trả ngay. /logs: đọc progress từ Redis, polling 2s
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.sheet import Sheet
+from ..models.violation import Violation
+from ..utils.auth import get_current_user
+from ..worker.celery_app import celery_app
+import uuid, re, redis as redis_lib, os, json as _json
+router = APIRouter()
+def extract_id(url):
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
+    if not m: raise HTTPException(400, "Invalid Google Sheet URL")
+    return m.group(1)
+@router.post("/")
+def add(body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sid = extract_id(body["url"])
+    sheet = Sheet(spreadsheet_id=sid, name=body.get("name",""), owner_id=user.id)
+    db.add(sheet); db.commit(); db.refresh(sheet)
+    run_id = str(uuid.uuid4())
+    celery_app.send_task("app.worker.tasks.check_sheet", args=[sid, sheet.id, run_id])
+    return {"id":sheet.id,"run_id":run_id,"message":"Sheet added, checking..."}
+@router.get("/")
+def list_all(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    q = db.query(Sheet)
+    if user.role != "admin": q = q.filter(Sheet.owner_id == user.id)
+    sheets = q.order_by(Sheet.created_at.desc()).all()
+    result = []
+    for s in sheets:
+        count = db.query(Violation).filter(Violation.sheet_id == s.id).count()
+        fail  = db.query(Violation).filter(Violation.sheet_id == s.id, Violation.ai_verdict == "FAIL").count()
+        result.append({"id":s.id,"spreadsheet_id":s.spreadsheet_id,"name":s.name,
+                        "last_checked":str(s.last_checked) if s.last_checked else None,
+                        "violation_count":count,"fail_count":fail})
+    return result
+@router.delete("/{sid}")
+def remove(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet: raise HTTPException(404)
+    db.query(Violation).filter(Violation.sheet_id == sid).delete()
+    db.delete(sheet); db.commit(); return {"message":"Deleted"}
+@router.post("/{sid}/check")
+def check_now(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet: raise HTTPException(404, "Sheet not found")
+    run_id = str(uuid.uuid4())
+    celery_app.send_task("app.worker.tasks.check_sheet", args=[sheet.spreadsheet_id, sid, run_id])
+    return {"run_id":run_id,"message":"Check started"}
+@router.get("/{sid}/status")
+def get_status(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet: raise HTTPException(404)
+    count = db.query(Violation).filter(Violation.sheet_id == sid).count()
+    fail  = db.query(Violation).filter(Violation.sheet_id == sid, Violation.ai_verdict=="FAIL").count()
+    return {"sheet_id":sid,"last_checked":str(sheet.last_checked) if sheet.last_checked else None,
+            "violation_count":count,"fail_count":fail}
+@router.get("/{sid}/logs")
+def get_logs(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    try:
+        r = redis_lib.from_url(os.environ.get("REDIS_URL","redis://localhost:6379/0"), decode_responses=True)
+        logs = r.lrange(f"check_log:{sid}", 0, -1)
+        status = r.get(f"check_status:{sid}") or "idle"
+        return {"status":status,"logs":[_json.loads(l) for l in logs]}
+    except Exception as e:
+        return {"status":"error","logs":[],"error":str(e)}
+
+
+
+Lưu ý: redirect_slashes=False trong main.py
+Vấn đề: FastAPI mặc định redirect /api/sheets → /api/sheets/. Redirect này bị CORS chặn khi frontend được serve từ port 3000 và backend ở port 8000.
+
+# main.py - PHAI CO redirect_slashes=False:
+app = FastAPI(
+    title="Task Compliance Portal",
+    version="4.0.0",
+    redirect_slashes=False  # Tat redirect /path -> /path/
+)
+ 
+# Khong co dong nay: frontend goi /api/sheets bi redirect 307
+# 307 Temporary Redirect bi CORS chan -> axios bao loi Network Error
+
+📄  app/main.py   —   FastAPI app — điểm vào, đăng ký tất cả routers
+Base.metadata.create_all: tự tạo bảng khi khởi động (nếu chưa có)
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from .routers import auth, users, sheets, violations, settings_router
+from .database import engine, Base
+from .models import user, sheet, setting, violation
+Base.metadata.create_all(bind=engine)
+app = FastAPI(title="Task Compliance Portal", version="4.0.0", redirect_slashes=False)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.include_router(auth.router,            prefix="/api/auth")
+app.include_router(users.router,           prefix="/api/users")
+app.include_router(sheets.router,          prefix="/api/sheets")
+app.include_router(violations.router,      prefix="/api/violations")
+app.include_router(settings_router.router, prefix="/api/settings")
+@app.get("/health")
+def health(): return {"status":"ok","version":"4.0.0"}
+
+
+
+PHẦN VII: CODE BACKEND — WORKER
+5 file — Celery, Google Sheet, Policy, AI, Tasks
+
+📄  app/worker/celery_app.py   —   Khởi tạo Celery — lưu ý cú pháp command
+broker = Redis. 1 biến celery_app trong module celery_app.py → lệnh phải có dấu :
+from celery import Celery
+from ..config import settings
+celery_app = Celery("task_compliance",
+    broker=settings.REDIS_URL, backend=settings.REDIS_URL,
+    include=["app.worker.tasks"])
+celery_app.conf.update(
+    task_serializer="json", result_expires=3600,
+    timezone="Asia/Ho_Chi_Minh",
+    broker_connection_retry_on_startup=True)
+
+
+
+
+# DUNG - phai co dau hai cham de chi ro ten bien trong module:
+celery -A app.worker.celery_app:celery_app worker
+ 
+# SAI - bao loi "No such command celery_app":
+celery -A app.worker.celery_app celery_app worker
+ 
+# Giai thich:
+# app.worker.celery_app  = duong dan module (thu muc/file)
+# :celery_app            = ten bien TRONG module do
+
+
+📄  app/worker/google_sheet.py   —   Đọc Google Sheet qua Service Account — lọc Task ID
+Chỉ lấy dòng có Task ID chứa chữ số thực sự. Bỏ qua header mẫu, dòng trống, tiêu đề nhóm
+import os
+os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from ..config import settings
+ 
+def get_service():
+    creds = service_account.Credentials.from_service_account_file(
+        settings.GOOGLE_APPLICATION_CREDENTIALS,
+        scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
+    return build("sheets", "v4", credentials=creds, cache_discovery=False)
+ 
+def read_tabs(spreadsheet_id: str, required_cols: list, tab_names: list = None) -> list:
+    svc = get_service()
+    meta = svc.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    req_set = set(c.strip().upper() for c in required_cols)
+    results = []
+    for sheet in meta.get("sheets", []):
+        tab = sheet["properties"]["title"]
+        if tab_names and tab not in tab_names: continue
+        data = svc.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=tab).execute()
+        rows = data.get("values", [])
+        if not rows: continue
+        headers_up = [h.strip().upper() for h in rows[0]]
+        if not req_set.issubset(set(headers_up)): continue
+        headers = [h.strip() for h in rows[0]]
+ 
+        # Tim cot Task ID (cot dau hoac cot co "ID" trong ten)
+        task_id_col = None
+        for h in headers:
+            if h.strip().upper() in ["TASK ID","ID","TASK_ID","#","NO","STT"]:
+                task_id_col = h.strip(); break
+        if task_id_col is None and headers:
+            task_id_col = headers[0]
+ 
+        tab_rows = []
+        for i, row in enumerate(rows[1:], start=2):
+            padded = row + [""] * (len(headers) - len(row))
+            d = dict(zip(headers, padded)); d["_row"] = i
+            if not any(str(v).strip() for k,v in d.items() if k != "_row"): continue
+            # Chi check dong co Task ID la so thuc su (bo qua header mau, dong tieu de)
+            task_id_val = str(d.get(task_id_col, "")).strip() if task_id_col else ""
+            if not task_id_val: continue
+            if not any(c.isdigit() for c in task_id_val): continue
+            tab_rows.append(d)
+        if tab_rows:
+            results.append({"tab_name": tab, "rows": tab_rows})
+    return results
+
+
+
+Logic lọc Task ID (quan trọng)
+
+# Chi lay dong co Task ID la so:
+"302"              -> co chu so -> LAY
+"[Action Verb]..." -> khong co chu so -> BO QUA
+""                 -> trong -> BO QUA
+"5,000"            -> co chu so (5 va 0) -> LAY (luu y truong hop nay)
+ 
+# Code kiem tra:
+if not any(c.isdigit() for c in task_id_val): continue
+ 
+# Tab chi duoc check khi co DU tat ca cot yeu cau:
+# VD: Tab "Summary" khong co cot "PRIORITY" -> BO QUA ca tab
+
+
+📄  app/worker/policy_engine.py   —   Kiểm tra rule cứng — không tốn AI token
+Chạy trước AI. Rule: manday_max, manday_min, min_words, required_fields
+def check_row(row: dict, policy: dict, required_cols: list) -> list:
+    violations = []
+    def add(code, msg): violations.append({"code":code,"message":msg})
+    col_map = {}
+    for rc in required_cols:
+        for k in row.keys():
+            if k.strip().upper() == rc.strip().upper(): col_map[rc.strip().upper()] = k; break
+    for rule in policy.get("rules", []):
+        field = rule.get("field","").strip().upper()
+        col_name = col_map.get(field, field)
+        cell_val = str(row.get(col_name,"")).strip()
+        rule_val = str(rule.get("value","")).strip()
+        if rule_val and cell_val.upper() != rule_val.upper(): continue
+        if rule.get("manday_max") is not None:
+            md_col = col_map.get("MANDAY (EST)","MANDAY (EST)")
+            try:
+                mv = float(str(row.get(md_col,0) or 0).replace(",","."))
+                if mv > rule["manday_max"]: add("MANDAY_TOO_HIGH",f"Manday={mv} exceeds max {rule['manday_max']}")
+            except: add("MANDAY_NOT_NUMBER","Manday must be a number")
+        if rule.get("manday_min") is not None:
+            md_col = col_map.get("MANDAY (EST)","MANDAY (EST)")
+            try:
+                mv = float(str(row.get(md_col,0) or 0).replace(",","."))
+                if mv < rule["manday_min"]: add("MANDAY_TOO_LOW",f"Manday={mv} below min {rule['manday_min']}")
+            except: pass
+        if rule.get("min_words") is not None:
+            task_col = col_map.get("DETAIL TASK","DETAIL TASK")
+            tv = str(row.get(task_col,"")).strip()
+            if len(tv.split()) < rule["min_words"]: add("DESC_TOO_SHORT",f"Need at least {rule['min_words']} words")
+        for rf in rule.get("required_fields",[]):
+            rc2 = col_map.get(rf.strip().upper(), rf)
+            if not str(row.get(rc2,"")).strip(): add("MISSING_FIELD",f"Required: {rf}")
+    return violations
+
+
+
+Cách rule hoạt động
+Mỗi rule có: field (cột), value (giá trị trigger), và các điều kiện kiểm tra. Rule chỉ chạy khi các cột field=value. Nếu value để trống → áp dụng cho tất cả dòng.
+
+# Vi du rule trong Settings > Policy Rules:
+Rule: field=PRIORITY, value=Normal, manday_max=3
+-> Ap dung khi PRIORITY=Normal
+-> Neu Manday > 3 -> violation MANDAY_TOO_HIGH
+ 
+Rule: field=PRIORITY, value=Critical, min_words=10
+-> Ap dung khi PRIORITY=Critical
+-> Neu DETAIL TASK co it hon 10 tu -> violation DESC_TOO_SHORT
+
+
+📄  app/worker/ai_evaluator.py   —   Gọi AI API — dùng requests, không dùng OpenAI SDK
+Đọc system_prompt từ DB → Admin sửa qua portal, không cần restart container
+import requests, json, re
+from ..config import settings
+from ..database import SessionLocal
+from ..routers.settings_router import get_setting
+ 
+DEFAULT_PROMPT = """You are a Project Manager and Task Quality Evaluator for an Infrastructure/SI team.
+ 
+IMPORTANT: Only evaluate tasks that have a Task ID (first column is not empty).
+If Task ID is empty, return immediately: {"verdict": "SKIP", "reason": "No Task ID", "suggestion": ""}
+ 
+TEAM CONTEXT:
+This is an Infrastructure/SI team that sometimes handles tasks outside pure infrastructure scope (UI changes, app configuration, integrations, documentation). When evaluating such tasks:
+- Consider that infra engineers doing non-core tasks face higher complexity than specialists would
+- UI/UX issues CAN affect system availability - a broken interface means users cannot access the system
+- Do NOT automatically downgrade priority just because a task is "not pure infra"
+- Evaluate actual business and system impact, not just the technical category
+ 
+CLASSIFICATION POLICY:
+ 
+CRITICAL (20 KPI/manday) - Emergency in progress + significant impact
+  * Production down, widespread outage, core transactions failing, service completely unavailable
+  * Security incident: credential leak, ransomware, actively exploited CVE, compromised account
+  * Hard deadline: go-live, cutover, major business event - delay causes direct financial/operational loss
+  * UI/system issue that blocks ALL users from accessing a critical business function
+  * Required evidence: incident/alert ID + affected services + user count + SLA or deadline
+  * Typical manday: 0.5-3 days (emergencies are short and focused)
+ 
+HIGH (12 KPI/manday) - Structural change OR significant incident
+  * P2/P3 incident: intermittent service, latency spike, partial degradation, not full outage
+  * Architecture work: HA setup, network segmentation, auth redesign, pipeline overhaul
+  * Critical component migration, Terraform/Ansible changes affecting production, RCA
+  * UI/app changes that affect core user workflows, business processes, or system integrations
+  * Required evidence: ticket/CR + scope + expected impact + rollback plan
+  * Typical manday: 1-5 days; more than 7 days requires clear justification
+ 
+NORMAL (6 KPI/manday) - Routine, SOP-based, low risk
+  * Following existing checklist or playbook, small config change, easy to rollback
+  * No production impact or very limited/controlled impact
+  * User/role management, backup testing, DNS updates, monitoring dashboards, documentation
+  * Minor UI tweaks that do not affect core workflows or business functions
+  * Typical manday: 0.5-3 days; more than 3 days requires justification
+ 
+EVALUATION RULES:
+1. Read the task description carefully - imagine what this task actually involves and how long it realistically takes
+2. Consider the perspective of an infra engineer doing this task
+3. Verify that Priority matches the actual work and its real impact
+4. Verify that Manday is realistic - slightly higher is acceptable for out-of-scope tasks
+5. If description is vague (fewer than 5 meaningful words): mark as REVIEW
+6. A task cannot be Critical just because someone labeled it so - it requires evidence
+7. If Priority seems too LOW for the described work, flag as FAIL and suggest upgrading
+ 
+RESPOND IN VALID JSON ONLY - no markdown, no text outside JSON:
+{
+  "verdict": "PASS or FAIL or REVIEW or SKIP",
+  "reason": "1-2 sentences in Vietnamese: what the task does and why this verdict",
+  "suggestion": "Specific advice in Vietnamese: for FAIL state exactly what to change and why; for REVIEW state what is missing; for PASS confirm why it meets standards; for SKIP leave empty"
+}"""
+ 
+def get_ai_cfg():
+    db = SessionLocal()
+    try:
+        cfg = get_setting("ai_config", db) or {}
+        return {
+            "api_key":       cfg.get("api_key")       or settings.AI_API_KEY,
+            "base_url":      cfg.get("base_url")      or settings.AI_BASE_URL,
+            "model":         cfg.get("model")         or settings.AI_MODEL,
+            "system_prompt": cfg.get("system_prompt") or DEFAULT_PROMPT
+        }
+    finally: db.close()
+ 
+def evaluate_row(row: dict, required_cols: list) -> dict:
+    cfg = get_ai_cfg()
+    row_str = " | ".join(f"{k}: {v}" for k,v in row.items() if k != "_row" and v)
+    try:
+        r = requests.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization":f"Bearer {cfg['api_key']}","Content-Type":"application/json"},
+            json={"model":cfg["model"],"messages":[
+                {"role":"system","content":cfg["system_prompt"]},
+                {"role":"user","content":f"Evaluate this task:\n{row_str}\n\nReturn JSON only."}
+            ],"temperature":0.1},
+            timeout=settings.AI_TIMEOUT_SECONDS)
+        content = r.json()["choices"][0]["message"]["content"].strip()
+        content = re.sub(r"```json\s*|\s*```","",content).strip()
+        parsed = json.loads(content)
+        return {"verdict":parsed.get("verdict","REVIEW"),"reason":parsed.get("reason",""),"suggestion":parsed.get("suggestion","")}
+    except Exception as e:
+        return {"verdict":"REVIEW","reason":f"AI error: {str(e)[:100]}","suggestion":""}
+
+
+
+Tại sao không dùng OpenAI SDK?
+OpenAI SDK phiên bản mới (≥40.0) có tham số proxies xung đột với httpx trong container. Lỗi: TypeError: Client.__init__() got an unexpected keyword argument proxies.
+Giải pháp: dùng requests.post() trực tiếp, tương thích mọi phiên bản.
+
+Tại sao không dùng response_format: json_object?
+ShopAIKey không hỗ trợ response_format với tất cả model. Một số model bị treo hoàn toàn khi gửi tham số này.
+Giải pháp: yêu cầu AI trong prompt trả JSON thuần, dùng regex strip markdown, sau đó json.loads().
+
+📄  app/worker/tasks.py   —   Celery task chính — điều phối toàn bộ quá trình check
+Ghi progress vào Redis sau mỗi bước. Frontend polling /logs mỗi 2 giây → realtime log
+from .celery_app import celery_app
+from .google_sheet import read_tabs
+from .policy_engine import check_row
+from .ai_evaluator import evaluate_row
+from ..database import SessionLocal
+from ..models.violation import Violation
+from ..models.sheet import Sheet
+from ..routers.settings_router import get_setting
+from datetime import datetime, timezone
+import uuid, json, logging, redis as redis_lib, os
+ 
+logger = logging.getLogger(__name__)
+ 
+def get_redis():
+    return redis_lib.from_url(os.environ.get("REDIS_URL","redis://localhost:6379/0"), decode_responses=True)
+ 
+def push_log(sheet_id, msg, level="info"):
+    try:
+        r = get_redis()
+        entry = json.dumps({"ts":datetime.now().strftime("%H:%M:%S"),"msg":msg,"level":level})
+        r.rpush(f"check_log:{sheet_id}", entry)
+        r.expire(f"check_log:{sheet_id}", 3600)
+        r.set(f"check_status:{sheet_id}", "running", ex=3600)
+    except: pass
+ 
+def set_status(sheet_id, status):
+    try: get_redis().set(f"check_status:{sheet_id}", status, ex=3600)
+    except: pass
+ 
+@celery_app.task(name="app.worker.tasks.check_sheet", bind=True, max_retries=2)
+def check_sheet(self, spreadsheet_id: str, sheet_id: int, run_id: str):
+    db = SessionLocal()
+    try:
+        try: r=get_redis(); r.delete(f"check_log:{sheet_id}"); r.set(f"check_status:{sheet_id}","running",ex=3600)
+        except: pass
+ 
+        push_log(sheet_id, "Starting check...")
+        col_cfg       = get_setting("column_config", db) or {}
+        required_cols = col_cfg.get("cols", ["DETAIL TASK","PRIORITY","MANDAY (EST)","STATUS","ASSIGNED"])
+        tab_names     = col_cfg.get("tab_names", [])
+        policy        = get_setting("policy", db) or {"rules":[]}
+ 
+        deleted = db.query(Violation).filter(Violation.sheet_id == sheet_id).delete()
+        db.commit()
+        push_log(sheet_id, f"Cleared {deleted} previous violations")
+ 
+        push_log(sheet_id, "Reading Google Sheet...")
+        tabs = read_tabs(spreadsheet_id, required_cols, tab_names or None)
+        total = sum(len(t["rows"]) for t in tabs)
+        push_log(sheet_id, f"Found {len(tabs)} tabs: {', '.join(t['tab_name'] for t in tabs)}")
+        push_log(sheet_id, f"Total rows with Task ID: {total}")
+ 
+        processed = 0; saved = 0
+        for tab in tabs:
+            push_log(sheet_id, f"── Tab: {tab['tab_name']} ({len(tab['rows'])} rows)")
+            for row in tab["rows"]:
+                processed += 1
+                rule_viols = check_row(row, policy, required_cols)
+                ai_result  = evaluate_row(row, required_cols)
+ 
+                # Bo qua PASS va SKIP - khong luu vao DB
+                if ai_result["verdict"] in ("PASS","SKIP") and not rule_viols:
+                    continue
+ 
+                codes = rule_viols if rule_viols else [{"code":"AI_REVIEW","message":""}]
+                for v in codes:
+                    db.add(Violation(
+                        sheet_id=sheet_id, tab_name=tab["tab_name"],
+                        row_number=row["_row"],
+                        row_data=json.dumps(row, ensure_ascii=False),
+                        violation_code=v["code"], violation_msg=v["message"],
+                        ai_verdict=ai_result["verdict"],
+                        ai_reason=ai_result.get("reason",""),
+                        ai_suggestion=ai_result.get("suggestion",""),
+                        check_run_id=run_id))
+                    saved += 1
+                    desc = str(row.get("DETAIL TASK",""))[:35]
+                    icon = "X" if ai_result["verdict"]=="FAIL" else "!"
+                    push_log(sheet_id, f"[{icon}] Row {row['_row']}: [{ai_result['verdict']}] {desc}",
+                             "warn" if ai_result["verdict"]=="FAIL" else "info")
+ 
+            db.commit()
+            push_log(sheet_id, f"Tab {tab['tab_name']} done - {saved} violations so far", "success")
+ 
+        s = db.query(Sheet).filter(Sheet.id == sheet_id).first()
+        if s: s.last_checked = datetime.now(timezone.utc); db.commit()
+ 
+        push_log(sheet_id, f"DONE: {processed} rows checked, {saved} violations found", "success")
+        set_status(sheet_id, "done")
+        logger.info(f"[DONE] Sheet {sheet_id}: {processed} rows, {saved} violations")
+ 
+    except Exception as exc:
+        push_log(sheet_id, f"ERROR: {str(exc)[:150]}", "error")
+        set_status(sheet_id, "error")
+        db.rollback()
+        raise self.retry(exc=exc, countdown=30)
+    finally: db.close()
+ 
+@celery_app.task(name="app.worker.tasks.check_all_sheets")
+def check_all_sheets():
+    db = SessionLocal()
+    try:
+        cfg = get_setting("ai_config", db) or {}
+        interval_h = cfg.get("check_interval_hours", 1)
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=interval_h)
+        for s in db.query(Sheet).filter(Sheet.is_active==True).all():
+            lc = s.last_checked
+            if lc is None or (lc.tzinfo is None and lc < cutoff.replace(tzinfo=None)) or \
+               (lc.tzinfo is not None and lc < cutoff):
+                check_sheet.delay(s.spreadsheet_id, s.id, str(uuid.uuid4()))
+    finally: db.close()
+
+
+
+Logic quan trọng trong tasks.py
+
+# Khong luu PASS va SKIP vao DB:
+if ai_result["verdict"] in ("PASS","SKIP") and not rule_viols:
+    continue  # Bo qua, khong them vao DB
+ 
+# Ly do: luu ca PASS len dashboard la rac, lam roi mat viec nhin
+# Dashboard chi hien cac diem CAN CHINH SUA (FAIL/REVIEW + rule violation)
+ 
+# Commit sau moi tab (khong phai sau tung dong):
+    db.commit()
+# Ly do: neu commit sau tung dong se cham. Neu commit cuoi cung bi loi
+# (vi du disconnect), mat het ket qua. Commit sau moi tab la balance.
+ 
+# max_retries=2: thu lai 2 lan neu loi
+# countdown=30: doi 30 giay truoc khi thu lai
+@celery_app.task(name="...", bind=True, max_retries=2)
+def check_sheet(self, ...):
+    ...
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=30)
+
+
+PHẦN VIII: DOCKERFILE BACKEND
+Giải thích từng dòng
+
+📄  Dockerfile   —   Đóng gói Python FastAPI + Celery vào Docker image
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app/ ./app/
+RUN useradd -m appuser && chown -R appuser /app
+USER appuser
+CMD ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+
+
+
+Tại sao copy requirements.txt trước khi copy code?
+Docker cache layer. Mỗi lệnh RUN tạo 1 layer mới. Nếu requirements.txt không đổi, Docker tái dùng layer pip install đã cache. Chỉ layer copy code mới bị tạo lại.
+
+# CHUAN: requirements.txt truoc -> pip install duoc cache
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app/ ./app/
+ 
+# Neu sua 1 dong code -> chi rebuild tu COPY app/ tro di (nhanh)
+# Neu sua requirements.txt -> rebuild tu pip install (cham hon)
+ 
+# SAI: copy code truoc -> pip install khong bao gio duoc cache
+COPY . .
+RUN pip install -r requirements.txt  # Chay lai moi lan build!
+
+
+Tại sao 3 container dùng cùng 1 image?
+
+# Dockerfile chi dinh CMD mac dinh:
+CMD ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+ 
+# docker-compose.yml OVERRIDE CMD cho worker va scheduler:
+worker:
+  image: task-portal-backend:latest
+  command: celery -A app.worker.celery_app:celery_app worker  # Override
+ 
+scheduler:
+  image: task-portal-backend:latest
+  command: celery -A app.worker.celery_app:celery_app beat    # Override
+ 
+# Loi ich: 1 lan build image, dung cho 3 container khac nhau
+
+
+PHẦN IX: CODE FRONTEND — CẤU HÌNH DỰ ÁN
+8 file config — package.json, tailwind, auth, api
+
+📄  package.json   —   Dependencies: Next.js 14, React 18, Axios
+{"name":"task-compliance-portal","version":"4.0.0","private":true,
+ "scripts":{"dev":"next dev","build":"next build","start":"next start"},
+ "dependencies":{"next":"14.2.3","react":"^18","react-dom":"^18","axios":"^1.6.8"},
+ "devDependencies":{"typescript":"^5","@types/node":"^20","@types/react":"^18",
+   "@types/react-dom":"^18","autoprefixer":"^10","postcss":"^8","tailwindcss":"^3.3.0"}}
+
+
+📄  tailwind.config.js   —   Tailwind CSS — scan toàn bộ src/
+module.exports={content:["./src/**/*.{js,ts,jsx,tsx,mdx}"],theme:{extend:{}},plugins:[]}
+
+
+
+tsconfig.json và next.config.js
+
+# next.config.js - output: standalone:
+# Tao thu muc .next/standalone chua server.js co the chay doc lap
+# Khong can node_modules, giam kich thuoc image Docker xuong ~10x
+module.exports = { output: "standalone" }
+ 
+# tsconfig.json - paths:
+# Cho phep import @/lib/api thay vi ../../lib/api
+"paths": {"@/*": ["./src/*"]}
+
+
+📄  src/lib/auth.ts   —   Lưu/đọc token, role, tên từ localStorage
+getToken(), getRole(), getName(): dùng khắp nơi. logout(): xóa localStorage, chuyển về /login
+export const saveToken=(t:string,r:string,n:string)=>{if(typeof window==='undefined')return;localStorage.setItem('token',t);localStorage.setItem('role',r);localStorage.setItem('name',n);};
+export const getToken=()=>typeof window!=='undefined'?localStorage.getItem('token'):null;
+export const getRole=()=>typeof window!=='undefined'?localStorage.getItem('role'):null;
+export const getName=()=>typeof window!=='undefined'?localStorage.getItem('name'):null;
+export const isAdmin=()=>getRole()==='admin';
+export const isGroupA=()=>['admin','group_a'].includes(getRole()??'');
+export const logout=()=>{localStorage.clear();window.location.href='/login';};
+
+
+📄  src/lib/api.ts   —   Axios instance — tất cả API calls đi qua đây
+BASE URL: đây là nơi DUY NHẤT cần sửa khi đổi IP/domain. Rebuild image sau khi sửa!
+import axios from 'axios';import{getToken,logout}from'./auth';
+const BASE='http://${SELF_IP}:8000/api';
+const api=axios.create({baseURL:BASE});
+api.interceptors.request.use(cfg=>{const t=getToken();if(t)cfg.headers.Authorization=\`Bearer \${t}\`;return cfg;});
+api.interceptors.response.use(r=>r,err=>{if(err.response?.status===401)logout();return Promise.reject(err);});
+export const login=(e:string,p:string)=>api.post('/auth/login',new URLSearchParams({username:e,password:p}),{headers:{'Content-Type':'application/x-www-form-urlencoded'}}).then(r=>r.data);
+export const getSheets=()=>api.get('/sheets').then(r=>r.data);
+export const addSheet=(url:string,name:string)=>api.post('/sheets',{url,name}).then(r=>r.data);
+export const deleteSheet=(id:number)=>api.delete(\`/sheets/\${id}\`);
+export const checkSheet=(id:number)=>api.post(\`/sheets/\${id}/check\`).then(r=>r.data);
+export const getSheetLogs=(id:number)=>api.get(\`/sheets/\${id}/logs\`).then(r=>r.data);
+export const getViolations=(params?:object)=>api.get('/violations',{params}).then(r=>r.data);
+export const getColumnConfig=()=>api.get('/settings/column-config').then(r=>r.data);
+export const updateColumnConfig=(d:object)=>api.put('/settings/column-config',d).then(r=>r.data);
+export const getPolicy=()=>api.get('/settings/policy').then(r=>r.data);
+export const updatePolicy=(d:object)=>api.put('/settings/policy',d).then(r=>r.data);
+export const getAuditLog=()=>api.get('/settings/audit-log').then(r=>r.data);
+export const getAIConfig=()=>api.get('/settings/ai-config').then(r=>r.data);
+export const updateAIConfig=(d:object)=>api.put('/settings/ai-config',d).then(r=>r.data);
+export const getAIModels=()=>api.get('/settings/ai-models').then(r=>r.data);
+export const getUsers=()=>api.get('/users').then(r=>r.data);
+export const createUser=(d:object)=>api.post('/users',d).then(r=>r.data);
+export const updateUser=(id:number,d:object)=>api.put(\`/users/\${id}\`,d).then(r=>r.data);
+export const deleteUser=(id:number)=>api.delete(\`/users/\${id}\`);
+
+
+
+Tại sao phải rebuild image khi đổi domain?
+Next.js bake (nhúng cứng) giá trị NEXT_PUBLIC_* vào file JavaScript khi npm run build. File JS trong image là static — restart container không thay đổi giá trị này.
+
+# Khi doi domain:
+# 1. Sua BASE trong src/lib/api.ts
+const BASE = "https://check.company.vn/api";  # Doi tu IP sang domain
+ 
+# 2. Rebuild image (KHONG chi restart container)
+sudo docker build \
+  -t task-portal-frontend:latest \
+  --build-arg NEXT_PUBLIC_API_BASE_URL="https://check.company.vn/api" \
+  /opt/task-portal/code/frontend
+ 
+# 3. Restart container voi image moi
+cd /opt/task-portal/app && docker compose up -d frontend
+
+
+📄  Dockerfile   —   Multi-stage build: stage build + stage run
+Stage run chỉ copy .next/standalone → image nhỏ hơn 10x so với copy node_modules
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --silent
+COPY . .
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+RUN npm run build
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone .
+COPY --from=builder /app/.next/static ./.next/static
+RUN addgroup -S app && adduser -S app -G app && chown -R app /app
+USER app
+EXPOSE 3000
+CMD ["node","server.js"]
+
+
+
+PHẦN X: CODE FRONTEND — PAGES
+4 trang — Login, Sheets, Dashboard, Settings
+
+📄  src/components/Navbar.tsx   —   Navigation bar — hiển thị role badge
+3 role: Admin (tím), Group A (xanh), Group B (xanh lá). isAdmin()/isGroupA() check role từ localStorage
+'use client';
+import Link from'next/link';import{usePathname}from'next/navigation';
+import{isAdmin,isGroupA,getName,logout,getRole}from'@/lib/auth';
+import{useState,useEffect}from'react';
+export default function Navbar(){
+  const path=usePathname();
+  const[name,setName]=useState('');const[role,setRole]=useState('');
+  useEffect(()=>{setName(getName()??'');setRole(getRole()??'');},[]);
+  const rl:Record<string,string>={admin:'bg-purple-100 text-purple-700',group_a:'bg-blue-100 text-blue-700',group_b:'bg-green-100 text-green-700'};
+  const nav=[{href:'/dashboard',label:'Dashboard',show:true},{href:'/sheets',label:'My Sheets',show:isGroupA()},{href:'/settings',label:'Settings',show:isAdmin()}].filter(n=>n.show);
+  return(
+    <nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-14">
+          <div className="flex items-center gap-6">
+            <Link href="/dashboard" className="flex items-center gap-2 font-bold text-indigo-700">
+              <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>Task Compliance
+            </Link>
+            <div className="flex gap-1">
+              {nav.map(n=>(<Link key={n.href} href={n.href}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${path.startsWith(n.href)?'bg-indigo-50 text-indigo-700':'text-gray-600 hover:bg-gray-100'}`}>
+                {n.label}</Link>))}
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${rl[role]??''}`}>{role}</span>
+            <span className="text-sm text-gray-600">{name}</span>
+            <button onClick={logout} className="text-sm text-gray-400 hover:text-red-500">Sign out</button>
+          </div>
+        </div>
+      </div>
+    </nav>);}
+
+
+
+📄  src/app/login/page.tsx   —   Trang đăng nhập — form email/password
+Gọi POST /auth/login, lưu token + role + name vào localStorage, chuyển về /dashboard
+'use client';
+import{useState}from'react';import{useRouter}from'next/navigation';
+import{login}from'@/lib/api';import{saveToken}from'@/lib/auth';
+export default function LoginPage(){
+  const router=useRouter();
+  const[email,setEmail]=useState('');const[pw,setPw]=useState('');
+  const[err,setErr]=useState('');const[loading,setLoading]=useState(false);
+  const handleSubmit=async(e:React.FormEvent)=>{
+    e.preventDefault();setLoading(true);setErr('');
+    try{const d=await login(email,pw);saveToken(d.access_token,d.role,d.full_name);router.push('/dashboard');}
+    catch{setErr('Invalid email or password');}finally{setLoading(false);}};
+  return(
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Task Compliance Portal</h1>
+          <p className="text-gray-500 text-sm mt-1">Sign in to continue</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <input type="password" required value={pw} onChange={e=>setPw(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
+          {err&&<div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg px-3 py-2">{err}</div>}
+          <button type="submit" disabled={loading}
+            className="w-full bg-indigo-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+            {loading?'Signing in...':'Sign In'}</button>
+        </form>
+        <p className="text-center text-xs text-gray-400 mt-6">Internal accounts only</p>
+      </div>
+    </div>);}
+
+
+
+📄  src/app/sheets/page.tsx   —   My Sheets — thêm sheet, check now, live log
+Live log: polling /sheets/{id}/logs mỗi 2 giây khi status=running. Hiển thị log màu realtime
+'use client';
+import{useEffect,useState,useRef}from'react';import Navbar from'@/components/Navbar';
+import{getSheets,addSheet,checkSheet,deleteSheet,getSheetLogs}from'@/lib/api';
+interface Log{ts:string;msg:string;level:string;}
+interface CS{id:number;status:string;logs:Log[];}
+export default function SheetsPage(){
+  const[sheets,setSheets]=useState<any[]>([]);const[url,setUrl]=useState('');const[name,setName]=useState('');
+  const[msg,setMsg]=useState<{t:string,e:boolean}|null>(null);
+  const[cs,setCs]=useState<CS|null>(null);const[showLog,setShowLog]=useState(false);
+  const logRef=useRef<HTMLDivElement>(null);const pollRef=useRef<any>(null);
+  const reload=()=>getSheets().then(setSheets);
+  useEffect(()=>{reload();},[]);
+  useEffect(()=>{if(logRef.current)logRef.current.scrollTop=logRef.current.scrollHeight;},[cs?.logs]);
+  const flash=(t:string,e=false)=>{setMsg({t,e});setTimeout(()=>setMsg(null),4000);};
+  const poll=(id:number)=>{
+    if(pollRef.current)clearInterval(pollRef.current);
+    setCs({id,status:'running',logs:[]});setShowLog(true);
+    pollRef.current=setInterval(async()=>{
+      try{
+        const r=await getSheetLogs(id);
+        setCs({id,status:r.status,logs:r.logs||[]});
+        if(r.status==='done'||r.status==='error'){clearInterval(pollRef.current);reload();}
+      }catch{}},2000);};
+  useEffect(()=>()=>{if(pollRef.current)clearInterval(pollRef.current);},[]);
+  const handleAdd=async(e:React.FormEvent)=>{e.preventDefault();
+    try{const d=await addSheet(url,name||'Sheet');setUrl('');setName('');flash('Added & check started!');reload();poll(d.id);}
+    catch{flash('Invalid URL or not shared with service account',true);}};
+  const lc:Record<string,string>={info:'text-gray-300',warn:'text-amber-400',error:'text-red-400',success:'text-emerald-400'};
+  return(
+    <div className="min-h-screen bg-gray-50"><Navbar/>
+      <div className="max-w-5xl mx-auto px-4 py-6">
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">My Sheets</h1>
+        <p className="text-gray-500 text-sm mb-6">Manage and check your Google Sheets</p>
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-4">
+          <form onSubmit={handleAdd} className="space-y-3">
+            <input value={url} onChange={e=>setUrl(e.target.value)} required placeholder="https://docs.google.com/spreadsheets/d/..."
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+            <div className="flex gap-3">
+              <input value={name} onChange={e=>setName(e.target.value)} placeholder="Sheet name"
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+              <button type="submit" className="bg-indigo-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">Add & Check Now</button>
+            </div>
+            {msg&&<div className={\`rounded-lg px-3 py-2 text-sm \${msg.e?'bg-red-50 text-red-600 border border-red-200':'bg-green-50 text-green-700 border border-green-200'}\`}>{msg.t}</div>}
+          </form>
+        </div>
+        {showLog&&cs!=null&&(
+          <div className="bg-gray-900 rounded-xl border border-gray-700 mb-4 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700">
+              <div className="flex items-center gap-3">
+                {cs.status==='running'?(<><div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"/><span className="text-emerald-400 text-xs font-semibold uppercase">Running</span></>)
+                :cs.status==='done'?(<><div className="w-2 h-2 bg-blue-400 rounded-full"/><span className="text-blue-400 text-xs font-semibold uppercase">Done</span></>)
+                :(<><div className="w-2 h-2 bg-red-400 rounded-full"/><span className="text-red-400 text-xs font-semibold uppercase">Error</span></>)}
+                <span className="text-gray-500 text-xs">Sheet #{cs.id} · {cs.logs.length} entries</span>
+              </div>
+              <button onClick={()=>setShowLog(false)} className="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded hover:bg-gray-800">Hide</button>
+            </div>
+            <div ref={logRef} className="h-56 overflow-y-auto p-4 space-y-0.5">
+              {cs.logs.length===0&&<p className="text-gray-500 text-xs animate-pulse">Waiting for worker...</p>}
+              {cs.logs.map((l,i)=>(
+                <div key={i} className="flex gap-2 text-xs leading-relaxed font-mono">
+                  <span className="text-gray-600 w-14 flex-shrink-0">{l.ts}</span>
+                  <span className={lc[l.level]||'text-gray-300'}>{l.msg}</span>
+                </div>))}
+            </div>
+          </div>)}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-100"><p className="text-sm font-semibold text-gray-700">{sheets.length} Sheet{sheets.length!==1?'s':''}</p></div>
+          <table className="w-full text-sm">
+            <thead><tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Sheet</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Violations</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Last Check</th>
+              <th className="px-5 py-3"></th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50">
+              {sheets.map(s=>{
+                const running=cs!=null&&cs.id===s.id&&cs.status==='running';
+                return(
+                <tr key={s.id} className={\`hover:bg-gray-50 \${running?'bg-indigo-50/20':''}\`}>
+                  <td className="px-5 py-3"><p className="font-medium text-gray-800">{s.name||'Unnamed'}</p>
+                    <p className="text-xs text-gray-400 font-mono truncate max-w-xs">{s.spreadsheet_id}</p></td>
+                  <td className="px-5 py-3">
+                    {running?(<div className="flex items-center gap-2">
+                      <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"/>
+                      <span className="text-indigo-600 text-xs truncate max-w-xs">{cs.logs.length>0?cs.logs[cs.logs.length-1].msg.slice(0,45):'Checking...'}</span>
+                    </div>):s.violation_count>0?(<div className="flex gap-2">
+                      <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-semibold">{s.fail_count} FAIL</span>
+                      <span className="text-gray-500 text-xs self-center">{s.violation_count} total</span>
+                    </div>):<span className="text-green-600 text-xs font-medium">No violations</span>}
+                  </td>
+                  <td className="px-5 py-3 text-xs text-gray-400">
+                    {s.last_checked?new Date(s.last_checked).toLocaleString('en-GB',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'Never'}</td>
+                  <td className="px-5 py-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={()=>{checkSheet(s.id).then(()=>poll(s.id)).catch(()=>flash('Failed',true));}} disabled={running}
+                        className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 disabled:opacity-50">
+                        {running?'Checking...':'Check Now'}</button>
+                      {cs!=null&&cs.id===s.id&&!showLog&&<button onClick={()=>setShowLog(true)} className="text-indigo-600 text-xs hover:underline">Logs</button>}
+                      <button onClick={()=>deleteSheet(s.id).then(reload)} className="text-gray-400 hover:text-red-500 text-xs">Delete</button>
+                    </div>
+                  </td>
+                </tr>);})}
+              {sheets.length===0&&<tr><td colSpan={4} className="text-center py-12 text-gray-400">No sheets added yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>);}
+
+
+
+Live log hoạt động như thế nào?
+
+# Frontend (polling):
+const poll = (id) => {
+  setInterval(async () => {
+    const r = await getSheetLogs(id);     // GET /sheets/{id}/logs
+    setLogs(r.logs);                       // Cap nhat UI
+    if (r.status === "done") clearInterval(...);  // Dung khi xong
+  }, 2000);  // Moi 2 giay
+};
+ 
+# Backend (Redis list):
+# Worker ghi moi buoc vao Redis: RPUSH check_log:{sheet_id} {json}
+# API /logs doc: LRANGE check_log:{sheet_id} 0 -1
+# Tu dong xoa sau 1 gio: EXPIRE check_log:{sheet_id} 3600
+
+
+📄  src/app/dashboard/page.tsx   —   Dashboard — filter theo sheet, search, phân trang
+Sheet filter: nút bấm từng sheet, hiển thị số violations. SKIP rows không hiển thị
+'use client';
+import{useEffect,useState,useCallback}from'react';
+import Navbar from'@/components/Navbar';
+import{getViolations,getSheets}from'@/lib/api';
+ 
+const VERDICT_STYLE:Record<string,string>={
+  FAIL:'bg-red-100 text-red-700 border border-red-200',
+  REVIEW:'bg-amber-100 text-amber-700 border border-amber-200',
+  PASS:'bg-green-100 text-green-700 border border-green-200'
+};
+const VERDICT_DOT:Record<string,string>={FAIL:'bg-red-500',REVIEW:'bg-amber-500',PASS:'bg-green-500'};
+ 
+export default function DashboardPage(){
+  const[sheets,setSheets]=useState<any[]>([]);
+  const[items,setItems]=useState<any[]>([]);
+  const[total,setTotal]=useState(0);
+  const[loading,setLoading]=useState(true);
+  const[sheetId,setSheetId]=useState('');
+  const[verdict,setVerdict]=useState('');
+  const[search,setSearch]=useState('');
+  const[searchInput,setSearchInput]=useState('');
+  const[page,setPage]=useState(1);
+  const PER_PAGE=25;
+ 
+  useEffect(()=>{getSheets().then(setSheets);},[]);
+ 
+  const load=useCallback(()=>{
+    setLoading(true);
+    const params:any={page,per_page:PER_PAGE};
+    if(sheetId)params.sheet_id=sheetId;
+    if(verdict)params.ai_verdict=verdict;
+    if(search)params.search=search;
+    getViolations(params).then(d=>{setItems(d.items);setTotal(d.total);}).finally(()=>setLoading(false));
+  },[sheetId,verdict,search,page]);
+ 
+  useEffect(()=>{load();},[load]);
+ 
+  const totalPages=Math.ceil(total/PER_PAGE);
+  const stats={total,fail:items.filter(v=>v.ai_verdict==='FAIL').length,review:items.filter(v=>v.ai_verdict==='REVIEW').length};
+ 
+  const getSheetName=(id:number)=>{
+    const s=sheets.find(s=>s.id===id);
+    return s?.name||s?.spreadsheet_id?.slice(0,20)||'Unknown';
+  };
+ 
+  const parseTask=(row_data:string)=>{
+    try{
+      const d=JSON.parse(row_data||'{}');
+      return d['DETAIL TASK']||d['Task']||Object.values(d).find(v=>typeof v==='string'&&(v as string).length>5)||'';
+    }catch{return '';}
+  };
+ 
+  const parsePriority=(row_data:string)=>{
+    try{const d=JSON.parse(row_data||'{}');return d['PRIORITY']||'';}catch{return '';}
+  };
+ 
+  const parseManday=(row_data:string)=>{
+    try{const d=JSON.parse(row_data||'{}');return d['MANDAY (EST)']||'';}catch{return '';}
+  };
+ 
+  return(
+    <div className="min-h-screen bg-gray-50">
+      <Navbar/>
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Compliance Dashboard</h1>
+            <p className="text-gray-500 text-sm mt-0.5">{total} violations found</p>
+          </div>
+          <button onClick={load} className="flex items-center gap-2 bg-white border border-gray-200 text-gray-600 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Refresh
+          </button>
+        </div>
+ 
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {[
+            {label:'Total Violations',val:total,color:'text-gray-900',bg:'bg-white'},
+            {label:'FAIL',val:sheets.reduce((a,s)=>a+s.fail_count,0),color:'text-red-600',bg:'bg-red-50'},
+            {label:'REVIEW',val:total-sheets.reduce((a,s)=>a+s.fail_count,0),color:'text-amber-600',bg:'bg-amber-50'},
+          ].map(m=>(
+            <div key={m.label} className={`${m.bg} rounded-xl border border-gray-100 p-5 shadow-sm`}>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{m.label}</p>
+              <p className={`text-3xl font-bold ${m.color}`}>{m.val}</p>
+            </div>))}
+        </div>
+ 
+        {/* Sheet summary cards */}
+        {sheets.length>0&&(
+          <div className="mb-6">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Sheets Overview</p>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={()=>{setSheetId('');setPage(1);}}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${!sheetId?'bg-indigo-600 text-white border-indigo-600':'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                All Sheets
+              </button>
+              {sheets.map(s=>(
+                <button key={s.id} onClick={()=>{setSheetId(String(s.id));setPage(1);}}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${sheetId===String(s.id)?'bg-indigo-600 text-white border-indigo-600':'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                  <span className="max-w-[150px] truncate">{s.name||s.spreadsheet_id.slice(0,16)}</span>
+                  {s.violation_count>0&&(
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${sheetId===String(s.id)?'bg-white/20 text-white':'bg-red-100 text-red-600'}`}>
+                      {s.violation_count}
+                    </span>)}
+                </button>))}
+            </div>
+          </div>)}
+ 
+        {/* Filters */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4">
+          <div className="flex gap-3 flex-wrap items-center">
+            <div className="flex gap-1">
+              {['','FAIL','REVIEW','PASS'].map(v=>(
+                <button key={v} onClick={()=>{setVerdict(v);setPage(1);}}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${verdict===v?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  {v||'All Status'}
+                </button>))}
+            </div>
+            <div className="flex-1 min-w-48">
+              <div className="flex gap-2">
+                <input value={searchInput} onChange={e=>setSearchInput(e.target.value)}
+                  onKeyDown={e=>{if(e.key==='Enter'){setSearch(searchInput);setPage(1);}}}
+                  placeholder="Search task content..."
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                <button onClick={()=>{setSearch(searchInput);setPage(1);}}
+                  className="bg-gray-100 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-200">Search</button>
+                {search&&<button onClick={()=>{setSearch('');setSearchInput('');setPage(1);}} className="text-gray-400 hover:text-red-500 text-sm px-2">Clear</button>}
+              </div>
+            </div>
+          </div>
+        </div>
+ 
+        {/* Table */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Sheet / Tab</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Task Description</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-20">Priority</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-16">Manday</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Status</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">AI Evaluation & Suggestion</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {loading&&<tr><td colSpan={6} className="text-center py-12 text-gray-400">
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  Loading...
+                </div>
+              </td></tr>}
+              {!loading&&items.length===0&&<tr><td colSpan={6} className="text-center py-12 text-gray-400">No violations found</td></tr>}
+              {!loading&&items.map((v,i)=>(
+                <tr key={v.id} className={`hover:bg-gray-50 transition-colors ${i%2===0?'':'bg-gray-50/30'}`}>
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-gray-800 text-xs leading-tight">{getSheetName(v.sheet_id)}</p>
+                    <p className="text-gray-400 text-xs mt-0.5">{v.tab_name} · Row {v.row_number}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-gray-700 text-xs leading-relaxed line-clamp-2">{String(parseTask(v.row_data))}</p>
+                    {v.violation_code&&v.violation_code!=='AI_REVIEW'&&(
+                      <span className="inline-block mt-1 bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded text-xs">{v.violation_code}: {v.violation_msg}</span>)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      parsePriority(v.row_data)==='Critical'?'bg-red-100 text-red-700':
+                      parsePriority(v.row_data)==='High'?'bg-orange-100 text-orange-700':
+                      'bg-blue-100 text-blue-700'}`}>
+                      {parsePriority(v.row_data)||'—'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 text-xs font-mono">{parseManday(v.row_data)||'—'}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${VERDICT_DOT[v.ai_verdict]??'bg-gray-400'}`}/>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${VERDICT_STYLE[v.ai_verdict]??'bg-gray-100 text-gray-600'}`}>{v.ai_verdict}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {v.ai_reason&&<p className="text-gray-600 text-xs leading-relaxed">{v.ai_reason}</p>}
+                    {v.ai_suggestion&&(
+                      <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-md px-2.5 py-1.5">
+                        <p className="text-indigo-700 text-xs leading-relaxed">
+                          <span className="font-semibold">💡 Suggestion: </span>{v.ai_suggestion}
+                        </p>
+                      </div>)}
+                  </td>
+                </tr>))}
+            </tbody>
+          </table>
+ 
+          {/* Pagination */}
+          {totalPages>1&&(
+            <div className="border-t border-gray-100 px-4 py-3 flex items-center justify-between">
+              <p className="text-xs text-gray-500">Showing {(page-1)*PER_PAGE+1}–{Math.min(page*PER_PAGE,total)} of {total}</p>
+              <div className="flex gap-1">
+                <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">Previous</button>
+                {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
+                  const p=page<=3?i+1:page+i-2;
+                  if(p<1||p>totalPages)return null;
+                  return(<button key={p} onClick={()=>setPage(p)}
+                    className={`px-3 py-1.5 text-xs rounded-lg border ${p===page?'bg-indigo-600 text-white border-indigo-600':'border-gray-200 hover:bg-gray-50'}`}>{p}</button>);
+                })}
+                <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">Next</button>
+              </div>
+            </div>)}
+        </div>
+      </div>
+    </div>);}
+
+
+
+Các tính năng dashboard
+•  Sheet filter: row nút bấm, click lọc từng sheet
+•  Status filter: All / FAIL / REVIEW / PASS
+•  Search: tìm trong row_data (nội dung đầy đủ của dòng)
+•  Phân trang: 25 dòng/trang, nút Previous/Next/số trang
+•  AI Suggestion: hiển thị box màu indigo có 💡 cho gợi ý của AI
+
+📄  src/app/settings/page.tsx   —   Settings — 5 tab: Users, Column Config, Policy, AI Config, Audit
+Tất cả thay đổi lưu vào DB. Áp dụng ngay lần check tiếp theo. Không cần restart container
+'use client';
+import{useEffect,useState}from'react';import Navbar from'@/components/Navbar';
+import{getUsers,createUser,updateUser,deleteUser,getColumnConfig,updateColumnConfig,
+       getPolicy,updatePolicy,getAIConfig,updateAIConfig,getAIModels,getAuditLog}from'@/lib/api';
+type Tab='users'|'columns'|'policy'|'ai'|'audit';
+const DEFAULT_PROMPT=`You are an IT/Infra task quality evaluator following company policy.
+ 
+CLASSIFICATION POLICY:
+- CRITICAL (20 KPI/manday): Emergency happening + large impact
+  * P1: production down, widespread outage, transaction failure
+  * Security: credential leak, ransomware, actively exploited CVE
+  * Hard deadline: go-live, cutover, major event - delay causes loss
+  * Evidence required: alert/incident ID, affected services, user count, SLA deadline
+- HIGH (12 KPI/manday): Structural change OR minor emergency
+  * P2/P3: intermittent service, latency spike, not full outage
+  * Architecture change: HA, segmentation, pipeline, auth system
+  * Component migration, automation script affecting prod, RCA analysis
+  * Evidence required: ticket/CR + scope + expected impact + rollback plan
+- NORMAL (6 KPI/manday): SOP-based, low risk
+  * Follow existing checklist, small change, easy rollback
+  * No production impact or very limited impact
+  * Support tasks, backup/restore test, DNS update, dashboard update
+ 
+RESPOND IN JSON ONLY (no markdown):
+{
+  "verdict": "PASS/FAIL/REVIEW",
+  "reason": "Brief reason in Vietnamese (1-2 sentences)",
+  "suggestion": "Specific improvement suggestion in Vietnamese - be concrete:
+    - If FAIL: 'Change Priority from X to Y because [reason], add evidence: [what evidence needed]'
+    - If REVIEW: 'Need to clarify: [what info], or reconsider [what aspect]'
+    - If PASS: 'Task meets standards, no changes needed'"
+}`;
+ 
+export default function SettingsPage(){
+  const[tab,setTab]=useState<Tab>('users');
+  const[users,setUsers]=useState<any[]>([]);
+  const[colCfg,setColCfg]=useState<any>({cols:[],tab_names:[]});
+  const[policy,setPolicy]=useState<any>({rules:[]});
+  const[aiCfg,setAiCfg]=useState<any>({system_prompt:DEFAULT_PROMPT,check_interval_hours:1});
+  const[models,setModels]=useState<string[]>([]);
+  const[logs,setLogs]=useState<any[]>([]);
+  const[saved,setSaved]=useState('');
+  const[form,setForm]=useState({email:'',full_name:'',password:'',role:'group_a'});
+  const[newKey,setNewKey]=useState('');
+  const[loadingModels,setLoadingModels]=useState(false);
+  useEffect(()=>{
+    getUsers().then(setUsers).catch(()=>{});
+    getColumnConfig().then(setColCfg).catch(()=>{});
+    getPolicy().then(setPolicy).catch(()=>{});
+    getAIConfig().then(d=>setAiCfg({...d,system_prompt:d.system_prompt||DEFAULT_PROMPT})).catch(()=>{});
+    getAuditLog().then(setLogs).catch(()=>{});
+  },[]);
+  const flash=(msg:string)=>{setSaved(msg);setTimeout(()=>setSaved(''),4000);};
+  const saveCol=()=>updateColumnConfig(colCfg).then(()=>flash('Column config saved')).catch(()=>flash('Error saving'));
+  const savePol=()=>updatePolicy(policy).then(()=>flash('Policy saved')).catch(()=>flash('Error saving'));
+  const saveAI=()=>updateAIConfig({...aiCfg,...(newKey?{api_key:newKey}:{})}).then(()=>{flash('AI config saved');setNewKey('');getAIConfig().then(d=>setAiCfg({...d,system_prompt:d.system_prompt||DEFAULT_PROMPT}));}).catch(()=>flash('Error saving'));
+  const fetchModels=()=>{setLoadingModels(true);getAIModels().then(r=>{setModels(r.models||[]);if(!r.models?.length)flash(r.error||'No models found');}).finally(()=>setLoadingModels(false));};
+  const addCol=()=>setColCfg((c:any)=>({...c,cols:[...c.cols,'']}));
+  const rmCol=(i:number)=>{const cols=[...colCfg.cols];cols.splice(i,1);setColCfg({...colCfg,cols});};
+  const addTab=()=>setColCfg((c:any)=>({...c,tab_names:[...c.tab_names,'']}));
+  const rmTab=(i:number)=>{const t=[...colCfg.tab_names];t.splice(i,1);setColCfg({...colCfg,tab_names:t});};
+  const addRule=()=>setPolicy((p:any)=>({...p,rules:[...p.rules,{field:'PRIORITY',value:'',manday_max:null,manday_min:null,min_words:null,required_fields:[]}]}));
+  const rmRule=(i:number)=>{const r=[...policy.rules];r.splice(i,1);setPolicy({...policy,rules:r});};
+  const setRule=(i:number,k:string,v:any)=>{const r=[...policy.rules];r[i]={...r[i],[k]:v};setPolicy({...policy,rules:r});};
+  const handleCreate=async(e:React.FormEvent)=>{e.preventDefault();
+    try{await createUser(form);flash('User created');setForm({email:'',full_name:'',password:'',role:'group_a'});getUsers().then(setUsers);}
+    catch{flash('Error - email may already exist');}};
+  const TABS=[{k:'users'as Tab,l:'Users'},{k:'columns'as Tab,l:'Column Config'},{k:'policy'as Tab,l:'Policy Rules'},{k:'ai'as Tab,l:'AI Config'},{k:'audit'as Tab,l:'Audit Log'}];
+  return(
+    <div className="min-h-screen bg-gray-50"><Navbar/>
+      <div className="max-w-5xl mx-auto px-4 py-6">
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Settings</h1>
+        <div className="flex gap-0 mb-6 border-b border-gray-200">
+          {TABS.map(t=>(<button key={t.k} onClick={()=>setTab(t.k)}
+            className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab===t.k?'border-indigo-600 text-indigo-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            {t.l}</button>))}
+        </div>
+        {saved&&<div className="mb-4 bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-2.5 text-sm flex items-center gap-2">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7"/></svg>
+          {saved}</div>}
+ 
+        {tab==='users'&&(
+          <div className="space-y-5">
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+              <h2 className="text-sm font-semibold text-gray-700 mb-4">Create New User</h2>
+              <form onSubmit={handleCreate} className="grid grid-cols-2 gap-3">
+                <input required type="email" placeholder="Email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                <input required placeholder="Full name" value={form.full_name} onChange={e=>setForm({...form,full_name:e.target.value})} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                <input required type="password" placeholder="Password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                <select value={form.role} onChange={e=>setForm({...form,role:e.target.value})} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                  <option value="group_a">Group A – Add sheets, view own</option>
+                  <option value="group_b">Group B – View all dashboard</option>
+                  <option value="admin">Admin – Full access</option>
+                </select>
+                <button type="submit" className="col-span-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">Create User</button>
+              </form>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+              <table className="w-full text-sm"><thead className="bg-gray-50 border-b border-gray-100"><tr>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Email</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Name</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Role</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                <th></th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">{users.map(u=>(
+                <tr key={u.id} className="hover:bg-gray-50">
+                  <td className="px-5 py-3 text-gray-700">{u.email}</td>
+                  <td className="px-5 py-3 text-gray-600">{u.full_name}</td>
+                  <td className="px-5 py-3">
+                    <select value={u.role} onChange={e=>updateUser(u.id,{role:e.target.value}).then(()=>getUsers().then(setUsers))}
+                      className="border border-gray-200 rounded px-2 py-0.5 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none">
+                      <option value="group_a">Group A</option><option value="group_b">Group B</option><option value="admin">Admin</option>
+                    </select>
+                  </td>
+                  <td className="px-5 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.is_active?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{u.is_active?'Active':'Disabled'}</span>
+                  </td>
+                  <td className="px-5 py-3 text-right space-x-2">
+                    <button onClick={()=>updateUser(u.id,{is_active:!u.is_active}).then(()=>getUsers().then(setUsers))} className="text-xs text-amber-600 hover:underline">{u.is_active?'Disable':'Enable'}</button>
+                    <button onClick={()=>{if(confirm('Delete user?'))deleteUser(u.id).then(()=>getUsers().then(setUsers));}} className="text-xs text-red-500 hover:underline">Delete</button>
+                  </td>
+                </tr>))}</tbody>
+            </table></div>
+          </div>)}
+ 
+        {tab==='columns'&&(
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-6">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">Column Headers to Check</h2>
+              <p className="text-xs text-gray-400 mb-3">Enter exact column header names from your Google Sheet. Worker only checks tabs that have ALL these columns.</p>
+              <div className="space-y-2">
+                {colCfg.cols.map((col:string,i:number)=>(
+                  <div key={i} className="flex gap-2">
+                    <input value={col} placeholder="e.g. DETAIL TASK" onChange={e=>{const c=[...colCfg.cols];c[i]=e.target.value;setColCfg({...colCfg,cols:c});}}
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                    <button onClick={()=>rmCol(i)} className="text-red-400 hover:text-red-600 text-xs px-2">Remove</button>
+                  </div>))}
+              </div>
+              <button onClick={addCol} className="mt-2 text-sm text-indigo-600 hover:underline">+ Add column</button>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">Tab Names to Check</h2>
+              <p className="text-xs text-gray-400 mb-3">Leave empty to check ALL tabs. If specified, only these tabs will be checked (must match exactly including slashes).</p>
+              <div className="space-y-2">
+                {(colCfg.tab_names||[]).map((t:string,i:number)=>(
+                  <div key={i} className="flex gap-2">
+                    <input value={t} placeholder="e.g. 1.Sale/Admin" onChange={e=>{const tabs=[...colCfg.tab_names];tabs[i]=e.target.value;setColCfg({...colCfg,tab_names:tabs});}}
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                    <button onClick={()=>rmTab(i)} className="text-red-400 hover:text-red-600 text-xs px-2">Remove</button>
+                  </div>))}
+              </div>
+              <button onClick={addTab} className="mt-2 text-sm text-indigo-600 hover:underline">+ Add tab</button>
+            </div>
+            <button onClick={saveCol} className="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">Save Column Config</button>
+          </div>)}
+ 
+        {tab==='policy'&&(
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
+              <p className="font-semibold mb-1">How Policy Rules Work</p>
+              <p className="text-xs">Each rule checks a condition. If Field=Value matches a row, the other checks apply. Leave Value empty to apply to all rows. Changes apply from the next check.</p>
+            </div>
+            {policy.rules.map((rule:any,i:number)=>(
+              <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-gray-700">Rule #{i+1}</h3>
+                  <button onClick={()=>rmRule(i)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Field (Column name)</span>
+                    <input value={rule.field} placeholder="e.g. PRIORITY" onChange={e=>setRule(i,'field',e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/></label>
+                  <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Value (trigger when field = this)</span>
+                    <input value={rule.value} placeholder="e.g. Critical (leave empty = all rows)" onChange={e=>setRule(i,'value',e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/></label>
+                  <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Max Manday (exceed = violation)</span>
+                    <input type="number" step="0.5" value={rule.manday_max??''} placeholder="e.g. 3" onChange={e=>setRule(i,'manday_max',e.target.value?Number(e.target.value):null)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/></label>
+                  <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Min Manday (below = violation)</span>
+                    <input type="number" step="0.5" value={rule.manday_min??''} placeholder="e.g. 0.5" onChange={e=>setRule(i,'manday_min',e.target.value?Number(e.target.value):null)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/></label>
+                  <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Min Words in Description</span>
+                    <input type="number" value={rule.min_words??''} placeholder="e.g. 10" onChange={e=>setRule(i,'min_words',e.target.value?Number(e.target.value):null)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/></label>
+                  <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Required Fields (comma separated)</span>
+                    <input value={(rule.required_fields||[]).join(',')} placeholder="e.g. ASSIGNED,TICKET ID" onChange={e=>setRule(i,'required_fields',e.target.value.split(',').map((s:string)=>s.trim()).filter(Boolean))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/></label>
+                </div>
+              </div>))}
+            <div className="flex items-center justify-between">
+              <button onClick={addRule} className="text-sm text-indigo-600 hover:underline font-medium">+ Add Rule</button>
+              <button onClick={savePol} className="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">Save Policy</button>
+            </div>
+          </div>)}
+ 
+        {tab==='ai'&&(
+          <div className="space-y-5">
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
+              <h2 className="text-sm font-semibold text-gray-700">AI Connection</h2>
+              <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Base URL</span>
+                <input value={aiCfg.base_url||''} onChange={e=>setAiCfg({...aiCfg,base_url:e.target.value})} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/></label>
+              <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">New API Key (leave empty to keep current)</span>
+                <input type="password" value={newKey} onChange={e=>setNewKey(e.target.value)} placeholder="sk-..." className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                <span className="text-xs text-gray-400">{aiCfg.has_key?'✓ API key configured':'⚠ No API key'}</span></label>
+              <label className="flex flex-col gap-1"><span className="text-xs font-medium text-gray-500">Model</span>
+                <div className="flex gap-2">
+                  <input value={aiCfg.model||''} onChange={e=>setAiCfg({...aiCfg,model:e.target.value})} placeholder="gpt-4o-mini" className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                  <button onClick={fetchModels} disabled={loadingModels} className="bg-gray-100 border border-gray-200 px-4 py-2 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50 whitespace-nowrap">
+                    {loadingModels?'Loading...':'Fetch Models'}</button>
+                </div></label>
+              {models.length>0&&(
+                <div className="border border-gray-200 rounded-lg p-3 max-h-48 overflow-y-auto">
+                  <p className="text-xs text-gray-400 mb-2">{models.length} models available – click to select:</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {models.map(m=>(<button key={m} onClick={()=>setAiCfg({...aiCfg,model:m})}
+                      className={`text-left text-xs px-2 py-1.5 rounded hover:bg-indigo-50 transition-colors ${aiCfg.model===m?'bg-indigo-100 text-indigo-700 font-medium':'text-gray-600'}`}>{m}</button>))}
+                  </div>
+                </div>)}
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-gray-500">Auto Check Interval (hours)</span>
+                <div className="flex items-center gap-2">
+                  <input type="number" min="1" max="24" value={aiCfg.check_interval_hours||1} onChange={e=>setAiCfg({...aiCfg,check_interval_hours:Number(e.target.value)})}
+                    className="w-24 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+                  <span className="text-xs text-gray-400">hours between automatic checks (1–24)</span>
+                </div>
+              </label>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">AI System Prompt</h2>
+              <p className="text-xs text-gray-400 mb-3">This prompt tells the AI how to evaluate tasks. Customize to match your company policy. AI always responds with verdict (PASS/FAIL/REVIEW) and suggestion in Vietnamese.</p>
+              <textarea value={aiCfg.system_prompt||''} onChange={e=>setAiCfg({...aiCfg,system_prompt:e.target.value})}
+                rows={18} className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-y leading-relaxed"/>
+              <button onClick={()=>setAiCfg({...aiCfg,system_prompt:DEFAULT_PROMPT})} className="mt-2 text-xs text-gray-400 hover:text-gray-600 hover:underline">Reset to default prompt</button>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={saveAI} className="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">Save AI Config</button>
+            </div>
+          </div>)}
+ 
+        {tab==='audit'&&(
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <table className="w-full text-sm"><thead className="bg-gray-50 border-b border-gray-100"><tr>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">User</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Action</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Time</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50">{logs.map((l:any)=>(
+              <tr key={l.id} className="hover:bg-gray-50">
+                <td className="px-5 py-3 text-gray-600 text-xs">{l.user}</td>
+                <td className="px-5 py-3"><span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">{l.action}</span></td>
+                <td className="px-5 py-3 text-gray-400 text-xs">{new Date(l.at).toLocaleString('en-GB')}</td>
+              </tr>))}</tbody>
+          </table></div>)}
+      </div>
+    </div>);}
+
+
+
+5 tab trong Settings
+Tab
+Chức năng
+Lưu ý
+Users
+Tạo/sửa/xóa user, đổi role
+3 role: admin, group_a, group_b
+Column Config
+Tên cột header + tên tab cần check
+Phải khớp chính xác với Sheet, kể cả dấu /
+Policy Rules
+Rule kiểm tra cứng trước AI
+Không tốn token AI, chạy nhanh
+AI Config
+API key, model, System Prompt, schedule
+Prompt được lưu DB, đổi không cần restart
+Audit Log
+Lịch sử thay đổi cấu hình
+Ghi rõ ai sửa gì lúc nào
+
+PHẦN XI: BUILD IMAGE VÀ KHỚI ĐỘNG
+
+11.1 Build Backend image
+
+# Build image (mat 3-5 phut lan dau)
+sudo docker build -t task-portal-backend:latest /opt/task-portal/code/backend
+ 
+# Kiem tra:
+docker images | grep task-portal
+# task-portal-backend   latest   abc123   3 min ago   456MB
+
+
+11.2 Build Frontend image
+
+# Install npm dependencies truoc:
+cd /opt/task-portal/code/frontend && npm install
+ 
+# Lay IP VM:
+SELF_IP=$(hostname -I | awk '{print $1}')
+ 
+# Build voi IP noi bo truoc (doi thanh domain sau):
+sudo docker build \
+  -t task-portal-frontend:latest \
+  --build-arg NEXT_PUBLIC_API_BASE_URL="http://${SELF_IP}:8000/api" \
+  /opt/task-portal/code/frontend
+
+
+11.3 Tạo docker-compose.yml
+📄  app/docker-compose.yml   —   Định nghĩa 6 container — volume, depends_on, healthcheck
+Thay MAT_KHAU_POSTGRES và MAT_KHAU_REDIS bằng mật khẩu thực tế
+services:
+  postgres:
+    image: postgres:16
+    container_name: task_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: task_portal
+      POSTGRES_USER: task_user
+      POSTGRES_PASSWORD: \"${PG_PASS}\"
+    ports: [\"127.0.0.1:5432:5432\"]
+    volumes: [\"${PG_VOL}\"]
+    healthcheck:
+      test: [\"CMD-SHELL\",\"pg_isready -U task_user -d task_portal\"]
+      interval: 10s; timeout: 5s; retries: 5
+ 
+  redis:
+    image: redis:7
+    container_name: task_redis
+    restart: unless-stopped
+    command: redis-server --requirepass \"${REDIS_PASS}\" --appendonly yes --maxmemory 512mb
+    ports: [\"127.0.0.1:6379:6379\"]
+    volumes: [\"${REDIS_VOL}\"]
+    healthcheck:
+      test: [\"CMD\",\"redis-cli\",\"-a\",\"${REDIS_PASS}\",\"ping\"]
+      interval: 10s; timeout: 3s; retries: 5
+ 
+  backend:
+    image: task-portal-backend:latest
+    container_name: task_backend
+    restart: unless-stopped
+    env_file: [.env]
+    ports: [\"8000:8000\"]
+    volumes: [\"./secrets:/app/secrets:ro\"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+ 
+  worker:
+    image: task-portal-backend:latest
+    container_name: task_worker
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app:celery_app worker --loglevel=info --concurrency=2
+    env_file: [.env]
+    volumes: [\"./secrets:/app/secrets:ro\"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+ 
+  scheduler:
+    image: task-portal-backend:latest
+    container_name: task_scheduler
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app:celery_app beat --loglevel=info
+    env_file: [.env]
+    volumes: [\"./secrets:/app/secrets:ro\"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+ 
+  frontend:
+    image: task-portal-frontend:latest
+    container_name: task_frontend
+    restart: unless-stopped
+    ports: [\"3000:3000\"]
+    depends_on: [backend]
+${EXTRA_VOL}
+
+
+
+11.4 Khởi động
+
+cd /opt/task-portal/app
+ 
+# Khoi dong tat ca container:
+sudo docker compose up -d
+ 
+# Doi Backend san sang (30 giay):
+for i in {1..12}; do
+  curl -sf http://localhost:8000/health > /dev/null 2>&1 && echo "Ready!" && break
+  echo "Waiting ($i/12)..."; sleep 5
+done
+ 
+# Kiem tra trang thai:
+docker ps
+# Phai thay tat ca 6 container Up, postgres va redis (healthy)
+
+
+11.5 Tạo Admin và init settings
+📄  /tmp/create_admin.py   —   Script tạo Admin user — chạy trong container
+Chạy: docker cp /tmp/create_admin.py task_backend:/tmp/ && docker exec -w /app task_backend python /tmp/create_admin.py
+import sys, os; sys.path.insert(0,'/app'); os.chdir('/app')
+from app.database import SessionLocal
+from app.models.user import User
+from passlib.context import CryptContext
+pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+db = SessionLocal()
+u = db.query(User).filter(User.email == "${ADMIN_EMAIL}").first()
+if u:
+    u.hashed_pw = pwd.hash("${ADMIN_PASS}"); u.role="admin"; u.is_active=True
+    db.commit(); print("Updated admin")
+else:
+    db.add(User(email="${ADMIN_EMAIL}",full_name="${ADMIN_NAME}",hashed_pw=pwd.hash("${ADMIN_PASS}"),role="admin"))
+    db.commit(); print("Created admin")
+
+
+📄  /tmp/init_settings.py   —   Script khởi tạo column config, policy, AI config mặc định
+Chỉ tạo nếu chưa có. Không ghi đè nếu đã tồn tại.
+import sys, os, json; sys.path.insert(0,'/app'); os.chdir('/app')
+from app.database import SessionLocal
+from app.models.setting import Setting
+db = SessionLocal()
+defaults = {
+    "column_config": {"cols":["DETAIL TASK","PRIORITY","MANDAY (EST)","STATUS","ASSIGNED"],
+                      "tab_names":["1.Sale/Admin","2.Init","2.1.Lab/PoC","3.Implement","4.MA"]},
+    "policy": {"rules":[
+        {"field":"PRIORITY","value":"Critical","min_words":10,"required_fields":["ASSIGNED"],"manday_max":None,"manday_min":None},
+        {"field":"PRIORITY","value":"High","min_words":8,"required_fields":["ASSIGNED"],"manday_max":None,"manday_min":None},
+        {"field":"PRIORITY","value":"Normal","manday_max":3,"min_words":None,"required_fields":[]}
+    ]},
+    "ai_config": {"base_url":"${AI_BASE_URL}","model":"${AI_MODEL}","api_key":"${AI_API_KEY}","check_interval_hours":1}
+}
+for key, val in defaults.items():
+    if not db.query(Setting).filter(Setting.key==key).first():
+        db.add(Setting(key=key,value=json.dumps(val,ensure_ascii=False))); print(f"Created: {key}")
+db.commit()
+
+
+
+PHẦN XII: NGINX, ĐỔI DOMAIN, CHECKLIST
+
+12.1 Vấn đề khi dùng domain public
+Nếu frontend build với BASE = http://10.120.40.27:8000/api thì user ngoài mạng không đưa request đến được backend (IP nội bộ không accessible từ internet).
+Giải pháp: Nginx đóng vai trò reverse proxy, forward cả / lẫn /api/ vào VM nội bộ.
+📌 Thứ tự đúng: (1) Test IP nội bộ OK → (2) Thêm /api/ vào Nginx → (3) Rebuild frontend với domain
+Không cần domain để hệ thống chạy nội bộ.
+
+12.2 Thêm location /api/ vào Nginx (trên Nginx server)
+
+# Them truoc "location /" hien tai:
+server {
+    server_name check.securityzone.vn;
+ 
+    # === THEM DOAN NAY ===
+    location /api/ {
+        proxy_pass http://10.120.40.27:8000/api/;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 120s;     # AI goi lau, can cao hon 60s mac dinh
+        proxy_connect_timeout 10s;
+    }
+    # === KET THUC THEM ===
+ 
+    location / {
+        proxy_pass http://10.120.40.27:3000;
+        # ... giu nguyen ...
+    }
+ 
+    # ... phan SSL giu nguyen ...
+}
+ 
+# Test va reload Nginx (tren Nginx server):
+nginx -t && systemctl reload nginx
+
+
+12.3 Rebuild Frontend với domain (trên VM 10.120.40.27)
+
+# 1. Doi URL trong source code:
+sed -i "s|http://10.120.40.27:8000/api|https://check.securityzone.vn/api|g" \
+  /opt/task-portal/code/frontend/src/lib/api.ts
+ 
+# 2. Kiem tra:
+grep "BASE" /opt/task-portal/code/frontend/src/lib/api.ts
+# Phai thay: const BASE='https://check.securityzone.vn/api';
+ 
+# 3. Rebuild image:
+sudo docker build \
+  -t task-portal-frontend:latest \
+  --build-arg NEXT_PUBLIC_API_BASE_URL="https://check.securityzone.vn/api" \
+  /opt/task-portal/code/frontend
+ 
+# 4. Restart container:
+cd /opt/task-portal/app && docker compose up -d frontend
+ 
+# 5. Test tu ngoai mang (tat VPN/noi bo):
+curl https://check.securityzone.vn/api/health
+# {"status":"ok","version":"4.0.0"}
+
+
+12.4 Checklist kiểm tra đầy đủ
+#
+Kiểm tra
+Lệnh / Cách thực hiện
+Kết quả phải thấy
+OK?
+1
+6 container chạy
+docker ps
+Tất cả Up, postgres/redis (healthy)
+[ ]
+2
+Backend health
+curl http://localhost:8000/health
+{"status":"ok","version":"4.0.0"}
+[ ]
+3
+Worker không lỗi
+docker logs task_worker --tail=5
+celery@xxx ready. Không ERROR
+[ ]
+4
+Celery command đúng
+docker inspect task_worker | grep Cmd
+-A app.worker.celery_app:celery_app
+[ ]
+5
+Frontend hiển thị
+Mở http://IP:3000
+Trang Sign In
+[ ]
+6
+Đăng nhập Admin
+Nhập email/password đã tạo
+Vào được Dashboard
+[ ]
+7
+Column Config
+Settings → Column Config
+Thấy cột đúng
+[ ]
+8
+Policy Rules
+Settings → Policy Rules
+Thấy 3 rule mặc định
+[ ]
+9
+AI Config
+Settings → AI Config
+has_key: true, model hiển
+[ ]
+10
+Thêm Sheet
+My Sheets → dán link → Add
+Sheet xuất hiện trong list
+[ ]
+11
+Live log
+Bấm Check Now
+Log chạy realtime đủ màu
+[ ]
+12
+Kết quả AI
+Sau 3-5 phút
+FAIL/REVIEW + gợi ý TV
+[ ]
+13
+SKIP không hiển
+Dashboard
+Không có dòng "No Task ID"
+[ ]
+14
+Nginx /api/
+curl https://domain/api/health
+{"status":"ok"} từ internet
+[ ]
+15
+Domain ngoài mạng
+Tat VPN, mở trình duyệt
+Vào được + đăng nhập OK
+[ ]
+
+Lệnh debug nhanh
+
+# Xem log worker theo thoi gian thuc:
+docker logs task_worker -f --tail=30
+ 
+# Xem loi backend:
+docker logs task_backend --tail=50 2>&1 | grep -E "ERROR|Error|Exception|Traceback"
+ 
+# Flush Redis (xoa job cu bi loi):
+docker exec task_redis redis-cli FLUSHALL
+ 
+# Restart 1 container:
+docker restart task_backend
+ 
+# Restart tat ca:
+cd /opt/task-portal/app && docker compose restart
+ 
+# Xem violations trong DB:
+docker exec task_postgres psql -U task_user -d task_portal \
+  -c "SELECT ai_verdict, COUNT(*) FROM violations GROUP BY ai_verdict;"
+ 
+# Kiem tra sheet trong DB:
+docker exec task_postgres psql -U task_user -d task_portal \
+  -c "SELECT id, name, last_checked FROM sheets;"
+ 
+# Xem setting hien tai:
+docker exec task_postgres psql -U task_user -d task_portal \
+  -c "SELECT key, LEFT(value,100) FROM settings;"
+ 
+# Test AI API truc tiep:
+KEY=$(grep AI_API_KEY /opt/task-portal/app/.env | cut -d= -f2)
+curl -s https://api.shopaikey.com/v1/models -H "Authorization: Bearer $KEY" | \
+  python3 -c "import sys,json; [print(m['id']) for m in json.load(sys.stdin)['data'][:5]]"
+
+
+
+
+Task Compliance Portal v4.0 · 12 phần · 40 file code · 2026
