@@ -36,7 +36,10 @@ def list_violations(sheet_id: int = Query(None), ai_verdict: str = Query(None),
         safe = search.replace("%", "\\%").replace("_", "\\_")
         q = q.filter(Violation.row_data.ilike(f"%{safe}%"))
     total = q.count()
-    items = q.order_by(Violation.created_at.desc()).offset((page-1)*per_page).limit(per_page).all()
+    if sheet_id:
+        items = q.order_by(Violation.row_number.asc()).offset((page-1)*per_page).limit(per_page).all()
+    else:
+        items = q.order_by(Violation.created_at.desc()).offset((page-1)*per_page).limit(per_page).all()
     return {"total":total,"page":page,"per_page":per_page,
             "items":[{"id":v.id,"sheet_id":v.sheet_id,
                        "sheet_name":s.name or "Unnamed",

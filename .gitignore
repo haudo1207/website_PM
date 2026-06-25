@@ -38,3 +38,8 @@ desktop.ini
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Agent Artifacts
+artifacts/
+.gemini/
+

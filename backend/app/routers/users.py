@@ -7,7 +7,7 @@ from ..utils.auth import require_admin, hash_password, get_current_user
 router = APIRouter()
 
 @router.get("/")
-def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
+def list_users(db: Session = Depends(get_db), user=Depends(get_current_user)):
     return [{"id":u.id,"email":u.email,"full_name":u.full_name,"role":u.role,"is_active":u.is_active} for u in db.query(User).all()]
 
 VALID_ROLES = {"admin", "group_a", "group_b"}

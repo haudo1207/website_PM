@@ -8,7 +8,15 @@ Base.metadata.create_all(bind=engine)
 
 from sqlalchemy import text
 with engine.connect() as conn:
-    for col, col_type in [("leader_email", "VARCHAR"), ("pm_email", "VARCHAR"), ("member_emails", "VARCHAR")]:
+    for col, col_type in [
+        ("leader_email", "VARCHAR"),
+        ("pm_email", "VARCHAR"),
+        ("member_emails", "VARCHAR"),
+        ("project_code", "VARCHAR"),
+        ("customer_name", "VARCHAR"),
+        ("current_phase", "VARCHAR"),
+        ("spreadsheet_url", "VARCHAR")
+    ]:
         try:
             conn.execute(text(f"ALTER TABLE sheets ADD COLUMN {col} {col_type}"))
             conn.commit()

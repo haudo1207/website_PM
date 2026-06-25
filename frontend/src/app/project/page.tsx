@@ -1,7 +1,9 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getSheets, addSheet, checkSheet, deleteSheet, getSheetLogs } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 
 interface Log {
   time: string;
@@ -16,6 +18,7 @@ interface CS {
 }
 
 export default function SheetsPage() {
+  const router = useRouter();
   const [sheets, setSheets] = useState<any[]>([]);
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
@@ -35,7 +38,7 @@ export default function SheetsPage() {
   useEffect(() => {
     reload();
     if (typeof window !== 'undefined' && window.location.search.includes('add=true')) {
-      setShowAddModal(true);
+      router.push('/projects/new');
     }
   }, []);
 
@@ -73,7 +76,14 @@ export default function SheetsPage() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const d = await addSheet(url, name || 'Sheet', leaderEmail || undefined, pmEmail || undefined, memberEmails || undefined);
+      const d = await addSheet({
+        url,
+        name: name || 'Sheet',
+        leader_email: leaderEmail || undefined,
+        pm_email: pmEmail || undefined,
+        member_emails: memberEmails || undefined,
+        auto_create: false
+      });
       setUrl('');
       setName('');
       setLeaderEmail('');
@@ -107,13 +117,13 @@ export default function SheetsPage() {
           <h2 className="text-sm font-bold tracking-wider text-slate-200 uppercase">My Sheets</h2>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setShowAddModal(true)}
+              onClick={() => router.push('/projects/new')}
               className="bg-[#6366f1] hover:bg-[#818cf8] text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
               </svg>
-              Add Project Sheet
+              Tạo dự án mới
             </button>
           </div>
         </div>
@@ -140,7 +150,7 @@ export default function SheetsPage() {
           )}
 
           {/* Log Worker Terminal */}
-          {showLog && cs != null && (
+          {isAdmin() && showLog && cs != null && (
             <div className="bg-[#151821] rounded-xl border border-[#2e3250] overflow-hidden shadow-2xl">
               <div className="flex items-center justify-between px-4.5 py-2.5 border-b border-[#2e3250] bg-[#1a1d27] px-4 py-2">
                 <div className="flex items-center gap-3">
@@ -204,8 +214,30 @@ export default function SheetsPage() {
                   return (
                     <tr key={s.id} className={`hover:bg-[#1e2235] transition-colors ${running ? 'bg-[#6366f1]/5' : ''}`}>
                       <td className="px-5 py-3.5">
-                        <p className="font-bold text-[#e2e8f0] text-xs">{s.name || 'Unnamed Project'}</p>
-                        <p className="text-[10px] text-[#64748b] font-mono truncate max-w-xs mt-0.5">{s.spreadsheet_id}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-bold text-[#e2e8f0] text-xs">{s.name || 'Unnamed Project'}</p>
+                          {s.project_code && (
+                            <span className="bg-[#2e3250] text-[#cbd5e1] border border-[#3f446e] px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase tracking-wider">
+                              {s.project_code}
+                            </span>
+                          )}
+                          {s.current_phase && (
+                            <span className="bg-[#3b82f6]/10 text-[#60a5fa] border border-[#3b82f6]/20 px-1.5 py-0.5 rounded text-[8px] font-semibold">
+                              {s.current_phase}
+                            </span>
+                          )}
+                        </div>
+                        {s.customer_name && (
+                          <p className="text-[10px] text-[#94a3b8] mt-0.5">Khách hàng: {s.customer_name}</p>
+                        )}
+                        <a
+                          href={s.spreadsheet_url || `https://docs.google.com/spreadsheets/d/${s.spreadsheet_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] text-[#818cf8] hover:text-[#a5b4fc] hover:underline font-medium flex items-center gap-1 mt-1"
+                        >
+                          <span>🔗</span> Mở Google Sheet
+                        </a>
                       </td>
                       <td className="px-5 py-3 text-[10px] space-y-1">
                         {s.leader_email && (
@@ -261,31 +293,35 @@ export default function SheetsPage() {
                       </td>
                       <td className="px-5 py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
-                          <button
-                            onClick={() => {
-                              checkSheet(s.id)
-                                .then(() => poll(s.id))
-                                .catch(() => flash('Failed to launch task scanning channel', true));
-                            }}
-                            disabled={running}
-                            className="bg-[#10b981]/15 text-[#34d399] border border-[#10b981]/30 hover:bg-[#10b981]/25 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
-                          >
-                            {running ? 'Checking...' : 'Check Now'}
-                          </button>
-                          {cs != null && cs.id === s.id && !showLog && (
-                            <button
-                              onClick={() => setShowLog(true)}
-                              className="text-[#818cf8] text-xs font-semibold hover:underline"
-                            >
-                              Logs
-                            </button>
+                          {isAdmin() && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  checkSheet(s.id)
+                                    .then(() => poll(s.id))
+                                    .catch(() => flash('Failed to launch task scanning channel', true));
+                                }}
+                                disabled={running}
+                                className="bg-[#10b981]/15 text-[#34d399] border border-[#10b981]/30 hover:bg-[#10b981]/25 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+                              >
+                                {running ? 'Checking...' : 'Check Now'}
+                              </button>
+                              {cs != null && cs.id === s.id && !showLog && (
+                                <button
+                                  onClick={() => setShowLog(true)}
+                                  className="text-[#818cf8] text-xs font-semibold hover:underline"
+                                >
+                                  Logs
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setSheetToDelete(s.id)}
+                                className="text-[#64748b] hover:text-[#f87171] text-xs font-semibold transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </>
                           )}
-                          <button
-                            onClick={() => setSheetToDelete(s.id)}
-                            className="text-[#64748b] hover:text-[#f87171] text-xs font-semibold transition-colors"
-                          >
-                            Delete
-                          </button>
                         </div>
                       </td>
                     </tr>

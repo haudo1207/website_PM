@@ -24,11 +24,21 @@ export const login = (e: string, p: string) =>
   }).then(r => r.data);
 
 export const getSheets = () => api.get('/sheets').then(r => r.data);
-export const addSheet = (url: string, name: string, leader_email?: string, pm_email?: string, member_emails?: string) =>
-  api.post('/sheets', { url, name, leader_email, pm_email, member_emails }).then(r => r.data);
+export const addSheet = (data: {
+  url?: string;
+  name: string;
+  leader_email?: string;
+  pm_email?: string;
+  member_emails?: string;
+  project_code?: string;
+  customer_name?: string;
+  current_phase?: string;
+  auto_create?: boolean;
+}) => api.post('/sheets', data).then(r => r.data);
 export const deleteSheet = (id: number) => api.delete(`/sheets/${id}`);
 export const checkSheet = (id: number) => api.post(`/sheets/${id}/check`).then(r => r.data);
 export const getSheetLogs = (id: number) => api.get(`/sheets/${id}/logs`).then(r => r.data);
+export const addTask = (sheetId: number, data: { tab_name: string; after_row: number; task_data: object }) => api.post(`/sheets/${sheetId}/add-task`, data).then(r => r.data);
 export const getViolations = (params?: object) => api.get('/violations', { params }).then(r => r.data);
 export const getColumnConfig = () => api.get('/settings/column-config').then(r => r.data);
 export const updateColumnConfig = (d: object) => api.put('/settings/column-config', d).then(r => r.data);

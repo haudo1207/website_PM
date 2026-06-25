@@ -14,6 +14,49 @@ def log_progress(r_conn, sheet_id, msg, level="info"):
     payload = _json.dumps({"time":str(datetime.now()),"level":level,"msg":msg}, ensure_ascii=False)
     r_conn.rpush(f"check_log:{sheet_id}", payload)
     r_conn.ltrim(f"check_log:{sheet_id}", -100, -1)
+
+import re
+
+def is_section_header_text(text: str) -> bool:
+    if not text:
+        return False
+    text_strip = text.strip()
+    text_upper = text_strip.upper()
+    
+    # 1. Roman numerals: I., II., III., IV., V., etc.
+    if re.match(r'^[IVXLC]+\.', text_upper):
+        return True
+        
+    # 2. Starts with PHASE
+    if text_upper.startswith("PHASE"):
+        return True
+        
+    # 3. Alphabet letters: A., B., C., D., E. (followed by a space)
+    if re.match(r'^[A-Z]\.\s', text_strip):
+        return True
+        
+    # 4. Numeric prefixes: 1., 2., 3. etc. only if the remainder has no lowercase letters
+    # E.g. "1. SETUP INFRASTRUCTURE" -> True, but "1. Setup Next.js..." -> False
+    if re.match(r'^\d+\.\s', text_strip):
+        has_lowercase = any(c.islower() for c in text_strip)
+        if not has_lowercase:
+            return True
+            
+    # 5. Known static section names
+    known_headers = [
+        "ISSUE & CHANGE REQUEST", 
+        "FEEDBACK", 
+        "RISK & ISSUE", 
+        "RISKS & ISSUES",
+        "ISSUE & CHANGE",
+        "ISSUE",
+        "CHANGES",
+        "REMARK"
+    ]
+    if text_upper in known_headers or any(text_upper.startswith(kh) for kh in known_headers):
+        return True
+        
+    return False
  
 @celery_app.task(name="app.worker.tasks.check_sheet")
 def check_sheet(spreadsheet_id: str, db_sheet_id: int, run_id: str):
@@ -65,6 +108,54 @@ def check_sheet(spreadsheet_id: str, db_sheet_id: int, run_id: str):
                 total_rows_checked += 1
                 row_data_str = _json.dumps({k:v for k,v in row.items() if k != "_row"}, ensure_ascii=False)
  
+                # Check if it is a section divider row
+                task_id_val = str(row.get("TASK ID", row.get("Task ID", row.get("ID", "")))).strip()
+                detail_val = ""
+                detail_key = "DETAIL TASK"
+                for k, v in row.items():
+                    if str(k).strip().upper() in ["DETAIL TASK", "DETAIL", "TASK", "DESCRIPTION", "MÔ TẢ", "TÊN TASK"]:
+                        detail_val = str(v).strip()
+                        detail_key = k
+                        break
+
+                has_numeric_id = False
+                if task_id_val:
+                    has_numeric_id = any(c.isdigit() for c in task_id_val)
+
+                # Check core task attributes
+                assigned_val = str(row.get("ASSIGNED", row.get("Assigned", ""))).strip()
+                status_val = str(row.get("STATUS", row.get("Status", ""))).strip()
+                priority_val = str(row.get("PRIORITY", row.get("Priority", ""))).strip()
+                has_core_fields = bool(assigned_val or status_val or priority_val)
+
+                is_section = False
+                if not has_core_fields:
+                    if is_section_header_text(task_id_val):
+                        is_section = True
+                        if not detail_val:
+                            detail_val = task_id_val
+                            task_id_val = ""
+                    elif is_section_header_text(detail_val):
+                        is_section = True
+
+                if is_section:
+                    # Normalize row data structure for section formatting on frontend
+                    row["TASK ID"] = task_id_val
+                    if "Task ID" in row: row["Task ID"] = task_id_val
+                    if "ID" in row: row["ID"] = task_id_val
+                    row[detail_key] = detail_val
+                    row_data_str = _json.dumps({k:v for k,v in row.items() if k != "_row"}, ensure_ascii=False)
+
+                    db.add(Violation(
+                        sheet_id=db_sheet_id, tab_name=tab_name, row_number=row_num,
+                        row_data=row_data_str, violation_code="SECTION",
+                        violation_msg="", ai_verdict="SECTION",
+                        ai_reason="", ai_suggestion="",
+                        check_run_id=run_id
+                    ))
+                    log_progress(r, db_sheet_id, f"Hàng {row_num} là Section: {detail_val}")
+                    continue
+
                 hard_violations = check_row(row, policy, req_cols)
                 if hard_violations:
                     for hv in hard_violations:
