@@ -107,6 +107,15 @@ export default function NewProjectPage() {
     '0. Huỷ'
   ];
 
+  const customers = [
+    'Samsung SDS',
+    'LG CNS',
+    'Viettel',
+    'FPT Software',
+    'Vingroup',
+    'Khác'
+  ];
+
   return (
     <div className="min-h-screen bg-[#0f1117] text-[#e2e8f0] flex">
       {/* Sidebar Navigation */}
@@ -204,13 +213,18 @@ export default function NewProjectPage() {
               {/* Tên khách hàng */}
               <div>
                 <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Tên khách hàng</label>
-                <input
-                  type="text"
+                <select
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Ví dụ: Samsung SDS"
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all"
-                />
+                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer"
+                >
+                  <option value="">Chọn khách hàng</option>
+                  {customers.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Giai đoạn */}
