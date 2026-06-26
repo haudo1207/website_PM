@@ -16,7 +16,7 @@ export default function NewProjectPage() {
   const [memberEmails, setMemberEmails] = useState('');
   
   // Auto create Google Sheet settings
-  const [autoCreate, setAutoCreate] = useState(true);
+  const [autoCreate, setAutoCreate] = useState(false);
   const [url, setUrl] = useState('');
   
   const [loading, setLoading] = useState(false);
@@ -107,15 +107,6 @@ export default function NewProjectPage() {
     '0. Huỷ'
   ];
 
-  const customers = [
-    'Samsung SDS',
-    'LG CNS',
-    'Viettel',
-    'FPT Software',
-    'Vingroup',
-    'Khác'
-  ];
-
   return (
     <div className="min-h-screen bg-[#0f1117] text-[#e2e8f0] flex">
       {/* Sidebar Navigation */}
@@ -137,9 +128,9 @@ export default function NewProjectPage() {
         {/* Form Container */}
         <div className="p-6 max-w-3xl w-full mx-auto space-y-6">
           <div>
-            <h1 className="text-xl font-bold text-slate-200">Tạo dự án & Google Sheet mới</h1>
+            <h1 className="text-xl font-bold text-slate-200">Tạo dự án mới</h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              Hệ thống hỗ trợ tự động tạo Google Sheet mẫu gồm 6 Tab (master và 5 phase) và tự động cấp quyền chỉnh sửa cho PM/Leader.
+              Nhập thông tin dự án và liên kết đường dẫn Google Sheet để hệ thống tiến hành đồng bộ và theo dõi công việc.
             </p>
           </div>
 
@@ -160,7 +151,7 @@ export default function NewProjectPage() {
                   rel="noreferrer"
                   className="bg-[#10b981] hover:bg-[#059669] text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
                 >
-                  🟢 Mở Google Sheet vừa tạo
+                  🟢 Mở Google Sheet liên kết
                 </a>
                 <button
                   onClick={() => router.push('/project')}
@@ -213,18 +204,13 @@ export default function NewProjectPage() {
               {/* Tên khách hàng */}
               <div>
                 <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Tên khách hàng</label>
-                <select
+                <input
+                  type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer"
-                >
-                  <option value="">Chọn khách hàng</option>
-                  {customers.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Ví dụ: Samsung SDS"
+                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all"
+                />
               </div>
 
               {/* Giai đoạn */}
@@ -297,38 +283,22 @@ export default function NewProjectPage() {
               </p>
             </div>
 
-            {/* Google Sheets Connection Type */}
-            <div className="border-t border-[#2e3250]/40 pt-4 space-y-4">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="autoCreate"
-                  checked={autoCreate}
-                  onChange={(e) => setAutoCreate(e.target.checked)}
-                  className="w-4 h-4 rounded text-[#6366f1] bg-[#22263a] border-[#2e3250] focus:ring-[#6366f1] cursor-pointer"
-                />
-                <label htmlFor="autoCreate" className="text-xs font-semibold text-[#cbd5e1] cursor-pointer selection:bg-transparent">
-                  Tự động khởi tạo Google Sheet mẫu <span className="text-indigo-400 font-bold ml-1">(Khuyên dùng)</span>
-                </label>
-              </div>
-
-              {!autoCreate && (
-                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Đường dẫn Google Sheet có sẵn <span className="text-rose-500 font-bold ml-0.5">*</span>
-                  </label>
-                  <input
-                    type="url"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    placeholder="https://docs.google.com/spreadsheets/d/..."
-                    className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all"
-                  />
-                  <span className="text-[10px] text-slate-400 block">
-                    Lưu ý: Bạn phải chia sẻ quyền Editor cho email Service Account của hệ thống để đồng bộ.
-                  </span>
-                </div>
-              )}
+            {/* Google Sheets Connection */}
+            <div className="border-t border-[#2e3250]/40 pt-4 space-y-1.5">
+              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                Đường dẫn Google Sheet <span className="text-rose-500 font-bold ml-0.5">*</span>
+              </label>
+              <input
+                type="url"
+                required
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+                className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all"
+              />
+              <span className="text-[10px] text-slate-400 block">
+                Lưu ý: Bạn phải chia sẻ quyền Editor cho email Service Account của hệ thống để đồng bộ.
+              </span>
             </div>
 
             {/* Action Buttons */}
