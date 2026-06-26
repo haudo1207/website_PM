@@ -27,6 +27,7 @@ export default function NewProjectPage() {
   const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
   const [pmDropdownOpen, setPmDropdownOpen] = useState(false);
   const [leaderDropdownOpen, setLeaderDropdownOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
 
   useEffect(() => {
     const closeDropdowns = () => {
@@ -34,6 +35,7 @@ export default function NewProjectPage() {
       setPhaseDropdownOpen(false);
       setPmDropdownOpen(false);
       setLeaderDropdownOpen(false);
+      setCustomerSearch('');
     };
     if (customerDropdownOpen || phaseDropdownOpen || pmDropdownOpen || leaderDropdownOpen) {
       document.addEventListener('click', closeDropdowns);
@@ -257,7 +259,7 @@ export default function NewProjectPage() {
                   className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
                   <span className={customerName ? 'text-[#dae2fd]' : 'text-slate-500'}>
-                    {customerName || 'Chọn khách hàng'}
+                    {customerName || 'Chọn hoặc nhập mới...'}
                   </span>
                   <span className="material-symbols-outlined text-[#958da1] text-[18px]">expand_more</span>
                 </button>
@@ -265,31 +267,65 @@ export default function NewProjectPage() {
                 {customerDropdownOpen && (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
+                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 p-2 space-y-2"
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomerName('');
-                        setCustomerDropdownOpen(false);
-                      }}
-                      className="w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] text-slate-400 transition-colors"
-                    >
-                      Chọn khách hàng
-                    </button>
-                    {customers.map((c) => (
+                    {/* Search / Type Input */}
+                    <input
+                      type="text"
+                      value={customerSearch}
+                      onChange={(e) => setCustomerSearch(e.target.value)}
+                      placeholder="Tìm kiếm hoặc nhập mới..."
+                      className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#7c3aed]"
+                    />
+
+                    <div className="max-h-[160px] overflow-y-auto space-y-1">
+                      {/* Option to clear/reset */}
                       <button
-                        key={c}
                         type="button"
                         onClick={() => {
-                          setCustomerName(c);
+                          setCustomerName('');
+                          setCustomerSearch('');
                           setCustomerDropdownOpen(false);
                         }}
-                        className={`w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] transition-colors ${customerName === c ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
+                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-[#222a3d] text-slate-400 rounded transition-colors"
                       >
-                        {c}
+                        Chọn khách hàng (Trống)
                       </button>
-                    ))}
+
+                      {/* Add new custom option */}
+                      {customerSearch.trim() && !customers.some(c => c.toLowerCase() === customerSearch.trim().toLowerCase()) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomerName(customerSearch.trim());
+                            setCustomerSearch('');
+                            setCustomerDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-2 py-1.5 text-xs bg-[#7c3aed]/10 hover:bg-[#7c3aed]/20 text-[#d2bbff] rounded transition-colors font-medium flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">add</span>
+                          Sử dụng &quot;{customerSearch.trim()}&quot;
+                        </button>
+                      )}
+
+                      {/* Filtered list of existing customers */}
+                      {customers
+                        .filter(c => c.toLowerCase().includes(customerSearch.toLowerCase()))
+                        .map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => {
+                              setCustomerName(c);
+                              setCustomerSearch('');
+                              setCustomerDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-2 py-1.5 text-xs hover:bg-[#222a3d] rounded transition-colors ${customerName === c ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                    </div>
                   </div>
                 )}
               </div>
