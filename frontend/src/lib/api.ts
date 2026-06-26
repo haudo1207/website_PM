@@ -40,6 +40,7 @@ export const checkSheet = (id: number) => api.post(`/sheets/${id}/check`).then(r
 export const getSheetLogs = (id: number) => api.get(`/sheets/${id}/logs`).then(r => r.data);
 export const addTask = (sheetId: number, data: { tab_name: string; after_row: number; task_data: object }) => api.post(`/sheets/${sheetId}/add-task`, data).then(r => r.data);
 export const getViolations = (params?: object) => api.get('/violations', { params }).then(r => r.data);
+export const checkSingleTask = (id: number) => api.post(`/violations/${id}/check`).then(r => r.data);
 export const getColumnConfig = () => api.get('/settings/column-config').then(r => r.data);
 export const updateColumnConfig = (d: object) => api.put('/settings/column-config', d).then(r => r.data);
 export const getPolicy = () => api.get('/settings/policy').then(r => r.data);

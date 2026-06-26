@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getViolations, getSheets, checkSheet, getSheetLogs, addTask } from '@/lib/api';
+import { getViolations, getSheets, checkSheet, getSheetLogs, addTask, checkSingleTask } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 const PHASE_TABS = [
@@ -30,6 +30,7 @@ function DashboardContent() {
   const PER_PAGE = 500;
 
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
+  const [checkingTaskId, setCheckingTaskId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [newForm, setNewForm] = useState({
     taskId: '',
@@ -241,6 +242,29 @@ function DashboardContent() {
     }
   };
 
+  const handleCheckTask = async (violationId: number) => {
+    setCheckingTaskId(violationId);
+    try {
+      const result = await checkSingleTask(violationId);
+      setItems(prev => prev.map(item => {
+        if (item.id === violationId) {
+          return {
+            ...item,
+            ai_verdict: result.ai_verdict,
+            ai_reason: result.ai_reason,
+            ai_suggestion: result.ai_suggestion,
+            row_data: result.row_data
+          };
+        }
+        return item;
+      }));
+    } catch (err: any) {
+      alert('Lỗi kiểm tra task: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setCheckingTaskId(null);
+    }
+  };
+
   // --- Computed data ---
   const phaseItems = items.filter(x => getRowPhase(x.tab_name) === activePhase);
   const phaseLabel = PHASE_TABS.find(p => p.key === activePhase)?.label || '';
@@ -369,6 +393,7 @@ function DashboardContent() {
               <table className="w-full text-xs min-w-max">
                 <thead className="sticky top-0 z-20 bg-[#151821] border-b border-[#2e3250] shadow-sm">
                   <tr>
+                    <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[110px]">ACTIONS</th>
                     <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[70px]">TASK ID</th>
                     <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[240px]">DETAIL TASK</th>
                     <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[100px]">PRIORITY</th>
@@ -389,14 +414,14 @@ function DashboardContent() {
                 </thead>
                 <tbody className="divide-y divide-[#2e3250]/50">
                   {loading && (
-                    <tr><td colSpan={16} className="text-center py-16 text-slate-500">
+                    <tr><td colSpan={17} className="text-center py-16 text-slate-500">
                       <div className="flex items-center justify-center gap-2">
                         <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> Loading...
                       </div>
                     </td></tr>
                   )}
                   {!loading && phaseItems.length === 0 && (
-                    <tr><td colSpan={16} className="text-center py-16 text-slate-500 font-medium">
+                    <tr><td colSpan={17} className="text-center py-16 text-slate-500 font-medium">
                       No tasks found in {phaseLabel}
                     </td></tr>
                   )}
@@ -414,7 +439,7 @@ function DashboardContent() {
                         rowElement = (
                           <tr className="bg-[#15152a] border-l-[4px] border-l-[#5b57d6] border-b border-[#2e3250]/20 group relative">
                             <td className="px-4 py-3.5"></td>
-                            <td colSpan={15} className="px-4 py-3.5 relative">
+                            <td colSpan={16} className="px-4 py-3.5 relative">
                               <span className="text-[12px] font-black text-slate-100 uppercase tracking-wider">{detail}</span>
                               
                               {/* Hover Add Task Button */}
@@ -432,9 +457,11 @@ function DashboardContent() {
                       } else {
                         rowElement = (
                           <tr className="bg-[#1c1a3a]/40 border-b border-[#2e3250]/20 font-bold group relative">
-                            {/* 1. TASK ID */}
+                            {/* 1. ACTIONS */}
                             <td className="px-4 py-3"></td>
-                            {/* 2. DETAIL TASK */}
+                            {/* 2. TASK ID */}
+                            <td className="px-4 py-3"></td>
+                            {/* 3. DETAIL TASK */}
                             <td className="px-4 py-3 text-slate-200 relative pl-8">
                               <span className="text-[11px] font-bold uppercase tracking-wider">{detail}</span>
                               
@@ -448,39 +475,39 @@ function DashboardContent() {
                                 </button>
                               </div>
                             </td>
-                            {/* 3. PRIORITY */}
+                            {/* 4. PRIORITY */}
                             <td className="px-4 py-3"></td>
-                            {/* 4. MANDAY EST */}
+                            {/* 5. MANDAY EST */}
                             <td className="px-4 py-3 text-slate-500 font-mono text-[11px] font-bold">
                               {td.manday || '—'}
                             </td>
-                            {/* 5. STATUS */}
+                            {/* 6. STATUS */}
                             <td className="px-4 py-3"></td>
-                            {/* 6. START DATE */}
+                            {/* 7. START DATE */}
                             <td className="px-4 py-3 text-slate-500">
                               {td.date || '—'}
                             </td>
-                            {/* 7. ASSIGNED */}
+                            {/* 8. ASSIGNED */}
                             <td className="px-4 py-3"></td>
-                            {/* 8. SUPPORT */}
+                            {/* 9. SUPPORT */}
                             <td className="px-4 py-3"></td>
-                            {/* 9. KPI RATIO */}
+                            {/* 10. KPI RATIO */}
                             <td className="px-4 py-3"></td>
-                            {/* 10. SKILL SOLUTION */}
+                            {/* 11. SKILL SOLUTION */}
                             <td className="px-4 py-3"></td>
-                            {/* 11. SKILL VENDOR */}
+                            {/* 12. SKILL VENDOR */}
                             <td className="px-4 py-3"></td>
-                            {/* 12. TICKET ID */}
+                            {/* 13. TICKET ID */}
                             <td className="px-4 py-3"></td>
-                            {/* 13. REMARK */}
+                            {/* 14. REMARK */}
                             <td className="px-4 py-3"></td>
-                            {/* 14. SEND */}
+                            {/* 15. SEND */}
                             <td className="px-4 py-3"></td>
-                            {/* 15. END DATE */}
+                            {/* 16. END DATE */}
                             <td className="px-4 py-3 text-slate-500">
                               {td.endDate || '—'}
                             </td>
-                            {/* 16. MANDAY ACTUAL */}
+                            {/* 17. MANDAY ACTUAL */}
                             <td className="px-4 py-3 text-slate-500">
                               {td.mandayActual || '—'}
                             </td>
@@ -493,9 +520,39 @@ function DashboardContent() {
 
                       rowElement = (
                         <tr className={`group relative hover:bg-[#22263a]/50 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#151821]/30'}`}>
-                          {/* 1. TASK ID */}
-                          <td className="px-4 py-3 font-mono text-slate-400 font-semibold">{td.taskId || v.row_number}</td>
-                          {/* 2. DETAIL TASK */}
+                          {/* 1. ACTIONS */}
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={() => handleCheckTask(v.id)}
+                              disabled={checkingTaskId === v.id}
+                              className="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-2 py-1 rounded text-[10px] font-bold transition-all disabled:opacity-50 flex items-center gap-1 mx-auto"
+                              title="Kiểm tra task này"
+                            >
+                              {checkingTaskId === v.id ? (
+                                <>
+                                  <div className="w-2.5 h-2.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                                  <span>Checking...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>🔍</span>
+                                  <span>Check Task</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+                          {/* 2. TASK ID */}
+                          <td className="px-4 py-3 font-mono text-slate-400 font-semibold flex items-center gap-1.5">
+                            {v.ai_verdict === 'FAIL' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="FAIL" />
+                            ) : v.ai_verdict === 'PASS' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="PASS" />
+                            ) : v.ai_verdict === 'REVIEW' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="REVIEW" />
+                            ) : null}
+                            <span>{td.taskId || v.row_number}</span>
+                          </td>
+                          {/* 3. DETAIL TASK */}
                           <td className="px-4 py-3 relative">
                             <p className="text-slate-200 text-xs font-semibold leading-relaxed">{td.detail || <span className="opacity-30">—</span>}</p>
                             {v.ai_verdict === 'FAIL' && v.ai_reason && (
@@ -515,7 +572,7 @@ function DashboardContent() {
                               </button>
                             </div>
                           </td>
-                          {/* 3. PRIORITY */}
+                          {/* 4. PRIORITY */}
                           <td className="px-4 py-3">
                             {td.priority ? (
                               <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${priStyle}`}>
@@ -523,9 +580,9 @@ function DashboardContent() {
                               </span>
                             ) : <span className="opacity-30">—</span>}
                           </td>
-                          {/* 4. MANDAY EST */}
+                          {/* 5. MANDAY EST */}
                           <td className="px-4 py-3 text-slate-300 font-mono">{td.manday || <span className="opacity-30">—</span>}</td>
-                          {/* 5. STATUS */}
+                          {/* 6. STATUS */}
                           <td className="px-4 py-3">
                             {td.status ? (
                               <div className="flex items-center gap-1.5">
@@ -534,27 +591,27 @@ function DashboardContent() {
                               </div>
                             ) : <span className="opacity-30">—</span>}
                           </td>
-                          {/* 6. START DATE */}
+                          {/* 7. START DATE */}
                           <td className="px-4 py-3 text-slate-400">{td.date || <span className="opacity-30">—</span>}</td>
-                          {/* 7. ASSIGNED */}
+                          {/* 8. ASSIGNED */}
                           <td className="px-4 py-3 text-slate-300">{td.assigned || <span className="opacity-30">—</span>}</td>
-                          {/* 8. SUPPORT */}
+                          {/* 9. SUPPORT */}
                           <td className="px-4 py-3 text-slate-400">{td.support || <span className="opacity-30">—</span>}</td>
-                          {/* 9. KPI RATIO */}
+                          {/* 10. KPI RATIO */}
                           <td className="px-4 py-3 text-slate-400 font-mono">{td.kpiRatio || <span className="opacity-30">—</span>}</td>
-                          {/* 10. SKILL SOLUTION */}
+                          {/* 11. SKILL SOLUTION */}
                           <td className="px-4 py-3 text-slate-300">{td.skillSolution || <span className="opacity-30">—</span>}</td>
-                          {/* 11. SKILL VENDOR */}
+                          {/* 12. SKILL VENDOR */}
                           <td className="px-4 py-3 text-slate-400">{td.skillVendor || <span className="opacity-30">—</span>}</td>
-                          {/* 12. TICKET ID */}
+                          {/* 13. TICKET ID */}
                           <td className="px-4 py-3 text-slate-400 font-mono">{td.ticketId || <span className="opacity-30">—</span>}</td>
-                          {/* 13. REMARK */}
+                          {/* 14. REMARK */}
                           <td className="px-4 py-3 text-slate-400 max-w-[150px] truncate" title={td.remark}>{td.remark || <span className="opacity-30">—</span>}</td>
-                          {/* 14. SEND */}
+                          {/* 15. SEND */}
                           <td className="px-4 py-3 text-slate-400">{td.send || <span className="opacity-30">—</span>}</td>
-                          {/* 15. END DATE */}
+                          {/* 16. END DATE */}
                           <td className="px-4 py-3 text-slate-400">{td.endDate || <span className="opacity-30">—</span>}</td>
-                          {/* 16. MANDAY ACTUAL */}
+                          {/* 17. MANDAY ACTUAL */}
                           <td className="px-4 py-3 text-slate-300 font-mono">{td.mandayActual || <span className="opacity-30">—</span>}</td>
                         </tr>
                       );
@@ -565,7 +622,9 @@ function DashboardContent() {
                         {rowElement}
                         {addingTaskBelowId === v.id && (
                           <tr className="bg-[#1b1c2b] border-2 border-indigo-500/40">
-                            {/* 1. TASK ID */}
+                            {/* 1. ACTIONS */}
+                            <td className="p-1"></td>
+                            {/* 2. TASK ID */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -575,7 +634,7 @@ function DashboardContent() {
                                 placeholder="ID"
                               />
                             </td>
-                            {/* 2. DETAIL TASK */}
+                            {/* 3. DETAIL TASK */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -586,7 +645,7 @@ function DashboardContent() {
                                 autoFocus
                               />
                             </td>
-                            {/* 3. PRIORITY */}
+                            {/* 4. PRIORITY */}
                             <td className="p-1">
                               <select
                                 value={newForm.priority}
@@ -601,7 +660,7 @@ function DashboardContent() {
                                 <option value="Low">Low</option>
                               </select>
                             </td>
-                            {/* 4. MANDAY EST */}
+                            {/* 5. MANDAY EST */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -611,7 +670,7 @@ function DashboardContent() {
                                 placeholder="Est"
                               />
                             </td>
-                            {/* 5. STATUS */}
+                            {/* 6. STATUS */}
                             <td className="p-1">
                               <select
                                 value={newForm.status}
@@ -626,7 +685,7 @@ function DashboardContent() {
                                 <option value="Done">Done</option>
                               </select>
                             </td>
-                            {/* 6. START DATE */}
+                            {/* 7. START DATE */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -636,7 +695,7 @@ function DashboardContent() {
                                 placeholder="Start Date"
                               />
                             </td>
-                            {/* 7. ASSIGNED */}
+                            {/* 8. ASSIGNED */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -646,7 +705,7 @@ function DashboardContent() {
                                 placeholder="Assignee"
                               />
                             </td>
-                            {/* 8. SUPPORT */}
+                            {/* 9. SUPPORT */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -656,7 +715,7 @@ function DashboardContent() {
                                 placeholder="Support"
                               />
                             </td>
-                            {/* 9. KPI RATIO */}
+                            {/* 10. KPI RATIO */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -666,7 +725,7 @@ function DashboardContent() {
                                 placeholder="KPI"
                               />
                             </td>
-                            {/* 10. SKILL SOLUTION */}
+                            {/* 11. SKILL SOLUTION */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -676,7 +735,7 @@ function DashboardContent() {
                                 placeholder="Solution"
                               />
                             </td>
-                            {/* 11. SKILL VENDOR */}
+                            {/* 12. SKILL VENDOR */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -686,7 +745,7 @@ function DashboardContent() {
                                 placeholder="Vendor"
                               />
                             </td>
-                            {/* 12. TICKET ID */}
+                            {/* 13. TICKET ID */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -696,7 +755,7 @@ function DashboardContent() {
                                 placeholder="Ticket ID"
                               />
                             </td>
-                            {/* 13. REMARK */}
+                            {/* 14. REMARK */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -706,7 +765,7 @@ function DashboardContent() {
                                 placeholder="Remark"
                               />
                             </td>
-                            {/* 14. SEND */}
+                            {/* 15. SEND */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -716,7 +775,7 @@ function DashboardContent() {
                                 placeholder="Send"
                               />
                             </td>
-                            {/* 15. END DATE */}
+                            {/* 16. END DATE */}
                             <td className="p-1">
                               <input
                                 type="text"
@@ -726,7 +785,7 @@ function DashboardContent() {
                                 placeholder="End Date"
                               />
                             </td>
-                            {/* 16. MANDAY ACTUAL */}
+                            {/* 17. MANDAY ACTUAL */}
                             <td className="p-1">
                               <div className="flex items-center gap-1 w-full min-w-[145px]">
                                 <input
