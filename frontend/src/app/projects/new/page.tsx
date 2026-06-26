@@ -23,6 +23,20 @@ export default function NewProjectPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successData, setSuccessData] = useState<{ id: number; url: string } | null>(null);
 
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    const closeDropdowns = () => {
+      setCustomerDropdownOpen(false);
+      setPhaseDropdownOpen(false);
+    };
+    if (customerDropdownOpen || phaseDropdownOpen) {
+      document.addEventListener('click', closeDropdowns);
+    }
+    return () => document.removeEventListener('click', closeDropdowns);
+  }, [customerDropdownOpen, phaseDropdownOpen]);
+
   useEffect(() => {
     getUsers()
       .then((data) => {
@@ -211,36 +225,95 @@ export default function NewProjectPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               {/* Tên khách hàng */}
-              <div>
+              <div className="relative">
                 <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Tên khách hàng</label>
-                <select
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer"
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCustomerDropdownOpen(!customerDropdownOpen);
+                    setPhaseDropdownOpen(false);
+                  }}
+                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] flex items-center justify-between outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer text-left"
                 >
-                  <option value="">Chọn khách hàng</option>
-                  {customers.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
+                  <span className={customerName ? 'text-[#e2e8f0]' : 'text-slate-500'}>
+                    {customerName || 'Chọn khách hàng'}
+                  </span>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${customerDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {customerDropdownOpen && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-[#1f2335] border border-[#2e3250] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerName('');
+                        setCustomerDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-3.5 py-2 text-xs hover:bg-[#2e3250] text-slate-400 transition-colors"
+                    >
+                      Chọn khách hàng
+                    </button>
+                    {customers.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => {
+                          setCustomerName(c);
+                          setCustomerDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3.5 py-2 text-xs hover:bg-[#2e3250] transition-colors ${customerName === c ? 'bg-[#6366f1]/20 text-[#818cf8] font-semibold' : 'text-slate-300'}`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Giai đoạn */}
-              <div>
+              <div className="relative">
                 <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Giai đoạn hiện tại</label>
-                <select
-                  value={currentPhase}
-                  onChange={(e) => setCurrentPhase(e.target.value)}
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer"
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPhaseDropdownOpen(!phaseDropdownOpen);
+                    setCustomerDropdownOpen(false);
+                  }}
+                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] flex items-center justify-between outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer text-left"
                 >
-                  {phases.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
+                  <span>{currentPhase}</span>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${phaseDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {phaseDropdownOpen && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-[#1f2335] border border-[#2e3250] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700"
+                  >
+                    {phases.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => {
+                          setCurrentPhase(p);
+                          setPhaseDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3.5 py-2 text-xs hover:bg-[#2e3250] transition-colors ${currentPhase === p ? 'bg-[#6366f1]/20 text-[#818cf8] font-semibold' : 'text-slate-300'}`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
