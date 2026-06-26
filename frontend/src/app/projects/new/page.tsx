@@ -10,7 +10,7 @@ export default function NewProjectPage() {
   const [name, setName] = useState('');
   const [projectCode, setProjectCode] = useState('');
   const [customerName, setCustomerName] = useState('');
-  const [currentPhase, setCurrentPhase] = useState('1.Sale/Admin');
+  const [currentPhase, setCurrentPhase] = useState('1. Tư vấn');
   const [leaderEmail, setLeaderEmail] = useState('');
   const [pmEmail, setPmEmail] = useState('');
   const [memberEmails, setMemberEmails] = useState('');
@@ -87,11 +87,24 @@ export default function NewProjectPage() {
   };
 
   const phases = [
-    '1.Sale/Admin',
-    '2.Init',
-    '2.1.Lab/PoC',
-    '3.Implement',
-    '4.MA'
+    '1. Tư vấn',
+    '2. Báo giá',
+    '3. Làm specs',
+    '4. Duyệt HSMT',
+    '5. Chờ ra thầu',
+    '6. Tham gia thầu POP',
+    '6. Tham gia thầu nhà phụ',
+    '7. Trúng Thầu',
+    '7. Rớt thầu',
+    '8. Ký hợp đồng',
+    '9. Đặt hàng',
+    '10. Giao hàng',
+    '11. Triển khai',
+    '12. Hoàn thành triển khai',
+    '13. Nghiệm thu',
+    '14. Thanh toán',
+    '15. Kết thúc dự án',
+    '0. Huỷ'
   ];
 
   return (
