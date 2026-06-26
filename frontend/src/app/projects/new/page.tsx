@@ -25,17 +25,21 @@ export default function NewProjectPage() {
 
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
+  const [pmDropdownOpen, setPmDropdownOpen] = useState(false);
+  const [leaderDropdownOpen, setLeaderDropdownOpen] = useState(false);
 
   useEffect(() => {
     const closeDropdowns = () => {
       setCustomerDropdownOpen(false);
       setPhaseDropdownOpen(false);
+      setPmDropdownOpen(false);
+      setLeaderDropdownOpen(false);
     };
-    if (customerDropdownOpen || phaseDropdownOpen) {
+    if (customerDropdownOpen || phaseDropdownOpen || pmDropdownOpen || leaderDropdownOpen) {
       document.addEventListener('click', closeDropdowns);
     }
     return () => document.removeEventListener('click', closeDropdowns);
-  }, [customerDropdownOpen, phaseDropdownOpen]);
+  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen]);
 
   useEffect(() => {
     getUsers()
@@ -60,7 +64,7 @@ export default function NewProjectPage() {
     }
 
     if (!autoCreate && !url.trim()) {
-      setErrorMsg('Đường dẫn Google Sheet là bắt buộc nếu không tự động tạo.');
+      setErrorMsg('Đường dẫn Google Sheet là bắt buộc.');
       setLoading(false);
       return;
     }
@@ -131,37 +135,46 @@ export default function NewProjectPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0f1117] text-[#e2e8f0] flex">
+    <div className="min-h-screen bg-[#0b1326] text-[#dae2fd] flex">
       {/* Sidebar Navigation */}
       <Navbar />
 
       {/* Main Content Area */}
-      <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
+      <div className="flex-1 pl-[230px] flex flex-col min-h-screen relative overflow-hidden bg-[#0b1326]">
+        {/* Animated Background Glow */}
+        <div className="absolute inset-0 pointer-events-none opacity-20 flex items-center justify-center overflow-hidden z-0">
+          <div className="w-[800px] h-[800px] bg-[#7c3aed] rounded-full blur-[130px] mix-blend-screen animate-pulse"></div>
+        </div>
+
         {/* Topbar */}
-        <div className="h-[52px] bg-[#1a1d27] border-b border-[#2e3250] flex items-center justify-between px-6 sticky top-0 z-40">
-          <h2 className="text-sm font-bold tracking-wider text-slate-200 uppercase">Tạo dự án mới</h2>
+        <div className="h-16 bg-[#0b1326] border-b border-[#4a4455] flex items-center justify-between px-8 sticky top-0 z-40 relative">
+          <h2 className="text-sm font-bold tracking-wider text-[#dae2fd] uppercase">Tạo dự án mới</h2>
           <button
             onClick={() => router.push('/project')}
-            className="text-xs text-[#94a3b8] hover:text-[#e2e8f0] transition-colors"
+            className="text-xs text-slate-400 hover:text-[#dae2fd] flex items-center gap-1.5 transition-all"
           >
-            ← Quay lại danh sách
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            Quay lại danh sách
           </button>
         </div>
 
         {/* Form Container */}
-        <div className="p-6 max-w-3xl w-full mx-auto space-y-6">
-          <div>
-            <h1 className="text-xl font-bold text-slate-200">Tạo dự án mới</h1>
-            <p className="text-xs text-slate-400 mt-0.5">
+        <div className="p-8 max-w-[1000px] w-full mx-auto space-y-6 overflow-y-auto flex-1 relative z-10">
+          <div className="text-center mb-8">
+            <h3 className="text-xl font-bold text-[#dae2fd] mb-2 flex items-center justify-center gap-2">
+              <span className="material-symbols-outlined text-[#d2bbff]" style={{ fontVariationSettings: "'FILL' 1" }}>bolt</span>
+              Tạo dự án mới
+            </h3>
+            <p className="text-xs text-slate-400 max-w-2xl mx-auto">
               Nhập thông tin dự án và liên kết đường dẫn Google Sheet để hệ thống tiến hành đồng bộ và theo dõi công việc.
             </p>
           </div>
 
           {/* Success Dialog */}
           {successData && (
-            <div className="bg-emerald-950/40 border border-emerald-800/40 rounded-xl p-5 space-y-3 shadow-lg">
+            <div className="bg-emerald-950/40 border border-emerald-800/40 rounded-xl p-5 space-y-3 shadow-lg max-w-3xl mx-auto animate-in fade-in duration-200">
               <div className="flex items-center gap-2">
-                <span className="text-xl text-emerald-400">🎉</span>
+                <span className="material-symbols-outlined text-emerald-400">check_circle</span>
                 <h3 className="text-sm font-bold text-emerald-400">Tạo dự án thành công!</h3>
               </div>
               <p className="text-xs text-slate-300">
@@ -178,7 +191,7 @@ export default function NewProjectPage() {
                 </a>
                 <button
                   onClick={() => router.push('/project')}
-                  className="bg-[#22263a] border border-[#2e3250] hover:bg-[#2a2f47] text-[#cbd5e1] px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+                  className="bg-[#171f33] border border-[#4a4455] hover:bg-[#222a3d] text-slate-300 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
                 >
                   Xem danh sách dự án
                 </button>
@@ -188,16 +201,20 @@ export default function NewProjectPage() {
 
           {/* Error Message */}
           {errorMsg && (
-            <div className="bg-red-950/40 border border-red-800/40 rounded-xl p-4 text-xs text-red-400">
-              ⚠️ {errorMsg}
+            <div className="bg-red-950/40 border border-red-800/40 rounded-xl p-4 text-xs text-red-400 max-w-3xl mx-auto animate-in fade-in duration-200">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-red-400">error</span>
+                <span>{errorMsg}</span>
+              </div>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="bg-[#1a1d27] border border-[#2e3250] rounded-xl p-6 space-y-5 shadow-xl">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <form onSubmit={handleSubmit} className="bg-[#171f33] border border-[#4a4455] rounded-xl p-8 space-y-6 shadow-2xl max-w-3xl mx-auto">
+            {/* Row 1: Project Details */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Tên dự án */}
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold text-slate-300 block">
                   Tên dự án <span className="text-rose-500 font-bold ml-0.5">*</span>
                 </label>
                 <input
@@ -206,48 +223,49 @@ export default function NewProjectPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Ví dụ: Dự án GoDN Korea"
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all"
+                  className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs"
                 />
               </div>
 
               {/* Mã dự án */}
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Mã dự án</label>
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold text-slate-300 block">Mã dự án</label>
                 <input
                   type="text"
                   value={projectCode}
                   onChange={(e) => setProjectCode(e.target.value)}
                   placeholder="Ví dụ: GDN-2026"
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all"
+                  className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Row 2: Customer & Status */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Tên khách hàng */}
-              <div className="relative">
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Tên khách hàng</label>
+              <div className="space-y-2 relative">
+                <label className="text-[11px] font-semibold text-slate-300 block">Tên khách hàng</label>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     setCustomerDropdownOpen(!customerDropdownOpen);
                     setPhaseDropdownOpen(false);
+                    setPmDropdownOpen(false);
+                    setLeaderDropdownOpen(false);
                   }}
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] flex items-center justify-between outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer text-left"
+                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
-                  <span className={customerName ? 'text-[#e2e8f0]' : 'text-slate-500'}>
+                  <span className={customerName ? 'text-[#dae2fd]' : 'text-slate-500'}>
                     {customerName || 'Chọn khách hàng'}
                   </span>
-                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${customerDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
+                  <span className="material-symbols-outlined text-[#958da1] text-[18px]">expand_more</span>
                 </button>
                 
                 {customerDropdownOpen && (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-[#1f2335] border border-[#2e3250] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
+                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
                   >
                     <button
                       type="button"
@@ -255,7 +273,7 @@ export default function NewProjectPage() {
                         setCustomerName('');
                         setCustomerDropdownOpen(false);
                       }}
-                      className="w-full text-left px-3.5 py-2 text-xs hover:bg-[#2e3250] text-slate-400 transition-colors"
+                      className="w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] text-slate-400 transition-colors"
                     >
                       Chọn khách hàng
                     </button>
@@ -267,7 +285,7 @@ export default function NewProjectPage() {
                           setCustomerName(c);
                           setCustomerDropdownOpen(false);
                         }}
-                        className={`w-full text-left px-3.5 py-2 text-xs hover:bg-[#2e3250] transition-colors ${customerName === c ? 'bg-[#6366f1]/20 text-[#818cf8] font-semibold' : 'text-slate-300'}`}
+                        className={`w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] transition-colors ${customerName === c ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
                       >
                         {c}
                       </button>
@@ -277,27 +295,27 @@ export default function NewProjectPage() {
               </div>
 
               {/* Giai đoạn */}
-              <div className="relative">
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Giai đoạn hiện tại</label>
+              <div className="space-y-2 relative">
+                <label className="text-[11px] font-semibold text-slate-300 block">Giai đoạn hiện tại</label>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     setPhaseDropdownOpen(!phaseDropdownOpen);
                     setCustomerDropdownOpen(false);
+                    setPmDropdownOpen(false);
+                    setLeaderDropdownOpen(false);
                   }}
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] flex items-center justify-between outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer text-left"
+                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
                   <span>{currentPhase}</span>
-                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${phaseDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
+                  <span className="material-symbols-outlined text-[#958da1] text-[18px]">expand_more</span>
                 </button>
                 
                 {phaseDropdownOpen && (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-[#1f2335] border border-[#2e3250] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700"
+                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700"
                   >
                     {phases.map((p) => (
                       <button
@@ -307,7 +325,7 @@ export default function NewProjectPage() {
                           setCurrentPhase(p);
                           setPhaseDropdownOpen(false);
                         }}
-                        className={`w-full text-left px-3.5 py-2 text-xs hover:bg-[#2e3250] transition-colors ${currentPhase === p ? 'bg-[#6366f1]/20 text-[#818cf8] font-semibold' : 'text-slate-300'}`}
+                        className={`w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] transition-colors ${currentPhase === p ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
                       >
                         {p}
                       </button>
@@ -317,90 +335,168 @@ export default function NewProjectPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-[#2e3250]/40 pt-4">
+            {/* Row 3: Leaders */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-[#4a4455]/40 pt-4">
               {/* PM selection */}
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Project Manager (PM)</label>
-                <select
-                  value={pmEmail}
-                  onChange={(e) => setPmEmail(e.target.value)}
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer"
+              <div className="space-y-2 relative">
+                <label className="text-[11px] font-semibold text-slate-300 block">Project Manager (PM)</label>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPmDropdownOpen(!pmDropdownOpen);
+                    setCustomerDropdownOpen(false);
+                    setPhaseDropdownOpen(false);
+                    setLeaderDropdownOpen(false);
+                  }}
+                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
-                  <option value="">Chọn Project Manager</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.email}>
-                      {u.full_name || u.email} ({u.email})
-                    </option>
-                  ))}
-                </select>
+                  <span className={pmEmail ? 'text-[#dae2fd]' : 'text-slate-500'}>
+                    {pmEmail ? (users.find(u => u.email === pmEmail)?.full_name || pmEmail) : 'Chọn Project Manager'}
+                  </span>
+                  <span className="material-symbols-outlined text-[#958da1] text-[18px]">expand_more</span>
+                </button>
+                
+                {pmDropdownOpen && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPmEmail('');
+                        setPmDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] text-slate-400 transition-colors"
+                    >
+                      Chọn Project Manager
+                    </button>
+                    {users.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          setPmEmail(u.email);
+                          setPmDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] transition-colors ${pmEmail === u.email ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
+                      >
+                        {u.full_name || u.email} ({u.email})
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Leader selection */}
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">Technical Leader</label>
-                <select
-                  value={leaderEmail}
-                  onChange={(e) => setLeaderEmail(e.target.value)}
-                  className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 transition-all cursor-pointer"
+              <div className="space-y-2 relative">
+                <label className="text-[11px] font-semibold text-slate-300 block">Technical Leader</label>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLeaderDropdownOpen(!leaderDropdownOpen);
+                    setCustomerDropdownOpen(false);
+                    setPhaseDropdownOpen(false);
+                    setPmDropdownOpen(false);
+                  }}
+                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
-                  <option value="">Chọn Technical Leader</option>
-                  {users.filter(u => u.role === 'group_a').map((u) => (
-                    <option key={u.id} value={u.email}>
-                      {u.full_name || u.email} ({u.email})
-                    </option>
-                  ))}
-                </select>
+                  <span className={leaderEmail ? 'text-[#dae2fd]' : 'text-slate-500'}>
+                    {leaderEmail ? (users.find(u => u.email === leaderEmail)?.full_name || leaderEmail) : 'Chọn Technical Leader'}
+                  </span>
+                  <span className="material-symbols-outlined text-[#958da1] text-[18px]">expand_more</span>
+                </button>
+                
+                {leaderDropdownOpen && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeaderEmail('');
+                        setLeaderDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] text-slate-400 transition-colors"
+                    >
+                      Chọn Technical Leader
+                    </button>
+                    {users.filter(u => u.role === 'group_a').map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          setLeaderEmail(u.email);
+                          setLeaderDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] transition-colors ${leaderEmail === u.email ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
+                      >
+                        {u.full_name || u.email} ({u.email})
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Members emails */}
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+            {/* Row 4: Emails */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold text-slate-300 block">
                 Email thành viên dự án
               </label>
               <textarea
                 value={memberEmails}
                 onChange={(e) => setMemberEmails(e.target.value)}
                 placeholder="member1@company.com, member2@company.com"
-                rows={2}
-                className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all resize-none"
+                rows={3}
+                className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs resize-none"
               />
-              <p className="text-[10px] text-slate-400 mt-1">
-                Nhập nhiều email bằng cách phân cách bởi dấu phẩy (,)
-              </p>
+              <p className="text-[10px] text-slate-400">Nhập nhiều email bằng cách phân cách bởi dấu phẩy (,)</p>
             </div>
 
-            {/* Google Sheets Connection */}
-            <div className="border-t border-[#2e3250]/40 pt-4 space-y-1.5">
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                Đường dẫn Google Sheet <span className="text-rose-500 font-bold ml-0.5">*</span>
-              </label>
-              <input
-                type="url"
-                required
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://docs.google.com/spreadsheets/d/..."
-                className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3.5 py-2 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] focus:ring-2 focus:ring-[#6366f1]/20 placeholder-slate-500 transition-all"
-              />
-              <span className="text-[10px] text-slate-400 block">
-                Lưu ý: Bạn phải chia sẻ quyền Editor cho email Service Account của hệ thống để đồng bộ.
-              </span>
+            {/* Row 5: Google Sheets */}
+            <div className="space-y-3 border-t border-[#4a4455]/40 pt-4">
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold text-slate-300 block">
+                  Đường dẫn Google Sheet <span className="text-rose-500 font-bold ml-0.5">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="url"
+                    required
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                    className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs"
+                  />
+                  <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-[20px]">description</span>
+                </div>
+              </div>
+              
+              <div className="p-3 bg-[#7c3aed]/10 border border-[#7c3aed]/30 rounded-lg flex gap-3 items-start">
+                <span className="material-symbols-outlined text-[#d2bbff] text-[18px] mt-0.5">info</span>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  <span className="text-[#d2bbff] font-bold">Lưu ý:</span> Bạn phải chia sẻ quyền Editor cho email Service Account của hệ thống để đồng bộ.
+                </p>
+              </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex justify-end gap-3 pt-6 border-t border-[#2e3250]/40 mt-4">
+            {/* Actions */}
+            <div className="flex justify-end items-center gap-4 pt-6 border-t border-[#4a4455]">
               <button
                 type="button"
                 onClick={() => router.push('/project')}
-                className="bg-transparent border border-[#2e3250] hover:border-slate-500 hover:bg-[#22263a] text-slate-300 px-5 py-2 rounded-lg text-xs font-semibold transition-all"
+                className="px-6 py-2.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-[#dae2fd] hover:bg-[#222a3d] border border-[#4a4455] transition-all"
               >
                 Hủy bỏ
               </button>
               <button
                 type="submit"
                 disabled={loading}
-                className="bg-[#6366f1] hover:bg-[#818cf8] text-white px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
+                className="px-8 py-2.5 bg-[#7c3aed] hover:bg-[#8b5cf6] text-white rounded-lg text-xs font-bold shadow-lg transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
               >
                 {loading ? (
                   <>
@@ -408,11 +504,45 @@ export default function NewProjectPage() {
                     Đang tạo...
                   </>
                 ) : (
-                  'Tạo dự án mới'
+                  <>
+                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>add_circle</span>
+                    Tạo dự án mới
+                  </>
                 )}
               </button>
             </div>
           </form>
+
+          {/* Bottom Decoration */}
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 opacity-60 max-w-3xl mx-auto">
+            <div className="p-4 rounded-lg border border-[#4a4455] bg-[#171f33] flex items-center gap-4">
+              <div className="w-10 h-10 rounded-full bg-[#0b1326] flex items-center justify-center">
+                <span className="material-symbols-outlined text-[#d2bbff]">sync</span>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-on-surface">Auto-Sync Enabled</p>
+                <p className="text-[10px] text-slate-400">Cloud updates every 5 mins</p>
+              </div>
+            </div>
+            <div className="p-4 rounded-lg border border-[#4a4455] bg-[#171f33] flex items-center gap-4">
+              <div className="w-10 h-10 rounded-full bg-[#0b1326] flex items-center justify-center">
+                <span className="material-symbols-outlined text-[#d2bbff]">security</span>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-on-surface">Encrypted Data</p>
+                <p className="text-[10px] text-slate-400">AES-256 standard security</p>
+              </div>
+            </div>
+            <div className="p-4 rounded-lg border border-[#4a4455] bg-[#171f33] flex items-center gap-4">
+              <div className="w-10 h-10 rounded-full bg-[#0b1326] flex items-center justify-center">
+                <span className="material-symbols-outlined text-[#d2bbff]">group</span>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-on-surface">Team Access</p>
+                <p className="text-[10px] text-slate-400">Centralized permissions control</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
