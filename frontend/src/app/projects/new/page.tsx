@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { addSheet, getUsers } from '@/lib/api';
@@ -29,18 +29,31 @@ export default function NewProjectPage() {
   const [leaderDropdownOpen, setLeaderDropdownOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState('');
 
+  const customerRef = useRef<HTMLDivElement>(null);
+  const phaseRef = useRef<HTMLDivElement>(null);
+  const pmRef = useRef<HTMLDivElement>(null);
+  const leaderRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const closeDropdowns = () => {
-      setCustomerDropdownOpen(false);
-      setPhaseDropdownOpen(false);
-      setPmDropdownOpen(false);
-      setLeaderDropdownOpen(false);
-      setCustomerSearch('');
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      
+      if (customerDropdownOpen && customerRef.current && !customerRef.current.contains(target)) {
+        setCustomerDropdownOpen(false);
+        setCustomerSearch('');
+      }
+      if (phaseDropdownOpen && phaseRef.current && !phaseRef.current.contains(target)) {
+        setPhaseDropdownOpen(false);
+      }
+      if (pmDropdownOpen && pmRef.current && !pmRef.current.contains(target)) {
+        setPmDropdownOpen(false);
+      }
+      if (leaderDropdownOpen && leaderRef.current && !leaderRef.current.contains(target)) {
+        setLeaderDropdownOpen(false);
+      }
     };
-    if (customerDropdownOpen || phaseDropdownOpen || pmDropdownOpen || leaderDropdownOpen) {
-      document.addEventListener('click', closeDropdowns);
-    }
-    return () => document.removeEventListener('click', closeDropdowns);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen]);
 
   useEffect(() => {
@@ -245,7 +258,7 @@ export default function NewProjectPage() {
             {/* Row 2: Customer & Status */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Tên khách hàng */}
-              <div className="space-y-2 relative">
+              <div ref={customerRef} className="space-y-2 relative">
                 <label className="text-[11px] font-semibold text-slate-300 block">Tên khách hàng</label>
                 <button
                   type="button"
@@ -331,7 +344,7 @@ export default function NewProjectPage() {
               </div>
 
               {/* Giai đoạn */}
-              <div className="space-y-2 relative">
+              <div ref={phaseRef} className="space-y-2 relative">
                 <label className="text-[11px] font-semibold text-slate-300 block">Giai đoạn hiện tại</label>
                 <button
                   type="button"
@@ -374,7 +387,7 @@ export default function NewProjectPage() {
             {/* Row 3: Leaders */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-[#4a4455]/40 pt-4">
               {/* PM selection */}
-              <div className="space-y-2 relative">
+              <div ref={pmRef} className="space-y-2 relative">
                 <label className="text-[11px] font-semibold text-slate-300 block">Project Manager (PM)</label>
                 <button
                   type="button"
@@ -426,7 +439,7 @@ export default function NewProjectPage() {
               </div>
 
               {/* Leader selection */}
-              <div className="space-y-2 relative">
+              <div ref={leaderRef} className="space-y-2 relative">
                 <label className="text-[11px] font-semibold text-slate-300 block">Technical Leader</label>
                 <button
                   type="button"
