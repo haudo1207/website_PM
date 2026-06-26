@@ -513,36 +513,8 @@ export default function NewProjectPage() {
             </div>
           </form>
 
-          {/* Bottom Decoration */}
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 opacity-60 max-w-3xl mx-auto">
-            <div className="p-4 rounded-lg border border-[#4a4455] bg-[#171f33] flex items-center gap-4">
-              <div className="w-10 h-10 rounded-full bg-[#0b1326] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[#d2bbff]">sync</span>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-on-surface">Auto-Sync Enabled</p>
-                <p className="text-[10px] text-slate-400">Cloud updates every 5 mins</p>
-              </div>
-            </div>
-            <div className="p-4 rounded-lg border border-[#4a4455] bg-[#171f33] flex items-center gap-4">
-              <div className="w-10 h-10 rounded-full bg-[#0b1326] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[#d2bbff]">security</span>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-on-surface">Encrypted Data</p>
-                <p className="text-[10px] text-slate-400">AES-256 standard security</p>
-              </div>
-            </div>
-            <div className="p-4 rounded-lg border border-[#4a4455] bg-[#171f33] flex items-center gap-4">
-              <div className="w-10 h-10 rounded-full bg-[#0b1326] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[#d2bbff]">group</span>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-on-surface">Team Access</p>
-                <p className="text-[10px] text-slate-400">Centralized permissions control</p>
-              </div>
-            </div>
-          </div>
+          {/* Bottom Space */}
+          <div className="h-4" />
         </div>
       </div>
     </div>
