@@ -55,6 +55,9 @@ def add(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get
     leader_email = body.get("leader_email")
     pm_email = body.get("pm_email")
     member_emails = body.get("member_emails")
+    zalo_link = body.get("zalo_link")
+    telegram_link = body.get("telegram_link")
+    teams_link = body.get("teams_link")
 
     if auto_create:
         from ..worker.google_sheet import create_new_sheet
@@ -87,7 +90,10 @@ def add(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get
         project_code=project_code,
         customer_name=customer_name,
         current_phase=current_phase,
-        spreadsheet_url=spreadsheet_url
+        spreadsheet_url=spreadsheet_url,
+        zalo_link=zalo_link,
+        telegram_link=telegram_link,
+        teams_link=teams_link
     )
     db.add(sheet)
     db.commit()
@@ -126,6 +132,9 @@ def list_all(db: Session = Depends(get_db), user=Depends(get_current_user)):
             "customer_name":s.customer_name,
             "current_phase":s.current_phase,
             "spreadsheet_url":s.spreadsheet_url,
+            "zalo_link":s.zalo_link,
+            "telegram_link":s.telegram_link,
+            "teams_link":s.teams_link,
             "last_checked":str(s.last_checked) if s.last_checked else None,
             "violation_count":count,
             "fail_count":fail
@@ -220,4 +229,45 @@ def add_task(sid: int, body: dict, db: Session = Depends(get_db), user=Depends(g
         pass
         
     return {"message": "Thêm task thành công", "new_row_num": new_row_num}
+
+
+@router.put("/{sid}")
+def update_sheet(sid: int, body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Sheet not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Not allowed to update this sheet")
+    
+    if "name" in body:
+        sheet.name = body["name"]
+    if "zalo_link" in body:
+        sheet.zalo_link = body["zalo_link"]
+    if "telegram_link" in body:
+        sheet.telegram_link = body["telegram_link"]
+    if "teams_link" in body:
+        sheet.teams_link = body["teams_link"]
+    if "pm_email" in body:
+        sheet.pm_email = body["pm_email"]
+    if "leader_email" in body:
+        sheet.leader_email = body["leader_email"]
+    if "customer_name" in body:
+        sheet.customer_name = body["customer_name"]
+    if "project_code" in body:
+        sheet.project_code = body["project_code"]
+        
+    db.commit()
+    db.refresh(sheet)
+    return {
+        "id": sheet.id,
+        "name": sheet.name,
+        "zalo_link": sheet.zalo_link,
+        "telegram_link": sheet.telegram_link,
+        "teams_link": sheet.teams_link,
+        "pm_email": sheet.pm_email,
+        "leader_email": sheet.leader_email,
+        "customer_name": sheet.customer_name,
+        "project_code": sheet.project_code
+    }
+
 

@@ -18,6 +18,16 @@ export default function NewProjectPage() {
   // Auto create Google Sheet settings
   const [autoCreate, setAutoCreate] = useState(false);
   const [url, setUrl] = useState('');
+
+  // Contact channels
+  const [zaloLink, setZaloLink] = useState('');
+  const [telegramLink, setTelegramLink] = useState('');
+  const [teamsLink, setTeamsLink] = useState('');
+  const [zaloEnabled, setZaloEnabled] = useState(true);
+  const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [teamsEnabled, setTeamsEnabled] = useState(false);
+
+
   
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -95,6 +105,9 @@ export default function NewProjectPage() {
         member_emails: memberEmails || undefined,
         auto_create: autoCreate,
         url: autoCreate ? undefined : url,
+        zalo_link: zaloEnabled ? (zaloLink || undefined) : undefined,
+        telegram_link: telegramEnabled ? (telegramLink || undefined) : undefined,
+        teams_link: teamsEnabled ? (teamsLink || undefined) : undefined,
       });
 
       setSuccessData({
@@ -110,6 +123,13 @@ export default function NewProjectPage() {
       setPmEmail('');
       setMemberEmails('');
       setUrl('');
+      setZaloLink('');
+      setTelegramLink('');
+      setTeamsLink('');
+      setZaloEnabled(true);
+      setTelegramEnabled(false);
+      setTeamsEnabled(false);
+
       
     } catch (err: any) {
       console.error(err);
@@ -206,7 +226,7 @@ export default function NewProjectPage() {
                 </a>
                 <button
                   onClick={() => router.push('/project')}
-                  className="bg-[#171f33] border border-[#4a4455] hover:bg-[#222a3d] text-slate-300 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+                  className="bg-[#1a1d27] border border-[#2e3250] hover:bg-[#22263a] text-slate-300 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
                 >
                   Xem danh sách dự án
                 </button>
@@ -224,7 +244,7 @@ export default function NewProjectPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="bg-[#171f33] border border-[#4a4455] rounded-xl p-8 space-y-6 shadow-2xl max-w-3xl mx-auto">
+          <form onSubmit={handleSubmit} className="bg-[#1a1d27]/90 border border-[#2e3250]/70 rounded-xl p-8 space-y-6 shadow-2xl max-w-3xl mx-auto backdrop-blur-sm">
             {/* Row 1: Project Details */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Tên dự án */}
@@ -238,7 +258,7 @@ export default function NewProjectPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Ví dụ: Dự án GoDN Korea"
-                  className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs"
+                  className="w-full bg-[#12141c] border border-[#2e3250]/70 text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-slate-600 text-xs"
                 />
               </div>
 
@@ -250,7 +270,7 @@ export default function NewProjectPage() {
                   value={projectCode}
                   onChange={(e) => setProjectCode(e.target.value)}
                   placeholder="Ví dụ: GDN-2026"
-                  className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs"
+                  className="w-full bg-[#12141c] border border-[#2e3250]/70 text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-slate-600 text-xs"
                 />
               </div>
             </div>
@@ -269,7 +289,7 @@ export default function NewProjectPage() {
                     setPmDropdownOpen(false);
                     setLeaderDropdownOpen(false);
                   }}
-                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
+                  className="w-full bg-[#12141c] border border-[#2e3250]/70 rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
                   <span className={customerName ? 'text-[#dae2fd]' : 'text-slate-500'}>
                     {customerName || 'Chọn hoặc nhập mới...'}
@@ -280,7 +300,7 @@ export default function NewProjectPage() {
                 {customerDropdownOpen && (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 p-2 space-y-2"
+                    className="absolute left-0 right-0 mt-1.5 bg-[#1a1d27] border border-[#2e3250] rounded-lg shadow-xl z-50 p-2 space-y-2"
                   >
                     {/* Search / Type Input */}
                     <input
@@ -288,7 +308,7 @@ export default function NewProjectPage() {
                       value={customerSearch}
                       onChange={(e) => setCustomerSearch(e.target.value)}
                       placeholder="Tìm kiếm hoặc nhập mới..."
-                      className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#7c3aed]"
+                      className="w-full bg-[#12141c] border border-[#2e3250] text-[#dae2fd] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#7c3aed]"
                     />
 
                     <div className="max-h-[160px] overflow-y-auto space-y-1">
@@ -355,7 +375,7 @@ export default function NewProjectPage() {
                     setPmDropdownOpen(false);
                     setLeaderDropdownOpen(false);
                   }}
-                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
+                  className="w-full bg-[#12141c] border border-[#2e3250]/70 rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
                   <span>{currentPhase}</span>
                   <span className="material-symbols-outlined text-[#958da1] text-[18px]">expand_more</span>
@@ -364,7 +384,7 @@ export default function NewProjectPage() {
                 {phaseDropdownOpen && (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700"
+                    className="absolute left-0 right-0 mt-1.5 bg-[#1a1d27] border border-[#2e3250] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700"
                   >
                     {phases.map((p) => (
                       <button
@@ -385,7 +405,7 @@ export default function NewProjectPage() {
             </div>
 
             {/* Row 3: Leaders */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-[#4a4455]/40 pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-[#2e3250]/40 pt-4">
               {/* PM selection */}
               <div ref={pmRef} className="space-y-2 relative">
                 <label className="text-[11px] font-semibold text-slate-300 block">Project Manager (PM)</label>
@@ -398,7 +418,7 @@ export default function NewProjectPage() {
                     setPhaseDropdownOpen(false);
                     setLeaderDropdownOpen(false);
                   }}
-                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
+                  className="w-full bg-[#12141c] border border-[#2e3250]/70 rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
                   <span className={pmEmail ? 'text-[#dae2fd]' : 'text-slate-500'}>
                     {pmEmail ? (users.find(u => u.email === pmEmail)?.full_name || pmEmail) : 'Chọn Project Manager'}
@@ -409,7 +429,7 @@ export default function NewProjectPage() {
                 {pmDropdownOpen && (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
+                    className="absolute left-0 right-0 mt-1.5 bg-[#1a1d27] border border-[#2e3250] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
                   >
                     <button
                       type="button"
@@ -450,7 +470,7 @@ export default function NewProjectPage() {
                     setPhaseDropdownOpen(false);
                     setPmDropdownOpen(false);
                   }}
-                  className="w-full bg-[#0b1326] border border-[#4a4455] rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
+                  className="w-full bg-[#12141c] border border-[#2e3250]/70 rounded-lg px-4 py-3 text-xs text-[#dae2fd] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#7c3aed] transition-all cursor-pointer text-left"
                 >
                   <span className={leaderEmail ? 'text-[#dae2fd]' : 'text-slate-500'}>
                     {leaderEmail ? (users.find(u => u.email === leaderEmail)?.full_name || leaderEmail) : 'Chọn Technical Leader'}
@@ -461,7 +481,7 @@ export default function NewProjectPage() {
                 {leaderDropdownOpen && (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-[#171f33] border border-[#4a4455] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
+                    className="absolute left-0 right-0 mt-1.5 bg-[#1a1d27] border border-[#2e3250] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
                   >
                     <button
                       type="button"
@@ -481,7 +501,7 @@ export default function NewProjectPage() {
                           setLeaderEmail(u.email);
                           setLeaderDropdownOpen(false);
                         }}
-                        className={`w-full text-left px-4 py-2.5 text-xs hover:bg-[#222a3d] transition-colors ${leaderEmail === u.email ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
+                        className={`w-full text-left px-4 py-2.5 text-xs hover:bg-[#22263a] transition-colors ${leaderEmail === u.email ? 'bg-[#7c3aed]/20 text-[#d2bbff] font-semibold' : 'text-[#dae2fd]'}`}
                       >
                         {u.full_name || u.email} ({u.email})
                       </button>
@@ -501,13 +521,13 @@ export default function NewProjectPage() {
                 onChange={(e) => setMemberEmails(e.target.value)}
                 placeholder="member1@company.com, member2@company.com"
                 rows={3}
-                className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs resize-none"
+                className="w-full bg-[#12141c] border border-[#2e3250]/70 text-[#dae2fd] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-slate-600 text-xs resize-none"
               />
               <p className="text-[10px] text-slate-400">Nhập nhiều email bằng cách phân cách bởi dấu phẩy (,)</p>
             </div>
 
             {/* Row 5: Google Sheets */}
-            <div className="space-y-3 border-t border-[#4a4455]/40 pt-4">
+            <div className="space-y-3 border-t border-[#2e3250]/40 pt-4">
               <div className="space-y-2">
                 <label className="text-[11px] font-semibold text-slate-300 block">
                   Đường dẫn Google Sheet <span className="text-rose-500 font-bold ml-0.5">*</span>
@@ -519,7 +539,7 @@ export default function NewProjectPage() {
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                     placeholder="https://docs.google.com/spreadsheets/d/..."
-                    className="w-full bg-[#0b1326] border border-[#4a4455] text-[#dae2fd] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-[#4a4455] text-xs"
+                    className="w-full bg-[#12141c] border border-[#2e3250]/70 text-[#dae2fd] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all placeholder:text-slate-600 text-xs"
                   />
                   <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-[20px]">description</span>
                 </div>
@@ -533,12 +553,105 @@ export default function NewProjectPage() {
               </div>
             </div>
 
+            {/* Row 6: Kênh liên lạc dự án */}
+            <div className="space-y-4 border-t border-[#2e3250]/40 pt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="material-symbols-outlined text-[#d2bbff] text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>forum</span>
+                <label className="text-[11px] font-semibold text-slate-300">Kênh liên lạc dự án</label>
+                <span className="text-[10px] text-slate-500 ml-1">(Tùy chọn)</span>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Zalo Card */}
+                <div className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${zaloEnabled ? 'bg-[#1a1d27] border-[#7c3aed]/60 shadow-lg shadow-[#7c3aed]/5' : 'bg-[#1a1d27]/40 border-[#2e3250]/30 opacity-60'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-full bg-[#0068FF] text-white flex items-center justify-center text-[10px] font-bold">Z</span>
+                      <span className="text-xs font-bold text-slate-200">Zalo</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={zaloEnabled}
+                      onChange={(e) => setZaloEnabled(e.target.checked)}
+                      className="w-4 h-4 rounded border-[#2e3250] text-[#7c3aed] focus:ring-[#7c3aed] focus:ring-offset-0 bg-[#12141c] cursor-pointer"
+                    />
+                  </div>
+                  <input
+                    type="url"
+                    disabled={!zaloEnabled}
+                    value={zaloLink}
+                    onChange={(e) => setZaloLink(e.target.value)}
+                    placeholder="Link tham gia nhóm..."
+                    className="w-full bg-[#12141c] border border-[#2e3250]/70 text-[#dae2fd] px-3 py-2 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#7c3aed] placeholder:text-slate-600 text-xs disabled:opacity-40"
+                  />
+                  <div className={`flex items-center gap-1 text-[10px] font-medium pt-0.5 ${(zaloEnabled && zaloLink.trim()) ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    <span className="text-[8px]">●</span> {(zaloEnabled && zaloLink.trim()) ? 'Đã lưu liên kết' : 'Chưa kết nối'}
+                  </div>
+                </div>
+
+                {/* Telegram Card */}
+                <div className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${telegramEnabled ? 'bg-[#1a1d27] border-[#7c3aed]/60 shadow-lg shadow-[#7c3aed]/5' : 'bg-[#1a1d27]/40 border-[#2e3250]/30 opacity-60'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-full bg-[#2AABEE] text-white flex items-center justify-center text-[10px] font-bold">✈</span>
+                      <span className="text-xs font-bold text-slate-200">Telegram</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={telegramEnabled}
+                      onChange={(e) => setTelegramEnabled(e.target.checked)}
+                      className="w-4 h-4 rounded border-[#2e3250] text-[#7c3aed] focus:ring-[#7c3aed] focus:ring-offset-0 bg-[#12141c] cursor-pointer"
+                    />
+                  </div>
+                  <input
+                    type="url"
+                    disabled={!telegramEnabled}
+                    value={telegramLink}
+                    onChange={(e) => setTelegramLink(e.target.value)}
+                    placeholder="https://t.me/joinchat/..."
+                    className="w-full bg-[#12141c] border border-[#2e3250]/70 text-[#dae2fd] px-3 py-2 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#7c3aed] placeholder:text-slate-600 text-xs disabled:opacity-40"
+                  />
+                  <div className={`flex items-center gap-1 text-[10px] font-medium pt-0.5 ${(telegramEnabled && telegramLink.trim()) ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    <span className="text-[8px]">●</span> {(telegramEnabled && telegramLink.trim()) ? 'Đã lưu liên kết' : 'Chưa kết nối'}
+                  </div>
+                </div>
+
+                {/* Teams Card */}
+                <div className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${teamsEnabled ? 'bg-[#1a1d27] border-[#7c3aed]/60 shadow-lg shadow-[#7c3aed]/5' : 'bg-[#1a1d27]/40 border-[#2e3250]/30 opacity-60'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-full bg-[#4F52B2] text-white flex items-center justify-center text-[10px] font-bold">T</span>
+                      <span className="text-xs font-bold text-slate-200">Teams</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={teamsEnabled}
+                      onChange={(e) => setTeamsEnabled(e.target.checked)}
+                      className="w-4 h-4 rounded border-[#2e3250] text-[#7c3aed] focus:ring-[#7c3aed] focus:ring-offset-0 bg-[#12141c] cursor-pointer"
+                    />
+                  </div>
+                  <input
+                    type="url"
+                    disabled={!teamsEnabled}
+                    value={teamsLink}
+                    onChange={(e) => setTeamsLink(e.target.value)}
+                    placeholder="Link workspace..."
+                    className="w-full bg-[#12141c] border border-[#2e3250]/70 text-[#dae2fd] px-3 py-2 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#7c3aed] placeholder:text-slate-600 text-xs disabled:opacity-40"
+                  />
+                  <div className={`flex items-center gap-1 text-[10px] font-medium pt-0.5 ${(teamsEnabled && teamsLink.trim()) ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    <span className="text-[8px]">●</span> {(teamsEnabled && teamsLink.trim()) ? 'Đã lưu liên kết' : 'Chưa kết nối'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+
             {/* Actions */}
-            <div className="flex justify-end items-center gap-4 pt-6 border-t border-[#4a4455]">
+            <div className="flex justify-end items-center gap-4 pt-6 border-t border-[#2e3250]">
               <button
                 type="button"
                 onClick={() => router.push('/project')}
-                className="px-6 py-2.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-[#dae2fd] hover:bg-[#222a3d] border border-[#4a4455] transition-all"
+                className="px-6 py-2.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-[#dae2fd] hover:bg-[#22263a] border border-[#2e3250] transition-all"
               >
                 Hủy bỏ
               </button>

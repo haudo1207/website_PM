@@ -3,6 +3,9 @@
   "version": "4.0.0",
   "private": true,
   "scripts": {
+    "design:build": "node scripts/build-design.js",
+    "predev": "npm run design:build",
+    "prebuild": "npm run design:build",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"

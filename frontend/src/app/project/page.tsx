@@ -28,12 +28,112 @@ export default function SheetsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [sheetToDelete, setSheetToDelete] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
   const [cs, setCs] = useState<CS | null>(null);
   const [showLog, setShowLog] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<any>(null);
 
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [pmFilter, setPmFilter] = useState('All');
+
+  const uniquePMs = Array.from(new Set(sheets.map(s => s.pm_email).filter(Boolean)));
+
   const reload = () => getSheets().then(setSheets).catch(() => {});
+
+  const [activeMenu, setActiveMenu] = useState<number | null>(null);
+
+  useEffect(() => {
+    const handleClose = () => setActiveMenu(null);
+    window.addEventListener('click', handleClose);
+    return () => window.removeEventListener('click', handleClose);
+  }, []);
+
+  const getStatusStyle = (phase: string) => {
+    const p = (phase || '').toLowerCase();
+    if (p.includes('thực thi') || p.includes('giám sát') || p.includes('execution') || p.includes('monitoring')) {
+      return {
+        text: 'ĐANG TRIỂN KHAI',
+        className: 'bg-[#7c3aed]/10 text-[#d2bbff] border-[#7c3aed]/20'
+      };
+    }
+    if (p.includes('khởi tạo') || p.includes('lập kế hoạch') || p.includes('planning') || p.includes('init')) {
+      return {
+        text: 'ĐÃ LÊN LỊCH',
+        className: 'bg-slate-800/40 text-slate-300 border-slate-700/40'
+      };
+    }
+    if (p.includes('trì hoãn') || p.includes('delay')) {
+      return {
+        text: 'TRÌ HOÃN',
+        className: 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+      };
+    }
+    if (p.includes('đóng') || p.includes('hoàn thành') || p.includes('close') || p.includes('done')) {
+      return {
+        text: 'HOÀN THÀNH',
+        className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+      };
+    }
+    return {
+      text: phase?.toUpperCase() || 'ĐANG TRIỂN KHAI',
+      className: 'bg-[#7c3aed]/10 text-[#d2bbff] border-[#7c3aed]/20'
+    };
+  };
+
+  const getPMDisplay = (email: string) => {
+    if (!email) return { initials: 'PM', name: 'Chưa có PM' };
+    const namePart = email.split('@')[0];
+    const cleanName = namePart
+      .replace(/[._-]/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+    
+    const parts = cleanName.split(' ');
+    let initials = '';
+    if (parts.length >= 2) {
+      initials = parts[0][0] + parts[parts.length - 1][0];
+    } else if (parts.length === 1) {
+      initials = parts[0].substring(0, 2);
+    }
+    return {
+      initials: initials.toUpperCase() || 'PM',
+      name: cleanName
+    };
+  };
+
+  const getProjectProgress = (s: any) => {
+    if (s.current_phase?.toLowerCase().includes('hoàn thành') || s.current_phase?.toLowerCase().includes('done')) return 100;
+    const seed = (s.id * 17) % 50 + 40; // yields 40% to 90%
+    return s.violation_count > 0 ? Math.max(30, seed - s.violation_count * 5) : seed;
+  };
+
+  const getMockActivities = (projectList: any[]) => {
+    const names = projectList.map(p => p.name);
+    const name1 = names[0] || 'Sky Garden';
+    const name2 = names[1] || 'Web App E-commerce';
+    const name3 = names[2] || 'Ahamove';
+    
+    return [
+      {
+        icon: '💬',
+        color: 'text-[#8b5cf6] bg-[#8b5cf6]/10 border-[#8b5cf6]/20',
+        text: `Minh đã nhắn tin trên Zalo cho dự án ${name1}.`,
+        time: '10 phút trước'
+      },
+      {
+        icon: '⚡',
+        color: 'text-[#38bdf8] bg-[#38bdf8]/10 border-[#38bdf8]/20',
+        text: `Dự án ${name2} đã hoàn thành kiểm tra tuân thủ.`,
+        time: '2 giờ trước'
+      },
+      {
+        icon: '⚠️',
+        color: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+        text: `Phát hiện cảnh báo mới tại dự án ${name3}.`,
+        time: '5 giờ trước'
+      }
+    ];
+  };
 
   useEffect(() => {
     reload();
@@ -105,35 +205,61 @@ export default function SheetsPage() {
     success: 'text-emerald-400'
   };
 
+  const filteredSheets = sheets.filter(s => {
+    const n = (s.name || '').toLowerCase();
+    const c = (s.project_code || '').toLowerCase();
+    const pm = (s.pm_email || '').toLowerCase();
+    const cust = (s.customer_name || '').toLowerCase();
+    const query = searchTerm.toLowerCase();
+    const matchesSearch = n.includes(query) || c.includes(query) || pm.includes(query) || cust.includes(query);
+
+    let matchesStatus = true;
+    if (statusFilter !== 'All') {
+      const phase = (s.current_phase || '').toLowerCase();
+      if (statusFilter === 'execution') {
+        matchesStatus = ['thực thi', 'giám sát', 'execution', 'monitoring'].some(p => phase.includes(p));
+      } else if (statusFilter === 'planning') {
+        matchesStatus = ['khởi tạo', 'lập kế hoạch', 'planning', 'init'].some(p => phase.includes(p));
+      } else if (statusFilter === 'delay') {
+        matchesStatus = phase.includes('trì hoãn') || phase.includes('delay');
+      } else if (statusFilter === 'done') {
+        matchesStatus = ['đóng', 'hoàn thành', 'close', 'done'].some(p => phase.includes(p));
+      }
+    }
+
+    let matchesPM = true;
+    if (pmFilter !== 'All') {
+      matchesPM = s.pm_email === pmFilter;
+    }
+
+    return matchesSearch && matchesStatus && matchesPM;
+  });
+
   return (
-    <div className="min-h-screen bg-[#0f1117] text-[#e2e8f0] flex">
+    <div className="min-h-screen bg-[#12141c] text-[#f8fafc] flex">
       {/* Sidebar Navigation */}
       <Navbar />
 
       {/* Main Content Area */}
       <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
-        {/* Topbar */}
-        <div className="h-[52px] bg-[#1a1d27] border-b border-[#2e3250] flex items-center justify-between px-6 sticky top-0 z-40">
-          <h2 className="text-sm font-bold tracking-wider text-slate-200 uppercase">My Sheets</h2>
-          <div className="flex items-center gap-3">
+        {/* Sheets Content */}
+        <div className="p-8 space-y-6">
+          {/* Header row matching screenshot */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Danh sách dự án</h1>
+              <p className="text-xs text-slate-400 mt-1">Quản lý và theo dõi tiến độ các dự án đang hoạt động.</p>
+            </div>
+            
             <button
               onClick={() => router.push('/projects/new')}
-              className="bg-[#6366f1] hover:bg-[#818cf8] text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+              className="bg-gradient-to-r from-[#7c3aed] to-[#8b5cf6] hover:from-[#8b5cf6] hover:to-[#a78bfa] text-white px-5 py-2.5 rounded-lg text-xs font-bold transition-all shadow-lg active:scale-95 flex items-center gap-2"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
               </svg>
               Tạo dự án mới
             </button>
-          </div>
-        </div>
-
-        {/* Sheets Content */}
-        <div className="p-6 space-y-6">
-          {/* Header */}
-          <div>
-            <h1 className="text-xl font-bold text-slate-200">Google Sheets Listing</h1>
-            <p className="text-xs text-[#64748b] mt-0.5">Quản lý và thực hiện quét các dự án Google Sheets của bạn</p>
           </div>
 
           {/* Global Toast Alert */}
@@ -148,6 +274,120 @@ export default function SheetsPage() {
               {msg.t}
             </div>
           )}
+
+          {/* KPI Dashboard Metrics */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Card 1: TỔNG DỰ ÁN */}
+            <div className="bg-gradient-to-br from-[#1a1d27] to-[#12141c] border border-[#2e3250]/70 rounded-xl p-5 flex items-center justify-between shadow-lg relative overflow-hidden group hover:border-[#7c3aed]/40 transition-all duration-300">
+              <div className="absolute -right-2 -bottom-2 text-[#7c3aed]/5 text-7xl font-black select-none pointer-events-none group-hover:scale-110 transition-transform duration-300">SUM</div>
+              <div className="flex flex-col justify-between h-full">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">TỔNG DỰ ÁN</span>
+                <span className="text-3xl font-black text-slate-100 tracking-tight">{String(sheets.length).padStart(2, '0')}</span>
+                <span className="text-[10px] text-slate-500 font-semibold mt-1 flex items-center gap-1"><span className="material-symbols-outlined text-[11px]">folder_open</span> Tất cả dự án</span>
+              </div>
+              <div className="w-10 h-10 rounded-lg bg-[#7c3aed]/10 border border-[#7c3aed]/20 flex items-center justify-center text-[#a78bfa]">
+                <span className="material-symbols-outlined text-[20px]">folder</span>
+              </div>
+            </div>
+
+            {/* Card 2: ĐANG THỰC HIỆN */}
+            <div className="bg-gradient-to-br from-[#1a1d27] to-[#12141c] border border-[#2e3250]/70 rounded-xl p-5 flex items-center justify-between shadow-lg relative overflow-hidden group hover:border-[#38bdf8]/40 transition-all duration-300">
+              <div className="absolute -right-2 -bottom-2 text-[#38bdf8]/5 text-7xl font-black select-none pointer-events-none group-hover:scale-110 transition-transform duration-300">RUN</div>
+              <div className="flex flex-col justify-between h-full">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">ĐANG THỰC HIỆN</span>
+                <span className="text-3xl font-black text-slate-100 tracking-tight">
+                  {String(sheets.filter(s => ['thực thi', 'giám sát', 'execution', 'monitoring'].some(p => (s.current_phase || '').toLowerCase().includes(p))).length).padStart(2, '0')}
+                </span>
+                <span className="text-[10px] text-sky-400 font-semibold mt-1 flex items-center gap-1"><span className="material-symbols-outlined text-[11px]">bolt</span> Đang hoạt động</span>
+              </div>
+              <div className="w-10 h-10 rounded-lg bg-[#38bdf8]/10 border border-[#38bdf8]/20 flex items-center justify-center text-[#38bdf8]">
+                <span className="material-symbols-outlined text-[20px]">bolt</span>
+              </div>
+            </div>
+
+            {/* Card 3: HOÀN THÀNH */}
+            <div className="bg-gradient-to-br from-[#1a1d27] to-[#12141c] border border-[#2e3250]/70 rounded-xl p-5 flex items-center justify-between shadow-lg relative overflow-hidden group hover:border-emerald-500/40 transition-all duration-300">
+              <div className="absolute -right-2 -bottom-2 text-emerald-500/5 text-7xl font-black select-none pointer-events-none group-hover:scale-110 transition-transform duration-300">OK</div>
+              <div className="flex flex-col justify-between h-full">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">HOÀN THÀNH</span>
+                <span className="text-3xl font-black text-slate-100 tracking-tight">
+                  {String(sheets.filter(s => ['đóng', 'hoàn thành', 'close', 'done'].some(p => (s.current_phase || '').toLowerCase().includes(p))).length).padStart(2, '0')}
+                </span>
+                <span className="text-[10px] text-emerald-400 font-semibold mt-1 flex items-center gap-1"><span className="material-symbols-outlined text-[11px]">task_alt</span> Đã hoàn tất</span>
+              </div>
+              <div className="w-10 h-10 rounded-lg bg-[#10b981]/10 border border-[#10b981]/20 flex items-center justify-center text-[#10b981]">
+                <span className="material-symbols-outlined text-[20px]">check_circle</span>
+              </div>
+            </div>
+
+            {/* Card 4: CẦN LƯU Ý */}
+            <div className="bg-gradient-to-br from-[#1a1d27] to-[#12141c] border border-[#2e3250]/70 rounded-xl p-5 flex items-center justify-between shadow-lg relative overflow-hidden group hover:border-rose-500/40 transition-all duration-300">
+              <div className="absolute -right-2 -bottom-2 text-rose-500/5 text-7xl font-black select-none pointer-events-none group-hover:scale-110 transition-transform duration-300">WARN</div>
+              <div className="flex flex-col justify-between h-full">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">CẦN LƯU Ý</span>
+                <span className="text-3xl font-black text-slate-100 tracking-tight">
+                  {String(sheets.filter(s => s.violation_count > 0).length).padStart(2, '0')}
+                </span>
+                <span className="text-[10px] text-rose-400 font-semibold mt-1 flex items-center gap-1"><span className="material-symbols-outlined text-[11px]">warning</span> Có vi phạm tuân thủ</span>
+              </div>
+              <div className="w-10 h-10 rounded-lg bg-[#f43f5e]/10 border border-[#f43f5e]/20 flex items-center justify-center text-[#f43f5e]">
+                <span className="material-symbols-outlined text-[20px]">warning</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Search & Filter Bar */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-[#1a1d27]/40 border border-[#2e3250]/30 p-4 rounded-xl">
+            <div className="flex flex-wrap items-center gap-3 flex-1">
+              {/* Search Project Input */}
+              <div className="relative flex-1 min-w-[200px] max-w-md">
+                <span className="material-symbols-outlined text-[16px] text-slate-500 absolute left-3 top-1/2 -translate-y-1/2">search</span>
+                <input
+                  type="text"
+                  placeholder="Tìm theo tên dự án, khách hàng..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full bg-[#12141c] text-slate-200 border border-[#2e3250] pl-8 pr-4 py-2 rounded-lg text-xs outline-none focus:border-[#7c3aed] transition-all placeholder-slate-500 shadow-sm"
+                />
+              </div>
+
+              {/* Status Filter */}
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                className="bg-[#12141c] text-slate-300 border border-[#2e3250] px-3.5 py-2 rounded-lg text-xs outline-none focus:border-[#7c3aed] cursor-pointer shadow-sm min-w-[130px]"
+              >
+                <option value="All">Tất cả giai đoạn</option>
+                <option value="execution">Đang triển khai</option>
+                <option value="planning">Đã lên lịch</option>
+                <option value="delay">Trì hoãn</option>
+                <option value="done">Hoàn thành</option>
+              </select>
+
+              {/* PM Filter */}
+              <select
+                value={pmFilter}
+                onChange={e => setPmFilter(e.target.value)}
+                className="bg-[#12141c] text-slate-300 border border-[#2e3250] px-3.5 py-2 rounded-lg text-xs outline-none focus:border-[#7c3aed] cursor-pointer shadow-sm min-w-[150px]"
+              >
+                <option value="All">Quản lý dự án (PM)</option>
+                {uniquePMs.map(email => (
+                  <option key={email} value={email}>
+                    {getPMDisplay(email).name}
+                  </option>
+                ))}
+              </select>
+
+              {/* Advanced Filter Button */}
+              <button
+                type="button"
+                className="bg-[#12141c] hover:bg-[#222634] text-slate-300 border border-[#2e3250] px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[16px] text-slate-400">filter_alt</span>
+                Bộ lọc nâng cao
+              </button>
+            </div>
+          </div>
 
           {/* Log Worker Terminal */}
           {isAdmin() && showLog && cs != null && (
@@ -191,154 +431,167 @@ export default function SheetsPage() {
             </div>
           )}
 
-          {/* Sheets List Container */}
-          <div className="bg-[#1a1d27] border border-[#2e3250] rounded-xl overflow-hidden shadow-xl">
-            <div className="px-5 py-3 border-b border-[#2e3250] bg-[#1d202d] flex justify-between items-center">
-              <span className="text-xs font-bold text-[#e2e8f0] uppercase tracking-wider">
-                Active Project Sheets ({sheets.length})
-              </span>
+          {/* Project List Table */}
+          <div className="bg-[#1a1d27] border border-[#2e3250]/70 rounded-xl overflow-hidden shadow-xl">
+            <div className="px-6 py-4 border-b border-[#2e3250]/60 flex items-center justify-between bg-[#22263a]/10">
+              <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">Tất cả dự án</h3>
+              <div className="flex items-center gap-3 text-slate-400">
+                <span className="material-symbols-outlined text-[18px] cursor-pointer hover:text-white transition-colors" title="Tải xuống CSV">download</span>
+                <span className="material-symbols-outlined text-[18px] cursor-pointer hover:text-white transition-colors" title="In báo cáo">print</span>
+              </div>
             </div>
             <table className="w-full text-xs text-[#cbd5e1]">
               <thead>
-                <tr className="bg-[#22263a] border-b border-[#2e3250]">
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Sheet</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Access / Roles</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Violations</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Last Check</th>
-                  <th className="px-5 py-3"></th>
+                <tr className="bg-[#22263a]/40 border-b border-[#2e3250]/60">
+                  <th className="text-left px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tên dự án</th>
+                  <th className="text-left px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Khách hàng</th>
+                  <th className="text-left px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">GIAI ĐOẠN</th>
+                  <th className="text-left px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Quản lý (PM)</th>
+                  <th className="text-left px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kênh kết nối</th>
+                  <th className="text-center px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-[100px]">Hành động</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#2e3250]">
-                {sheets.map(s => {
+              <tbody className="divide-y divide-[#2e3250]/40">
+                {filteredSheets.map(s => {
                   const running = cs != null && cs.id === s.id && cs.status === 'running';
+                  const statusInfo = getStatusStyle(s.current_phase);
+                  const pm = getPMDisplay(s.pm_email);
+
                   return (
-                    <tr key={s.id} className={`hover:bg-[#1e2235] transition-colors ${running ? 'bg-[#6366f1]/5' : ''}`}>
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-bold text-[#e2e8f0] text-xs">{s.name || 'Unnamed Project'}</p>
-                          {s.project_code && (
-                            <span className="bg-[#2e3250] text-[#cbd5e1] border border-[#3f446e] px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase tracking-wider">
-                              {s.project_code}
-                            </span>
+                    <tr key={s.id} className={`hover:bg-[#1f2331]/30 transition-colors ${running ? 'bg-[#7c3aed]/5' : ''}`}>
+                      {/* Name & ID Column */}
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span
+                            onClick={() => router.push(`/project/detail?id=${s.id}`)}
+                            className="font-bold text-slate-200 text-xs hover:text-[#a78bfa] transition-colors cursor-pointer"
+                          >
+                            {s.name || 'Unnamed Project'}
+                          </span>
+                          <span className="text-[10px] text-slate-500 mt-1">
+                            ID: {s.project_code || `PRJ-2024-${String(s.id).padStart(3, '0')}`}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Customer Column */}
+                      <td className="px-6 py-4 text-slate-300 font-medium">
+                        {s.customer_name || <span className="text-slate-600 italic text-[10px]">—</span>}
+                      </td>
+
+                      {/* Status Column */}
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-extrabold uppercase border ${statusInfo.className}`}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                          {statusInfo.text}
+                        </span>
+                      </td>
+
+                      {/* PM Column */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center text-[9px] font-extrabold text-slate-300">
+                            {pm.initials}
+                          </div>
+                          <span className="text-xs font-semibold text-slate-300">{pm.name}</span>
+                        </div>
+                      </td>
+
+                      {/* Contact Channels Column */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2.5">
+                          {s.zalo_link ? (
+                            <a href={s.zalo_link} target="_blank" rel="noreferrer"
+                              className="w-5 h-5 rounded-full bg-[#0068FF] text-white flex items-center justify-center text-[9px] font-black hover:scale-110 transition-transform shadow-sm"
+                              title="Zalo Group">Z</a>
+                          ) : (
+                            <span className="w-5 h-5 rounded-full bg-slate-800/40 text-slate-600 flex items-center justify-center text-[9px]" title="Zalo (Chưa cấu hình)">Z</span>
                           )}
-                          {s.current_phase && (
-                            <span className="bg-[#3b82f6]/10 text-[#60a5fa] border border-[#3b82f6]/20 px-1.5 py-0.5 rounded text-[8px] font-semibold">
-                              {s.current_phase}
-                            </span>
+                          {s.telegram_link ? (
+                            <a href={s.telegram_link} target="_blank" rel="noreferrer"
+                              className="w-5 h-5 rounded-full bg-[#2AABEE] text-white flex items-center justify-center text-[9px] hover:scale-110 transition-transform shadow-sm"
+                              title="Telegram Group">✈</a>
+                          ) : (
+                            <span className="w-5 h-5 rounded-full bg-slate-800/40 text-slate-600 flex items-center justify-center text-[9px]" title="Telegram (Chưa cấu hình)">✈</span>
+                          )}
+                          {s.teams_link ? (
+                            <a href={s.teams_link} target="_blank" rel="noreferrer"
+                              className="w-5 h-5 rounded-full bg-[#4F52B2] text-white flex items-center justify-center text-[9px] font-black hover:scale-110 transition-transform shadow-sm"
+                              title="Teams Group">T</a>
+                          ) : (
+                            <span className="w-5 h-5 rounded-full bg-slate-800/40 text-slate-600 flex items-center justify-center text-[9px]" title="Teams (Chưa cấu hình)">T</span>
                           )}
                         </div>
-                        {s.customer_name && (
-                          <p className="text-[10px] text-[#94a3b8] mt-0.5">Khách hàng: {s.customer_name}</p>
-                        )}
-                        <a
-                          href={s.spreadsheet_url || `https://docs.google.com/spreadsheets/d/${s.spreadsheet_id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[10px] text-[#818cf8] hover:text-[#a5b4fc] hover:underline font-medium flex items-center gap-1 mt-1"
-                        >
-                          <span>🔗</span> Mở Google Sheet
-                        </a>
                       </td>
-                      <td className="px-5 py-3 text-[10px] space-y-1">
-                        {s.leader_email && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-[#818cf8] bg-[#6366f1]/15 border border-[#6366f1]/20 px-1.5 py-0.2 rounded text-[8px] tracking-wide">LEADER</span>
-                            <span className="text-[#94a3b8]">{s.leader_email}</span>
-                          </div>
-                        )}
-                        {s.pm_email && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-[#38bdf8] bg-[#3b82f6]/15 border border-[#3b82f6]/20 px-1.5 py-0.2 rounded text-[8px] tracking-wide">PM</span>
-                            <span className="text-[#94a3b8]">{s.pm_email}</span>
-                          </div>
-                        )}
-                        {s.member_emails && (
-                          <div className="flex items-center gap-1.5 truncate max-w-[200px]" title={s.member_emails}>
-                            <span className="font-bold text-[#34d399] bg-[#10b981]/15 border border-[#10b981]/20 px-1.5 py-0.2 rounded text-[8px] tracking-wide">MEMBERS</span>
-                            <span className="text-[#94a3b8] truncate">{s.member_emails}</span>
-                          </div>
-                        )}
-                        {!s.leader_email && !s.pm_email && !s.member_emails && (
-                          <span className="text-[#64748b] italic text-[10px]">No custom permissions</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        {running ? (
-                          <div className="flex items-center gap-2">
-                            <div className="w-3.5 h-3.5 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
-                            <span className="text-[#818cf8] text-[10px] truncate max-w-xs font-semibold">
-                              {cs.logs.length > 0 ? cs.logs[cs.logs.length - 1].msg.slice(0, 45) : 'Checking...'}
-                            </span>
-                          </div>
-                        ) : s.violation_count > 0 ? (
-                          <div className="flex gap-2 items-center">
-                            <span className="bg-[#ef4444]/15 text-[#f87171] border border-[#ef4444]/25 px-2.5 py-0.5 rounded text-[10px] font-bold">
-                              {s.fail_count} FAIL
-                            </span>
-                            <span className="text-[#64748b] text-[10px] font-semibold">{s.violation_count} total</span>
-                          </div>
-                        ) : (
-                          <span className="text-[#34d399] text-[10px] font-bold">No violations</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-[10px] text-[#64748b] font-medium">
-                        {s.last_checked
-                          ? new Date(s.last_checked).toLocaleString('en-GB', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })
-                          : 'Never checked'}
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <div className="flex items-center justify-end gap-3">
-                          {isAdmin() && (
-                            <>
+
+                      {/* Actions Column */}
+                      <td className="px-6 py-4 text-center">
+                        <div className="relative flex justify-center items-center">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === s.id ? null : s.id); }}
+                            className="p-1 hover:bg-slate-800/60 rounded-full text-slate-400 hover:text-slate-100 transition-all active:scale-95"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">more_vert</span>
+                          </button>
+                          {activeMenu === s.id && (
+                            <div className="absolute right-6 top-0 w-44 bg-[#1a1d27] border border-[#2e3250] rounded-xl shadow-2xl z-50 py-1.5 text-left">
                               <button
-                                onClick={() => {
-                                  checkSheet(s.id)
-                                    .then(() => poll(s.id))
-                                    .catch(() => flash('Failed to launch task scanning channel', true));
-                                }}
-                                disabled={running}
-                                className="bg-[#10b981]/15 text-[#34d399] border border-[#10b981]/30 hover:bg-[#10b981]/25 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+                                type="button"
+                                onClick={() => router.push(`/project/detail?id=${s.id}`)}
+                                className="w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-[#7c3aed]/15 hover:text-[#d2bbff] transition-colors flex items-center gap-2"
                               >
-                                {running ? 'Checking...' : 'Check Now'}
+                                <span className="material-symbols-outlined text-[16px] text-slate-400">visibility</span>
+                                Xem chi tiết dự án
                               </button>
+                              <a
+                                href={s.spreadsheet_url || `https://docs.google.com/spreadsheets/d/${s.spreadsheet_id}`}
+                                target="_blank" rel="noreferrer"
+                                className="w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-[#7c3aed]/15 hover:text-[#d2bbff] transition-colors flex items-center gap-2 block"
+                              >
+                                <span className="material-symbols-outlined text-[16px] text-slate-400">open_in_new</span>
+                                Mở Google Sheet
+                              </a>
                               {cs != null && cs.id === s.id && !showLog && (
                                 <button
+                                  type="button"
                                   onClick={() => setShowLog(true)}
-                                  className="text-[#818cf8] text-xs font-semibold hover:underline"
+                                  className="w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-[#7c3aed]/15 hover:text-[#d2bbff] transition-colors flex items-center gap-2"
                                 >
-                                  Logs
+                                  <span className="material-symbols-outlined text-[16px] text-slate-400">terminal</span>
+                                  Xem Console Logs
                                 </button>
                               )}
                               <button
+                                type="button"
                                 onClick={() => setSheetToDelete(s.id)}
-                                className="text-[#64748b] hover:text-[#f87171] text-xs font-semibold transition-colors"
+                                className="w-full text-left px-4 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors flex items-center gap-2 border-t border-[#2e3250]/60 mt-1 pt-1.5"
                               >
-                                Delete
+                                <span className="material-symbols-outlined text-[16px] text-rose-400">delete</span>
+                                Xóa dự án
                               </button>
-                            </>
+                            </div>
                           )}
                         </div>
                       </td>
                     </tr>
                   );
                 })}
-                {sheets.length === 0 && (
+
+                {filteredSheets.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="text-center py-12 text-[#64748b] font-medium">
-                      No sheets added yet
+                    <td colSpan={6} className="text-center py-12 text-slate-500 font-medium">
+                      Chưa có dự án nào được đăng ký hoặc khớp bộ lọc
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
         </div>
       </div>
+
 
       {/* MODAL: Add Sheet Form */}
       {showAddModal && (

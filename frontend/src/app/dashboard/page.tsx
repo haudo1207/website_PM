@@ -108,17 +108,11 @@ function DashboardContent() {
       load();
     }
   }, [sheetId, poll, load]);
-
-  // Trigger sync on sheet selection change, or load all data
+  // Load data on sheet selection change
   useEffect(() => {
-    if (sheetId) {
-      handleSync();
-    } else {
-      setIsScanning(false);
-      load();
-    }
-  }, [sheetId, handleSync, load]);
-
+    setIsScanning(false);
+    load();
+  }, [sheetId, load]);
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   // --- Helpers ---
