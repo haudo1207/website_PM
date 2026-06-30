@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getToken, logout } from './auth';
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
+const BASE = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
 const api = axios.create({ baseURL: BASE });
 
 api.interceptors.request.use(cfg => {
