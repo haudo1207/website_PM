@@ -5,8 +5,23 @@ const path = require('path');
 try {
   console.log('Building design tokens from DESIGN.md...');
   
-  // Chạy npx designmd export thông qua cmd.exe (mặc định trên Windows của Node.js execSync)
-  const stdout = execSync('npx -p @google/design.md designmd export --format json-tailwind ../DESIGN.md', {
+  // Kiểm tra xem DESIGN.md ở thư mục hiện tại (frontend/) hay thư mục cha
+  let designMdPath = 'DESIGN.md';
+  const localPath = path.resolve(__dirname, '../DESIGN.md');
+  const parentPath = path.resolve(__dirname, '../../DESIGN.md');
+  
+  if (fs.existsSync(localPath)) {
+    designMdPath = 'DESIGN.md';
+  } else if (fs.existsSync(parentPath)) {
+    designMdPath = '../DESIGN.md';
+  } else {
+    // Dự phòng mặc định nếu không thấy file nào
+    designMdPath = 'DESIGN.md';
+  }
+
+  console.log(`Using DESIGN.md path: ${designMdPath}`);
+
+  const stdout = execSync(`npx -p @google/design.md designmd export --format json-tailwind ${designMdPath}`, {
     cwd: path.resolve(__dirname, '..'),
     encoding: 'utf-8'
   });
