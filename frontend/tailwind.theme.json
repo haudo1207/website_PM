@@ -2,66 +2,53 @@
   "theme": {
     "extend": {
       "colors": {
-        "primary": "#12141c",
-        "secondary": "#1a1d27",
-        "accent": "#4f46e5",
-        "accent-hover": "#4338ca",
-        "border": "#2e3250",
-        "text-primary": "#f8fafc",
-        "text-secondary": "#94a3b8",
-        "danger": "#b91c1c",
-        "danger-hover": "#991b1b"
+        "primary": "#0058be",
+        "secondary": "#565e74",
+        "background": "#f8f9ff",
+        "app-bg": "#f0f2f5",
+        "surface-white": "#ffffff",
+        "outline-variant": "#c2c6d6",
+        "on-background": "#0b1c30",
+        "status-success-bg": "#dcfce7",
+        "status-success-text": "#15803d",
+        "status-warning-bg": "#fef9c3",
+        "status-warning-text": "#854d0e",
+        "status-error-bg": "#fee2e2",
+        "status-error-text": "#dc2626"
       },
-      "fontFamily": {
-        "h1": [
-          "Inter, sans-serif"
-        ],
-        "h2": [
-          "Inter, sans-serif"
-        ],
-        "body": [
-          "Inter, sans-serif"
-        ],
-        "caption": [
-          "Inter, sans-serif"
-        ]
-      },
+      "fontFamily": {},
       "fontSize": {
-        "h1": [
-          "2rem",
+        "hero-title": [
+          "20px",
           {
+            "lineHeight": "28px",
             "fontWeight": "700"
           }
         ],
-        "h2": [
-          "1.5rem",
+        "section-title": [
+          "14px",
           {
-            "fontWeight": "600"
+            "lineHeight": "20px",
+            "fontWeight": "700"
           }
         ],
-        "body": [
-          "0.875rem",
+        "body-md-medium": [
+          "13px",
           {
-            "fontWeight": "400"
-          }
-        ],
-        "caption": [
-          "0.75rem",
-          {
+            "lineHeight": "20px",
             "fontWeight": "500"
+          }
+        ],
+        "micro-label": [
+          "10px",
+          {
+            "lineHeight": "12px",
+            "fontWeight": "700"
           }
         ]
       },
-      "borderRadius": {
-        "sm": "4px",
-        "md": "8px",
-        "lg": "12px"
-      },
-      "spacing": {
-        "sm": "8px",
-        "md": "16px",
-        "lg": "24px"
-      }
+      "borderRadius": {},
+      "spacing": {}
     }
   }
 }

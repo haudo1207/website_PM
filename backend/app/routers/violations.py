@@ -24,7 +24,7 @@ def has_read_access(sheet, user):
             return True
     return False
 
-@router.get("/")
+@router.get("")
 def list_violations(sheet_id: int = Query(None), ai_verdict: str = Query(None),
                     search: str = Query(None), leader_email: str = Query(None),
                     pm_email: str = Query(None), page: int = Query(1), per_page: int = Query(25),

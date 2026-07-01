@@ -20,60 +20,58 @@ export default function LoginPage() {
       saveToken(d.access_token, d.role, d.full_name);
       router.push('/dashboard');
     } catch {
-      setErr('Invalid email or password');
+      setErr('Email hoặc mật khẩu không chính xác');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#0f1117] flex items-center justify-center p-4 text-[#e2e8f0]">
-      <div className="bg-[#1a1d27] border border-[#2e3250] rounded-2xl shadow-2xl p-8 w-full max-w-sm">
+    <div className="min-h-screen bg-[#f0f2f5] flex items-center justify-center p-4 text-[#0b1c30]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
+      <div className="bg-white border border-[#c2c6d6]/60 rounded-2xl shadow-xl p-8 w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl shadow-lg">
-            ⚡
-          </div>
-          <h1 className="text-xl font-bold text-slate-200 uppercase tracking-wider">Task Compliance Portal</h1>
-          <p className="text-[#64748b] text-xs mt-1">Sign in to continue to SecurityZone</p>
+          <img src="/logo.jpg" alt="Logo" className="w-14 h-14 rounded-2xl mx-auto mb-4 object-cover shadow-sm border border-slate-200" />
+          <h1 className="text-lg font-bold text-[#0b1c30] tracking-tight">COMPLIANCE PORTAL</h1>
+          <p className="text-[#565e74] text-xs mt-1">Đăng nhập hệ thống giám sát SecurityZone</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Email</label>
+            <label className="block text-[10px] font-bold text-[#424754] uppercase tracking-wider">Email</label>
             <input
               type="email"
               required
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="admin@company.com"
-              className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] placeholder-[#64748b] transition-colors"
+              placeholder="admin@portal.so"
+              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2.5 text-xs text-[#0b1c30] outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be]/20 placeholder-[#727785] transition-all"
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Password</label>
+            <label className="block text-[10px] font-bold text-[#424754] uppercase tracking-wider">Mật khẩu</label>
             <input
               type="password"
               required
               value={pw}
               onChange={e => setPw(e.target.value)}
               placeholder="••••••••"
-              className="w-full bg-[#22263a] border border-[#2e3250] rounded-lg px-3 py-2.5 text-xs text-[#e2e8f0] outline-none focus:border-[#6366f1] placeholder-[#64748b] transition-colors"
+              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2.5 text-xs text-[#0b1c30] outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be]/20 placeholder-[#727785] transition-all"
             />
           </div>
           {err && (
-            <div className="bg-red-950/40 border border-red-800/40 text-[#f87171] text-xs rounded-lg px-3.5 py-2.5 font-medium">
+            <div className="bg-[#fee2e2] border border-[#fca5a5] text-[#dc2626] text-xs rounded-lg px-3.5 py-2.5 font-semibold">
               {err}
             </div>
           )}
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-[#6366f1] hover:bg-[#818cf8] text-white rounded-lg py-2.5 text-xs font-semibold transition-all shadow-md disabled:opacity-50"
+            className="w-full bg-[#0058be] hover:bg-[#0058be]/90 text-white rounded-lg py-2.5 text-xs font-bold transition-all shadow-md active:scale-95 disabled:opacity-50"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? 'Đang đăng nhập...' : 'Đăng Nhập'}
           </button>
         </form>
-        <p className="text-center text-[10px] text-[#64748b] mt-6 uppercase tracking-wider font-bold">
-          Internal accounts only
+        <p className="text-center text-[10px] text-[#565e74] mt-6 uppercase tracking-wider font-bold">
+          Chỉ dành cho nhân viên nội bộ
         </p>
       </div>
     </div>

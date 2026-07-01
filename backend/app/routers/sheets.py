@@ -13,6 +13,27 @@ router = APIRouter()
 def _get_redis():
     return fallback_redis
 
+def _get_sheet_stats(sid: int, db: Session):
+    violations = db.query(Violation).filter(Violation.sheet_id == sid).all()
+    real_violations = [v for v in violations if v.ai_verdict != "SECTION"]
+    total = len(real_violations)
+    fail = sum(1 for v in real_violations if v.ai_verdict == "FAIL")
+    completed = 0
+    for v in real_violations:
+        try:
+            import json
+            data = json.loads(v.row_data or "{}")
+            status = ""
+            for k, val in data.items():
+                if k.upper() == "STATUS":
+                    status = str(val).lower()
+                    break
+            if status in ["done", "completed", "hoàn tất"] or "hoàn" in status or "finish" in status:
+                completed += 1
+        except Exception:
+            pass
+    return {"total": total, "fail": fail, "completed": completed}
+
 def extract_id(url):
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
     if not m:
@@ -31,7 +52,7 @@ def has_write_access(sheet, user):
     return False
 
 def has_read_access(sheet, user):
-    if user.role == "admin":
+    if user.role in ["admin", "group_b"]:
         return True
     if sheet.owner_id == user.id:
         return True
@@ -45,7 +66,7 @@ def has_read_access(sheet, user):
             return True
     return False
 
-@router.post("/")
+@router.post("")
 def add(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user=Depends(get_current_user)):
     auto_create = body.get("auto_create", False)
     name = body.get("name", "")
@@ -103,10 +124,10 @@ def add(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get
     background_tasks.add_task(check_sheet, sid, sheet.id, run_id)
     return {"id":sheet.id,"run_id":run_id,"message":"Tạo dự án thành công, đang phân tích...","spreadsheet_url":spreadsheet_url}
 
-@router.get("/")
+@router.get("")
 def list_all(db: Session = Depends(get_db), user=Depends(get_current_user)):
     q = db.query(Sheet)
-    if user.role != "admin":
+    if user.role not in ["admin", "group_b"]:
         from sqlalchemy import or_
         q = q.filter(
             or_(
@@ -119,8 +140,7 @@ def list_all(db: Session = Depends(get_db), user=Depends(get_current_user)):
     sheets = q.order_by(Sheet.created_at.desc()).all()
     result = []
     for s in sheets:
-        count = db.query(Violation).filter(Violation.sheet_id == s.id, Violation.ai_verdict != "PASS").count()
-        fail  = db.query(Violation).filter(Violation.sheet_id == s.id, Violation.ai_verdict == "FAIL").count()
+        stats = _get_sheet_stats(s.id, db)
         result.append({
             "id":s.id,
             "spreadsheet_id":s.spreadsheet_id,
@@ -136,8 +156,9 @@ def list_all(db: Session = Depends(get_db), user=Depends(get_current_user)):
             "telegram_link":s.telegram_link,
             "teams_link":s.teams_link,
             "last_checked":str(s.last_checked) if s.last_checked else None,
-            "violation_count":count,
-            "fail_count":fail
+            "violation_count":stats["total"],
+            "fail_count":stats["fail"],
+            "completed_count":stats["completed"]
         })
     return result
 
@@ -172,10 +193,9 @@ def get_status(sid: int, db: Session = Depends(get_db), user=Depends(get_current
         raise HTTPException(404)
     if not has_read_access(sheet, user):
         raise HTTPException(403, "Access denied")
-    count = db.query(Violation).filter(Violation.sheet_id == sid, Violation.ai_verdict != "PASS").count()
-    fail  = db.query(Violation).filter(Violation.sheet_id == sid, Violation.ai_verdict=="FAIL").count()
+    stats = _get_sheet_stats(sid, db)
     return {"sheet_id":sid,"last_checked":str(sheet.last_checked) if sheet.last_checked else None,
-            "violation_count":count,"fail_count":fail}
+            "violation_count":stats["total"],"fail_count":stats["fail"],"completed_count":stats["completed"]}
 
 @router.get("/{sid}/logs")
 def get_logs(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -255,6 +275,8 @@ def update_sheet(sid: int, body: dict, db: Session = Depends(get_db), user=Depen
         sheet.customer_name = body["customer_name"]
     if "project_code" in body:
         sheet.project_code = body["project_code"]
+    if "member_emails" in body:
+        sheet.member_emails = body["member_emails"]
         
     db.commit()
     db.refresh(sheet)
@@ -267,7 +289,8 @@ def update_sheet(sid: int, body: dict, db: Session = Depends(get_db), user=Depen
         "pm_email": sheet.pm_email,
         "leader_email": sheet.leader_email,
         "customer_name": sheet.customer_name,
-        "project_code": sheet.project_code
+        "project_code": sheet.project_code,
+        "member_emails": sheet.member_emails
     }
 
 

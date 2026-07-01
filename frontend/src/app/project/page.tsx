@@ -26,10 +26,45 @@ export default function SheetsPage() {
   const pollRef = useRef<any>(null);
   const [statusFilter, setStatusFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
+  const [customerFilter, setCustomerFilter] = useState('All');
+  const [yearFilter, setYearFilter] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 9;
 
+  const phases = [
+    '1. Tư vấn',
+    '2. Báo giá',
+    '3. Làm specs',
+    '4. Duyệt HSMT',
+    '5. Chờ ra thầu',
+    '6. Tham gia thầu POP',
+    '6. Tham gia thầu nhà phụ',
+    '7. Trúng Thầu',
+    '7. Rớt thầu',
+    '8. Ký hợp đồng',
+    '9. Đặt hàng',
+    '10. Giao hàng',
+    '11. Triển khai',
+    '12. Hoàn thành triển khai',
+    '13. Nghiệm thu',
+    '14. Thanh toán',
+    '15. Kết thúc dự án',
+    '0. Huỷ'
+  ];
+
   const uniquePMs = Array.from(new Set(sheets.map(s => s.pm_email).filter(Boolean)));
+  const uniqueCustomers = Array.from(new Set(sheets.map(s => s.customer_name).filter(Boolean)));
+  const uniqueYears = Array.from(
+    new Set(
+      sheets.map(s => {
+        try {
+          return s.created_at ? new Date(s.created_at).getFullYear() : new Date().getFullYear();
+        } catch {
+          return new Date().getFullYear();
+        }
+      })
+    )
+  ).sort((a: any, b: any) => b - a);
   const reload = () => getSheets().then(setSheets).catch(() => {});
 
   useEffect(() => { reload(); }, []);
@@ -63,9 +98,15 @@ export default function SheetsPage() {
 
   const getPhaseStyle = (phase: string) => {
     const p = (phase || '').toLowerCase();
-    if (p.includes('hoàn thành') || p.includes('done') || p.includes('close')) return { label: 'Hoàn tất', bg: 'bg-[#dcfce7] text-[#15803d]', bar: 'bg-[#15803d]' };
-    if (p.includes('trì hoãn') || p.includes('delay')) return { label: phase || 'Trì hoãn', bg: 'bg-[#fee2e2] text-[#dc2626]', bar: 'bg-[#dc2626]' };
-    if (p.includes('thiết kế') || p.includes('design') || p.includes('09')) return { label: phase || 'Thiết kế', bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' };
+    if (p.includes('hoàn thành') || p.includes('done') || p.includes('close') || p.includes('15. kết thúc')) {
+      return { label: phase || 'Hoàn tất', bg: 'bg-[#dcfce7] text-[#15803d]', bar: 'bg-[#15803d]' };
+    }
+    if (p.includes('trì hoãn') || p.includes('delay') || p.includes('huỷ') || p.includes('rớt')) {
+      return { label: phase || 'Trì hoãn/Huỷ', bg: 'bg-[#fee2e2] text-[#dc2626]', bar: 'bg-[#dc2626]' };
+    }
+    if (p.includes('thiết kế') || p.includes('design') || p.includes('tư vấn') || p.includes('báo giá') || p.includes('specs') || p.includes('thầu')) {
+      return { label: phase || 'Khởi tạo', bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' };
+    }
     return { label: phase || 'Triển khai', bg: 'bg-[#dbeafe] text-[#1d4ed8]', bar: 'bg-[#0058be]' };
   };
 
@@ -83,16 +124,17 @@ export default function SheetsPage() {
   const filteredSheets = sheets.filter(s => {
     const q = searchTerm.toLowerCase();
     const matchSearch = [(s.name || ''), (s.customer_name || ''), (s.pm_email || ''), (s.project_code || '')].some(v => v.toLowerCase().includes(q));
-    let matchPhase = true;
-    if (statusFilter !== 'All') {
-      const p = (s.current_phase || '').toLowerCase();
-      if (statusFilter === 'execution') matchPhase = ['thực thi', 'triển khai', 'execution'].some(x => p.includes(x));
-      else if (statusFilter === 'planning') matchPhase = ['khởi tạo', 'thiết kế', 'planning'].some(x => p.includes(x));
-      else if (statusFilter === 'done') matchPhase = ['hoàn thành', 'done', 'close'].some(x => p.includes(x));
-      else if (statusFilter === 'delay') matchPhase = p.includes('trì hoãn') || p.includes('delay');
-    }
+    const matchPhase = statusFilter === 'All' || s.current_phase === statusFilter;
     const matchPM = pmFilter === 'All' || s.pm_email === pmFilter;
-    return matchSearch && matchPhase && matchPM;
+    const matchCustomer = customerFilter === 'All' || s.customer_name === customerFilter;
+    let sheetYear = new Date().getFullYear();
+    if (s.created_at) {
+      try {
+        sheetYear = new Date(s.created_at).getFullYear();
+      } catch {}
+    }
+    const matchYear = yearFilter === 'All' || String(sheetYear) === yearFilter;
+    return matchSearch && matchPhase && matchPM && matchCustomer && matchYear;
   });
 
   const totalPages = Math.max(1, Math.ceil(filteredSheets.length / PAGE_SIZE));
@@ -145,10 +187,18 @@ export default function SheetsPage() {
               <label className="text-[10px] font-bold text-[#424754] uppercase mb-1 ml-1">Giai đoạn</label>
               <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setCurrentPage(1); }} className="bg-[#eff4ff] border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#0058be] text-[#0b1c30]">
                 <option value="All">Tất cả giai đoạn</option>
-                <option value="execution">Đang triển khai</option>
-                <option value="planning">Thiết kế / Khởi tạo</option>
-                <option value="done">Hoàn tất</option>
-                <option value="delay">Trì hoãn</option>
+                {phases.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col min-w-[150px]">
+              <label className="text-[10px] font-bold text-[#424754] uppercase mb-1 ml-1">Khách hàng</label>
+              <select value={customerFilter} onChange={e => { setCustomerFilter(e.target.value); setCurrentPage(1); }} className="bg-[#eff4ff] border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#0058be] text-[#0b1c30]">
+                <option value="All">Tất cả khách hàng</option>
+                {uniqueCustomers.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
               </select>
             </div>
             <div className="flex flex-col min-w-[150px]">
@@ -158,9 +208,16 @@ export default function SheetsPage() {
                 {uniquePMs.map(e => <option key={e} value={e}>{getPMName(e)}</option>)}
               </select>
             </div>
+            <div className="flex flex-col min-w-[100px]">
+              <label className="text-[10px] font-bold text-[#424754] uppercase mb-1 ml-1">Năm</label>
+              <select value={yearFilter} onChange={e => { setYearFilter(e.target.value); setCurrentPage(1); }} className="bg-[#eff4ff] border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#0058be] text-[#0b1c30]">
+                <option value="All">Tất cả năm</option>
+                {uniqueYears.map(y => <option key={y} value={String(y)}>{y}</option>)}
+              </select>
+            </div>
             <button
               type="button"
-              onClick={() => { setSearchTerm(''); setStatusFilter('All'); setPmFilter('All'); setCurrentPage(1); }}
+              onClick={() => { setSearchTerm(''); setStatusFilter('All'); setPmFilter('All'); setCustomerFilter('All'); setYearFilter('All'); setCurrentPage(1); }}
               className="flex items-center gap-2 bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#565e74] px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
               <span className="material-symbols-outlined text-[18px]">filter_alt_off</span>
@@ -241,11 +298,11 @@ export default function SheetsPage() {
                             <p className="text-[13px] font-bold text-[#0b1c30]">{s.violation_count ?? 0}</p>
                           </div>
                           <div className="text-center">
-                            <p className="text-[10px] text-[#15803d] font-medium">PASS</p>
-                            <p className="text-[13px] font-bold text-[#15803d]">{Math.max(0, (s.violation_count ?? 0) - (s.fail_count ?? 0))}</p>
+                            <p className="text-[10px] text-[#15803d] font-medium">Hoàn thành</p>
+                            <p className="text-[13px] font-bold text-[#15803d]">{s.completed_count ?? 0}</p>
                           </div>
                           <div className="text-center">
-                            <p className="text-[10px] text-[#dc2626] font-medium">FAIL</p>
+                            <p className="text-[10px] text-[#dc2626] font-medium">Cảnh báo</p>
                             <p className="text-[13px] font-bold text-[#dc2626]">{s.fail_count ?? 0}</p>
                           </div>
                         </div>
@@ -265,14 +322,6 @@ export default function SheetsPage() {
                         </div>
                       </div>
 
-                      {/* Channel Links */}
-                      {(s.zalo_link || s.telegram_link || s.teams_link) && (
-                        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[#f1f5f9]" onClick={e => e.stopPropagation()}>
-                          {s.zalo_link && <a href={s.zalo_link} target="_blank" rel="noreferrer" className="w-5 h-5 rounded-full bg-[#0068FF] text-white flex items-center justify-center text-[9px] font-black hover:scale-110 transition-transform shadow-sm" title="Zalo Group">Z</a>}
-                          {s.telegram_link && <a href={s.telegram_link} target="_blank" rel="noreferrer" className="w-5 h-5 rounded-full bg-[#2AABEE] text-white flex items-center justify-center text-[9px] hover:scale-110 transition-transform shadow-sm" title="Telegram">✈</a>}
-                          {s.teams_link && <a href={s.teams_link} target="_blank" rel="noreferrer" className="w-5 h-5 rounded-full bg-[#4F52B2] text-white flex items-center justify-center text-[9px] font-black hover:scale-110 transition-transform shadow-sm" title="Teams">T</a>}
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -302,7 +351,7 @@ export default function SheetsPage() {
           {/* Pagination */}
           <div className="flex flex-col md:flex-row justify-between items-center border-t border-[#e2e8f0] pt-6 mt-2">
             <p className="text-sm text-[#565e74] mb-4 md:mb-0">
-              Hiển thị <span className="font-bold text-[#0b1c30]">{Math.min((currentPage - 1) * PAGE_SIZE + 1, filteredSheets.length)}–{Math.min(currentPage * PAGE_SIZE, filteredSheets.length)}</span> trên tổng số <span className="font-bold text-[#0b1c30]">{filteredSheets.length}</span> dự án
+              Hiển thị <span className="font-bold text-[#0b1c30]">{Math.min((currentPage - 1) * PAGE_SIZE + 1, filteredSheets.length)}-{Math.min(currentPage * PAGE_SIZE, filteredSheets.length)}</span> trên tổng số <span className="font-bold text-[#0b1c30]">{filteredSheets.length}</span> dự án
             </p>
             <div className="flex items-center gap-2">
               <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className="w-9 h-9 border border-[#c2c6d6] rounded-lg flex items-center justify-center bg-white hover:bg-[#f1f5f9] transition-colors disabled:opacity-40">

@@ -5,12 +5,23 @@ import Navbar from '@/components/Navbar';
 import { getViolations, getSheets, addTask, checkSingleTask, updateSheet } from '@/lib/api';
 
 const PHASE_TABS = [
+  { key: 'ALL', label: 'Master' },
   { key: 'A', label: '1.Sale/Admin' },
   { key: 'B', label: '2.Init' },
   { key: 'C', label: '2.1.Lab/PoC' },
   { key: 'D', label: '3.Implement' },
   { key: 'E', label: '4.MA' },
 ];
+
+const getRowPhase = (tabName: string): string => {
+  const n = (tabName || '').toLowerCase();
+  if (n.includes('sale') || n.includes('admin') || n.startsWith('1.')) return 'A';
+  if (n.includes('poc') || n.includes('lab') || n.startsWith('2.1.')) return 'C';
+  if (n.includes('init') || n.startsWith('2.')) return 'B';
+  if (n.includes('implement') || n.startsWith('3.')) return 'D';
+  if (n.includes('ma') || n.startsWith('4.')) return 'E';
+  return 'A';
+};
 
 function ProjectDetailContent() {
   const searchParams = useSearchParams();
@@ -21,13 +32,37 @@ function ProjectDetailContent() {
   const [loadingProject, setLoadingProject] = useState(true);
   const [items, setItems] = useState<any[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
-  const [activePhase, setActivePhase] = useState<string>('A');
   const [taskSearch, setTaskSearch] = useState('');
   const [checkingTaskId, setCheckingTaskId] = useState<number | null>(null);
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
 
+  // Main Tabs State: 'tasks' | 'meetings' | 'chats' | 'members'
+  const [activeMainTab, setActiveMainTab] = useState<'tasks' | 'meetings' | 'chats' | 'members'>('tasks');
+  const [activePhase, setActivePhase] = useState<string>('A');
+
+
+  // Local state for meetings, chats
+  const [meetings, setMeetings] = useState<any[]>([]);
+  const [newMeetingTitle, setNewMeetingTitle] = useState('');
+  const [newMeetingDate, setNewMeetingDate] = useState('');
+  const [newMeetingTime, setNewMeetingTime] = useState('');
+
+  const [chats, setChats] = useState<any[]>([]);
+  const [chatInput, setChatInput] = useState('');
+
+  // Group Chats state
+  const [chatGroups, setChatGroups] = useState<any[]>([]);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupPlatform, setNewGroupPlatform] = useState('Telegram');
+  const [newGroupLink, setNewGroupLink] = useState('');
+  const [newGroupDesc, setNewGroupDesc] = useState('');
+
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [isAddingMember, setIsAddingMember] = useState(false);
+
+  // Link edit state
   const [editingChannel, setEditingChannel] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [isSavingLink, setIsSavingLink] = useState(false);
@@ -85,6 +120,39 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
+  // Load meetings and chats from localStorage
+  useEffect(() => {
+    if (!id) return;
+    const savedMeetings = localStorage.getItem(`meetings_${id}`);
+    if (savedMeetings) {
+      setMeetings(JSON.parse(savedMeetings));
+    } else {
+      const defaultMeetings = [
+        { id: '1', title: 'Họp kick-off dự án và phân công nhiệm vụ', date: '2026-07-02', time: '14:00', status: 'scheduled', attendees: ['admin@portal.so', 'pm@portal.so'] },
+        { id: '2', title: 'Rà soát lỗ hổng bảo mật và tuân thủ phase 1', date: '2026-07-05', time: '09:30', status: 'scheduled', attendees: ['admin@portal.so', 'leader@portal.so'] }
+      ];
+      setMeetings(defaultMeetings);
+      localStorage.setItem(`meetings_${id}`, JSON.stringify(defaultMeetings));
+    }
+
+    const savedChats = localStorage.getItem(`chats_${id}`);
+    if (savedChats) {
+      setChats(JSON.parse(savedChats));
+    } else {
+      const defaultChats = [
+        { id: '1', sender: 'Technical Lead', role: 'Leader', message: 'Mọi người lưu ý hoàn thành specs đúng hạn để kịp làm HSMT nhé.', time: '15:30 30/06/2026', avatarColor: 'bg-blue-500' },
+        { id: '2', sender: 'Product Manager', role: 'PM', message: 'Tôi đã cập nhật lại file Google Sheet, nhờ AI quét lại hộ xem đạt bao nhiêu % tuân thủ.', time: '16:00 30/06/2026', avatarColor: 'bg-emerald-500' }
+      ];
+      setChats(defaultChats);
+      localStorage.setItem(`chats_${id}`, JSON.stringify(defaultChats));
+    }
+
+    const savedChatGroups = localStorage.getItem(`chatgroups_${id}`);
+    if (savedChatGroups) {
+      setChatGroups(JSON.parse(savedChatGroups));
+    }
+  }, [id]);
+
   useEffect(() => {
     loadProject();
     loadTasks();
@@ -105,16 +173,6 @@ function ProjectDetailContent() {
     } finally {
       setIsSavingLink(false);
     }
-  };
-
-  const getRowPhase = (tabName: string): string => {
-    const n = (tabName || '').toLowerCase();
-    if (n.includes('sale') || n.includes('admin') || n.startsWith('1.')) return 'A';
-    if (n.includes('poc') || n.includes('lab') || n.startsWith('2.1.')) return 'C';
-    if (n.includes('init') || n.startsWith('2.')) return 'B';
-    if (n.includes('implement') || n.startsWith('3.')) return 'D';
-    if (n.includes('ma') || n.startsWith('4.')) return 'E';
-    return 'A';
   };
 
   const parseRowData = (rowData: string) => {
@@ -215,6 +273,7 @@ function ProjectDetailContent() {
       
       setAddingTaskBelowId(null);
       loadTasks();
+      flash('Đã thêm nhiệm vụ thành công!');
     } catch (err: any) {
       alert('Lỗi thêm task: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -238,43 +297,12 @@ function ProjectDetailContent() {
         }
         return item;
       }));
+      flash('AI kiểm tra tuân thủ hoàn tất!');
     } catch (err: any) {
       alert('Lỗi kiểm tra task: ' + (err.response?.data?.detail || err.message));
     } finally {
       setCheckingTaskId(null);
     }
-  };
-
-  const getStatusStyle = (phase: string) => {
-    const p = (phase || '').toLowerCase();
-    if (p.includes('thực thi') || p.includes('giám sát') || p.includes('execution') || p.includes('monitoring')) {
-      return {
-        text: 'ĐANG TRIỂN KHAI',
-        className: 'bg-[#7c3aed]/10 text-[#d2bbff] border-[#7c3aed]/20'
-      };
-    }
-    if (p.includes('khởi tạo') || p.includes('lập kế hoạch') || p.includes('planning') || p.includes('init')) {
-      return {
-        text: 'ĐÃ LÊN LỊCH',
-        className: 'bg-slate-800/40 text-slate-300 border-slate-700/40'
-      };
-    }
-    if (p.includes('trì hoãn') || p.includes('delay')) {
-      return {
-        text: 'TRÌ HOÃN',
-        className: 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-      };
-    }
-    if (p.includes('đóng') || p.includes('hoàn thành') || p.includes('close') || p.includes('done')) {
-      return {
-        text: 'HOÀN THÀNH',
-        className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-      };
-    }
-    return {
-      text: phase?.toUpperCase() || 'ĐANG TRIỂN KHAI',
-      className: 'bg-[#7c3aed]/10 text-[#d2bbff] border-[#7c3aed]/20'
-    };
   };
 
   const getPMDisplay = (email: string) => {
@@ -300,20 +328,82 @@ function ProjectDetailContent() {
 
   const getStatusInfo = (status: string) => {
     const s = (status || '').trim().toLowerCase();
-    if (s === 'done' || s === 'completed') return { label: 'Done', dot: 'bg-emerald-400', text: 'text-emerald-400' };
-    if (s === 'process' || s === 'doing' || s === 'in progress') return { label: 'Process', dot: 'bg-amber-400', text: 'text-amber-400' };
-    if (s === 'review') return { label: 'Review', dot: 'bg-indigo-400', text: 'text-indigo-400' };
-    if (s === 'pending') return { label: 'Pending', dot: 'bg-slate-400', text: 'text-slate-400' };
-    return { label: status || 'Todo', dot: 'bg-slate-500', text: 'text-slate-400' };
+    if (s === 'done' || s === 'completed' || s === 'hoàn tất') return { label: 'Done', dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-[#dcfce7] text-[#15803d]' };
+    if (s === 'process' || s === 'doing' || s === 'in progress' || s === 'đang xử lý') return { label: 'Process', dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-[#fef9c3] text-[#854d0e]' };
+    if (s === 'review') return { label: 'Review', dot: 'bg-blue-500', text: 'text-[#0058be]', bg: 'bg-[#dbeafe] text-[#1d4ed8]' };
+    if (s === 'pending') return { label: 'Pending', dot: 'bg-slate-400', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
+    return { label: status || 'Todo', dot: 'bg-slate-500', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
   };
 
   const getPriorityStyle = (priority: string) => {
     const p = (priority || '').trim().toLowerCase();
-    if (p === 'critical' || p === 'urgent') return 'bg-red-500/15 text-red-400 border-red-500/30';
-    if (p === 'high') return 'bg-orange-500/15 text-orange-400 border-orange-500/30';
-    if (p === 'normal' || p === 'medium') return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
-    if (p === 'low') return 'bg-slate-500/15 text-slate-400 border-slate-500/30';
-    return 'bg-slate-500/15 text-slate-400 border-slate-500/30';
+    if (p === 'critical' || p === 'urgent') return 'bg-red-50 text-red-700 border-red-200';
+    if (p === 'high') return 'bg-orange-50 text-orange-700 border-orange-200';
+    if (p === 'normal' || p === 'medium') return 'bg-[#eff4ff] text-[#0058be] border-[#0058be]/20';
+    if (p === 'low') return 'bg-slate-50 text-slate-700 border-slate-200';
+    return 'bg-slate-50 text-slate-700 border-slate-200';
+  };
+
+  const handleAddMeeting = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMeetingTitle.trim() || !newMeetingDate || !newMeetingTime) {
+      alert('Vui lòng điền đầy đủ thông tin cuộc họp!');
+      return;
+    }
+    const meet = {
+      id: String(Date.now()),
+      title: newMeetingTitle,
+      date: newMeetingDate,
+      time: newMeetingTime,
+      status: 'scheduled',
+      attendees: ['admin@portal.so']
+    };
+    const updated = [meet, ...meetings];
+    setMeetings(updated);
+    localStorage.setItem(`meetings_${id}`, JSON.stringify(updated));
+    setNewMeetingTitle('');
+    setNewMeetingDate('');
+    setNewMeetingTime('');
+    flash('Đã lên lịch cuộc họp mới!');
+  };
+
+  const handleSendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    const msgObj = {
+      id: String(Date.now()),
+      sender: 'Admin User',
+      role: 'Administrator',
+      message: chatInput.trim(),
+      time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString('vi-VN'),
+      avatarColor: 'bg-blue-600'
+    };
+    const updated = [...chats, msgObj];
+    setChats(updated);
+    localStorage.setItem(`chats_${id}`, JSON.stringify(updated));
+    setChatInput('');
+  };
+
+  const handleAddMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMemberEmail.trim()) return;
+    setIsAddingMember(true);
+    try {
+      const currentMembers = project.member_emails ? project.member_emails.split(',') : [];
+      if (currentMembers.includes(newMemberEmail.trim())) {
+        alert('Thành viên này đã tồn tại!');
+        return;
+      }
+      const updatedList = [...currentMembers, newMemberEmail.trim()].join(',');
+      const updated = await updateSheet(Number(id), { member_emails: updatedList });
+      setProject((prev: any) => ({ ...prev, ...updated }));
+      setNewMemberEmail('');
+      flash('Đã thêm thành viên mới thành công!');
+    } catch (err: any) {
+      alert('Không thể thêm thành viên: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setIsAddingMember(false);
+    }
   };
 
   // --- Dynamic Stats calculation ---
@@ -322,7 +412,7 @@ function ProjectDetailContent() {
   
   const completedTasks = realTasks.filter(x => {
     const s = parseRowData(x.row_data).status.toLowerCase();
-    return s === 'done' || s === 'completed';
+    return s === 'done' || s === 'completed' || s === 'hoàn tất';
   }).length;
   
   const passTasks = realTasks.filter(x => x.ai_verdict === 'PASS').length;
@@ -331,16 +421,58 @@ function ProjectDetailContent() {
   const complianceScore = evaluatedTasks > 0 ? Math.round((passTasks / evaluatedTasks) * 100) : null;
   const devProgressPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
   
-  const highPriority = realTasks.filter(x => {
-    const p = parseRowData(x.row_data).priority.toLowerCase();
-    return p === 'high' || p === 'critical' || p === 'urgent';
+  const needEditTasks = realTasks.filter(x => x.ai_verdict === 'REVIEW').length;
+  const flaggedTasks = realTasks.filter(x => x.ai_verdict === 'FAIL').length;
+
+  // Phase-filtered stats for KPI cards (using realTasks to exclude SECTION rows representing phase headers and Roman numerals)
+  const kpiTasks = activePhase === 'ALL'
+    ? realTasks
+    : realTasks.filter(x => getRowPhase(x.tab_name) === activePhase);
+
+  const kpiTotal = kpiTasks.length;
+  const kpiWarning = kpiTasks.filter(x => x.ai_verdict === 'FAIL').length;
+  
+  // KPI Done: tasks with completed status
+  const kpiDone = kpiTasks.filter(x => {
+    const s = parseRowData(x.row_data).status?.toLowerCase() || '';
+    return s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
   }).length;
 
-  const activeMembers = Array.from(new Set(realTasks.map(x => parseRowData(x.row_data).assigned).filter(Boolean))).length;
+  const kpiPass = kpiTasks.filter(x => x.ai_verdict === 'PASS').length;
+  const kpiEvaluated = kpiTasks.length;
+
+  const kpiInProgress = kpiTasks.filter(x => {
+    const s = parseRowData(x.row_data).status?.toLowerCase() || '';
+    return s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress';
+  }).length;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const kpiOverdue = kpiTasks.filter(x => {
+    if (x.ai_verdict === 'SECTION') return false;
+    const td = parseRowData(x.row_data);
+    const s = td.status?.toLowerCase() || '';
+    if (s === 'done' || s === 'completed' || s.includes('hoàn')) return false;
+    const endDate = td.endDate || td.date || '';
+    if (!endDate) return false;
+    const parts = endDate.split('/');
+    let d: Date;
+    if (parts.length === 3) {
+      d = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    } else {
+      d = new Date(endDate);
+    }
+    return !isNaN(d.getTime()) && d < today;
+  }).length;
+
+
+
+  const handleCancelAddTask = () => {
+    setAddingTaskBelowId(null);
+  };
 
   const phaseItems = items.filter(x => {
-    if (getRowPhase(x.tab_name) !== activePhase) return false;
-    if (x.ai_verdict === 'SECTION') return true;
+    if (activePhase !== 'ALL' && getRowPhase(x.tab_name) !== activePhase) return false;
     if (!taskSearch.trim()) return true;
     const td = parseRowData(x.row_data);
     const detail = (td.detail || '').toLowerCase();
@@ -349,28 +481,14 @@ function ProjectDetailContent() {
     const query = taskSearch.toLowerCase();
     return detail.includes(query) || taskId.includes(query) || assigned.includes(query);
   });
-  const phaseLabel = PHASE_TABS.find(p => p.key === activePhase)?.label || '';  // Milestones dynamic check
-  const getPhaseMilestoneState = (key: string) => {
-    const pItems = items.filter(x => getRowPhase(x.tab_name) === key && x.ai_verdict !== 'SECTION');
-    if (pItems.length === 0) return 'planned'; // No tasks
-    const allPass = pItems.every(x => x.ai_verdict === 'PASS');
-    if (allPass) return 'completed';
-    return 'in_progress';
-  };
+  const phaseLabel = activePhase === 'ALL' ? 'Master (Tất cả)' : (PHASE_TABS.find(p => p.key === activePhase)?.label || '');
 
-  const getPhaseStats = (key: string) => {
-    const pItems = items.filter(x => getRowPhase(x.tab_name) === key && x.ai_verdict !== 'SECTION');
-    const total = pItems.length;
-    const pass = pItems.filter(x => x.ai_verdict === 'PASS').length;
-    const fail = pItems.filter(x => x.ai_verdict === 'FAIL').length;
-    return { total, pass, fail };
-  };
   if (loadingProject || !project) {
     return (
-      <div className="h-screen bg-[#0f1117] flex items-center justify-center text-slate-400">
+      <div className="h-screen bg-[#f0f2f5] flex items-center justify-center text-[#565e74]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <span>Loading project details...</span>
+          <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
+          <span>Đang tải thông tin dự án...</span>
         </div>
       </div>
     );
@@ -378,479 +496,412 @@ function ProjectDetailContent() {
 
   const pmInfo = getPMDisplay(project.pm_email);
   const leadInfo = getPMDisplay(project.leader_email);
-
-  const renderChannelRow = (
-    label: string,
-    key: string,
-    value: string,
-    icon: string,
-    iconBg: string,
-    iconColor: string,
-    placeholder: string
-  ) => {
-    const isEditing = editingChannel === key;
-
-    return (
-      <div className="flex items-center justify-between p-3 bg-[#12141c]/50 rounded-lg border border-[#2e3250]/40">
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          <div className={`w-8 h-8 rounded-full ${iconBg} ${iconColor} flex items-center justify-center font-black text-xs shrink-0`}>
-            {icon}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-bold text-slate-200">{label}</p>
-            {isEditing ? (
-              <div className="flex items-center gap-2 mt-1.5 w-full">
-                <input
-                  type="text"
-                  value={editingValue}
-                  onChange={e => setEditingValue(e.target.value)}
-                  placeholder={placeholder}
-                  className="flex-1 bg-[#0f1117] border border-[#2e3250] rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                  autoFocus
-                />
-                <button
-                  onClick={() => handleSaveChannelLink(key, editingValue)}
-                  disabled={isSavingLink}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] px-2.5 py-1 rounded font-bold shrink-0 shadow transition-colors"
-                >
-                  {isSavingLink ? '...' : 'Lưu'}
-                </button>
-                <button
-                  onClick={() => setEditingChannel(null)}
-                  disabled={isSavingLink}
-                  className="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] px-2 py-1 rounded font-bold shrink-0 shadow transition-colors"
-                >
-                  Hủy
-                </button>
-              </div>
-            ) : (
-              <p className="text-[10px] text-slate-500 truncate max-w-[180px] sm:max-w-xs mt-0.5">
-                {value || `Chưa cấu hình liên kết ${label}`}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {!isEditing && (
-          <div className="flex items-center gap-2 shrink-0">
-            {value ? (
-              <>
-                <a
-                  href={value}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[10px] font-bold bg-[#6366f1]/10 hover:bg-[#6366f1]/25 text-indigo-400 hover:text-indigo-300 border border-[#6366f1]/20 px-3 py-1.5 rounded transition-all shadow-sm"
-                >
-                  Truy cập kênh
-                </a>
-                <button
-                  onClick={() => {
-                    setEditingChannel(key);
-                    setEditingValue(value);
-                  }}
-                  className="p-1.5 hover:bg-[#22263a] rounded text-slate-400 hover:text-slate-200 transition-colors flex items-center justify-center border border-[#2e3250]/40"
-                  title="Sửa liên kết"
-                >
-                  <span className="material-symbols-outlined text-[14px]">edit</span>
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={() => {
-                  setEditingChannel(key);
-                  setEditingValue('');
-                }}
-                className="text-[10px] font-bold bg-[#6366f1]/15 hover:bg-[#6366f1]/30 text-indigo-400 px-3 py-1.5 rounded transition-all border border-[#6366f1]/20 flex items-center gap-1 shadow-sm"
-              >
-                <span className="material-symbols-outlined text-[12px]">add</span>
-                Thêm liên kết
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
+  const membersList = project.member_emails ? project.member_emails.split(',').filter(Boolean) : [];
 
   return (
-    <div className="h-screen bg-[#0f1117] text-[#e2e8f0] flex overflow-hidden">
+    <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden font-body-md" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
       
       <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
         
         {/* TOP BAR / NAVIGATION HEADER */}
-        <div className="h-14 bg-[#1a1d27]/80 backdrop-blur-md border-b border-[#2e3250] flex items-center justify-between px-8 shrink-0 z-40">
+        <div className="h-[52px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
           <div className="flex items-center gap-3">
-            <span className="text-slate-500 hover:text-slate-300 cursor-pointer text-xs font-semibold" onClick={() => router.push('/project')}>Danh sách dự án</span>
-            <span className="text-slate-600 text-xs">/</span>
-            <span className="text-xs font-semibold text-slate-300">{project.name}</span>
+            <span className="text-[#565e74] hover:text-[#0058be] cursor-pointer text-xs font-semibold" onClick={() => router.push('/project')}>Dự án</span>
+            <span className="text-[#c2c6d6] text-xs">/</span>
+            <span className="text-xs font-bold text-[#0b1c30]">{project.name}</span>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={loadTasks} className="text-xs font-semibold px-4 py-2 rounded-lg bg-[#22263a] border border-[#2e3250] hover:bg-[#2a2f47] text-slate-200 transition-all">
-              ↻ Refresh
+            <button onClick={loadTasks} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
+              ↻ Tải lại
             </button>
           </div>
         </div>
 
-        {/* MAIN DETAILS AREA */}
-        <div className="flex-1 overflow-y-auto p-8 space-y-6">
+        {/* MAIN CONTAINER */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {msg && (
-            <div className={`p-3 rounded-lg text-xs font-semibold ${msg.e ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'} animate-in fade-in slide-in-from-top-1`}>
+            <div className={`fixed top-4 right-4 z-50 p-3 rounded-lg text-xs font-semibold shadow-xl border ${msg.e ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
             </div>
           )}
 
-          {/* PAGE HERO ROW */}
-          <div className="flex flex-col md:flex-row justify-between items-start gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 px-2 py-0.5 rounded">
-                  ID: {project.project_code || `PRJ-2024-${String(project.id).padStart(3, '0')}`}
-                </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border flex items-center gap-1 ${
-                  project.current_phase 
-                    ? getStatusStyle(project.current_phase).className 
-                    : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                }`}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                  {project.current_phase ? getStatusStyle(project.current_phase).text : 'ACTIVE'}
-                </span>
+          {/* Breadcrumbs & Header */}
+          <div className="mb-4">
+
+            <div className="flex justify-between items-end">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-bold text-[#0b1c30] tracking-tight">{project.name}</h2>
+                  <span className="px-3 py-1 rounded-full bg-[#eff4ff] text-[#1d4ed8] text-[10px] font-bold uppercase border border-[#0058be]/10">
+                    Phase {project.current_phase || '11. Triển khai'}
+                  </span>
+                </div>
+                <p className="text-[12px] text-[#565e74] mt-1">
+                  Mã dự án: {project.project_code || 'Chưa cấu hình'} | Khởi tạo: {project.created_at ? new Date(project.created_at).toLocaleDateString('vi-VN') : '12/01/2024'}
+                </p>
               </div>
-              <h1 className="text-2xl font-bold text-slate-100">{project.name}</h1>
-              <p className="text-xs text-slate-500 mt-1.5 max-w-2xl leading-relaxed">
-                {project.customer_name ? `Khách hàng: ${project.customer_name} · ` : ''}Dự án giám sát và đánh giá tuân thủ chính sách bảo mật hệ thống.
-              </p>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => router.push(`/project`)}
+                  className="bg-white text-slate-800 px-4 py-2 rounded-lg text-[13px] font-medium flex items-center border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
+                >
+                  <span className="material-symbols-outlined text-[18px] mr-2">arrow_back</span>
+                  Quay lại
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* THREE STATS CARDS */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-5 relative overflow-hidden">
-              <span className="absolute right-4 top-4 text-emerald-400 text-lg">⚡</span>
-              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Điểm Tuân Thủ (AI)</p>
-              <h3 className="text-2xl font-extrabold text-slate-100 mt-2">
-                {complianceScore !== null ? `${complianceScore}%` : 'Chưa đánh giá'}
-              </h3>
-              <div className="w-full bg-[#22263a] h-1.5 rounded-full mt-4 overflow-hidden">
-                <div className="bg-emerald-400 h-full rounded-full transition-all duration-500" style={{ width: `${complianceScore !== null ? complianceScore : 0}%` }} />
-              </div>
-              <p className="text-[10px] text-slate-500 mt-2">Dựa trên tỷ lệ số lượng task vượt qua kiểm tra AI</p>
-            </div>
-
-            <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-5 relative overflow-hidden">
-              <span className="absolute right-4 top-4 text-indigo-400 text-lg">📈</span>
-              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Tiến Độ Thực Hiện</p>
-              <h3 className="text-2xl font-extrabold text-slate-100 mt-2">{devProgressPercent}%</h3>
-              <div className="w-full bg-[#22263a] h-1.5 rounded-full mt-4 overflow-hidden">
-                <div className="bg-indigo-500 h-full rounded-full transition-all duration-500" style={{ width: `${devProgressPercent}%` }} />
-              </div>
-              <p className="text-[10px] text-slate-500 mt-2">{completedTasks}/{totalTasks} nhiệm vụ hoàn thành</p>
-            </div>
-
-            <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-5 relative overflow-hidden">
-              <span className="absolute right-4 top-4 text-slate-400 text-lg">📋</span>
-              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Tổng Số Nhiệm Vụ</p>
-              <h3 className="text-2xl font-extrabold text-slate-100 mt-2">{totalTasks}</h3>
-              <div className="flex gap-4 mt-4 text-[10px] text-slate-400">
-                <div className="flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[13px] text-rose-400">error</span>
-                  <span className="text-rose-400 font-bold">{highPriority}</span> Ưu tiên cao
+          {/* KPI ROW */}
+          <div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* KPI 1 - Tổng nhiệm vụ */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tổng nhiệm vụ</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-bold text-[#0b1c30]">{kpiTotal}</span>
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[13px] text-indigo-400">group</span>
-                  <span className="text-slate-300 font-bold">{activeMembers}</span> Thành viên
+                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                  <div className="bg-[#0058be] h-full" style={{ width: '100%' }}></div>
                 </div>
               </div>
-              <p className="text-[10px] text-slate-500 mt-2">Phân bổ trên {PHASE_TABS.length} giai đoạn triển khai</p>
+
+              {/* KPI 2 - Đã phê duyệt */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Đã phê duyệt (AI OK)</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-bold text-emerald-600">{kpiPass}</span>
+                  <span className="text-[#565e74] text-xs">/ {kpiEvaluated}</span>
+                </div>
+                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                  <div className="bg-emerald-500 h-full" style={{ width: `${kpiEvaluated > 0 ? (kpiPass / kpiEvaluated) * 100 : 0}%` }}></div>
+                </div>
+              </div>
+
+              {/* KPI 3 - Đang thực hiện */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Đang thực hiện</p>
+                <div className="flex items-baseline justify-between mt-1">
+                  <span className="text-2xl font-bold text-blue-600">{kpiInProgress}</span>
+                  <span className="material-symbols-outlined text-blue-400 text-[18px]">pending_actions</span>
+                </div>
+                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                  <div className="bg-blue-500 h-full" style={{ width: `${kpiEvaluated > 0 ? (kpiInProgress / kpiEvaluated) * 100 : 0}%` }}></div>
+                </div>
+              </div>
+
+              {/* KPI 4 - Cảnh báo */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Cảnh báo</p>
+                <div className="flex items-baseline justify-between mt-1">
+                  <span className="text-2xl font-bold text-red-600">{kpiWarning}</span>
+                  <span className="material-symbols-outlined text-red-500 text-[18px]">warning</span>
+                </div>
+                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                  <div className="bg-red-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiWarning / kpiTotal) * 100 : 0}%` }}></div>
+                </div>
+              </div>
+
+              {/* KPI 5 - Hoàn thành */}
+              <div className="bg-white p-5 rounded-xl border border-emerald-200 border-2 shadow-sm transition-transform hover:-translate-y-0.5">
+                <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Hoàn thành</p>
+                <div className="flex items-baseline justify-between mt-1">
+                  <span className="text-2xl font-bold text-emerald-600">{kpiDone}</span>
+                  <span className="material-symbols-outlined text-emerald-500 text-[18px]">task_alt</span>
+                </div>
+                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                  <div className="bg-emerald-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiDone / kpiTotal) * 100 : 0}%` }}></div>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* TWO COLUMN GRID */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* TAB NAVIGATION */}
+          <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
+            <button 
+              onClick={() => setActiveMainTab('tasks')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
+                activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">task</span>
+              Tasks
+            </button>
+            <button 
+              onClick={() => setActiveMainTab('meetings')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
+                activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">calendar_month</span>
+              Meetings
+            </button>
+            <button 
+              onClick={() => setActiveMainTab('chats')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
+                activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
+              Chats
+            </button>
+            <button 
+              onClick={() => setActiveMainTab('members')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
+                activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
+              Members
+            </button>
+          </div>
+
+          {/* MAIN TABS CONTENT AREA */}
+          <div className="w-full">
             
-            {/* LEFT COLUMN: COMMUNICATION HUB & COMPLIANCE TABLE */}
-            <div className="lg:col-span-2 space-y-6">
+            {/* LEFT COLUMN: ACTIVE TAB WORKSPACE */}
+            <div className="space-y-6">
               
-              {/* COMMUNICATION HUB */}
-              <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-6">
-                <div className="flex justify-between items-center mb-5">
-                  <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                    <span className="text-indigo-400">💬</span> Communication Hub
-                  </h3>
-                </div>
-
-                <div className="space-y-4">
-                  {project.zalo_link && renderChannelRow(
-                    'Zalo Group Discussion',
-                    'zalo_link',
-                    project.zalo_link,
-                    'Z',
-                    'bg-[#0068FF]/10',
-                    'text-[#0068FF]',
-                    'zalo.me/g/...'
-                  )}
-
-                  {project.telegram_link && renderChannelRow(
-                    'Telegram Channel',
-                    'telegram_link',
-                    project.telegram_link,
-                    '✈',
-                    'bg-[#2AABEE]/10',
-                    'text-[#2AABEE]',
-                    't.me/...'
-                  )}
-
-                  {project.teams_link && renderChannelRow(
-                    'Microsoft Teams Channel',
-                    'teams_link',
-                    project.teams_link,
-                    'T',
-                    'bg-[#4F52B2]/10',
-                    'text-[#4F52B2]',
-                    'teams.microsoft.com/...'
-                  )}
-
-                  {!project.zalo_link && !project.telegram_link && !project.teams_link && (
-                    <div className="text-center py-6 text-slate-500 text-xs italic">
-                      Chưa cấu hình kênh liên lạc nào cho dự án này
-                    </div>
-                  )}
-
-                  {/* Dash bordered button */}
-                  {!showAddChannel && (!project.zalo_link || !project.telegram_link || !project.teams_link) && (
-                    <button
-                      onClick={() => {
-                        setShowAddChannel(true);
-                        if (!project.zalo_link) setAddChannelKey('zalo_link');
-                        else if (!project.telegram_link) setAddChannelKey('telegram_link');
-                        else if (!project.teams_link) setAddChannelKey('teams_link');
-                        else setAddChannelKey('');
-                        setAddChannelValue('');
-                      }}
-                      className="w-full py-3 mt-4 border border-dashed border-[#2e3250] hover:border-indigo-500/60 hover:bg-indigo-500/5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold text-slate-400 hover:text-indigo-400 transition-all cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">add_circle</span>
-                      Thêm kênh liên lạc
-                    </button>
-                  )}
-
-                  {/* Inline add form */}
-                  {showAddChannel && (
-                    <div className="mt-4 p-4 bg-[#12141c]/40 rounded-xl border border-[#2e3250]/70 space-y-3 animate-in fade-in duration-200">
-                      <p className="text-xs font-bold text-slate-300">Thêm kênh liên lạc mới</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <select
-                          value={addChannelKey}
-                          onChange={e => setAddChannelKey(e.target.value)}
-                          className="bg-[#0f1117] border border-[#2e3250] rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-bold"
-                        >
-                          <option value="">-- Chọn kênh --</option>
-                          {!project.zalo_link && <option value="zalo_link">Zalo Group Discussion</option>}
-                          {!project.telegram_link && <option value="telegram_link">Telegram Channel</option>}
-                          {!project.teams_link && <option value="teams_link">Microsoft Teams Channel</option>}
-                        </select>
-                        
-                        <input
-                          type="text"
-                          value={addChannelValue}
-                          onChange={e => setAddChannelValue(e.target.value)}
-                          placeholder="Nhập đường dẫn liên kết..."
-                          className="sm:col-span-2 bg-[#0f1117] border border-[#2e3250] rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                        />
-                      </div>
-                      <div className="flex justify-end gap-2 text-xs">
-                        <button
-                          onClick={() => {
-                            if (!addChannelKey) {
-                              alert('Vui lòng chọn loại kênh liên lạc!');
-                              return;
-                            }
-                            if (!addChannelValue.trim()) {
-                              alert('Vui lòng nhập đường dẫn liên kết!');
-                              return;
-                            }
-                            handleSaveChannelLink(addChannelKey, addChannelValue);
-                          }}
-                          disabled={isSavingLink}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-1.5 rounded shadow transition-colors"
-                        >
-                          {isSavingLink ? 'Đang lưu...' : 'Thêm'}
+              {/* TAB 1: TASKS */}
+              {activeMainTab === 'tasks' && (
+                <div className="space-y-6">
+                  {/* Phase Tabs + Search */}
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center gap-1 bg-[#eff4ff] border border-[#c2c6d6]/60 rounded-xl p-1">
+                      {PHASE_TABS.map(p => (
+                        <button key={p.key} onClick={() => setActivePhase(p.key)}
+                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                            activePhase === p.key
+                              ? p.key === 'ALL'
+                                ? 'bg-[#0058be] text-white shadow-sm'
+                                : 'bg-white text-[#0058be] shadow-sm'
+                              : 'text-[#565e74] hover:text-[#0058be]'
+                          }`}>
+                          {p.label}
                         </button>
-                        <button
-                          onClick={() => setShowAddChannel(false)}
-                          disabled={isSavingLink}
-                          className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold px-4 py-1.5 rounded shadow transition-colors"
-                        >
-                          Hủy
-                        </button>
-                      </div>
+                      ))}
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {/* TASK LIST / COMPLIANCE CHECKLIST */}
-              <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4 flex-1">
-                    <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2 shrink-0">
-                      <span className="text-indigo-400">📋</span> Compliance Checklist
-                    </h3>
-                    
-                    <div className="relative flex-1 max-w-xs">
-                      <span className="material-symbols-outlined text-[16px] text-slate-500 absolute left-3 top-1/2 -translate-y-1/2">search</span>
-                      <input
-                        type="text"
+                    <div className="flex gap-2 items-center">
+                      <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)}
                         placeholder="Tìm kiếm nhiệm vụ..."
-                        value={taskSearch}
-                        onChange={e => setTaskSearch(e.target.value)}
-                        className="w-full bg-[#12141c] text-slate-200 border border-[#2e3250] pl-8 pr-4 py-1.5 rounded-lg text-xs outline-none focus:border-[#7c3aed] transition-all placeholder-slate-500 shadow-sm"
-                      />
+                        className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] outline-none w-52 focus:border-[#0058be] placeholder-[#727785] transition-colors" />
+                      {taskSearch && (
+                        <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline">Xóa</button>
+                      )}
                     </div>
                   </div>
-                  
-                  <div className="flex bg-[#12141c] p-0.5 rounded-lg border border-[#2e3250]/60 max-w-full overflow-x-auto no-scrollbar gap-1">
-                    {PHASE_TABS.map(tab => {
-                      const { total, pass, fail } = getPhaseStats(tab.key);
-                      return (
-                        <button
-                          key={tab.key}
-                          onClick={() => { setActivePhase(tab.key); setAddingTaskBelowId(null); }}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap flex flex-col items-center gap-0.5 min-w-[75px] ${
-                            activePhase === tab.key
-                              ? 'bg-[#22263a] text-indigo-400 shadow-sm border border-[#2e3250]'
-                              : 'text-slate-500 hover:text-slate-400'
-                          }`}
-                        >
-                          <span>{tab.label}</span>
-                          {total > 0 && (
-                            <span className="text-[9px] font-semibold opacity-90 flex items-center gap-1.5 lowercase">
-                              <span className="text-emerald-400">✅ {pass}</span>
-                              {fail > 0 && <span className="text-rose-400">❌ {fail}</span>}
-                            </span>
+
+                  {/* Task Table */}
+                  <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
+                    <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+                      <table className="w-full text-xs min-w-max border-collapse">
+                        <thead className="sticky top-0 z-20 bg-[#f8f9ff] border-b-2 border-[#c2c6d6]" style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }}>
+                          <tr>
+                            <th className="text-center px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '80px', width: '80px' }}>THAO TÁC</th>
+                            <th className="text-left px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '60px', width: '60px' }}>ID</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '300px', width: '300px' }}>DETAIL TASK</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '100px' }}>PRIORITY</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '90px' }}>MANDAY EST</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '105px' }}>STATUS</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>START DATE</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>ASSIGNED</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>SUPPORT</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '85px' }}>KPI RATIO</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '120px' }}>SKILL SOLUTION</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '115px' }}>SKILL VENDOR</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '100px' }}>TICKET ID</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '130px' }}>REMARK</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '80px' }}>SEND</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>END DAY EST</th>
+                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '100px' }}>MANDAY ACTUAL</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#c2c6d6]/40 bg-white">
+                          {loadingTasks && (
+                            <tr>
+                              <td colSpan={17} className="text-center py-16 text-[#565e74]">
+                                <div className="flex items-center justify-center gap-2">
+                                  <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" /> Đang tải...
+                                </div>
+                              </td>
+                            </tr>
                           )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                {loadingTasks ? (
-                  <div className="py-12 text-center text-slate-500 font-medium">
-                    <div className="inline-block w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2" />
-                    <p className="text-xs">Đang tải danh sách nhiệm vụ...</p>
-                  </div>
-                ) : (
-                  <div className="border border-[#2e3250]/50 rounded-xl overflow-hidden shadow-sm">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs text-[#cbd5e1] text-left border-collapse">
-                    <thead>
-                      <tr className="bg-[#22263a]/40 border-b border-[#2e3250]/60 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        <th className="px-4 py-3 text-center w-[100px]">Thao tác</th>
-                        <th className="px-4 py-3 text-left w-[120px]">Task ID</th>
-                        <th className="px-4 py-3 text-left min-w-[280px]">Nhiệm vụ</th>
-                        <th className="px-4 py-3 text-left w-[80px]">Độ ưu tiên</th>
-                        <th className="px-4 py-3 text-left w-[90px]">Giai đoạn</th>
-                        <th className="px-4 py-3 text-left w-[120px]">Người thực hiện</th>
-                      </tr>
-                    </thead>
-                        <tbody className="divide-y divide-[#2e3250]/40">
-                          {phaseItems.map((v, idx) => {
+                          {!loadingTasks && phaseItems.length === 0 && (
+                            <tr>
+                              <td colSpan={17} className="text-center py-16 text-[#565e74] font-medium">
+                                Không tìm thấy nhiệm vụ nào trong {phaseLabel}
+                              </td>
+                            </tr>
+                          )}
+                          {!loadingTasks && phaseItems.map((v, idx) => {
                             const td = parseRowData(v.row_data);
+                            const isSection = v.ai_verdict === 'SECTION';
 
-                            if (v.ai_verdict === 'SECTION') {
-                              return (
-                                <tr key={v.id} className="bg-[#22263a]/20 font-bold border-t border-[#2e3250]/60">
-                                  <td className="px-4 py-2"></td>
-                                  <td className="px-4 py-2"></td>
-                                  <td colSpan={4} className="px-4 py-2 text-indigo-400 uppercase tracking-wider text-[10px] font-extrabold">
-                                    {td.detail || 'SECTION'}
-                                  </td>
-                                </tr>
-                              );
-                            }
+                            let rowElement = null;
 
-                            const statusInfo = getStatusInfo(td.status);
-                            const priStyle = getPriorityStyle(td.priority);
+                            if (isSection) {
+                              // In Master view, hide all section headers (phase banners + Roman numerals)
+                              if (activePhase === 'ALL') return <Fragment key={v.id} />;
 
-                            return (
-                              <Fragment key={v.id}>
-                                <tr className={`group relative hover:bg-[#22263a]/40 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#151821]/20'}`}>
+                              const detail = td.detail || '';
+                              // Only PHASE-prefixed rows get the main banner treatment
+                              const isPhaseHeader = /^PHASE\s/i.test(detail);
+
+                              if (isPhaseHeader) {
+                                rowElement = (
+                                  <tr className="bg-[#eff4ff] border-l-[4px] border-l-[#0058be] border-b border-[#c2c6d6]/30 group relative">
+                                    <td className="px-4 py-3.5"></td>
+                                    <td colSpan={16} className="px-4 py-3.5 relative">
+                                      <span className="text-[12px] font-black text-[#0b1c30] uppercase tracking-wider">{detail}</span>
+
+                                      {/* Hover Add Task Button */}
+                                      <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
+                                        <button
+                                          onClick={() => handleOpenAddTask(v)}
+                                          className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
+                                        >
+                                          <span>+ Thêm task phía dưới</span>
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              } else {
+                                // All other sections (Roman numerals, ALL CAPS group names) → same horizontal position as Phase, lighter style
+                                rowElement = (
+                                  <tr className="bg-[#f8f9ff] border-l-[3px] border-l-[#0058be]/40 border-b border-[#c2c6d6]/30 group relative">
+                                    <td className="px-1 py-2.5"></td>
+                                    <td colSpan={16} className="px-4 py-2.5 relative">
+                                      <span className="text-[11px] font-bold text-[#0058be] uppercase tracking-wide flex items-center gap-2">
+                                        <span className="w-0.5 h-3.5 rounded bg-[#0058be]/40 shrink-0 inline-block" />
+                                        {detail}
+                                      </span>
+
+                                      {/* Hover Add Task Button */}
+                                      <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
+                                        <button
+                                          onClick={() => handleOpenAddTask(v)}
+                                          className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
+                                        >
+                                          <span>+ Thêm task phía dưới</span>
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+                            } else {
+                              const statusInfo = getStatusInfo(td.status);
+                              const priStyle = getPriorityStyle(td.priority);
+
+                              rowElement = (
+                                <tr className={`group relative hover:bg-[#eff4ff]/50 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#f8f9ff]/30'}`}>
                                   {/* 1. ACTIONS */}
-                                  <td className="px-4 py-3 text-center">
-                                    <div className={`transition-opacity duration-150 flex items-center justify-center ${
-                                      checkingTaskId === v.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                    }`}>
-                                      <button
-                                        onClick={() => handleCheckTask(v.id)}
-                                        disabled={checkingTaskId === v.id}
-                                        className="bg-[#6366f1]/10 hover:bg-[#6366f1]/20 text-[#818cf8] border border-[#6366f1]/20 px-2.5 py-1 rounded text-[9px] font-bold transition-all disabled:opacity-50 flex items-center gap-1 mx-auto"
-                                      >
-                                        {checkingTaskId === v.id ? 'Checking...' : 'Check'}
-                                      </button>
+                                  <td className="px-1 py-3 text-center" style={{ width: '80px' }}>
+                                    <button
+                                      onClick={() => handleCheckTask(v.id)}
+                                      disabled={checkingTaskId === v.id}
+                                      className="bg-[#eff4ff] hover:bg-[#0058be]/10 text-[#0058be] border border-[#0058be]/20 px-1.5 py-1 rounded text-[10px] font-bold transition-all disabled:opacity-50 flex items-center gap-1 mx-auto"
+                                      title="Kiểm tra task này"
+                                    >
+                                      {checkingTaskId === v.id ? (
+                                        <div className="w-3 h-3 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
+                                      ) : (
+                                        <span>🔍</span>
+                                      )}
+                                    </button>
+                                  </td>
+                                  {/* 2. TASK ID */}
+                                  <td className="px-2 py-3" style={{ width: '60px' }}>
+                                    <div className="flex items-center gap-1 font-mono text-[#565e74] font-semibold text-[11px]">
+                                      {v.ai_verdict === 'FAIL' ? (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="FAIL" />
+                                      ) : v.ai_verdict === 'PASS' ? (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="PASS" />
+                                      ) : v.ai_verdict === 'REVIEW' ? (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="REVIEW" />
+                                      ) : null}
+                                      <span className="truncate">{td.taskId || v.row_number}</span>
                                     </div>
                                   </td>
-
-                                  {/* 2. TASK ID */}
-                                  <td className="px-4 py-3 font-mono text-slate-400 font-semibold flex items-center gap-1.5">
-                                    {v.ai_verdict === 'FAIL' ? (
-                                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="FAIL" />
-                                    ) : v.ai_verdict === 'PASS' ? (
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="PASS" />
-                                    ) : v.ai_verdict === 'REVIEW' ? (
-                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="REVIEW" />
-                                    ) : null}
-                                    <span>{td.taskId || v.row_number}</span>
-                                  </td>
                                   {/* 3. DETAIL TASK */}
-                                  <td className="px-4 py-3 relative">
-                                    <p className="text-slate-200 text-[11px] font-semibold leading-relaxed">{td.detail || <span className="opacity-30">—</span>}</p>
+                                  <td className="px-4 py-3 relative" style={{ maxWidth: '300px', width: '300px' }}>
+                                    <p className="text-[#0b1c30] text-xs font-semibold leading-relaxed break-words whitespace-normal">{td.detail || <span className="opacity-30">—</span>}</p>
                                     {v.ai_verdict === 'FAIL' && v.ai_reason && (
-                                      <p className="text-red-400/80 text-[10px] mt-1">⚠️ {v.ai_reason}</p>
+                                      <p className="text-red-600 text-[10px] mt-1 font-semibold">⚠️ {v.ai_reason}</p>
                                     )}
                                     {v.ai_suggestion && v.ai_verdict !== 'PASS' && (
-                                      <p className="text-indigo-400/70 text-[10px] mt-0.5">💡 {v.ai_suggestion}</p>
+                                      <p className="text-[#0058be]/80 text-[10px] mt-0.5 font-semibold">💡 {v.ai_suggestion}</p>
                                     )}
 
                                     {/* Hover Add Task Button */}
                                     <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
                                       <button
                                         onClick={() => handleOpenAddTask(v)}
-                                        className="pointer-events-auto bg-indigo-600 hover:bg-indigo-500 text-white text-[8px] font-black px-2.5 py-0.5 rounded-full shadow-lg flex items-center gap-1 active:scale-95 transition-all border border-indigo-400/30 uppercase tracking-wider"
+                                        className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
                                       >
-                                        <span>+ Add task below</span>
+                                        <span>+ Thêm task phía dưới</span>
                                       </button>
                                     </div>
                                   </td>
                                   {/* 4. PRIORITY */}
                                   <td className="px-4 py-3">
                                     {td.priority ? (
-                                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${priStyle}`}>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${priStyle}`}>
                                         {td.priority}
                                       </span>
                                     ) : <span className="opacity-30">—</span>}
                                   </td>
-                                  {/* 5. STATUS */}
+                                  {/* 5. MANDAY EST */}
+                                  <td className="px-4 py-3 text-[#0b1c30] font-mono">{td.manday || <span className="opacity-30">—</span>}</td>
+                                  {/* 6. STATUS */}
                                   <td className="px-4 py-3">
                                     {td.status ? (
                                       <div className="flex items-center gap-1.5">
-                                        <div className={`w-1 h-1 rounded-full shrink-0 ${statusInfo.dot}`} />
-                                        <span className={`text-[9px] font-bold ${statusInfo.text}`}>{statusInfo.label}</span>
+                                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusInfo.dot}`} />
+                                        <span className={`text-[10px] font-bold ${statusInfo.text}`}>{statusInfo.label}</span>
                                       </div>
                                     ) : <span className="opacity-30">—</span>}
                                   </td>
-                                  {/* 6. ASSIGNED */}
-                                  <td className="px-4 py-3 text-slate-300 font-semibold">{td.assigned || <span className="opacity-30">—</span>}</td>
+                                  {/* 7. START DATE */}
+                                  <td className="px-4 py-3 text-[#565e74]">{td.date || <span className="opacity-30">—</span>}</td>
+                                  {/* 8. ASSIGNED */}
+                                  <td className="px-4 py-3 text-[#0b1c30]">{td.assigned || <span className="opacity-30">—</span>}</td>
+                                  {/* 9. SUPPORT */}
+                                  <td className="px-4 py-3 text-[#565e74]">{td.support || <span className="opacity-30">—</span>}</td>
+                                  {/* 10. KPI RATIO */}
+                                  <td className="px-4 py-3 text-[#565e74] font-mono">{td.kpiRatio || <span className="opacity-30">—</span>}</td>
+                                  {/* 11. SKILL SOLUTION */}
+                                  <td className="px-4 py-3 text-[#0b1c30]">{td.skillSolution || <span className="opacity-30">—</span>}</td>
+                                  {/* 12. SKILL VENDOR */}
+                                  <td className="px-4 py-3 text-[#565e74]">{td.skillVendor || <span className="opacity-30">—</span>}</td>
+                                  {/* 13. TICKET ID */}
+                                  <td className="px-4 py-3 text-[#565e74] font-mono">{td.ticketId || <span className="opacity-30">—</span>}</td>
+                                  {/* 14. REMARK */}
+                                  <td className="px-4 py-3 text-[#565e74] max-w-[150px] truncate" title={td.remark}>{td.remark || <span className="opacity-30">—</span>}</td>
+                                  {/* 15. SEND */}
+                                  <td className="px-4 py-3 text-[#565e74]">{td.send || <span className="opacity-30">—</span>}</td>
+                                  {/* 16. END DATE */}
+                                  <td className="px-4 py-3 text-[#565e74]">{td.endDate || <span className="opacity-30">—</span>}</td>
+                                  {/* 17. MANDAY ACTUAL */}
+                                  <td className="px-4 py-3 text-[#0b1c30] font-mono">{td.mandayActual || <span className="opacity-30">—</span>}</td>
                                 </tr>
+                              );
+                            }
 
+                            return (
+                              <Fragment key={v.id}>
+                                {rowElement}
                                 {addingTaskBelowId === v.id && (
-                                  <tr className="bg-[#1b1c2b] border-2 border-indigo-500/40">
+                                  <tr className="bg-[#f1f5f9] border-2 border-[#0058be]/40">
                                     <td className="p-1"></td>
                                     <td className="p-1">
                                       <input
                                         type="text"
                                         value={newForm.taskId}
                                         onChange={e => setNewForm({ ...newForm, taskId: e.target.value })}
-                                        className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
                                         placeholder="ID"
                                       />
                                     </td>
@@ -859,7 +910,7 @@ function ProjectDetailContent() {
                                         type="text"
                                         value={newForm.detail}
                                         onChange={e => setNewForm({ ...newForm, detail: e.target.value })}
-                                        className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold"
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
                                         placeholder="Task detail description..."
                                         autoFocus
                                       />
@@ -868,7 +919,7 @@ function ProjectDetailContent() {
                                       <select
                                         value={newForm.priority}
                                         onChange={e => setNewForm({ ...newForm, priority: e.target.value })}
-                                        className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold"
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
                                       >
                                         <option value="">None</option>
                                         <option value="Critical">Critical</option>
@@ -879,11 +930,21 @@ function ProjectDetailContent() {
                                       </select>
                                     </td>
                                     <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.manday}
+                                        onChange={e => setNewForm({ ...newForm, manday: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
+                                        placeholder="Est"
+                                      />
+                                    </td>
+                                    <td className="p-1">
                                       <select
                                         value={newForm.status}
                                         onChange={e => setNewForm({ ...newForm, status: e.target.value })}
-                                        className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold"
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
                                       >
+                                        <option value="">None</option>
                                         <option value="Todo">Todo</option>
                                         <option value="Process">Process</option>
                                         <option value="Review">Review</option>
@@ -892,27 +953,116 @@ function ProjectDetailContent() {
                                       </select>
                                     </td>
                                     <td className="p-1">
-                                      <div className="flex items-center gap-1 w-full">
+                                      <input
+                                        type="text"
+                                        value={newForm.date}
+                                        onChange={e => setNewForm({ ...newForm, date: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="Start Date"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.assigned}
+                                        onChange={e => setNewForm({ ...newForm, assigned: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="Assignee"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.support}
+                                        onChange={e => setNewForm({ ...newForm, support: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="Support"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.kpiRatio}
+                                        onChange={e => setNewForm({ ...newForm, kpiRatio: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
+                                        placeholder="KPI"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.skillSolution}
+                                        onChange={e => setNewForm({ ...newForm, skillSolution: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="Solution"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.skillVendor}
+                                        onChange={e => setNewForm({ ...newForm, skillVendor: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="Vendor"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.ticketId}
+                                        onChange={e => setNewForm({ ...newForm, ticketId: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
+                                        placeholder="Ticket ID"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.remark}
+                                        onChange={e => setNewForm({ ...newForm, remark: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="Remark"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.send}
+                                        onChange={e => setNewForm({ ...newForm, send: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="Send"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        value={newForm.endDate}
+                                        onChange={e => setNewForm({ ...newForm, endDate: e.target.value })}
+                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                        placeholder="End Date"
+                                      />
+                                    </td>
+                                    <td className="p-1">
+                                      <div className="flex items-center gap-1 w-full min-w-[145px]">
                                         <input
                                           type="text"
-                                          value={newForm.assigned}
-                                          onChange={e => setNewForm({ ...newForm, assigned: e.target.value })}
-                                          className="w-16 bg-[#0f1117] border border-[#2e3250] rounded px-1 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-indigo-500"
-                                          placeholder="Assign"
+                                          value={newForm.mandayActual}
+                                          onChange={e => setNewForm({ ...newForm, mandayActual: e.target.value })}
+                                          className="w-12 bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
+                                          placeholder="Actual"
                                         />
                                         <button
                                           onClick={handleSaveTask}
                                           disabled={savingTask}
-                                          className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[8px] font-black px-1.5 py-1 rounded"
+                                          className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[9px] font-black px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
                                         >
-                                          {savingTask ? '...' : 'Save'}
+                                          {savingTask ? '...' : 'Lưu'}
                                         </button>
                                         <button
-                                          onClick={() => setAddingTaskBelowId(null)}
-                                          disabled={savingTask}
-                                          className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-300 text-[8px] font-black px-1.5 py-1 rounded"
+                                          onClick={handleCancelAddTask}
+                                          className="bg-white border border-slate-300 text-slate-700 text-[9px] font-black px-2 py-1 rounded shadow hover:bg-slate-50 transition-colors shrink-0 uppercase"
                                         >
-                                          X
+                                          Hủy
                                         </button>
                                       </div>
                                     </td>
@@ -921,123 +1071,404 @@ function ProjectDetailContent() {
                               </Fragment>
                             );
                           })}
-
-                          {phaseItems.length === 0 && (
-                            <tr>
-                              <td colSpan={6} className="text-center py-8 text-slate-500 font-medium">
-                                Không có nhiệm vụ nào trong giai đoạn này
-                              </td>
-                            </tr>
-                          )}
                         </tbody>
                       </table>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
+              )}
 
-            {/* RIGHT COLUMN: OWNERS, KEY MILESTONES, EFFICIENCY */}
-            <div className="space-y-6">
-              {/* PROJECT OWNERS */}
-              <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-6">
-                <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider mb-4">👥 Project Owners</h3>
-                <div className="space-y-4">
-                  {/* Leader */}
-                  {project.leader_email && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-[10px] font-extrabold text-indigo-400">
-                        {leadInfo.initials}
+              {/* TAB 2: MEETINGS */}
+              {activeMainTab === 'meetings' && (
+                <div className="space-y-6">
+                  {/* Schedule Meeting Card */}
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-4 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be]">add_circle</span>
+                      Lên lịch cuộc họp dự án
+                    </h3>
+                    <form onSubmit={handleAddMeeting} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                      <div className="sm:col-span-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Tên cuộc họp *</label>
+                        <input
+                          type="text"
+                          required
+                          value={newMeetingTitle}
+                          onChange={e => setNewMeetingTitle(e.target.value)}
+                          placeholder="Ví dụ: Rà soát bảo mật tuần 2"
+                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                        />
                       </div>
                       <div>
-                        <h4 className="text-xs font-bold text-slate-200">{leadInfo.name}</h4>
-                        <p className="text-[10px] text-slate-500">Technical Lead ({leadInfo.email})</p>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Ngày họp *</label>
+                        <input
+                          type="date"
+                          required
+                          value={newMeetingDate}
+                          onChange={e => setNewMeetingDate(e.target.value)}
+                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                        />
                       </div>
-                    </div>
-                  )}
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Giờ họp *</label>
+                          <input
+                            type="time"
+                            required
+                            value={newMeetingTime}
+                            onChange={e => setNewMeetingTime(e.target.value)}
+                            className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all"
+                        >
+                          Đặt lịch
+                        </button>
+                      </div>
+                    </form>
+                  </div>
 
-                  {/* PM */}
-                  {project.pm_email && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[10px] font-extrabold text-emerald-400">
-                        {pmInfo.initials}
+                  {/* Meetings List */}
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be]">calendar_today</span>
+                      Danh sách cuộc họp ({meetings.length})
+                    </h3>
+                    
+                    <div className="space-y-4">
+                      {meetings.map(m => (
+                        <div key={m.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center hover:bg-slate-100/50 transition-colors">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-lg bg-[#eff4ff] text-[#0058be] flex flex-col items-center justify-center shrink-0 border border-[#0058be]/10">
+                              <span className="text-[10px] font-bold uppercase">{new Date(m.date).toLocaleDateString('vi-VN', { month: 'short' })}</span>
+                              <span className="text-base font-black leading-none">{new Date(m.date).getDate()}</span>
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-[#0b1c30]">{m.title}</h4>
+                              <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[12px]">schedule</span>
+                                {m.time} · Tham gia: {m.attendees.join(', ')}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[9px] font-bold uppercase">
+                              Lên lịch
+                            </span>
+                            <button
+                              onClick={() => {
+                                const updated = meetings.filter(x => x.id !== m.id);
+                                setMeetings(updated);
+                                localStorage.setItem(`meetings_${id}`, JSON.stringify(updated));
+                                flash('Đã xóa cuộc họp');
+                              }}
+                              className="text-slate-400 hover:text-red-600 p-1 rounded"
+                              title="Xóa cuộc họp"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {meetings.length === 0 && (
+                        <div className="text-center py-8 text-slate-400 text-xs italic">
+                          Chưa có cuộc họp nào được lên lịch cho dự án này
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: GROUP CHATS */}
+              {activeMainTab === 'chats' && (
+                <div className="space-y-6">
+
+                  {/* Add Group Form */}
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be] text-[20px]">add_circle</span>
+                      Thêm Chat Group
+                    </h3>
+                    <form
+                      onSubmit={e => {
+                        e.preventDefault();
+                        if (!newGroupName.trim() || !newGroupLink.trim()) return;
+                        const group = {
+                          id: Date.now(),
+                          name: newGroupName.trim(),
+                          platform: newGroupPlatform,
+                          link: newGroupLink.trim(),
+                          desc: newGroupDesc.trim(),
+                          createdAt: new Date().toISOString(),
+                        };
+                        const updated = [...chatGroups, group];
+                        setChatGroups(updated);
+                        localStorage.setItem(`chatgroups_${id}`, JSON.stringify(updated));
+                        setNewGroupName('');
+                        setNewGroupLink('');
+                        setNewGroupDesc('');
+                        flash('Đã thêm group chat!');
+                      }}
+                      className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end"
+                    >
+                      <div className="sm:col-span-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên Group *</label>
+                        <input
+                          type="text"
+                          required
+                          value={newGroupName}
+                          onChange={e => setNewGroupName(e.target.value)}
+                          placeholder="VD: VCB-Network-Main"
+                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                        />
                       </div>
+
                       <div>
-                        <h4 className="text-xs font-bold text-slate-200">{pmInfo.name}</h4>
-                        <p className="text-[10px] text-slate-500">Product Manager ({pmInfo.email})</p>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nền tảng</label>
+                        <select
+                          value={newGroupPlatform}
+                          onChange={e => setNewGroupPlatform(e.target.value)}
+                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                        >
+                          <option value="Telegram">Telegram</option>
+                          <option value="Zalo">Zalo</option>
+                          <option value="Slack">Slack</option>
+                          <option value="Teams">Microsoft Teams</option>
+                          <option value="Discord">Discord</option>
+                          <option value="WhatsApp">WhatsApp</option>
+                          <option value="Khác">Khác</option>
+                        </select>
                       </div>
-                    </div>
-                  )}
 
-                  {!project.leader_email && !project.pm_email && (
-                    <p className="text-xs text-slate-500 italic">Chưa cấu hình thông tin quản trị dự án</p>
-                  )}
-                </div>
-              </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Mô tả (tuỳ chọn)</label>
+                        <input
+                          type="text"
+                          value={newGroupDesc}
+                          onChange={e => setNewGroupDesc(e.target.value)}
+                          placeholder="VD: Kênh thông báo nhanh"
+                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                        />
+                      </div>
 
-              <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-6 flex flex-col items-center">
-                <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider mb-6 w-full text-left">📊 Project Progress</h3>
-                
-                {/* Circular Progress Ring */}
-                <div className="relative w-36 h-36 flex items-center justify-center">
-                  <svg className="w-full h-full transform -rotate-90">
-                    <circle cx="72" cy="72" r="60" stroke="#22263a" strokeWidth="10" fill="transparent" />
-                    <circle cx="72" cy="72" r="60" stroke="#6366f1" strokeWidth="10" fill="transparent"
-                      strokeDasharray={2 * Math.PI * 60}
-                      strokeDashoffset={2 * Math.PI * 60 * (1 - devProgressPercent / 100)}
-                      strokeLinecap="round" className="transition-all duration-500" />
-                  </svg>
-                  <div className="absolute text-center">
-                    <h4 className="text-2xl font-black text-slate-100">{devProgressPercent}%</h4>
-                    <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Progress</p>
-                  </div>
-                </div>
-
-                <div className="w-full grid grid-cols-2 gap-4 mt-6 border-t border-[#2e3250]/60 pt-4 text-[10px]">
-                  <div>
-                    <p className="text-slate-500">Hoàn thành</p>
-                    <p className="text-xs font-bold text-emerald-400 mt-0.5">{completedTasks} Tasks</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500">Chờ kiểm duyệt</p>
-                    <p className="text-xs font-bold text-amber-400 mt-0.5">{realTasks.filter(x => parseRowData(x.row_data).status.toLowerCase() === 'review').length} Tasks</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* KEY MILESTONES */}
-              <div className="bg-[#1a1d27]/70 border border-[#2e3250]/70 rounded-xl p-6">
-                <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider mb-5">🏁 Key Milestones</h3>
-                <div className="space-y-5 relative pl-4 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-[2px] before:bg-[#2e3250]/80">
-                  {PHASE_TABS.map((phase, idx) => {
-                    const state = getPhaseMilestoneState(phase.key);
-                    let indicatorBg = 'bg-[#22263a] border-[#2e3250]';
-                    let textClass = 'text-slate-500';
-                    let stateLabel = 'Chưa bắt đầu';
-
-                    if (state === 'completed') {
-                      indicatorBg = 'bg-emerald-500/20 border-emerald-400';
-                      textClass = 'text-emerald-400 font-bold';
-                      stateLabel = 'Đã hoàn thành';
-                    } else if (state === 'in_progress') {
-                      indicatorBg = 'bg-indigo-500/20 border-indigo-400';
-                      textClass = 'text-slate-200 font-bold';
-                      stateLabel = 'Đang thực hiện';
-                    }
-
-                    return (
-                      <div key={phase.key} className="relative">
-                        {/* Dot indicator */}
-                        <div className={`absolute -left-[19px] top-1 w-2.5 h-2.5 rounded-full border-2 ${indicatorBg}`} />
-                        <div>
-                          <p className={`text-xs ${textClass}`}>{phase.label}</p>
-                          <p className="text-[9px] text-slate-500 mt-0.5">Tiến độ: {stateLabel}</p>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Link *</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="url"
+                            required
+                            value={newGroupLink}
+                            onChange={e => setNewGroupLink(e.target.value)}
+                            placeholder="https://..."
+                            className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                          />
+                          <button
+                            type="submit"
+                            className="bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all whitespace-nowrap"
+                          >
+                            Thêm mới
+                          </button>
                         </div>
                       </div>
-                    );
-                  })}
+                    </form>
+                  </div>
+
+                  {/* Groups Grid */}
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be] text-[20px]">forum</span>
+                      Danh sách Group ({chatGroups.length})
+                    </h3>
+
+                    {chatGroups.length === 0 ? (
+                      <div className="py-16 text-center">
+                        <div className="w-14 h-14 rounded-2xl bg-[#eff4ff] mx-auto flex items-center justify-center mb-4">
+                          <span className="material-symbols-outlined text-[#0058be] text-[28px]">forum</span>
+                        </div>
+                        <p className="text-sm font-semibold text-[#565e74]">Chưa có group nào</p>
+                        <p className="text-xs text-slate-400 mt-1">Thêm group chat đầu tiên cho dự án này</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {chatGroups.map(g => {
+                          const PLATFORM_STYLES: Record<string, { bg: string; icon: string; label: string }> = {
+                            Telegram:  { bg: 'bg-[#229ED9]',  icon: '▶',  label: 'Telegram' },
+                            Zalo:      { bg: 'bg-[#0068FF]',  icon: '💬', label: 'Zalo' },
+                            Slack:     { bg: 'bg-[#4A154B]',  icon: '#',  label: 'Slack' },
+                            Teams:     { bg: 'bg-[#6264A7]',  icon: 'T',  label: 'Teams' },
+                            Discord:   { bg: 'bg-[#5865F2]',  icon: '⚡', label: 'Discord' },
+                            WhatsApp:  { bg: 'bg-[#25D366]',  icon: '📱', label: 'WhatsApp' },
+                            Khác:      { bg: 'bg-slate-500',  icon: '💬', label: 'Group' },
+                          };
+                          const ps = PLATFORM_STYLES[g.platform] || PLATFORM_STYLES['Khác'];
+
+                          return (
+                            <div key={g.id} className="relative group bg-white border border-[#c2c6d6]/60 rounded-xl p-5 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5">
+                              {/* Delete btn */}
+                              <button
+                                onClick={() => {
+                                  const updated = chatGroups.filter(x => x.id !== g.id);
+                                  setChatGroups(updated);
+                                  localStorage.setItem(`chatgroups_${id}`, JSON.stringify(updated));
+                                  flash('Đã xóa group');
+                                }}
+                                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-red-500 p-1 rounded"
+                                title="Xóa group"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">close</span>
+                              </button>
+
+                              {/* Platform icon */}
+                              <div className={`w-12 h-12 rounded-2xl ${ps.bg} flex items-center justify-center text-white text-xl mb-3 shadow-sm`}>
+                                {ps.icon}
+                              </div>
+
+                              {/* Name */}
+                              <p className="text-xs font-bold text-[#0b1c30] mb-1 leading-snug">{g.name}</p>
+
+                              {/* Platform + desc */}
+                              <p className="text-[10px] text-slate-400 mb-3">
+                                {ps.label} Group{g.desc ? ` • ${g.desc}` : ''}
+                              </p>
+
+                              {/* Open link */}
+                              <a
+                                href={g.link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[11px] font-bold text-[#0058be] hover:underline flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                                Mở ứng dụng
+                              </a>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* TAB 4: MEMBERS */}
+              {activeMainTab === 'members' && (
+                <div className="space-y-6">
+                  {/* Add Member Card */}
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-4 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be]">person_add</span>
+                      Thêm thành viên mới
+                    </h3>
+                    <form onSubmit={handleAddMember} className="flex gap-2">
+                      <input
+                        type="email"
+                        required
+                        value={newMemberEmail}
+                        onChange={e => setNewMemberEmail(e.target.value)}
+                        placeholder="Nhập địa chỉ email thành viên mới..."
+                        className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-4 py-2 text-xs focus:outline-none focus:border-[#0058be]"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isAddingMember}
+                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-5 py-2 rounded-lg shadow-sm transition-all disabled:opacity-50"
+                      >
+                        {isAddingMember ? 'Đang thêm...' : 'Thêm'}
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Members List Card */}
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be]">groups</span>
+                      Đội ngũ phát triển dự án
+                    </h3>
+
+                    <div className="divide-y divide-slate-100">
+                      {/* Tech Lead */}
+                      {project.leader_email && (
+                        <div className="py-4 flex justify-between items-center">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full bg-[#eff4ff] border border-[#0058be]/20 flex items-center justify-center text-xs font-extrabold text-[#0058be]">
+                              {leadInfo.initials}
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-[#0b1c30]">{leadInfo.name}</h4>
+                              <p className="text-[10px] text-slate-500 mt-0.5">{leadInfo.email}</p>
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-0.5 bg-[#eff4ff] text-[#0058be] text-[10px] font-bold rounded-full uppercase border border-[#0058be]/10">
+                            Technical Lead
+                          </span>
+                        </div>
+                      )}
+
+                      {/* PM */}
+                      {project.pm_email && (
+                        <div className="py-4 flex justify-between items-center">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-xs font-extrabold text-emerald-700">
+                              {pmInfo.initials}
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-[#0b1c30]">{pmInfo.name}</h4>
+                              <p className="text-[10px] text-slate-500 mt-0.5">{pmInfo.email}</p>
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-full uppercase border border-emerald-200/50">
+                            Product Manager
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Other members */}
+                      {membersList.map((m: string) => {
+                        const mInfo = getPMDisplay(m);
+                        return (
+                          <div key={m} className="py-4 flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">
+                                {mInfo.initials}
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-bold text-[#0b1c30]">{mInfo.name}</h4>
+                                <p className="text-[10px] text-slate-500 mt-0.5">{mInfo.email}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="px-2.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full uppercase border border-slate-200">
+                                Member
+                              </span>
+                              <button
+                                onClick={async () => {
+                                  const filtered = membersList.filter((x: string) => x !== m).join(',');
+                                  const updated = await updateSheet(Number(id), { member_emails: filtered });
+                                  setProject((prev: any) => ({ ...prev, ...updated }));
+                                  flash('Đã gỡ bỏ thành viên');
+                                }}
+                                className="text-slate-400 hover:text-red-600 p-1"
+                                title="Gỡ thành viên"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">close</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {!project.leader_email && !project.pm_email && membersList.length === 0 && (
+                        <p className="py-8 text-center text-slate-400 text-xs italic">Chưa có thành viên nào tham gia dự án này</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
             </div>
 
@@ -1053,9 +1484,9 @@ function ProjectDetailContent() {
 export default function ProjectDetailPage() {
   return (
     <Suspense fallback={
-      <div className="h-screen bg-[#0f1117] flex items-center justify-center text-slate-400">
+      <div className="h-screen bg-[#f0f2f5] flex items-center justify-center text-[#565e74]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
           <span>Đang tải thông tin...</span>
         </div>
       </div>

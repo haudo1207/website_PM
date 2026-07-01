@@ -298,34 +298,34 @@ function DashboardContent() {
   };
 
   return (
-    <div className="h-screen bg-[#0f1117] text-[#e2e8f0] flex overflow-hidden">
+    <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
       <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
 
         {/* Top Bar */}
-        <div className="h-14 bg-[#1a1d27]/80 backdrop-blur-md border-b border-[#2e3250] flex items-center justify-between px-6 shrink-0 z-40">
+        <div className="h-14 bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-6 shrink-0 z-40">
           <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <h2 className="text-sm font-bold text-slate-200">Dashboard</h2>
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <h2 className="text-sm font-bold text-[#0b1c30]">Dashboard</h2>
             {activeSheetName && (
               <>
-                <span className="text-slate-600">/</span>
-                <span className="text-xs font-semibold text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-lg border border-indigo-500/20 max-w-[220px] truncate flex items-center gap-1.5" title={activeSheetName}>
+                <span className="text-[#c2c6d6]">/</span>
+                <span className="text-xs font-semibold text-[#0058be] bg-[#eff4ff] px-2.5 py-0.5 rounded-lg border border-[#0058be]/20 max-w-[220px] truncate flex items-center gap-1.5" title={activeSheetName}>
                   {isScanning ? (
-                    <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <div className="w-3 h-3 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin shrink-0" />
                   ) : (
                     <span>📂</span>
                   )}
                   <span>{activeSheetName}</span>
-                  {isScanning && <span className="text-[10px] text-indigo-400/70 animate-pulse">(syncing...)</span>}
+                  {isScanning && <span className="text-[10px] text-[#0058be]/70 animate-pulse">(syncing...)</span>}
                 </span>
               </>
             )}
           </div>
           <div className="flex items-center gap-4 shrink-0">
             <button onClick={load} disabled={isScanning}
-              className="text-xs font-semibold px-4 py-2 rounded-lg bg-[#22263a] border border-[#2e3250] hover:bg-[#2a2f47] text-slate-200 transition-all disabled:opacity-50">
-              ↻ Refresh
+              className="text-xs font-semibold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#c2c6d6]/60 hover:bg-[#0058be]/10 text-[#0058be] transition-all disabled:opacity-50">
+              ↻ Tải lại
             </button>
           </div>
         </div>
@@ -336,26 +336,26 @@ function DashboardContent() {
           {/* 4 Stat Cards — Pulse style */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { label: 'Total Tasks', value: totalTasks, sub: `Across all phases in ${phaseLabel}`, icon: '📋', border: 'border-l-indigo-500', text: 'text-indigo-400' },
-              { label: 'High Priority', value: highPriority, sub: 'Tasks marked as high priority', icon: '🔥', border: 'border-l-rose-500', text: 'text-rose-400' },
-              { label: 'In Progress', value: inProgress, sub: 'Tasks currently active', icon: '⚡', border: 'border-l-amber-500', text: 'text-amber-400' },
-              { label: 'Completed', value: completed, sub: 'Tasks marked as done', icon: '✅', border: 'border-l-emerald-500', text: 'text-emerald-400' },
+              { label: 'Tổng số nhiệm vụ', value: totalTasks, sub: `Trong tất cả các giai đoạn thuộc ${phaseLabel}`, icon: '📋', border: 'border-l-[#0058be]', text: 'text-[#0058be]' },
+              { label: 'Ưu tiên cao', value: highPriority, sub: 'Nhiệm vụ được đánh dấu ưu tiên cao', icon: '🔥', border: 'border-l-rose-500', text: 'text-rose-600' },
+              { label: 'Đang thực hiện', value: inProgress, sub: 'Nhiệm vụ đang hoạt động', icon: '⚡', border: 'border-l-amber-500', text: 'text-amber-600' },
+              { label: 'Hoàn thành', value: completed, sub: 'Nhiệm vụ đã hoàn tất', icon: '✅', border: 'border-l-emerald-500', text: 'text-emerald-600' },
             ].map(c => (
-              <div key={c.label} className={`relative overflow-hidden rounded-xl border border-[#2e3250]/70 border-l-4 ${c.border} bg-[#1a1d27]/70 backdrop-blur-sm p-5`}>
-                <div className="absolute -right-2 -top-2 text-4xl opacity-15">{c.icon}</div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{c.label}</p>
+              <div key={c.label} className={`relative overflow-hidden rounded-xl border border-[#c2c6d6]/60 border-l-4 ${c.border} bg-white p-5 shadow-sm`}>
+                <div className="absolute -right-2 -top-2 text-4xl opacity-10">{c.icon}</div>
+                <p className="text-[10px] font-bold text-[#565e74] uppercase tracking-wider">{c.label}</p>
                 <p className={`text-3xl font-extrabold mt-2 ${c.text}`}>{c.value}</p>
-                <p className="text-[11px] text-slate-400 mt-1">{c.sub}</p>
+                <p className="text-[11px] text-[#565e74] mt-1">{c.sub}</p>
               </div>
             ))}
           </div>
 
           {/* Phase Tabs + Search */}
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-1 bg-[#1a1d27] border border-[#2e3250] rounded-xl p-1">
+            <div className="flex items-center gap-1 bg-[#eff4ff] border border-[#c2c6d6]/60 rounded-xl p-1">
               {PHASE_TABS.map(p => (
                 <button key={p.key} onClick={() => setActivePhase(p.key)}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activePhase === p.key ? 'bg-indigo-500/20 text-indigo-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activePhase === p.key ? 'bg-white text-[#0058be] shadow-sm' : 'text-[#565e74] hover:text-[#0058be]'}`}>
                   {p.label}
                 </button>
               ))}
@@ -363,10 +363,10 @@ function DashboardContent() {
             <div className="flex gap-2 items-center">
               <input value={searchInput} onChange={e => setSearchInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { setSearch(searchInput); } }}
-                placeholder="Search tasks..."
-                className="bg-[#1a1d27] border border-[#2e3250] rounded-lg px-3 py-2 text-xs text-slate-200 outline-none w-52 focus:border-indigo-500/50 placeholder-slate-500 transition-colors" />
+                placeholder="Tìm kiếm nhiệm vụ..."
+                className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] outline-none w-52 focus:border-[#0058be] placeholder-[#727785] transition-colors" />
               {search && (
-                <button onClick={() => { setSearch(''); setSearchInput(''); }} className="text-red-400 text-xs hover:underline">Clear</button>
+                <button onClick={() => { setSearch(''); setSearchInput(''); }} className="text-red-600 text-xs hover:underline">Xóa</button>
               )}
             </div>
           </div>
@@ -374,49 +374,49 @@ function DashboardContent() {
           {/* Task List Header */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h3 className="text-lg font-bold text-slate-100">Task List</h3>
-              <span className="bg-indigo-500/15 text-indigo-400 border border-indigo-500/25 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
-                {phaseItems.length} items
+              <h3 className="text-lg font-bold text-[#0b1c30]">Danh sách nhiệm vụ</h3>
+              <span className="bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+                {phaseItems.length} nhiệm vụ
               </span>
             </div>
           </div>
 
           {/* Task Table */}
-          <div className="bg-[#1a1d27] border border-[#2e3250] rounded-xl shadow-xl flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex-1 min-h-0 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-auto">
               <table className="w-full text-xs min-w-max">
-                <thead className="sticky top-0 z-20 bg-[#151821] border-b border-[#2e3250] shadow-sm">
+                <thead className="sticky top-0 z-20 bg-[#f8f9ff] border-b border-[#c2c6d6] shadow-sm">
                   <tr>
-                    <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[110px]">ACTIONS</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[70px]">TASK ID</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[240px]">DETAIL TASK</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[100px]">PRIORITY</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[90px]">MANDAY EST</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[100px]">STATUS</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[110px]">START DATE</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[110px]">ASSIGNED</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[110px]">SUPPORT</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[85px]">KPI RATIO</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[120px]">SKILL SOLUTION</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[110px]">SKILL VENDOR</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[100px]">TICKET ID</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[120px]">REMARK</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[80px]">SEND</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[110px]">END DAY EST</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-[95px]">MANDAY ACTUAL</th>
+                    <th className="text-center px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[110px]">THAO TÁC</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[70px]">TASK ID</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[240px]">DETAIL TASK</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[100px]">PRIORITY</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[90px]">MANDAY EST</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[100px]">STATUS</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[110px]">START DATE</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[110px]">ASSIGNED</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[110px]">SUPPORT</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[85px]">KPI RATIO</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[120px]">SKILL SOLUTION</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[110px]">SKILL VENDOR</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[100px]">TICKET ID</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[120px]">REMARK</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[80px]">SEND</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[110px]">END DAY EST</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider min-w-[95px]">MANDAY ACTUAL</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#2e3250]/50">
+                <tbody className="divide-y divide-[#c2c6d6]/40">
                   {loading && (
-                    <tr><td colSpan={17} className="text-center py-16 text-slate-500">
+                    <tr><td colSpan={17} className="text-center py-16 text-[#565e74]">
                       <div className="flex items-center justify-center gap-2">
-                        <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> Loading...
+                        <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" /> Đang tải...
                       </div>
                     </td></tr>
                   )}
                   {!loading && phaseItems.length === 0 && (
-                    <tr><td colSpan={17} className="text-center py-16 text-slate-500 font-medium">
-                      No tasks found in {phaseLabel}
+                    <tr><td colSpan={17} className="text-center py-16 text-[#565e74] font-medium">
+                      Không tìm thấy nhiệm vụ nào trong {phaseLabel}
                     </td></tr>
                   )}
                   {!loading && phaseItems.map((v, idx) => {
@@ -431,18 +431,18 @@ function DashboardContent() {
 
                       if (isMainSection) {
                         rowElement = (
-                          <tr className="bg-[#15152a] border-l-[4px] border-l-[#5b57d6] border-b border-[#2e3250]/20 group relative">
+                          <tr className="bg-[#eff4ff] border-l-[4px] border-l-[#0058be] border-b border-[#c2c6d6]/30 group relative">
                             <td className="px-4 py-3.5"></td>
                             <td colSpan={16} className="px-4 py-3.5 relative">
-                              <span className="text-[12px] font-black text-slate-100 uppercase tracking-wider">{detail}</span>
+                              <span className="text-[12px] font-black text-[#0b1c30] uppercase tracking-wider">{detail}</span>
                               
                               {/* Hover Add Task Button */}
                               <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
                                 <button
                                   onClick={() => handleOpenAddTask(v)}
-                                  className="pointer-events-auto bg-[#5b57d6]/95 hover:bg-[#5b57d6] text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all border border-[#5b57d6]/30 uppercase tracking-wider"
+                                  className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
                                 >
-                                  <span>+ Add task below</span>
+                                  <span>+ Thêm task phía dưới</span>
                                 </button>
                               </div>
                             </td>
@@ -450,22 +450,22 @@ function DashboardContent() {
                         );
                       } else {
                         rowElement = (
-                          <tr className="bg-[#1c1a3a]/40 border-b border-[#2e3250]/20 font-bold group relative">
+                          <tr className="bg-[#f8f9ff]/80 border-b border-[#c2c6d6]/30 font-bold group relative">
                             {/* 1. ACTIONS */}
                             <td className="px-4 py-3"></td>
                             {/* 2. TASK ID */}
                             <td className="px-4 py-3"></td>
                             {/* 3. DETAIL TASK */}
-                            <td className="px-4 py-3 text-slate-200 relative pl-8">
+                            <td className="px-4 py-3 text-[#0b1c30] relative pl-8">
                               <span className="text-[11px] font-bold uppercase tracking-wider">{detail}</span>
                               
                               {/* Hover Add Task Button */}
                               <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
                                 <button
                                   onClick={() => handleOpenAddTask(v)}
-                                  className="pointer-events-auto bg-indigo-600/95 hover:bg-indigo-600 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all border border-indigo-400/30 uppercase tracking-wider"
+                                  className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
                                 >
-                                  <span>+ Add task below</span>
+                                  <span>+ Thêm task phía dưới</span>
                                 </button>
                               </div>
                             </td>
@@ -513,30 +513,30 @@ function DashboardContent() {
                       const priStyle = getPriorityStyle(td.priority);
 
                       rowElement = (
-                        <tr className={`group relative hover:bg-[#22263a]/50 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#151821]/30'}`}>
+                        <tr className={`group relative hover:bg-[#eff4ff]/50 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#f8f9ff]/30'}`}>
                           {/* 1. ACTIONS */}
                           <td className="px-4 py-3 text-center">
                             <button
                               onClick={() => handleCheckTask(v.id)}
                               disabled={checkingTaskId === v.id}
-                              className="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-2 py-1 rounded text-[10px] font-bold transition-all disabled:opacity-50 flex items-center gap-1 mx-auto"
+                              className="bg-[#eff4ff] hover:bg-[#0058be]/10 text-[#0058be] border border-[#0058be]/20 px-2 py-1 rounded text-[10px] font-bold transition-all disabled:opacity-50 flex items-center gap-1 mx-auto"
                               title="Kiểm tra task này"
                             >
                               {checkingTaskId === v.id ? (
                                 <>
-                                  <div className="w-2.5 h-2.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                                  <div className="w-2.5 h-2.5 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin shrink-0" />
                                   <span>Checking...</span>
                                 </>
                               ) : (
                                 <>
                                   <span>🔍</span>
-                                  <span>Check Task</span>
+                                  <span>Kiểm tra</span>
                                 </>
                               )}
                             </button>
                           </td>
                           {/* 2. TASK ID */}
-                          <td className="px-4 py-3 font-mono text-slate-400 font-semibold flex items-center gap-1.5">
+                          <td className="px-4 py-3 font-mono text-[#565e74] font-semibold flex items-center gap-1.5">
                             {v.ai_verdict === 'FAIL' ? (
                               <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="FAIL" />
                             ) : v.ai_verdict === 'PASS' ? (
@@ -548,21 +548,21 @@ function DashboardContent() {
                           </td>
                           {/* 3. DETAIL TASK */}
                           <td className="px-4 py-3 relative">
-                            <p className="text-slate-200 text-xs font-semibold leading-relaxed">{td.detail || <span className="opacity-30">—</span>}</p>
+                            <p className="text-[#0b1c30] text-xs font-semibold leading-relaxed">{td.detail || <span className="opacity-30">—</span>}</p>
                             {v.ai_verdict === 'FAIL' && v.ai_reason && (
-                              <p className="text-red-400/80 text-[10px] mt-1">⚠️ {v.ai_reason}</p>
+                              <p className="text-red-600 text-[10px] mt-1 font-semibold">⚠️ {v.ai_reason}</p>
                             )}
                             {v.ai_suggestion && v.ai_verdict !== 'PASS' && (
-                              <p className="text-indigo-400/70 text-[10px] mt-0.5">💡 {v.ai_suggestion}</p>
+                              <p className="text-[#0058be]/80 text-[10px] mt-0.5 font-semibold">💡 {v.ai_suggestion}</p>
                             )}
 
                             {/* Hover Add Task Button */}
                             <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
                               <button
                                 onClick={() => handleOpenAddTask(v)}
-                                className="pointer-events-auto bg-indigo-600/95 hover:bg-indigo-600 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all border border-indigo-400/30 uppercase tracking-wider"
+                                className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
                               >
-                                <span>+ Add task below</span>
+                                <span>+ Thêm task phía dưới</span>
                               </button>
                             </div>
                           </td>
@@ -575,7 +575,7 @@ function DashboardContent() {
                             ) : <span className="opacity-30">—</span>}
                           </td>
                           {/* 5. MANDAY EST */}
-                          <td className="px-4 py-3 text-slate-300 font-mono">{td.manday || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#0b1c30] font-mono">{td.manday || <span className="opacity-30">—</span>}</td>
                           {/* 6. STATUS */}
                           <td className="px-4 py-3">
                             {td.status ? (
@@ -586,27 +586,27 @@ function DashboardContent() {
                             ) : <span className="opacity-30">—</span>}
                           </td>
                           {/* 7. START DATE */}
-                          <td className="px-4 py-3 text-slate-400">{td.date || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74]">{td.date || <span className="opacity-30">—</span>}</td>
                           {/* 8. ASSIGNED */}
-                          <td className="px-4 py-3 text-slate-300">{td.assigned || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#0b1c30]">{td.assigned || <span className="opacity-30">—</span>}</td>
                           {/* 9. SUPPORT */}
-                          <td className="px-4 py-3 text-slate-400">{td.support || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74]">{td.support || <span className="opacity-30">—</span>}</td>
                           {/* 10. KPI RATIO */}
-                          <td className="px-4 py-3 text-slate-400 font-mono">{td.kpiRatio || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74] font-mono">{td.kpiRatio || <span className="opacity-30">—</span>}</td>
                           {/* 11. SKILL SOLUTION */}
-                          <td className="px-4 py-3 text-slate-300">{td.skillSolution || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#0b1c30]">{td.skillSolution || <span className="opacity-30">—</span>}</td>
                           {/* 12. SKILL VENDOR */}
-                          <td className="px-4 py-3 text-slate-400">{td.skillVendor || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74]">{td.skillVendor || <span className="opacity-30">—</span>}</td>
                           {/* 13. TICKET ID */}
-                          <td className="px-4 py-3 text-slate-400 font-mono">{td.ticketId || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74] font-mono">{td.ticketId || <span className="opacity-30">—</span>}</td>
                           {/* 14. REMARK */}
-                          <td className="px-4 py-3 text-slate-400 max-w-[150px] truncate" title={td.remark}>{td.remark || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74] max-w-[150px] truncate" title={td.remark}>{td.remark || <span className="opacity-30">—</span>}</td>
                           {/* 15. SEND */}
-                          <td className="px-4 py-3 text-slate-400">{td.send || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74]">{td.send || <span className="opacity-30">—</span>}</td>
                           {/* 16. END DATE */}
-                          <td className="px-4 py-3 text-slate-400">{td.endDate || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#565e74]">{td.endDate || <span className="opacity-30">—</span>}</td>
                           {/* 17. MANDAY ACTUAL */}
-                          <td className="px-4 py-3 text-slate-300 font-mono">{td.mandayActual || <span className="opacity-30">—</span>}</td>
+                          <td className="px-4 py-3 text-[#0b1c30] font-mono">{td.mandayActual || <span className="opacity-30">—</span>}</td>
                         </tr>
                       );
                     }
@@ -615,7 +615,7 @@ function DashboardContent() {
                       <Fragment key={v.id}>
                         {rowElement}
                         {addingTaskBelowId === v.id && (
-                          <tr className="bg-[#1b1c2b] border-2 border-indigo-500/40">
+                          <tr className="bg-[#f1f5f9] border-2 border-[#0058be]/40">
                             {/* 1. ACTIONS */}
                             <td className="p-1"></td>
                             {/* 2. TASK ID */}
@@ -624,7 +624,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.taskId}
                                 onChange={e => setNewForm({ ...newForm, taskId: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
                                 placeholder="ID"
                               />
                             </td>
@@ -634,7 +634,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.detail}
                                 onChange={e => setNewForm({ ...newForm, detail: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
                                 placeholder="Task detail description..."
                                 autoFocus
                               />
@@ -644,7 +644,7 @@ function DashboardContent() {
                               <select
                                 value={newForm.priority}
                                 onChange={e => setNewForm({ ...newForm, priority: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
                               >
                                 <option value="">None</option>
                                 <option value="Critical">Critical</option>
@@ -660,7 +660,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.manday}
                                 onChange={e => setNewForm({ ...newForm, manday: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
                                 placeholder="Est"
                               />
                             </td>
@@ -669,7 +669,7 @@ function DashboardContent() {
                               <select
                                 value={newForm.status}
                                 onChange={e => setNewForm({ ...newForm, status: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
                               >
                                 <option value="">None</option>
                                 <option value="Todo">Todo</option>
@@ -685,7 +685,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.date}
                                 onChange={e => setNewForm({ ...newForm, date: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="Start Date"
                               />
                             </td>
@@ -695,7 +695,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.assigned}
                                 onChange={e => setNewForm({ ...newForm, assigned: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="Assignee"
                               />
                             </td>
@@ -705,7 +705,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.support}
                                 onChange={e => setNewForm({ ...newForm, support: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="Support"
                               />
                             </td>
@@ -715,7 +715,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.kpiRatio}
                                 onChange={e => setNewForm({ ...newForm, kpiRatio: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
                                 placeholder="KPI"
                               />
                             </td>
@@ -725,7 +725,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.skillSolution}
                                 onChange={e => setNewForm({ ...newForm, skillSolution: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="Solution"
                               />
                             </td>
@@ -735,7 +735,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.skillVendor}
                                 onChange={e => setNewForm({ ...newForm, skillVendor: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="Vendor"
                               />
                             </td>
@@ -745,7 +745,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.ticketId}
                                 onChange={e => setNewForm({ ...newForm, ticketId: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
                                 placeholder="Ticket ID"
                               />
                             </td>
@@ -755,7 +755,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.remark}
                                 onChange={e => setNewForm({ ...newForm, remark: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="Remark"
                               />
                             </td>
@@ -765,7 +765,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.send}
                                 onChange={e => setNewForm({ ...newForm, send: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="Send"
                               />
                             </td>
@@ -775,7 +775,7 @@ function DashboardContent() {
                                 type="text"
                                 value={newForm.endDate}
                                 onChange={e => setNewForm({ ...newForm, endDate: e.target.value })}
-                                className="w-full bg-[#0f1117] border border-[#2e3250] rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
                                 placeholder="End Date"
                               />
                             </td>
@@ -786,7 +786,7 @@ function DashboardContent() {
                                   type="text"
                                   value={newForm.mandayActual}
                                   onChange={e => setNewForm({ ...newForm, mandayActual: e.target.value })}
-                                  className="w-12 bg-[#0f1117] border border-[#2e3250] rounded px-1 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                                  className="w-12 bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
                                   placeholder="Actual"
                                 />
                                 <button
@@ -794,14 +794,14 @@ function DashboardContent() {
                                   disabled={savingTask}
                                   className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[9px] font-black px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
                                 >
-                                  {savingTask ? '...' : 'Save'}
+                                  {savingTask ? '...' : 'Lưu'}
                                 </button>
                                 <button
                                   onClick={handleCancelAddTask}
                                   disabled={savingTask}
-                                  className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-300 text-[9px] font-black px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
+                                  className="bg-[#565e74] hover:bg-[#565e74]/90 disabled:opacity-50 text-white text-[9px] font-black px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
                                 >
-                                  Cancel
+                                  Hủy
                                 </button>
                               </div>
                             </td>
@@ -818,7 +818,7 @@ function DashboardContent() {
         </div>
 
         {/* Footer */}
-        <div className="border-t border-[#2e3250] bg-[#1a1d27] px-6 py-3 text-center text-[10px] text-slate-600">
+        <div className="border-t border-[#c2c6d6]/60 bg-white px-6 py-3 text-center text-[10px] text-[#565e74]">
           © 2026 SecurityZone Team · Plane.so Compliance Dashboard
         </div>
       </div>
@@ -829,10 +829,10 @@ function DashboardContent() {
 export default function DashboardPage() {
   return (
     <Suspense fallback={
-      <div className="h-screen bg-[#0f1117] flex items-center justify-center text-slate-400">
+      <div className="h-screen bg-[#f0f2f5] flex items-center justify-center text-[#565e74]">
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <span>Loading dashboard...</span>
+          <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
+          <span>Đang tải bảng điều khiển...</span>
         </div>
       </div>
     }>

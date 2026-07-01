@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { isAdmin, getName, logout, getRole } from '@/lib/auth';
+import { getName, logout, getRole } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
 import { getSheets } from '@/lib/api';
 
@@ -18,7 +18,7 @@ function NavbarContent() {
     getSheets().then(setSheets).catch(() => {});
   }, [path]);
 
-  const currentProjId = searchParams.get('project');
+  const currentProjId = searchParams.get('project') || searchParams.get('id');
 
   const nav = [
     { href: '/dashboard', label: 'Dashboard', icon: (
@@ -40,17 +40,15 @@ function NavbarContent() {
   ].filter(n => n.show !== false);
 
   return (
-    <aside className="w-[230px] flex-shrink-0 bg-primary border-r border-border/50 flex flex-col fixed top-0 bottom-0 left-0 z-50 overflow-y-auto">
+    <aside className="w-[230px] flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-50 overflow-y-auto">
 
       {/* Logo */}
-      <div className="p-5 border-b border-border/50">
+      <div className="p-5 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-            ⚡
-          </div>
+          <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
           <div>
-            <div className="text-sm font-extrabold text-text-primary tracking-tight leading-none">Plane.so</div>
-            <div className="text-[10px] text-text-secondary font-semibold mt-0.5">SecurityZone · v2.1</div>
+            <div className="text-sm font-extrabold text-white tracking-tight leading-none">Plane.so</div>
+            <div className="text-[10px] text-slate-400 font-semibold mt-0.5">SecurityZone · v2.1</div>
           </div>
         </div>
       </div>
@@ -63,8 +61,8 @@ function NavbarContent() {
             <Link key={n.href} href={n.href}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
                 active
-                  ? 'bg-accent/15 text-accent'
-                  : 'text-text-secondary hover:bg-secondary hover:text-text-primary'
+                  ? 'bg-white/10 text-white'
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-white'
               }`}>
               {n.icon}
               {n.label}
@@ -74,10 +72,10 @@ function NavbarContent() {
       </nav>
 
       {/* Projects Section */}
-      <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-border/30 pt-4">
+      <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
         <div className="flex items-center justify-between px-3 mb-2 shrink-0">
-          <span className="text-[10px] font-bold text-text-secondary/60 uppercase tracking-wider">Projects</span>
-          <Link href="/projects/new" className="text-text-secondary/60 hover:text-accent p-0.5 rounded transition-colors" title="Tạo dự án mới">
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Projects</span>
+          <Link href="/project" className="text-slate-500 hover:text-white p-0.5 rounded transition-colors" title="Quản lý dự án">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
@@ -85,16 +83,16 @@ function NavbarContent() {
         </div>
         <div className="space-y-0.5">
           {sheets.map(s => {
-            const href = `/dashboard?project=${s.id}`;
-            const active = path === '/dashboard' && currentProjId === String(s.id);
+            const href = `/project/detail?id=${s.id}`;
+            const active = currentProjId === String(s.id);
             return (
               <Link key={s.id} href={href}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all truncate ${
                   active
-                    ? 'bg-accent/10 text-accent border-l-2 border-accent rounded-l-none pl-2.5'
-                    : 'text-text-secondary hover:bg-secondary hover:text-text-primary'
+                    ? 'bg-white/10 text-white border-l-2 border-indigo-500 rounded-l-none pl-2.5'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 }`}>
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-accent' : 'bg-text-secondary/40'}`} />
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-indigo-500' : 'bg-slate-600'}`} />
                 <span className="truncate">{s.name || 'Unnamed'}</span>
               </Link>
             );
@@ -103,18 +101,18 @@ function NavbarContent() {
       </div>
 
       {/* User */}
-      <div className="p-3 border-t border-border/50 space-y-2.5">
+      <div className="p-3 border-t border-slate-800 space-y-2.5">
         <div className="flex items-center gap-2.5 px-1">
-          <div className="w-8 h-8 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center text-xs font-bold text-accent uppercase">
+          <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
             {name ? name.substring(0, 2) : 'US'}
           </div>
           <div className="truncate flex-grow">
-            <div className="text-[11px] font-bold text-text-primary truncate">{name || 'User'}</div>
-            <div className="text-[9px] text-text-secondary uppercase font-bold tracking-wider">{role || 'member'}</div>
+            <div className="text-[11px] font-bold text-white truncate">{name || 'User'}</div>
+            <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">{role || 'member'}</div>
           </div>
         </div>
         <button onClick={logout}
-          className="w-full text-center py-1.5 rounded-lg bg-secondary hover:bg-danger/10 text-xs font-semibold text-text-secondary hover:text-danger transition-colors border border-border/50">
+          className="w-full text-center py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/40 text-xs font-semibold text-slate-300 hover:text-red-400 transition-colors border border-slate-700/60">
           Sign out
         </button>
         <div className="text-[9px] text-slate-600 text-center">© 2026 SecurityZone Team</div>
@@ -125,7 +123,7 @@ function NavbarContent() {
 
 export default function Navbar() {
   return (
-    <Suspense fallback={<aside className="w-[230px] shrink-0 bg-[#12141c] border-r border-[#2e3250]/50" />}>
+    <Suspense fallback={<aside className="w-[230px] shrink-0 bg-[#0F172A] border-r border-slate-800" />}>
       <NavbarContent />
     </Suspense>
   );

@@ -15,7 +15,10 @@ with engine.connect() as conn:
         ("project_code", "VARCHAR"),
         ("customer_name", "VARCHAR"),
         ("current_phase", "VARCHAR"),
-        ("spreadsheet_url", "VARCHAR")
+        ("spreadsheet_url", "VARCHAR"),
+        ("zalo_link", "VARCHAR"),
+        ("telegram_link", "VARCHAR"),
+        ("teams_link", "VARCHAR")
     ]:
         try:
             conn.execute(text(f"ALTER TABLE sheets ADD COLUMN {col} {col_type}"))
