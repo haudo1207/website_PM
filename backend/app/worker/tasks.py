@@ -90,7 +90,7 @@ def check_sheet(spreadsheet_id: str, db_sheet_id: int, run_id: str):
             ai_cfg["model"] = os.environ.get("AI_MODEL","gpt-4o-mini")
  
         log_progress(r, db_sheet_id, f"Đang kết nối Google Sheets và đọc các Tab...")
-        tabs = read_tabs(spreadsheet_id, req_cols, tab_names)
+        tabs = read_tabs(spreadsheet_id, req_cols, None)
  
         db.query(Violation).filter(Violation.sheet_id == db_sheet_id).delete()
         db.commit()
