@@ -75,7 +75,7 @@ function NavbarContent() {
       <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
         <div className="flex items-center justify-between px-3 mb-2 shrink-0">
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Projects</span>
-          <Link href="/project" className="text-slate-500 hover:text-white p-0.5 rounded transition-colors" title="Quản lý dự án">
+          <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50" title="Thêm dự án mới">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>

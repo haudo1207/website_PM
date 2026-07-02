@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.sheet import Sheet
 from ..models.violation import Violation
+from ..models.chat_group import ChatGroup
 from ..utils.auth import get_current_user
 from ..utils.redis_fallback import fallback_redis
 import uuid, re, os, json as _json
@@ -170,6 +171,7 @@ def remove(sid: int, db: Session = Depends(get_db), user=Depends(get_current_use
     if not has_write_access(sheet, user):
         raise HTTPException(403, "Not allowed to delete this sheet")
     db.query(Violation).filter(Violation.sheet_id == sid).delete()
+    db.query(ChatGroup).filter(ChatGroup.sheet_id == sid).delete()
     db.delete(sheet)
     db.commit()
     return {"message":"Deleted"}
@@ -292,5 +294,59 @@ def update_sheet(sid: int, body: dict, db: Session = Depends(get_db), user=Depen
         "project_code": sheet.project_code,
         "member_emails": sheet.member_emails
     }
+
+@router.get("/{sid}/chat-groups")
+def get_chat_groups(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Sheet not found")
+    if not has_read_access(sheet, user):
+        raise HTTPException(403, "Access denied")
+    groups = db.query(ChatGroup).filter(ChatGroup.sheet_id == sid).order_by(ChatGroup.created_at.desc()).all()
+    return groups
+
+@router.post("/{sid}/chat-groups")
+def create_chat_group(sid: int, body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Sheet not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Not allowed to write to this sheet")
+    
+    name = body.get("name")
+    platform = body.get("platform")
+    link = body.get("link")
+    desc = body.get("desc")
+    
+    if not name or not platform or not link:
+        raise HTTPException(400, "name, platform, and link are required")
+        
+    group = ChatGroup(
+        sheet_id=sid,
+        name=name,
+        platform=platform,
+        link=link,
+        desc=desc
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return group
+
+@router.delete("/{sid}/chat-groups/{cgid}")
+def delete_chat_group(sid: int, cgid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Sheet not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Not allowed to delete from this sheet")
+        
+    group = db.query(ChatGroup).filter(ChatGroup.sheet_id == sid, ChatGroup.id == cgid).first()
+    if not group:
+        raise HTTPException(404, "Chat group not found")
+        
+    db.delete(group)
+    db.commit()
+    return {"message": "Chat group deleted"}
 
 

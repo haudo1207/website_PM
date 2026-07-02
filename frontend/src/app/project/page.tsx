@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, useRef, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getSheets, addSheet, checkSheet, deleteSheet, getSheetLogs } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
@@ -8,9 +8,26 @@ import { isAdmin } from '@/lib/auth';
 interface Log { time: string; msg: string; level: string; }
 interface CS { id: number; status: string; logs: Log[]; }
 
-export default function SheetsPage() {
+const getYearFromProjectCode = (projectCode: string, createdAt: string): number => {
+  if (projectCode) {
+    const match = projectCode.match(/(19\d{2}|20\d{2})/);
+    if (match) {
+      return parseInt(match[1], 10);
+    }
+  }
+  if (createdAt) {
+    try {
+      return new Date(createdAt).getFullYear();
+    } catch {}
+  }
+  return new Date().getFullYear();
+};
+
+function SheetsPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [sheets, setSheets] = useState<any[]>([]);
+  const [syncingSheetId, setSyncingSheetId] = useState<number | null>(null);
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   const [leaderEmail, setLeaderEmail] = useState('');
@@ -56,31 +73,41 @@ export default function SheetsPage() {
   const uniqueCustomers = Array.from(new Set(sheets.map(s => s.customer_name).filter(Boolean)));
   const uniqueYears = Array.from(
     new Set(
-      sheets.map(s => {
-        try {
-          return s.created_at ? new Date(s.created_at).getFullYear() : new Date().getFullYear();
-        } catch {
-          return new Date().getFullYear();
-        }
-      })
+      sheets.map(s => getYearFromProjectCode(s.project_code, s.created_at))
     )
   ).sort((a: any, b: any) => b - a);
   const reload = () => getSheets().then(setSheets).catch(() => {});
 
   useEffect(() => { reload(); }, []);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [cs?.logs]);
+  useEffect(() => {
+    const pollId = searchParams.get('poll');
+    if (pollId) {
+      flash('Đang khởi tạo đồng bộ dữ liệu dự án mới...');
+      setSyncingSheetId(Number(pollId));
+      poll(Number(pollId), false);
+      const newUrl = window.location.pathname;
+      window.history.replaceState({ ...window.history.state, as: newUrl, url: newUrl }, '', newUrl);
+    }
+  }, [searchParams]);
 
   const flash = (t: string, e = false) => { setMsg({ t, e }); setTimeout(() => setMsg(null), 4000); };
 
-  const poll = (id: number) => {
+  const poll = (id: number, showTerminal = true) => {
     if (pollRef.current) clearInterval(pollRef.current);
     setCs({ id, status: 'running', logs: [] });
-    setShowLog(true);
+    if (showTerminal) {
+      setShowLog(true);
+    }
     pollRef.current = setInterval(async () => {
       try {
         const r = await getSheetLogs(id);
         setCs({ id, status: r.status, logs: r.logs || [] });
-        if (['success', 'failed', 'error'].includes(r.status)) { clearInterval(pollRef.current); reload(); }
+        if (['success', 'failed', 'error'].includes(r.status)) {
+          clearInterval(pollRef.current);
+          setSyncingSheetId(null);
+          reload();
+        }
       } catch {}
     }, 2000);
   };
@@ -122,17 +149,15 @@ export default function SheetsPage() {
   };
 
   const filteredSheets = sheets.filter(s => {
+    if (syncingSheetId !== null && s.id === syncingSheetId) {
+      return false;
+    }
     const q = searchTerm.toLowerCase();
     const matchSearch = [(s.name || ''), (s.customer_name || ''), (s.pm_email || ''), (s.project_code || '')].some(v => v.toLowerCase().includes(q));
     const matchPhase = statusFilter === 'All' || s.current_phase === statusFilter;
     const matchPM = pmFilter === 'All' || s.pm_email === pmFilter;
     const matchCustomer = customerFilter === 'All' || s.customer_name === customerFilter;
-    let sheetYear = new Date().getFullYear();
-    if (s.created_at) {
-      try {
-        sheetYear = new Date(s.created_at).getFullYear();
-      } catch {}
-    }
+    const sheetYear = getYearFromProjectCode(s.project_code, s.created_at);
     const matchYear = yearFilter === 'All' || String(sheetYear) === yearFilter;
     return matchSearch && matchPhase && matchPM && matchCustomer && matchYear;
   });
@@ -157,17 +182,26 @@ export default function SheetsPage() {
           )}
 
           {/* Page Header */}
-          <div className="flex justify-between items-end">
+          <div className="flex justify-between items-center">
             <div>
               <h2 className="text-xl font-bold text-[#0b1c30]">Danh sách dự án</h2>
               <p className="text-sm text-[#565e74]">Quản lý và theo dõi tiến độ các dự án tuân thủ bảo mật.</p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-[#565e74]">Sắp xếp:</span>
-              <select className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#0058be]/20 text-[#0b1c30]">
-                <option>Mới nhất</option>
-                <option>Tên (A-Z)</option>
-              </select>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[#565e74]">Sắp xếp:</span>
+                <select className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#0058be]/20 text-[#0b1c30]">
+                  <option>Mới nhất</option>
+                  <option>Tên (A-Z)</option>
+                </select>
+              </div>
+              <button
+                onClick={() => router.push('/projects/new')}
+                className="flex items-center gap-2 bg-[#0058be] hover:bg-[#004bb2] text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition-all duration-150 hover:shadow-md active:scale-95"
+              >
+                <span className="material-symbols-outlined text-[18px]">add</span>
+                Thêm dự án
+              </button>
             </div>
           </div>
 
@@ -251,11 +285,20 @@ export default function SheetsPage() {
 
           {/* Project Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {syncingSheetId !== null && (
+              <div className="bg-white border border-dashed border-[#0058be]/40 rounded-[10px] p-5 flex flex-col justify-center items-center shadow-sm animate-pulse min-h-[220px]">
+                <div className="w-10 h-10 rounded-full border-4 border-[#0058be] border-t-transparent animate-spin mb-3" />
+                <h4 className="text-[13px] font-bold text-[#0b1c30]">Đang đồng bộ dự án mới...</h4>
+                <p className="text-[11px] text-[#565e74] text-center mt-1 px-4">
+                  Vui lòng đợi giây lát khi hệ thống đồng bộ dữ liệu từ Google Sheet.
+                </p>
+              </div>
+            )}
             {pagedSheets.map(s => {
               const phaseStyle = getPhaseStyle(s.current_phase);
               const members = (s.member_emails || '').split(',').filter(Boolean);
               const allMembers = [s.leader_email, s.pm_email, ...members].filter(Boolean);
-              const year = s.created_at ? new Date(s.created_at).getFullYear() : new Date().getFullYear();
+              const year = getYearFromProjectCode(s.project_code, s.created_at);
 
               return (
                 <div
@@ -382,5 +425,13 @@ export default function SheetsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SheetsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f0f2f5]" />}>
+      <SheetsPageContent />
+    </Suspense>
   );
 }

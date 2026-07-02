@@ -2,7 +2,8 @@
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getViolations, getSheets, addTask, checkSingleTask, updateSheet } from '@/lib/api';
+import { getViolations, getSheets, addTask, checkSingleTask, updateSheet, deleteSheet, getChatGroups, createChatGroup, deleteChatGroup } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 
 const PHASE_TABS = [
   { key: 'ALL', label: 'Master' },
@@ -40,14 +41,43 @@ function ProjectDetailContent() {
 
   // Main Tabs State: 'tasks' | 'meetings' | 'chats' | 'members'
   const [activeMainTab, setActiveMainTab] = useState<'tasks' | 'meetings' | 'chats' | 'members'>('tasks');
-  const [activePhase, setActivePhase] = useState<string>('A');
+  const [activePhase, setActivePhase] = useState<string>('ALL');
+
+  // --- Dynamic Tab and Column Helpers ---
+  const getDynamicColumns = (itemsList: any[]) => {
+    const firstTask = itemsList.find(x => x.ai_verdict !== 'SECTION');
+    if (!firstTask) {
+      return ["TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY (EST)", "STATUS", "ASSIGNED"];
+    }
+    try {
+      const parsed = JSON.parse(firstTask.row_data || '{}');
+      const keys = Object.keys(parsed).filter(k => k !== '_row');
+      if (keys.length === 0) {
+        return ["TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY (EST)", "STATUS", "ASSIGNED"];
+      }
+      return keys;
+    } catch {
+      return ["TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY (EST)", "STATUS", "ASSIGNED"];
+    }
+  };
+
+  const dynamicTabs = [
+    { key: 'ALL', label: 'Master' },
+    ...Array.from(new Set(items.map(x => x.tab_name))).filter(Boolean).map(tab => ({
+      key: tab,
+      label: tab
+    }))
+  ];
 
 
   // Local state for meetings, chats
   const [meetings, setMeetings] = useState<any[]>([]);
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
   const [newMeetingTitle, setNewMeetingTitle] = useState('');
+  const [newMeetingPlatform, setNewMeetingPlatform] = useState('Microsoft Teams');
   const [newMeetingDate, setNewMeetingDate] = useState('');
   const [newMeetingTime, setNewMeetingTime] = useState('');
+  const [newMeetingEndTime, setNewMeetingEndTime] = useState('');
 
   const [chats, setChats] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -70,28 +100,23 @@ function ProjectDetailContent() {
   const [addChannelKey, setAddChannelKey] = useState('');
   const [addChannelValue, setAddChannelValue] = useState('');
 
-  const [newForm, setNewForm] = useState({
-    taskId: '',
-    detail: '',
-    priority: '',
-    manday: '',
-    status: 'Todo',
-    date: '',
-    assigned: '',
-    support: '',
-    kpiRatio: '',
-    skillSolution: '',
-    skillVendor: '',
-    ticketId: '',
-    remark: '',
-    send: '',
-    endDate: '',
-    mandayActual: '',
-  });
+  const [newForm, setNewForm] = useState<any>({});
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const flash = (t: string, e = false) => {
     setMsg({ t, e });
     setTimeout(() => setMsg(null), 4000);
+  };
+
+  const handleDeleteSheet = async () => {
+    try {
+      await deleteSheet(Number(id));
+      flash('Xóa dự án thành công!');
+      router.push('/project');
+    } catch {
+      flash('Xóa dự án thất bại', true);
+    }
   };
 
   const loadProject = useCallback(async () => {
@@ -120,6 +145,16 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
+  const loadChatGroups = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await getChatGroups(Number(id));
+      setChatGroups(data || []);
+    } catch {
+      flash('Không thể tải danh sách group chat từ database', true);
+    }
+  }, [id]);
+
   // Load meetings and chats from localStorage
   useEffect(() => {
     if (!id) return;
@@ -128,8 +163,8 @@ function ProjectDetailContent() {
       setMeetings(JSON.parse(savedMeetings));
     } else {
       const defaultMeetings = [
-        { id: '1', title: 'Họp kick-off dự án và phân công nhiệm vụ', date: '2026-07-02', time: '14:00', status: 'scheduled', attendees: ['admin@portal.so', 'pm@portal.so'] },
-        { id: '2', title: 'Rà soát lỗ hổng bảo mật và tuân thủ phase 1', date: '2026-07-05', time: '09:30', status: 'scheduled', attendees: ['admin@portal.so', 'leader@portal.so'] }
+        { id: '1', title: 'Review tiến độ tuần 24', platform: 'Microsoft Teams', date: '2024-10-24', time: '09:00', endTime: '10:30', status: 'done', aiSummary: ['Hoàn thành 80% giai đoạn PoC, cần đẩy nhanh tích hợp API.', 'Vấn đề: Chậm trễ trong việc kết nối phụ lục gia hạn thiết bị.', 'Action: Lê Hoa liên hệ phòng mua hàng trong ngày mai.'] },
+        { id: '2', title: 'Họp kỹ thuật: Tối ưu hóa Database', platform: 'Zoom Meeting', date: '2026-10-26', time: '14:00', endTime: '15:00', status: 'upcoming' },
       ];
       setMeetings(defaultMeetings);
       localStorage.setItem(`meetings_${id}`, JSON.stringify(defaultMeetings));
@@ -146,17 +181,13 @@ function ProjectDetailContent() {
       setChats(defaultChats);
       localStorage.setItem(`chats_${id}`, JSON.stringify(defaultChats));
     }
-
-    const savedChatGroups = localStorage.getItem(`chatgroups_${id}`);
-    if (savedChatGroups) {
-      setChatGroups(JSON.parse(savedChatGroups));
-    }
   }, [id]);
 
   useEffect(() => {
     loadProject();
     loadTasks();
-  }, [id, loadProject, loadTasks]);
+    loadChatGroups();
+  }, [id, loadProject, loadTasks, loadChatGroups]);
 
   const handleSaveChannelLink = async (channelKey: string, value: string) => {
     setIsSavingLink(true);
@@ -205,39 +236,38 @@ function ProjectDetailContent() {
   };
 
   const handleOpenAddTask = (item: any) => {
-    const parsed = parseRowData(item.row_data);
-    let nextId = '';
-    const idVal = parsed.taskId || '';
-    const numPart = idVal.match(/\d+$/);
-    if (numPart) {
-      const nextNum = parseInt(numPart[0], 10) + 1;
-      nextId = idVal.slice(0, numPart.index) + nextNum;
+    const dynamicCols = getDynamicColumns(phaseItems);
+    const initialForm: Record<string, string> = {};
+    dynamicCols.forEach(col => {
+      initialForm[col] = '';
+    });
+    
+    const idCol = dynamicCols.find(c => c.toUpperCase().includes('ID'));
+    if (idCol) {
+      const parsed = JSON.parse(item.row_data || '{}');
+      const idVal = parsed[idCol] || '';
+      const numPart = String(idVal).match(/\d+$/);
+      if (numPart) {
+        const nextNum = parseInt(numPart[0], 10) + 1;
+        initialForm[idCol] = idVal.slice(0, numPart.index) + nextNum;
+      }
     }
     
-    setNewForm({
-      taskId: nextId,
-      detail: '',
-      priority: '',
-      manday: '',
-      status: 'Todo',
-      date: '',
-      assigned: '',
-      support: '',
-      kpiRatio: '',
-      skillSolution: '',
-      skillVendor: '',
-      ticketId: '',
-      remark: '',
-      send: '',
-      endDate: '',
-      mandayActual: '',
-    });
+    const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+    if (statusCol) {
+      initialForm[statusCol] = 'Todo';
+    }
+    
+    setNewForm(initialForm);
     setAddingTaskBelowId(item.id);
   };
 
   const handleSaveTask = async () => {
-    if (!newForm.detail.trim()) {
-      alert('Vui lòng nhập Detail Task!');
+    const dynamicCols = getDynamicColumns(phaseItems);
+    const detailCol = dynamicCols.find(c => c.toUpperCase().includes('DETAIL TASK') || c.toUpperCase() === 'TASK' || c.toUpperCase() === 'DESCRIPTION') || 'DETAIL TASK';
+    
+    if (!newForm[detailCol]?.trim()) {
+      alert(`Vui lòng nhập ${detailCol}!`);
       return;
     }
     
@@ -246,24 +276,10 @@ function ProjectDetailContent() {
     
     setSavingTask(true);
     try {
-      const taskData = {
-        'TASK ID': newForm.taskId,
-        'DETAIL TASK': newForm.detail,
-        'PRIORITY': newForm.priority,
-        'MANDAY (EST)': newForm.manday,
-        'STATUS': newForm.status,
-        'START DATE (EST)': newForm.date,
-        'ASSIGNED': newForm.assigned,
-        'SUPPORT': newForm.support,
-        'KPI RATIO': newForm.kpiRatio,
-        'SKILL SOLUTION': newForm.skillSolution,
-        'SKILL VENDOR': newForm.skillVendor,
-        'TICKET ID': newForm.ticketId,
-        'REMARK': newForm.remark,
-        'SEND': newForm.send,
-        'END DAY (EST)': newForm.endDate,
-        'MANDAY ACTUAL': newForm.mandayActual,
-      };
+      const taskData: Record<string, string> = {};
+      dynamicCols.forEach(col => {
+        taskData[col] = newForm[col] || '';
+      });
       
       await addTask(Number(id), {
         tab_name: belowItem.tab_name,
@@ -350,21 +366,28 @@ function ProjectDetailContent() {
       alert('Vui lòng điền đầy đủ thông tin cuộc họp!');
       return;
     }
+    const meetDate = new Date(newMeetingDate);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const status = meetDate < today ? 'done' : 'upcoming';
     const meet = {
       id: String(Date.now()),
       title: newMeetingTitle,
+      platform: newMeetingPlatform,
       date: newMeetingDate,
       time: newMeetingTime,
-      status: 'scheduled',
-      attendees: ['admin@portal.so']
+      endTime: newMeetingEndTime,
+      status,
     };
     const updated = [meet, ...meetings];
     setMeetings(updated);
     localStorage.setItem(`meetings_${id}`, JSON.stringify(updated));
     setNewMeetingTitle('');
+    setNewMeetingPlatform('Microsoft Teams');
     setNewMeetingDate('');
     setNewMeetingTime('');
-    flash('Đã lên lịch cuộc họp mới!');
+    setNewMeetingEndTime('');
+    setShowMeetingModal(false);
+    flash('Đã tạo cuộc họp mới!');
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -427,7 +450,7 @@ function ProjectDetailContent() {
   // Phase-filtered stats for KPI cards (using realTasks to exclude SECTION rows representing phase headers and Roman numerals)
   const kpiTasks = activePhase === 'ALL'
     ? realTasks
-    : realTasks.filter(x => getRowPhase(x.tab_name) === activePhase);
+    : realTasks.filter(x => x.tab_name === activePhase);
 
   const kpiTotal = kpiTasks.length;
   const kpiWarning = kpiTasks.filter(x => x.ai_verdict === 'FAIL').length;
@@ -472,16 +495,17 @@ function ProjectDetailContent() {
   };
 
   const phaseItems = items.filter(x => {
-    if (activePhase !== 'ALL' && getRowPhase(x.tab_name) !== activePhase) return false;
+    if (activePhase !== 'ALL' && x.tab_name !== activePhase) return false;
     if (!taskSearch.trim()) return true;
-    const td = parseRowData(x.row_data);
-    const detail = (td.detail || '').toLowerCase();
-    const taskId = (td.taskId || '').toLowerCase();
-    const assigned = (td.assigned || '').toLowerCase();
-    const query = taskSearch.toLowerCase();
-    return detail.includes(query) || taskId.includes(query) || assigned.includes(query);
+    try {
+      const td = JSON.parse(x.row_data || '{}');
+      const query = taskSearch.toLowerCase();
+      return Object.values(td).some(val => String(val).toLowerCase().includes(query));
+    } catch {
+      return false;
+    }
   });
-  const phaseLabel = activePhase === 'ALL' ? 'Master (Tất cả)' : (PHASE_TABS.find(p => p.key === activePhase)?.label || '');
+  const phaseLabel = activePhase === 'ALL' ? 'Master (Tất cả)' : (dynamicTabs.find(p => p.key === activePhase)?.label || '');
 
   if (loadingProject || !project) {
     return (
@@ -542,6 +566,15 @@ function ProjectDetailContent() {
                 </p>
               </div>
               <div className="flex gap-2">
+                {isAdmin() && (
+                  <button 
+                    onClick={() => setShowDeleteModal(true)}
+                    className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
+                  >
+                    <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
+                    Xóa dự án
+                  </button>
+                )}
                 <button 
                   onClick={() => router.push(`/project`)}
                   className="bg-white text-slate-800 px-4 py-2 rounded-lg text-[13px] font-medium flex items-center border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
@@ -669,7 +702,7 @@ function ProjectDetailContent() {
                   {/* Phase Tabs + Search */}
                   <div className="flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-1 bg-[#eff4ff] border border-[#c2c6d6]/60 rounded-xl p-1">
-                      {PHASE_TABS.map(p => (
+                      {dynamicTabs.map(p => (
                         <button key={p.key} onClick={() => setActivePhase(p.key)}
                           className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
                             activePhase === p.key
@@ -699,28 +732,33 @@ function ProjectDetailContent() {
                         <thead className="sticky top-0 z-20 bg-[#f8f9ff] border-b-2 border-[#c2c6d6]" style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }}>
                           <tr>
                             <th className="text-center px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '80px', width: '80px' }}>THAO TÁC</th>
-                            <th className="text-left px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '60px', width: '60px' }}>ID</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '300px', width: '300px' }}>DETAIL TASK</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '100px' }}>PRIORITY</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '90px' }}>MANDAY EST</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '105px' }}>STATUS</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>START DATE</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>ASSIGNED</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>SUPPORT</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '85px' }}>KPI RATIO</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '120px' }}>SKILL SOLUTION</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '115px' }}>SKILL VENDOR</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '100px' }}>TICKET ID</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '130px' }}>REMARK</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '80px' }}>SEND</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '110px' }}>END DAY EST</th>
-                            <th className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '100px' }}>MANDAY ACTUAL</th>
+                            <th className="text-center px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '80px', width: '80px' }}>TRẠNG THÁI AI</th>
+                            {getDynamicColumns(phaseItems).map((col) => {
+                              let widthStyle = {};
+                              const colUpper = col.toUpperCase();
+                              if (colUpper.includes('DETAIL TASK') || colUpper === 'TASK' || colUpper === 'DESCRIPTION') {
+                                widthStyle = { minWidth: '350px', width: '350px' };
+                              } else if (colUpper.includes('ID')) {
+                                widthStyle = { minWidth: '80px' };
+                              } else {
+                                widthStyle = { minWidth: '110px' };
+                              }
+                              return (
+                                <th
+                                  key={col}
+                                  className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]"
+                                  style={widthStyle}
+                                >
+                                  {col}
+                                </th>
+                              );
+                            })}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#c2c6d6]/40 bg-white">
                           {loadingTasks && (
                             <tr>
-                              <td colSpan={17} className="text-center py-16 text-[#565e74]">
+                              <td colSpan={getDynamicColumns(phaseItems).length + 2} className="text-center py-16 text-[#565e74]">
                                 <div className="flex items-center justify-center gap-2">
                                   <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" /> Đang tải...
                                 </div>
@@ -729,30 +767,34 @@ function ProjectDetailContent() {
                           )}
                           {!loadingTasks && phaseItems.length === 0 && (
                             <tr>
-                              <td colSpan={17} className="text-center py-16 text-[#565e74] font-medium">
+                              <td colSpan={getDynamicColumns(phaseItems).length + 2} className="text-center py-16 text-[#565e74] font-medium">
                                 Không tìm thấy nhiệm vụ nào trong {phaseLabel}
                               </td>
                             </tr>
                           )}
                           {!loadingTasks && phaseItems.map((v, idx) => {
-                            const td = parseRowData(v.row_data);
                             const isSection = v.ai_verdict === 'SECTION';
-
                             let rowElement = null;
 
                             if (isSection) {
-                              // In Master view, hide all section headers (phase banners + Roman numerals)
                               if (activePhase === 'ALL') return <Fragment key={v.id} />;
-
-                              const detail = td.detail || '';
-                              // Only PHASE-prefixed rows get the main banner treatment
+                              
+                              let detail = '';
+                              try {
+                                const td = JSON.parse(v.row_data || '{}');
+                                const firstKey = Object.keys(td).find(k => k !== '_row');
+                                detail = firstKey ? td[firstKey] : '';
+                              } catch {
+                                detail = '';
+                              }
+                              
                               const isPhaseHeader = /^PHASE\s/i.test(detail);
 
                               if (isPhaseHeader) {
                                 rowElement = (
                                   <tr className="bg-[#eff4ff] border-l-[4px] border-l-[#0058be] border-b border-[#c2c6d6]/30 group relative">
                                     <td className="px-4 py-3.5"></td>
-                                    <td colSpan={16} className="px-4 py-3.5 relative">
+                                    <td colSpan={getDynamicColumns(phaseItems).length + 1} className="px-4 py-3.5 relative">
                                       <span className="text-[12px] font-black text-[#0b1c30] uppercase tracking-wider">{detail}</span>
 
                                       {/* Hover Add Task Button */}
@@ -768,11 +810,10 @@ function ProjectDetailContent() {
                                   </tr>
                                 );
                               } else {
-                                // All other sections (Roman numerals, ALL CAPS group names) → same horizontal position as Phase, lighter style
                                 rowElement = (
                                   <tr className="bg-[#f8f9ff] border-l-[3px] border-l-[#0058be]/40 border-b border-[#c2c6d6]/30 group relative">
                                     <td className="px-1 py-2.5"></td>
-                                    <td colSpan={16} className="px-4 py-2.5 relative">
+                                    <td colSpan={getDynamicColumns(phaseItems).length + 1} className="px-4 py-2.5 relative">
                                       <span className="text-[11px] font-bold text-[#0058be] uppercase tracking-wide flex items-center gap-2">
                                         <span className="w-0.5 h-3.5 rounded bg-[#0058be]/40 shrink-0 inline-block" />
                                         {detail}
@@ -792,8 +833,11 @@ function ProjectDetailContent() {
                                 );
                               }
                             } else {
-                              const statusInfo = getStatusInfo(td.status);
-                              const priStyle = getPriorityStyle(td.priority);
+                              const dynamicCols = getDynamicColumns(phaseItems);
+                              let td: Record<string, string> = {};
+                              try {
+                                td = JSON.parse(v.row_data || '{}');
+                              } catch {}
 
                               rowElement = (
                                 <tr className={`group relative hover:bg-[#eff4ff]/50 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#f8f9ff]/30'}`}>
@@ -812,80 +856,88 @@ function ProjectDetailContent() {
                                       )}
                                     </button>
                                   </td>
-                                  {/* 2. TASK ID */}
-                                  <td className="px-2 py-3" style={{ width: '60px' }}>
-                                    <div className="flex items-center gap-1 font-mono text-[#565e74] font-semibold text-[11px]">
-                                      {v.ai_verdict === 'FAIL' ? (
-                                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="FAIL" />
-                                      ) : v.ai_verdict === 'PASS' ? (
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="PASS" />
-                                      ) : v.ai_verdict === 'REVIEW' ? (
-                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="REVIEW" />
-                                      ) : null}
-                                      <span className="truncate">{td.taskId || v.row_number}</span>
-                                    </div>
+                                  {/* 2. AI STATUS */}
+                                  <td className="px-2 py-3 text-center" style={{ width: '80px' }}>
+                                    {v.ai_verdict === 'FAIL' ? (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-red-100 text-red-700">FAIL</span>
+                                    ) : v.ai_verdict === 'PASS' ? (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-700">PASS</span>
+                                    ) : v.ai_verdict === 'REVIEW' ? (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-700">REVIEW</span>
+                                    ) : (
+                                      <span className="text-gray-400 text-[10px] font-bold">—</span>
+                                    )}
                                   </td>
-                                  {/* 3. DETAIL TASK */}
-                                  <td className="px-4 py-3 relative" style={{ maxWidth: '300px', width: '300px' }}>
-                                    <p className="text-[#0b1c30] text-xs font-semibold leading-relaxed break-words whitespace-normal">{td.detail || <span className="opacity-30">—</span>}</p>
-                                    {v.ai_verdict === 'FAIL' && v.ai_reason && (
-                                      <p className="text-red-600 text-[10px] mt-1 font-semibold">⚠️ {v.ai_reason}</p>
-                                    )}
-                                    {v.ai_suggestion && v.ai_verdict !== 'PASS' && (
-                                      <p className="text-[#0058be]/80 text-[10px] mt-0.5 font-semibold">💡 {v.ai_suggestion}</p>
-                                    )}
+                                  {/* 3+. DYNAMIC CELLS */}
+                                  {dynamicCols.map((col) => {
+                                    const val = td[col] || '';
+                                    const colUpper = col.toUpperCase();
+                                    const isDetailCol = colUpper.includes('DETAIL TASK') || colUpper === 'TASK' || colUpper === 'DESCRIPTION';
+                                    const isStatusCol = colUpper === 'STATUS';
+                                    const isPriorityCol = colUpper === 'PRIORITY';
 
-                                    {/* Hover Add Task Button */}
-                                    <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
-                                      <button
-                                        onClick={() => handleOpenAddTask(v)}
-                                        className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
+                                    if (isDetailCol) {
+                                      return (
+                                        <td key={col} className="px-4 py-3 relative" style={{ maxWidth: '350px', width: '350px' }}>
+                                          <p className="text-[#0b1c30] text-xs font-semibold leading-relaxed break-words whitespace-normal">{val || <span className="opacity-30">—</span>}</p>
+                                          {v.ai_verdict === 'FAIL' && v.ai_reason && (
+                                            <p className="text-red-600 text-[10px] mt-1 font-semibold">⚠️ {v.ai_reason}</p>
+                                          )}
+                                          {v.ai_suggestion && v.ai_verdict !== 'PASS' && (
+                                            <p className="text-[#0058be]/80 text-[10px] mt-0.5 font-semibold">💡 {v.ai_suggestion}</p>
+                                          )}
+
+                                          {/* Hover Add Task Button */}
+                                          <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
+                                            <button
+                                              onClick={() => handleOpenAddTask(v)}
+                                              className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
+                                            >
+                                              <span>+ Thêm task phía dưới</span>
+                                            </button>
+                                          </div>
+                                        </td>
+                                      );
+                                    }
+
+                                    if (isStatusCol) {
+                                      const statusInfo = getStatusInfo(val);
+                                      return (
+                                        <td key={col} className="px-4 py-3">
+                                          {val ? (
+                                            <div className="flex items-center gap-1.5">
+                                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusInfo.dot}`} />
+                                              <span className={`text-[10px] font-bold ${statusInfo.text}`}>{statusInfo.label}</span>
+                                            </div>
+                                          ) : <span className="opacity-30">—</span>}
+                                        </td>
+                                      );
+                                    }
+
+                                    if (isPriorityCol) {
+                                      const priStyle = getPriorityStyle(val);
+                                      return (
+                                        <td key={col} className="px-4 py-3">
+                                          {val ? (
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${priStyle}`}>
+                                              {val}
+                                            </span>
+                                          ) : <span className="opacity-30">—</span>}
+                                        </td>
+                                      );
+                                    }
+
+                                    const isNumericOrDate = colUpper.includes('MANDAY') || colUpper.includes('DATE') || colUpper.includes('RATIO') || colUpper.includes('ID');
+
+                                    return (
+                                      <td
+                                        key={col}
+                                        className={`px-4 py-3 text-xs ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
                                       >
-                                        <span>+ Thêm task phía dưới</span>
-                                      </button>
-                                    </div>
-                                  </td>
-                                  {/* 4. PRIORITY */}
-                                  <td className="px-4 py-3">
-                                    {td.priority ? (
-                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${priStyle}`}>
-                                        {td.priority}
-                                      </span>
-                                    ) : <span className="opacity-30">—</span>}
-                                  </td>
-                                  {/* 5. MANDAY EST */}
-                                  <td className="px-4 py-3 text-[#0b1c30] font-mono">{td.manday || <span className="opacity-30">—</span>}</td>
-                                  {/* 6. STATUS */}
-                                  <td className="px-4 py-3">
-                                    {td.status ? (
-                                      <div className="flex items-center gap-1.5">
-                                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusInfo.dot}`} />
-                                        <span className={`text-[10px] font-bold ${statusInfo.text}`}>{statusInfo.label}</span>
-                                      </div>
-                                    ) : <span className="opacity-30">—</span>}
-                                  </td>
-                                  {/* 7. START DATE */}
-                                  <td className="px-4 py-3 text-[#565e74]">{td.date || <span className="opacity-30">—</span>}</td>
-                                  {/* 8. ASSIGNED */}
-                                  <td className="px-4 py-3 text-[#0b1c30]">{td.assigned || <span className="opacity-30">—</span>}</td>
-                                  {/* 9. SUPPORT */}
-                                  <td className="px-4 py-3 text-[#565e74]">{td.support || <span className="opacity-30">—</span>}</td>
-                                  {/* 10. KPI RATIO */}
-                                  <td className="px-4 py-3 text-[#565e74] font-mono">{td.kpiRatio || <span className="opacity-30">—</span>}</td>
-                                  {/* 11. SKILL SOLUTION */}
-                                  <td className="px-4 py-3 text-[#0b1c30]">{td.skillSolution || <span className="opacity-30">—</span>}</td>
-                                  {/* 12. SKILL VENDOR */}
-                                  <td className="px-4 py-3 text-[#565e74]">{td.skillVendor || <span className="opacity-30">—</span>}</td>
-                                  {/* 13. TICKET ID */}
-                                  <td className="px-4 py-3 text-[#565e74] font-mono">{td.ticketId || <span className="opacity-30">—</span>}</td>
-                                  {/* 14. REMARK */}
-                                  <td className="px-4 py-3 text-[#565e74] max-w-[150px] truncate" title={td.remark}>{td.remark || <span className="opacity-30">—</span>}</td>
-                                  {/* 15. SEND */}
-                                  <td className="px-4 py-3 text-[#565e74]">{td.send || <span className="opacity-30">—</span>}</td>
-                                  {/* 16. END DATE */}
-                                  <td className="px-4 py-3 text-[#565e74]">{td.endDate || <span className="opacity-30">—</span>}</td>
-                                  {/* 17. MANDAY ACTUAL */}
-                                  <td className="px-4 py-3 text-[#0b1c30] font-mono">{td.mandayActual || <span className="opacity-30">—</span>}</td>
+                                        {val || <span className="opacity-30">—</span>}
+                                      </td>
+                                    );
+                                  })}
                                 </tr>
                               );
                             }
@@ -896,176 +948,89 @@ function ProjectDetailContent() {
                                 {addingTaskBelowId === v.id && (
                                   <tr className="bg-[#f1f5f9] border-2 border-[#0058be]/40">
                                     <td className="p-1"></td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.taskId}
-                                        onChange={e => setNewForm({ ...newForm, taskId: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
-                                        placeholder="ID"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.detail}
-                                        onChange={e => setNewForm({ ...newForm, detail: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
-                                        placeholder="Task detail description..."
-                                        autoFocus
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <select
-                                        value={newForm.priority}
-                                        onChange={e => setNewForm({ ...newForm, priority: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
-                                      >
-                                        <option value="">None</option>
-                                        <option value="Critical">Critical</option>
-                                        <option value="High">High</option>
-                                        <option value="Medium">Medium</option>
-                                        <option value="Normal">Normal</option>
-                                        <option value="Low">Low</option>
-                                      </select>
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.manday}
-                                        onChange={e => setNewForm({ ...newForm, manday: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
-                                        placeholder="Est"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <select
-                                        value={newForm.status}
-                                        onChange={e => setNewForm({ ...newForm, status: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
-                                      >
-                                        <option value="">None</option>
-                                        <option value="Todo">Todo</option>
-                                        <option value="Process">Process</option>
-                                        <option value="Review">Review</option>
-                                        <option value="Pending">Pending</option>
-                                        <option value="Done">Done</option>
-                                      </select>
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.date}
-                                        onChange={e => setNewForm({ ...newForm, date: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="Start Date"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.assigned}
-                                        onChange={e => setNewForm({ ...newForm, assigned: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="Assignee"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.support}
-                                        onChange={e => setNewForm({ ...newForm, support: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="Support"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.kpiRatio}
-                                        onChange={e => setNewForm({ ...newForm, kpiRatio: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
-                                        placeholder="KPI"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.skillSolution}
-                                        onChange={e => setNewForm({ ...newForm, skillSolution: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="Solution"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.skillVendor}
-                                        onChange={e => setNewForm({ ...newForm, skillVendor: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="Vendor"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.ticketId}
-                                        onChange={e => setNewForm({ ...newForm, ticketId: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
-                                        placeholder="Ticket ID"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.remark}
-                                        onChange={e => setNewForm({ ...newForm, remark: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="Remark"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.send}
-                                        onChange={e => setNewForm({ ...newForm, send: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="Send"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        value={newForm.endDate}
-                                        onChange={e => setNewForm({ ...newForm, endDate: e.target.value })}
-                                        className="w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                                        placeholder="End Date"
-                                      />
-                                    </td>
-                                    <td className="p-1">
-                                      <div className="flex items-center gap-1 w-full min-w-[145px]">
-                                        <input
-                                          type="text"
-                                          value={newForm.mandayActual}
-                                          onChange={e => setNewForm({ ...newForm, mandayActual: e.target.value })}
-                                          className="w-12 bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono"
-                                          placeholder="Actual"
-                                        />
-                                        <button
-                                          onClick={handleSaveTask}
-                                          disabled={savingTask}
-                                          className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[9px] font-black px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
-                                        >
-                                          {savingTask ? '...' : 'Lưu'}
-                                        </button>
-                                        <button
-                                          onClick={handleCancelAddTask}
-                                          className="bg-white border border-slate-300 text-slate-700 text-[9px] font-black px-2 py-1 rounded shadow hover:bg-slate-50 transition-colors shrink-0 uppercase"
-                                        >
-                                          Hủy
-                                        </button>
-                                      </div>
-                                    </td>
+                                    <td className="p-1"></td>
+                                    {getDynamicColumns(phaseItems).map((col, cIdx, arr) => {
+                                      const colUpper = col.toUpperCase();
+                                      const isStatusCol = colUpper === 'STATUS';
+                                      const isPriorityCol = colUpper === 'PRIORITY';
+                                      const isLast = cIdx === arr.length - 1;
+
+                                      let inputField = null;
+
+                                      if (isStatusCol) {
+                                        inputField = (
+                                          <select
+                                            value={newForm[col] || ''}
+                                            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+                                            className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
+                                          >
+                                            <option value="">None</option>
+                                            <option value="Todo">Todo</option>
+                                            <option value="Process">Process</option>
+                                            <option value="Review">Review</option>
+                                            <option value="Pending">Pending</option>
+                                            <option value="Done">Done</option>
+                                          </select>
+                                        );
+                                      } else if (isPriorityCol) {
+                                        inputField = (
+                                          <select
+                                            value={newForm[col] || ''}
+                                            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+                                            className="w-full bg-white border border-[#c2c6d6] rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold"
+                                          >
+                                            <option value="">None</option>
+                                            <option value="Critical">Critical</option>
+                                            <option value="High">High</option>
+                                            <option value="Medium">Medium</option>
+                                            <option value="Normal">Normal</option>
+                                            <option value="Low">Low</option>
+                                          </select>
+                                        );
+                                      } else {
+                                        inputField = (
+                                          <input
+                                            type="text"
+                                            value={newForm[col] || ''}
+                                            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+                                            className={`w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${
+                                              colUpper.includes('DETAIL') ? 'font-semibold' : ''
+                                            }`}
+                                            placeholder={col}
+                                            autoFocus={cIdx === 1}
+                                          />
+                                        );
+                                      }
+
+                                      if (isLast) {
+                                        return (
+                                          <td key={col} className="p-1">
+                                            <div className="flex items-center gap-1 w-full min-w-[145px]">
+                                              {inputField}
+                                              <button
+                                                onClick={handleSaveTask}
+                                                disabled={savingTask}
+                                                className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[9px] font-black px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
+                                              >
+                                                {savingTask ? '...' : 'Lưu'}
+                                              </button>
+                                              <button
+                                                onClick={handleCancelAddTask}
+                                                className="bg-gray-400 hover:bg-gray-500 text-white text-[9px] font-black px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
+                                              >
+                                                Hủy
+                                              </button>
+                                            </div>
+                                          </td>
+                                        );
+                                      }
+
+                                      return (
+                                        <td key={col} className="p-1">
+                                          {inputField}
+                                        </td>
+                                      );
+                                    })}
                                   </tr>
                                 )}
                               </Fragment>
@@ -1080,252 +1045,225 @@ function ProjectDetailContent() {
 
               {/* TAB 2: MEETINGS */}
               {activeMainTab === 'meetings' && (
-                <div className="space-y-6">
-                  {/* Schedule Meeting Card */}
-                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-[#0b1c30] mb-4 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#0058be]">add_circle</span>
-                      Lên lịch cuộc họp dự án
-                    </h3>
-                    <form onSubmit={handleAddMeeting} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
-                      <div className="sm:col-span-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Tên cuộc họp *</label>
-                        <input
-                          type="text"
-                          required
-                          value={newMeetingTitle}
-                          onChange={e => setNewMeetingTitle(e.target.value)}
-                          placeholder="Ví dụ: Rà soát bảo mật tuần 2"
-                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Ngày họp *</label>
-                        <input
-                          type="date"
-                          required
-                          value={newMeetingDate}
-                          onChange={e => setNewMeetingDate(e.target.value)}
-                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Giờ họp *</label>
-                          <input
-                            type="time"
-                            required
-                            value={newMeetingTime}
-                            onChange={e => setNewMeetingTime(e.target.value)}
-                            className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
-                          />
-                        </div>
-                        <button
-                          type="submit"
-                          className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all"
-                        >
-                          Đặt lịch
-                        </button>
-                      </div>
-                    </form>
+                <div>
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-5">
+                    <h2 className="text-sm font-bold text-[#0b1c30]">Lịch họp dự án</h2>
+                    <button
+                      onClick={() => setShowMeetingModal(true)}
+                      className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">add</span>
+                      Tạo meeting
+                    </button>
                   </div>
 
-                  {/* Meetings List */}
-                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#0058be]">calendar_today</span>
-                      Danh sách cuộc họp ({meetings.length})
-                    </h3>
-                    
-                    <div className="space-y-4">
-                      {meetings.map(m => (
-                        <div key={m.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center hover:bg-slate-100/50 transition-colors">
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-lg bg-[#eff4ff] text-[#0058be] flex flex-col items-center justify-center shrink-0 border border-[#0058be]/10">
-                              <span className="text-[10px] font-bold uppercase">{new Date(m.date).toLocaleDateString('vi-VN', { month: 'short' })}</span>
-                              <span className="text-base font-black leading-none">{new Date(m.date).getDate()}</span>
-                            </div>
-                            <div>
-                              <h4 className="text-xs font-bold text-[#0b1c30]">{m.title}</h4>
-                              <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[12px]">schedule</span>
-                                {m.time} · Tham gia: {m.attendees.join(', ')}
-                              </p>
-                            </div>
-                          </div>
+                  {/* Meeting Cards */}
+                  <div className="space-y-3">
+                    {meetings.length === 0 ? (
+                      <div className="bg-white border border-[#c2c6d6]/60 rounded-xl py-16 text-center">
+                        <span className="material-symbols-outlined text-slate-300 text-[48px] block mb-3">event</span>
+                        <p className="text-sm font-semibold text-slate-500">Chưa có cuộc họp nào</p>
+                        <p className="text-xs text-slate-400 mt-1">Nhấn "+ Tạo meeting" để thêm cuộc họp đầu tiên</p>
+                      </div>
+                    ) : (
+                      meetings.map(m => {
+                        const isDone = m.status === 'done';
+                        const timeLabel = [m.time, m.endTime].filter(Boolean).join(' - ');
+                        const dateLabel = m.date
+                          ? new Date(m.date + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                          : '';
 
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[9px] font-bold uppercase">
-                              Lên lịch
-                            </span>
-                            <button
-                              onClick={() => {
-                                const updated = meetings.filter(x => x.id !== m.id);
-                                setMeetings(updated);
-                                localStorage.setItem(`meetings_${id}`, JSON.stringify(updated));
-                                flash('Đã xóa cuộc họp');
-                              }}
-                              className="text-slate-400 hover:text-red-600 p-1 rounded"
-                              title="Xóa cuộc họp"
-                            >
-                              <span className="material-symbols-outlined text-[16px]">delete</span>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-
-                      {meetings.length === 0 && (
-                        <div className="text-center py-8 text-slate-400 text-xs italic">
-                          Chưa có cuộc họp nào được lên lịch cho dự án này
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 3: GROUP CHATS */}
-              {activeMainTab === 'chats' && (
-                <div className="space-y-6">
-
-                  {/* Official Channels (Database backed) */}
-                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#0058be] text-[20px]">cloud_done</span>
-                      Kênh Liên Lạc Chính Thức (Lưu trên Hệ thống)
-                    </h3>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      {[
-                        { key: 'zalo_link', label: 'Zalo Group', bg: 'bg-[#0068FF]', colorText: 'text-[#0068FF]', logo: '💬', val: project.zalo_link || '' },
-                        { key: 'telegram_link', label: 'Telegram Channel', bg: 'bg-[#229ED9]', colorText: 'text-[#229ED9]', logo: '▶', val: project.telegram_link || '' },
-                        { key: 'teams_link', label: 'Microsoft Teams', bg: 'bg-[#6264A7]', colorText: 'text-[#6264A7]', logo: 'T', val: project.teams_link || '' },
-                      ].map(ch => {
-                        const isEditing = editingChannel === ch.key;
                         return (
-                          <div key={ch.key} className="bg-slate-50/50 border border-slate-200/80 rounded-xl p-5 flex flex-col justify-between space-y-4 hover:shadow-sm transition-all">
-                            <div className="flex items-center gap-3">
-                              <div className={`w-10 h-10 rounded-xl ${ch.bg} flex items-center justify-center text-white text-lg font-bold shadow-sm`}>
-                                {ch.logo}
-                              </div>
-                              <div>
-                                <h4 className="text-xs font-bold text-[#0b1c30]">{ch.label}</h4>
-                                <p className="text-[10px] text-slate-400">Đồng bộ trên toàn hệ thống</p>
-                              </div>
-                            </div>
-
-                            {isEditing ? (
-                              <div className="space-y-2">
-                                <input
-                                  type="url"
-                                  value={editingValue}
-                                  onChange={e => setEditingValue(e.target.value)}
-                                  placeholder="Nhập liên kết https://..."
-                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-2.5 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                                />
-                                <div className="flex gap-2">
-                                  <button
-                                    onClick={() => handleSaveChannelLink(ch.key, editingValue)}
-                                    disabled={isSavingLink}
-                                    className="flex-1 bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-[10px] py-1.5 rounded-md shadow-sm transition-all flex items-center justify-center gap-1"
-                                  >
-                                    {isSavingLink ? (
-                                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                    ) : (
-                                      'Lưu'
-                                    )}
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setEditingChannel(null);
-                                      setEditingValue('');
-                                    }}
-                                    disabled={isSavingLink}
-                                    className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] py-1.5 rounded-md transition-all"
-                                  >
-                                    Huỷ
-                                  </button>
+                          <div key={m.id} className="bg-white border border-[#c2c6d6]/60 rounded-xl p-5 shadow-sm hover:shadow-md transition-all">
+                            {/* Row 1: icon + title + badge + delete */}
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-3">
+                                <div className="w-9 h-9 rounded-lg bg-[#eff4ff] border border-[#0058be]/10 flex items-center justify-center shrink-0 mt-0.5">
+                                  <span className="material-symbols-outlined text-[#0058be] text-[18px]">{isDone ? 'event_available' : 'event_upcoming'}</span>
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-[#0b1c30] leading-snug">{m.title}</p>
+                                  <p className="text-[11px] text-slate-400 mt-0.5">
+                                    {m.platform || 'Online Meeting'}
+                                    {dateLabel ? ` • ${dateLabel}` : ''}
+                                    {timeLabel ? ` • ${timeLabel}` : ''}
+                                  </p>
                                 </div>
                               </div>
-                            ) : (
-                              <div className="space-y-3">
-                                {ch.val ? (
-                                  <div className="space-y-2">
-                                    <div className="text-[10px] text-slate-500 truncate" title={ch.val}>
-                                      {ch.val}
-                                    </div>
-                                    <div className="flex gap-2">
-                                      <a
-                                        href={ch.val}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-center py-1.5 rounded-md text-[10px] font-bold text-slate-700 transition-colors flex items-center justify-center gap-1 border border-slate-200"
-                                      >
-                                        <span className="material-symbols-outlined text-[12px]">open_in_new</span>
-                                        Truy cập
-                                      </a>
-                                      <button
-                                        onClick={() => {
-                                          setEditingChannel(ch.key);
-                                          setEditingValue(ch.val);
-                                        }}
-                                        className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-colors"
-                                      >
-                                        Sửa
-                                      </button>
-                                    </div>
-                                  </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {isDone ? (
+                                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wide border border-emerald-200">
+                                    Đã diễn ra
+                                  </span>
                                 ) : (
-                                  <div className="space-y-2">
-                                    <div className="text-[10px] text-slate-400 italic">Chưa liên kết group chat</div>
-                                    <button
-                                      onClick={() => {
-                                        setEditingChannel(ch.key);
-                                        setEditingValue('');
-                                      }}
-                                      className={`w-full py-1.5 rounded-md border border-dashed border-slate-300 hover:border-slate-400 text-center text-[10px] font-bold ${ch.colorText} transition-all`}
-                                    >
-                                      + Kết nối
-                                    </button>
-                                  </div>
+                                  <span className="px-2.5 py-1 rounded-full bg-[#eff4ff] text-[#0058be] text-[10px] font-bold uppercase tracking-wide border border-[#0058be]/20">
+                                    Sắp tới
+                                  </span>
                                 )}
+                                <button
+                                  onClick={() => {
+                                    const updated = meetings.filter(x => x.id !== m.id);
+                                    setMeetings(updated);
+                                    localStorage.setItem(`meetings_${id}`, JSON.stringify(updated));
+                                    flash('Đã xóa cuộc họp');
+                                  }}
+                                  className="text-slate-300 hover:text-red-500 p-1 rounded transition-colors"
+                                  title="Xóa cuộc họp"
+                                >
+                                  <span className="material-symbols-outlined text-[16px]">close</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* AI Summary (for done meetings) */}
+                            {isDone && m.aiSummary && m.aiSummary.length > 0 && (
+                              <div className="mt-4 ml-12 bg-[#f8f9fe] border border-[#0058be]/10 rounded-lg p-4">
+                                <p className="text-[11px] font-bold text-[#0058be] mb-2 flex items-center gap-1.5">
+                                  <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
+                                  AI Summary
+                                </p>
+                                <ul className="space-y-1">
+                                  {m.aiSummary.map((line: string, idx: number) => (
+                                    <li key={idx} className="text-[11px] text-[#0058be]/80 flex items-start gap-1.5">
+                                      <span className="mt-1.5 w-1 h-1 rounded-full bg-[#0058be]/40 shrink-0" />
+                                      {line}
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
                             )}
                           </div>
                         );
-                      })}
-                    </div>
+                      })
+                    )}
                   </div>
 
+                  {/* Create Meeting Modal */}
+                  {showMeetingModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+                        <div className="flex items-center justify-between mb-5">
+                          <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[#0058be] text-[20px]">event_add</span>
+                            Tạo cuộc họp mới
+                          </h3>
+                          <button onClick={() => setShowMeetingModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded">
+                            <span className="material-symbols-outlined text-[20px]">close</span>
+                          </button>
+                        </div>
+                        <form onSubmit={handleAddMeeting} className="space-y-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên cuộc họp *</label>
+                            <input
+                              type="text"
+                              required
+                              value={newMeetingTitle}
+                              onChange={e => setNewMeetingTitle(e.target.value)}
+                              placeholder="VD: Review tiến độ tuần 25"
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nền tảng</label>
+                            <select
+                              value={newMeetingPlatform}
+                              onChange={e => setNewMeetingPlatform(e.target.value)}
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                            >
+                              <option>Microsoft Teams</option>
+                              <option>Zoom Meeting</option>
+                              <option>Google Meet</option>
+                              <option>Họp trực tiếp</option>
+                              <option>Khác</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Ngày họp *</label>
+                            <input
+                              type="date"
+                              required
+                              value={newMeetingDate}
+                              onChange={e => setNewMeetingDate(e.target.value)}
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Giờ bắt đầu *</label>
+                              <input
+                                type="time"
+                                required
+                                value={newMeetingTime}
+                                onChange={e => setNewMeetingTime(e.target.value)}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Giờ kết thúc</label>
+                              <input
+                                type="time"
+                                value={newMeetingEndTime}
+                                onChange={e => setNewMeetingEndTime(e.target.value)}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex gap-3 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowMeetingModal(false)}
+                              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 rounded-lg transition-all"
+                            >
+                              Huỷ
+                            </button>
+                            <button
+                              type="submit"
+                              className="flex-1 bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-xs py-2.5 rounded-lg shadow-sm transition-all"
+                            >
+                              Tạo meeting
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+
+              {activeMainTab === 'chats' && (
+                <div className="space-y-4">
+
                   {/* Add Group Form */}
-                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-4 flex items-center gap-2">
                       <span className="material-symbols-outlined text-[#0058be] text-[20px]">add_circle</span>
-                      Thêm Kênh Thảo Luận Phụ (Lưu ở Trình duyệt)
+                      Thêm Chat Group
                     </h3>
                     <form
-                      onSubmit={e => {
+                      onSubmit={async e => {
                         e.preventDefault();
                         if (!newGroupName.trim() || !newGroupLink.trim()) return;
-                        const group = {
-                          id: Date.now(),
-                          name: newGroupName.trim(),
-                          platform: newGroupPlatform,
-                          link: newGroupLink.trim(),
-                          desc: newGroupDesc.trim(),
-                          createdAt: new Date().toISOString(),
-                        };
-                        const updated = [...chatGroups, group];
-                        setChatGroups(updated);
-                        localStorage.setItem(`chatgroups_${id}`, JSON.stringify(updated));
-                        setNewGroupName('');
-                        setNewGroupLink('');
-                        setNewGroupDesc('');
-                        flash('Đã thêm group chat!');
+                        try {
+                          const group = await createChatGroup(Number(id), {
+                            name: newGroupName.trim(),
+                            platform: newGroupPlatform,
+                            link: newGroupLink.trim(),
+                            desc: newGroupDesc.trim(),
+                          });
+                          setChatGroups(prev => [group, ...prev]);
+                          setNewGroupName('');
+                          setNewGroupLink('');
+                          setNewGroupDesc('');
+                          flash('Đã thêm group chat!');
+                        } catch (err: any) {
+                          alert('Lỗi thêm group chat: ' + (err.response?.data?.detail || err.message));
+                        }
                       }}
-                      className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end"
+                      className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
                     >
-                      <div className="sm:col-span-1">
+                      <div>
                         <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên Group *</label>
                         <input
                           type="text"
@@ -1338,7 +1276,7 @@ function ProjectDetailContent() {
                       </div>
 
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nền tảng</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nền Tảng</label>
                         <select
                           value={newGroupPlatform}
                           onChange={e => setNewGroupPlatform(e.target.value)}
@@ -1354,18 +1292,7 @@ function ProjectDetailContent() {
                         </select>
                       </div>
 
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Mô tả (tuỳ chọn)</label>
-                        <input
-                          type="text"
-                          value={newGroupDesc}
-                          onChange={e => setNewGroupDesc(e.target.value)}
-                          placeholder="VD: Kênh thông báo nhanh"
-                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                        />
-                      </div>
-
-                      <div>
+                      <div className="sm:col-span-2">
                         <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Link *</label>
                         <div className="flex gap-2">
                           <input
@@ -1388,79 +1315,75 @@ function ProjectDetailContent() {
                   </div>
 
                   {/* Groups Grid */}
-                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#0058be] text-[20px]">forum</span>
-                      Danh sách Group ({chatGroups.length})
-                    </h3>
-
-                    {chatGroups.length === 0 ? (
-                      <div className="py-16 text-center">
-                        <div className="w-14 h-14 rounded-2xl bg-[#eff4ff] mx-auto flex items-center justify-center mb-4">
-                          <span className="material-symbols-outlined text-[#0058be] text-[28px]">forum</span>
-                        </div>
-                        <p className="text-sm font-semibold text-[#565e74]">Chưa có group nào</p>
-                        <p className="text-xs text-slate-400 mt-1">Thêm group chat đầu tiên cho dự án này</p>
+                  {chatGroups.length === 0 ? (
+                    <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl py-16 text-center">
+                      <div className="w-14 h-14 rounded-2xl bg-[#eff4ff] mx-auto flex items-center justify-center mb-4">
+                        <span className="material-symbols-outlined text-[#0058be] text-[28px]">forum</span>
                       </div>
-                    ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                        {chatGroups.map(g => {
-                          const PLATFORM_STYLES: Record<string, { bg: string; icon: string; label: string }> = {
-                            Telegram:  { bg: 'bg-[#229ED9]',  icon: '▶',  label: 'Telegram' },
-                            Zalo:      { bg: 'bg-[#0068FF]',  icon: '💬', label: 'Zalo' },
-                            Slack:     { bg: 'bg-[#4A154B]',  icon: '#',  label: 'Slack' },
-                            Teams:     { bg: 'bg-[#6264A7]',  icon: 'T',  label: 'Teams' },
-                            Discord:   { bg: 'bg-[#5865F2]',  icon: '⚡', label: 'Discord' },
-                            WhatsApp:  { bg: 'bg-[#25D366]',  icon: '📱', label: 'WhatsApp' },
-                            Khác:      { bg: 'bg-slate-500',  icon: '💬', label: 'Group' },
-                          };
-                          const ps = PLATFORM_STYLES[g.platform] || PLATFORM_STYLES['Khác'];
+                      <p className="text-sm font-semibold text-[#565e74]">Chưa có group nào</p>
+                      <p className="text-xs text-slate-400 mt-1">Thêm group chat đầu tiên cho dự án này</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                      {chatGroups.map(g => {
+                        const PLATFORM_STYLES: Record<string, { bg: string; icon: string; label: string }> = {
+                          Telegram:  { bg: 'bg-[#229ED9]', icon: '▶',  label: 'Telegram' },
+                          Zalo:      { bg: 'bg-[#0068FF]', icon: '💬', label: 'Zalo' },
+                          Slack:     { bg: 'bg-[#4A154B]', icon: '#',  label: 'Slack' },
+                          Teams:     { bg: 'bg-[#6264A7]', icon: 'T',  label: 'Teams' },
+                          Discord:   { bg: 'bg-[#5865F2]', icon: '⚡', label: 'Discord' },
+                          WhatsApp:  { bg: 'bg-[#25D366]', icon: '📱', label: 'WhatsApp' },
+                          Khác:      { bg: 'bg-slate-500', icon: '💬', label: 'Group' },
+                        };
+                        const ps = PLATFORM_STYLES[g.platform] || PLATFORM_STYLES['Khác'];
 
-                          return (
-                            <div key={g.id} className="relative group bg-white border border-[#c2c6d6]/60 rounded-xl p-5 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5">
-                              {/* Delete btn */}
-                              <button
-                                onClick={() => {
-                                  const updated = chatGroups.filter(x => x.id !== g.id);
-                                  setChatGroups(updated);
-                                  localStorage.setItem(`chatgroups_${id}`, JSON.stringify(updated));
+                        return (
+                          <div key={g.id} className="relative group bg-white border border-[#c2c6d6]/60 rounded-xl p-5 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5">
+                            {/* Delete btn */}
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await deleteChatGroup(Number(id), g.id);
+                                  setChatGroups(prev => prev.filter(x => x.id !== g.id));
                                   flash('Đã xóa group');
-                                }}
-                                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-red-500 p-1 rounded"
-                                title="Xóa group"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">close</span>
-                              </button>
+                                } catch (err: any) {
+                                  alert('Lỗi xóa group: ' + (err.response?.data?.detail || err.message));
+                                }
+                              }}
+                              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-red-500 p-1 rounded"
+                              title="Xóa group"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">close</span>
+                            </button>
 
-                              {/* Platform icon */}
-                              <div className={`w-12 h-12 rounded-2xl ${ps.bg} flex items-center justify-center text-white text-xl mb-3 shadow-sm`}>
-                                {ps.icon}
-                              </div>
-
-                              {/* Name */}
-                              <p className="text-xs font-bold text-[#0b1c30] mb-1 leading-snug">{g.name}</p>
-
-                              {/* Platform + desc */}
-                              <p className="text-[10px] text-slate-400 mb-3">
-                                {ps.label} Group{g.desc ? ` • ${g.desc}` : ''}
-                              </p>
-
-                              {/* Open link */}
-                              <a
-                                href={g.link}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[11px] font-bold text-[#0058be] hover:underline flex items-center gap-1"
-                              >
-                                <span className="material-symbols-outlined text-[13px]">open_in_new</span>
-                                Mở ứng dụng
-                              </a>
+                            {/* Platform icon */}
+                            <div className={`w-12 h-12 rounded-2xl ${ps.bg} flex items-center justify-center text-white text-xl mb-3 shadow-sm`}>
+                              {ps.icon}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+
+                            {/* Name */}
+                            <p className="text-xs font-bold text-[#0b1c30] mb-1 leading-snug">{g.name}</p>
+
+                            {/* Platform + desc */}
+                            <p className="text-[10px] text-slate-400 mb-3">
+                              {ps.label} Group{g.desc ? ` • ${g.desc}` : ''}
+                            </p>
+
+                            {/* Open link */}
+                            <a
+                              href={g.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-bold text-[#0058be] hover:underline flex items-center gap-1"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                              Mở ứng dụng
+                            </a>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1586,6 +1509,38 @@ function ProjectDetailContent() {
         </div>
 
       </div>
+
+      {/* Modal xác nhận xóa */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-red-600 mb-3">
+                <span className="material-symbols-outlined text-[28px]">warning</span>
+                <h3 className="text-base font-bold">Xác nhận xóa dự án</h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Bạn có chắc chắn muốn xóa dự án <strong>{project.name}</strong> không? Hành động này sẽ xóa toàn bộ các vi phạm, tác vụ liên quan và không thể hoàn tác.
+              </p>
+            </div>
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                onClick={handleDeleteSheet}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm"
+              >
+                Xác nhận xóa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

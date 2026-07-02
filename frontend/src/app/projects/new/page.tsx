@@ -88,6 +88,12 @@ export default function NewProjectPage() {
       return;
     }
 
+    if (!projectCode.trim()) {
+      setErrorMsg('Mã dự án là bắt buộc.');
+      setLoading(false);
+      return;
+    }
+
     if (!autoCreate && !url.trim()) {
       setErrorMsg('Đường dẫn Google Sheet là bắt buộc.');
       setLoading(false);
@@ -110,25 +116,7 @@ export default function NewProjectPage() {
         teams_link: teamsEnabled ? (teamsLink || undefined) : undefined,
       });
 
-      setSuccessData({
-        id: res.id,
-        url: res.spreadsheet_url,
-      });
-      
-      // Clear form
-      setName('');
-      setProjectCode('');
-      setCustomerName('');
-      setLeaderEmail('');
-      setPmEmail('');
-      setMemberEmails('');
-      setUrl('');
-      setZaloLink('');
-      setTelegramLink('');
-      setTeamsLink('');
-      setZaloEnabled(true);
-      setTelegramEnabled(false);
-      setTeamsEnabled(false);
+      router.push(`/project?poll=${res.id}`);
 
       
     } catch (err: any) {
@@ -264,9 +252,12 @@ export default function NewProjectPage() {
 
               {/* Mã dự án */}
               <div className="space-y-2">
-                <label className="text-[11px] font-semibold text-[#565e74] block">Mã dự án</label>
+                <label className="text-[11px] font-semibold text-[#565e74] block">
+                  Mã dự án <span className="text-rose-500 font-bold ml-0.5">*</span>
+                </label>
                 <input
                   type="text"
+                  required
                   value={projectCode}
                   onChange={(e) => setProjectCode(e.target.value)}
                   placeholder="Ví dụ: GDN-2026"
