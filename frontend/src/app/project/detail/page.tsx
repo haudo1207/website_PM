@@ -1188,11 +1188,120 @@ function ProjectDetailContent() {
               {activeMainTab === 'chats' && (
                 <div className="space-y-6">
 
+                  {/* Official Channels (Database backed) */}
+                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be] text-[20px]">cloud_done</span>
+                      Kênh Liên Lạc Chính Thức (Lưu trên Hệ thống)
+                    </h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {[
+                        { key: 'zalo_link', label: 'Zalo Group', bg: 'bg-[#0068FF]', colorText: 'text-[#0068FF]', logo: '💬', val: project.zalo_link || '' },
+                        { key: 'telegram_link', label: 'Telegram Channel', bg: 'bg-[#229ED9]', colorText: 'text-[#229ED9]', logo: '▶', val: project.telegram_link || '' },
+                        { key: 'teams_link', label: 'Microsoft Teams', bg: 'bg-[#6264A7]', colorText: 'text-[#6264A7]', logo: 'T', val: project.teams_link || '' },
+                      ].map(ch => {
+                        const isEditing = editingChannel === ch.key;
+                        return (
+                          <div key={ch.key} className="bg-slate-50/50 border border-slate-200/80 rounded-xl p-5 flex flex-col justify-between space-y-4 hover:shadow-sm transition-all">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-xl ${ch.bg} flex items-center justify-center text-white text-lg font-bold shadow-sm`}>
+                                {ch.logo}
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-bold text-[#0b1c30]">{ch.label}</h4>
+                                <p className="text-[10px] text-slate-400">Đồng bộ trên toàn hệ thống</p>
+                              </div>
+                            </div>
+
+                            {isEditing ? (
+                              <div className="space-y-2">
+                                <input
+                                  type="url"
+                                  value={editingValue}
+                                  onChange={e => setEditingValue(e.target.value)}
+                                  placeholder="Nhập liên kết https://..."
+                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-2.5 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => handleSaveChannelLink(ch.key, editingValue)}
+                                    disabled={isSavingLink}
+                                    className="flex-1 bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-[10px] py-1.5 rounded-md shadow-sm transition-all flex items-center justify-center gap-1"
+                                  >
+                                    {isSavingLink ? (
+                                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                      'Lưu'
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setEditingChannel(null);
+                                      setEditingValue('');
+                                    }}
+                                    disabled={isSavingLink}
+                                    className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] py-1.5 rounded-md transition-all"
+                                  >
+                                    Huỷ
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                {ch.val ? (
+                                  <div className="space-y-2">
+                                    <div className="text-[10px] text-slate-500 truncate" title={ch.val}>
+                                      {ch.val}
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <a
+                                        href={ch.val}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-center py-1.5 rounded-md text-[10px] font-bold text-slate-700 transition-colors flex items-center justify-center gap-1 border border-slate-200"
+                                      >
+                                        <span className="material-symbols-outlined text-[12px]">open_in_new</span>
+                                        Truy cập
+                                      </a>
+                                      <button
+                                        onClick={() => {
+                                          setEditingChannel(ch.key);
+                                          setEditingValue(ch.val);
+                                        }}
+                                        className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-colors"
+                                      >
+                                        Sửa
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <div className="text-[10px] text-slate-400 italic">Chưa liên kết group chat</div>
+                                    <button
+                                      onClick={() => {
+                                        setEditingChannel(ch.key);
+                                        setEditingValue('');
+                                      }}
+                                      className={`w-full py-1.5 rounded-md border border-dashed border-slate-300 hover:border-slate-400 text-center text-[10px] font-bold ${ch.colorText} transition-all`}
+                                    >
+                                      + Kết nối
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Add Group Form */}
                   <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-6">
                     <h3 className="text-sm font-bold text-[#0b1c30] mb-5 flex items-center gap-2">
                       <span className="material-symbols-outlined text-[#0058be] text-[20px]">add_circle</span>
-                      Thêm Chat Group
+                      Thêm Kênh Thảo Luận Phụ (Lưu ở Trình duyệt)
                     </h3>
                     <form
                       onSubmit={e => {
