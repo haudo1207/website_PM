@@ -8,9 +8,10 @@ services:
       POSTGRES_USER: task_user
       POSTGRES_PASSWORD: MyPass2026
     ports:
-      - "127.0.0.1:5432:5432"
+      - "0.0.0.0:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U task_user -d task_portal"]
       interval: 10s

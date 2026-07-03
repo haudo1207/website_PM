@@ -31,8 +31,10 @@ Hệ thống **Task Compliance Portal** tự động đọc dữ liệu công vi
 ```
 Plane.so/
 ├── .env                          # Biến môi trường (DB, Redis, AI keys)
+├── .env.example                  # Mẫu cấu hình môi trường
 ├── docker-compose.yml            # Orchestration 6 services
 ├── vercel.json                   # Deploy frontend lên Vercel
+├── init-db.sql                   # File dữ liệu khởi tạo database (auto-seeded)
 │
 ├── secrets/
 │   └── google-service-account.json   # Service Account Google API
@@ -40,9 +42,8 @@ Plane.so/
 ├── backend/                      # ===== BACKEND (Python) =====
 │   ├── Dockerfile
 │   ├── requirements.txt          # Dependencies Python
-│   ├── create_admin.py           # Script tạo user admin đầu tiên
-│   ├── init_settings.py          # Script khởi tạo cấu hình mặc định
-│   ├── task_portal.db            # SQLite fallback database
+│   ├── create_admin.py           # Script tiện ích tạo/cập nhật admin (optional)
+│   ├── init_settings.py          # Script tiện ích reset cấu hình (optional)
 │   │
 │   └── app/
 │       ├── __init__.py
@@ -105,6 +106,7 @@ Plane.so/
 
 ### 3.1 `main.py` — Entry Point
 
+- Tự động chạy Database Seeding (Khởi tạo mặc định cấu hình cột, policy, AI prompt và tạo tài khoản `admin@company.com` / `admin123` nếu database rỗng)
 - Tạo bảng DB tự động (`Base.metadata.create_all`)
 - Thêm cột mới vào bảng `sheets` nếu chưa có (migration đơn giản)
 - Đăng ký 5 router: `auth`, `users`, `sheets`, `violations`, `settings`
@@ -126,8 +128,8 @@ Plane.so/
 
 ### 3.3 `database.py` — Kết nối Database
 
-- **Ưu tiên PostgreSQL** — kiểm tra kết nối TCP trước
-- **Fallback sang SQLite** — nếu PostgreSQL không khả dụng, tự động dùng `task_portal.db`
+- **Chỉ sử dụng PostgreSQL** — Kết nối trực tiếp đến PostgreSQL qua `DATABASE_URL` (không còn cơ chế fallback sang SQLite để đảm bảo tính nhất quán dữ liệu).
+- **Auto-seeded Database** — Khi khởi tạo container database PostgreSQL trống, hệ thống tự động chạy file `init-db.sql` nếu được mount, hoặc backend sẽ tự sinh các dữ liệu cài đặt mặc định trên PostgreSQL.
 - Cung cấp `get_db()` dependency cho FastAPI
 
 ### 3.4 Models (ORM)
@@ -360,11 +362,13 @@ Plane.so/
 
 ## 8. Scripts tiện ích
 
+*Lưu ý: Kể từ phiên bản 4.0.0, backend đã tích hợp sẵn cơ chế tự động seed database khi khởi chạy, do đó bạn không cần chạy thủ công các lệnh dưới đây nữa trừ khi muốn reset lại hệ thống.*
+
 ```bash
-# Tạo admin đầu tiên
+# Tạo/reset admin bằng lệnh thủ công
 python create_admin.py admin@company.com "Admin" "password123"
 
-# Khởi tạo cấu hình mặc định
+# Reset cấu hình cài đặt về mặc định
 python init_settings.py
 
 # Chạy backend dev
@@ -405,3 +409,31 @@ docker-compose up -d --build
 | axios | HTTP client |
 | tailwindcss 3 | CSS framework |
 | typescript 5 | Type safety |
+
+---
+
+## 10. Đồng bộ Database & Quy trình Phát triển Nhóm
+
+Để đảm bảo môi trường phát triển của nhiều lập trình viên (multi-developer) đồng bộ dữ liệu với nhau, dự án hỗ trợ 2 hướng tiếp cận chính:
+
+### 10.1 Cách 1: Sử dụng Database chung trên VM (Khuyên dùng)
+Kết nối trực tiếp mã nguồn chạy ở máy local tới một database PostgreSQL chung được cài trên VM:
+1. **Trên VM:** Mở cổng `5432` trong file `docker-compose.yml` (đặt là `0.0.0.0:5432:5432`) và cấu hình Firewall/Security Group mở cổng `5432` (TCP).
+2. **Tại máy Local:** Cập nhật biến `DATABASE_URL` trong file `.env` trỏ về địa chỉ IP của VM:
+   ```env
+   DATABASE_URL=postgresql://task_user:MyPass2026@<IP_VM>:5432/task_portal
+   ```
+3. **Kết quả:** Cả 2 lập trình viên cùng làm việc trên 1 cơ sở dữ liệu duy nhất, dữ liệu thêm/sửa/xóa sẽ được đồng bộ thời gian thực.
+
+### 10.2 Cách 2: Sử dụng Database Offline riêng biệt (Auto-seeded)
+Nếu muốn phát triển độc lập không phụ thuộc vào internet/VM:
+1. Mỗi máy lập trình viên sẽ tự chạy database PostgreSQL riêng thông qua Docker Compose local.
+2. File **`init-db.sql`** đặt ở thư mục gốc chứa bản sao lưu cấu trúc và dữ liệu mẫu.
+3. Khi khởi chạy Docker Compose lần đầu (hoặc sau khi reset volume bằng `docker compose down -v`), database sẽ tự động nạp dữ liệu từ file `init-db.sql` này để tạo sẵn tài khoản `admin@company.com` và các dự án mẫu.
+4. **Cách cập nhật file khởi tạo:** Chạy lệnh dump dữ liệu trên máy có database mới nhất để xuất đè lại file `init-db.sql` rồi commit lên Git:
+   ```bash
+   # Dump dữ liệu sạch từ container ra host máy tính
+   docker exec task_postgres pg_dump -U task_user -d task_portal --clean --no-owner --no-privileges -f /tmp/init-db.sql
+   docker cp task_postgres:/tmp/init-db.sql ./init-db.sql
+   docker exec task_postgres rm /tmp/init-db.sql
+   ```
