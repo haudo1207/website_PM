@@ -14,9 +14,9 @@ export default function NewProjectPage() {
   const [leaderEmail, setLeaderEmail] = useState('');
   const [pmEmail, setPmEmail] = useState('');
   const [memberEmails, setMemberEmails] = useState('');
-  
+
   // Auto create Google Sheet settings
-  const [autoCreate, setAutoCreate] = useState(false);
+  const [autoCreate, setAutoCreate] = useState(true);
   const [url, setUrl] = useState('');
 
   // Contact channels
@@ -28,7 +28,7 @@ export default function NewProjectPage() {
   const [teamsEnabled, setTeamsEnabled] = useState(false);
 
 
-  
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successData, setSuccessData] = useState<{ id: number; url: string } | null>(null);
@@ -47,7 +47,7 @@ export default function NewProjectPage() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      
+
       if (customerDropdownOpen && customerRef.current && !customerRef.current.contains(target)) {
         setCustomerDropdownOpen(false);
         setCustomerSearch('');
@@ -94,11 +94,12 @@ export default function NewProjectPage() {
       return;
     }
 
-    if (!autoCreate && !url.trim()) {
-      setErrorMsg('Đường dẫn Google Sheet là bắt buộc.');
-      setLoading(false);
-      return;
-    }
+    // =====task#1: ẩn gg sheet link khi tạo project
+    // if (!autoCreate && !url.trim()) {
+    //   setErrorMsg('Đường dẫn Google Sheet là bắt buộc.');
+    //   setLoading(false);
+    //   return;
+    // }
 
     try {
       const res = await addSheet({
@@ -118,7 +119,7 @@ export default function NewProjectPage() {
 
       router.push(`/project?poll=${res.id}`);
 
-      
+
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.response?.data?.detail || 'Lỗi khi tạo dự án. Vui lòng kiểm tra lại.');
@@ -287,9 +288,9 @@ export default function NewProjectPage() {
                   </span>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </button>
-                
+
                 {customerDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2"
                   >
@@ -371,9 +372,9 @@ export default function NewProjectPage() {
                   <span>{currentPhase}</span>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </button>
-                
+
                 {phaseDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto scrollbar-thin"
                   >
@@ -416,9 +417,9 @@ export default function NewProjectPage() {
                   </span>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </button>
-                
+
                 {pmDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
                   >
@@ -468,9 +469,9 @@ export default function NewProjectPage() {
                   </span>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </button>
-                
+
                 {leaderDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[220px] overflow-y-auto"
                   >
@@ -518,6 +519,7 @@ export default function NewProjectPage() {
             </div>
 
             {/* Row 5: Google Sheets */}
+            {/* =====task#1: ẩn gg sheet link khi tạo project
             <div className="space-y-3 border-t border-[#c2c6d6]/60 pt-4">
               <div className="space-y-2">
                 <label className="text-[11px] font-semibold text-[#565e74] block">
@@ -543,6 +545,9 @@ export default function NewProjectPage() {
                 </p>
               </div>
             </div>
+            */}
+
+
 
             {/* Row 6: Kênh liên lạc dự án */}
             <div className="space-y-4 border-t border-[#c2c6d6]/60 pt-4">
@@ -551,7 +556,7 @@ export default function NewProjectPage() {
                 <label className="text-[11px] font-semibold text-[#565e74]">Kênh liên lạc dự án</label>
                 <span className="text-[10px] text-[#727785] ml-1">(Tùy chọn)</span>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Zalo Card */}
                 <div className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${zaloEnabled ? 'bg-white border-[#0058be]/60 shadow-sm shadow-[#0058be]/5' : 'bg-[#f0f2f5]/40 border-[#c2c6d6]/30 opacity-60'}`}>
