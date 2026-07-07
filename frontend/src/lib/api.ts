@@ -38,6 +38,10 @@ export const addSheet = (data: {
   telegram_link?: string;
   teams_link?: string;
 }) => api.post('/sheets', data).then(r => r.data);
+export const getWorksheets = (url: string) =>
+  api.post('/sheets/worksheets', { url }).then(r => r.data);
+
+
 
 export const deleteSheet = (id: number) => api.delete(`/sheets/${id}`);
 export const updateSheet = (id: number, data: object) => api.put(`/sheets/${id}`, data).then(r => r.data);
@@ -62,5 +66,5 @@ export const deleteUser = (id: number) => api.delete(`/users/${id}`);
 export const getChatGroups = (sheetId: number) => api.get(`/sheets/${sheetId}/chat-groups`).then(r => r.data);
 export const createChatGroup = (sheetId: number, d: { name: string; platform: string; link: string; desc?: string }) => api.post(`/sheets/${sheetId}/chat-groups`, d).then(r => r.data);
 export const deleteChatGroup = (sheetId: number, cgid: number) => api.delete(`/sheets/${sheetId}/chat-groups/${cgid}`).then(r => r.data);
-export const getWorksheets = (url: string) => api.post('/sheets/worksheets', { url }).then(r => r.data);
+
 

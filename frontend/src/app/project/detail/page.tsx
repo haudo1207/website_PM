@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getViolations, getSheets, addTask, checkSingleTask, updateSheet, deleteSheet, getChatGroups, createChatGroup, deleteChatGroup } from '@/lib/api';
+import { getViolations, getSheets, addTask, checkSingleTask, updateSheet, deleteSheet, getChatGroups, createChatGroup, deleteChatGroup, getWorksheets } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 const PHASE_TABS = [
@@ -109,6 +109,10 @@ function ProjectDetailContent() {
   const [phaseName, setPhaseName] = useState('');
   const [sheetUrl, setSheetUrl] = useState('');
 
+  const [worksheets, setWorksheets] = useState<string[]>([]);
+  const [selectedWorksheet, setSelectedWorksheet] = useState('');
+  const [loadingWorksheets, setLoadingWorksheets] = useState(false);
+
 
 
 
@@ -126,6 +130,42 @@ function ProjectDetailContent() {
       flash('Xóa dự án thất bại', true);
     }
   };
+
+
+
+  const handleLoadWorksheets = async () => {
+    if (!sheetUrl.trim()) {
+      setWorksheets([]);
+      setSelectedWorksheet('');
+      return;
+    }
+
+    try {
+      setLoadingWorksheets(true);
+
+      const res = await getWorksheets(sheetUrl);
+
+      console.log("Worksheets:", res);
+
+      setWorksheets(res.worksheets || []);
+
+      if (res.worksheets?.length > 0) {
+        setSelectedWorksheet(res.worksheets[0]);
+      }
+
+    } catch (err) {
+      console.error(err);
+      setWorksheets([]);
+      setSelectedWorksheet('');
+    } finally {
+      setLoadingWorksheets(false);
+    }
+  };
+
+
+
+
+
 
   const loadProject = useCallback(async () => {
     try {
@@ -1593,22 +1633,56 @@ function ProjectDetailContent() {
                 {/* Sheet URL */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Google Sheet URL
+                    Google Sheet URL (nếu có)
                   </label>
 
                   <input
                     type="url"
                     value={sheetUrl}
                     onChange={(e) => setSheetUrl(e.target.value)}
+                    onBlur={handleLoadWorksheets}
                     placeholder="https://docs.google.com/spreadsheets/d/..."
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+
+                  {worksheets.length > 0 && (
+                    <div className="space-y-2 mt-4">
+                      <label className="block text-sm font-medium">
+                        Chọn worksheet
+                      </label>
+
+                      <select
+                        value={selectedWorksheet}
+                        onChange={(e) => setSelectedWorksheet(e.target.value)}
+                        className="w-full border rounded-lg p-2"
+                      >
+                        <option value="">
+                          -- Chọn worksheet --
+                        </option>
+
+                        {worksheets.map((name) => (
+                          <option
+                            key={name}
+                            value={name}
+                          >
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
             <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
               <button
-                onClick={() => setShowImportPhaseModal(false)}
+                onClick={() => {
+                  setShowImportPhaseModal(false);
+                  setPhaseName('');
+                  setSheetUrl('');
+                  setWorksheets([]);
+                  setSelectedWorksheet('');
+                }}
                 className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
               >
                 Hủy bỏ

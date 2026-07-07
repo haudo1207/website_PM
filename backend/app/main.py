@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, sheets, violations, settings_router
+from .routers import auth, users, sheets, violations, settings_router, phases
 from .database import engine, Base
-from .models import user, sheet, setting, violation, chat_group
+from .models import user, sheet, setting, violation, chat_group, phase_model
 
 Base.metadata.create_all(bind=engine)
 
@@ -137,6 +137,7 @@ app.include_router(users.router,           prefix="/api/users")
 app.include_router(sheets.router,          prefix="/api/sheets")
 app.include_router(violations.router,      prefix="/api/violations")
 app.include_router(settings_router.router, prefix="/api/settings")
+app.include_router(phases.router)
 
 @app.get("/health")
 def health():

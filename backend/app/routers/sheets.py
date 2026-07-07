@@ -55,13 +55,21 @@ def get_worksheets(body: dict, user=Depends(get_current_user)):
 
     spreadsheet_id = extract_id(url)
 
+    # try:
+    #     worksheets = get_worksheet_names(spreadsheet_id)
+    # except Exception as e:
+    #     raise HTTPException(
+    #         500,
+    #         f"Không thể đọc Google Sheet: {str(e)}"
+    #     )
+
     try:
         worksheets = get_worksheet_names(spreadsheet_id)
     except Exception as e:
-        raise HTTPException(
-            500,
-            f"Không thể đọc Google Sheet: {str(e)}"
-        )
+        import traceback
+        traceback.print_exc()
+        print("ERROR:", repr(e))
+        raise
 
     return {
         "worksheets": worksheets
