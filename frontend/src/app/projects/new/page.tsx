@@ -16,8 +16,8 @@ export default function NewProjectPage() {
   const [memberEmails, setMemberEmails] = useState('');
   
   // Auto create Google Sheet settings
-  const [autoCreate, setAutoCreate] = useState(false);
-  const [url, setUrl] = useState('');
+  const autoCreate = true;
+  const url = '';
 
   // Contact channels
   const [zaloLink, setZaloLink] = useState('');
@@ -89,13 +89,7 @@ export default function NewProjectPage() {
     }
 
     if (!projectCode.trim()) {
-      setErrorMsg('Mã dự án là bắt buộc.');
-      setLoading(false);
-      return;
-    }
-
-    if (!autoCreate && !url.trim()) {
-      setErrorMsg('Đường dẫn Google Sheet là bắt buộc.');
+      setErrorMsg('Năm là bắt buộc.');
       setLoading(false);
       return;
     }
@@ -109,14 +103,12 @@ export default function NewProjectPage() {
         leader_email: leaderEmail || undefined,
         pm_email: pmEmail || undefined,
         member_emails: memberEmails || undefined,
-        auto_create: autoCreate,
-        url: autoCreate ? undefined : url,
         zalo_link: zaloEnabled ? (zaloLink || undefined) : undefined,
         telegram_link: telegramEnabled ? (telegramLink || undefined) : undefined,
         teams_link: teamsEnabled ? (teamsLink || undefined) : undefined,
       });
 
-      router.push(`/project?poll=${res.id}`);
+      router.push(`/project/detail?id=${res.id}`);
 
       
     } catch (err: any) {
@@ -189,7 +181,7 @@ export default function NewProjectPage() {
               Tạo dự án mới
             </h3>
             <p className="text-xs text-[#565e74] max-w-2xl mx-auto">
-              Nhập thông tin dự án và liên kết đường dẫn Google Sheet để hệ thống tiến hành đồng bộ và theo dõi công việc.
+              Nhập thông tin dự án để hệ thống tiến hành khởi tạo và theo dõi công việc.
             </p>
           </div>
 
@@ -250,19 +242,29 @@ export default function NewProjectPage() {
                 />
               </div>
 
-              {/* Mã dự án */}
+              {/* Năm */}
               <div className="space-y-2">
                 <label className="text-[11px] font-semibold text-[#565e74] block">
-                  Mã dự án <span className="text-rose-500 font-bold ml-0.5">*</span>
+                  Năm <span className="text-rose-500 font-bold ml-0.5">*</span>
                 </label>
                 <input
                   type="text"
                   required
+                  list="project-years"
                   value={projectCode}
                   onChange={(e) => setProjectCode(e.target.value)}
-                  placeholder="Ví dụ: GDN-2026"
+                  placeholder="Chọn hoặc nhập năm (VD: 2026)"
                   className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all placeholder:text-[#727785] text-xs"
                 />
+                <datalist id="project-years">
+                  <option value="2024" />
+                  <option value="2025" />
+                  <option value="2026" />
+                  <option value="2027" />
+                  <option value="2028" />
+                  <option value="2029" />
+                  <option value="2030" />
+                </datalist>
               </div>
             </div>
 
@@ -517,32 +519,6 @@ export default function NewProjectPage() {
               <p className="text-[10px] text-[#727785]">Nhập nhiều email bằng cách phân cách bởi dấu phẩy (,)</p>
             </div>
 
-            {/* Row 5: Google Sheets */}
-            <div className="space-y-3 border-t border-[#c2c6d6]/60 pt-4">
-              <div className="space-y-2">
-                <label className="text-[11px] font-semibold text-[#565e74] block">
-                  Đường dẫn Google Sheet <span className="text-rose-500 font-bold ml-0.5">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="url"
-                    required
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    placeholder="https://docs.google.com/spreadsheets/d/..."
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all placeholder:text-[#727785] text-xs"
-                  />
-                  <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#727785] text-[20px]">description</span>
-                </div>
-              </div>
-              
-              <div className="p-3 bg-[#eff4ff] border border-[#0058be]/20 rounded-lg flex gap-3 items-start">
-                <span className="material-symbols-outlined text-[#0058be] text-[18px] mt-0.5">info</span>
-                <p className="text-[11px] text-[#565e74] leading-relaxed">
-                  <span className="text-[#0058be] font-bold font-semibold">Lưu ý:</span> Bạn phải chia sẻ quyền Editor cho email Service Account của hệ thống để đồng bộ.
-                </p>
-              </div>
-            </div>
 
             {/* Row 6: Kênh liên lạc dự án */}
             <div className="space-y-4 border-t border-[#c2c6d6]/60 pt-4">

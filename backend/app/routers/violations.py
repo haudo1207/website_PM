@@ -225,3 +225,170 @@ def check_single_task(violation_id: int, db: Session = Depends(get_db), user=Dep
         "ai_suggestion": violation.ai_suggestion,
         "row_data": violation.row_data
     }
+
+
+def has_write_access(sheet, user):
+    if user.role == "admin":
+        return True
+    if sheet.owner_id == user.id:
+        return True
+    if sheet.leader_email == user.email:
+        return True
+    if sheet.pm_email == user.email:
+        return True
+    return False
+
+
+@router.put("/{violation_id}")
+def update_violation(violation_id: int, body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    violation = db.query(Violation).filter(Violation.id == violation_id).first()
+    if not violation:
+        raise HTTPException(404, "Task not found")
+    sheet = db.query(Sheet).filter(Sheet.id == violation.sheet_id).first()
+    if not sheet:
+        raise HTTPException(404, "Sheet not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Access denied")
+        
+    import json
+    row_data_str = json.dumps(body, ensure_ascii=False)
+    violation.row_data = row_data_str
+    
+    # Check if section
+    task_id_val = str(body.get("TASK ID", body.get("Task ID", body.get("ID", "")))).strip()
+    detail_val = ""
+    detail_key = "DETAIL TASK"
+    for k, v in body.items():
+        if str(k).strip().upper() in ["DETAIL TASK", "DETAIL", "TASK", "DESCRIPTION", "MÔ TẢ", "TÊN TASK"]:
+            detail_val = str(v).strip()
+            detail_key = k
+            break
+            
+    from ..worker.tasks import is_section_header_text
+    assigned_val = str(body.get("ASSIGNED", body.get("Assigned", ""))).strip()
+    status_val = str(body.get("STATUS", body.get("Status", ""))).strip()
+    priority_val = str(body.get("PRIORITY", body.get("Priority", ""))).strip()
+    has_core_fields = bool(assigned_val or status_val or priority_val)
+    
+    is_section = False
+    if not has_core_fields:
+        if is_section_header_text(task_id_val):
+            is_section = True
+            if not detail_val:
+                detail_val = task_id_val
+                task_id_val = ""
+        elif is_section_header_text(detail_val):
+            is_section = True
+            
+    if is_section:
+        body["TASK ID"] = task_id_val
+        if "Task ID" in body: body["Task ID"] = task_id_val
+        if "ID" in body: body["ID"] = task_id_val
+        body[detail_key] = detail_val
+        violation.row_data = json.dumps(body, ensure_ascii=False)
+        violation.violation_code = "SECTION"
+        violation.violation_msg = ""
+        violation.ai_verdict = "SECTION"
+        violation.ai_reason = ""
+        violation.ai_suggestion = ""
+        db.commit()
+        return {
+            "id": violation.id,
+            "tab_name": violation.tab_name,
+            "row_number": violation.row_number,
+            "row_data": violation.row_data,
+            "violation_code": violation.violation_code,
+            "violation_msg": violation.violation_msg,
+            "ai_verdict": violation.ai_verdict,
+            "ai_reason": violation.ai_reason,
+            "ai_suggestion": violation.ai_suggestion
+        }
+        
+    from ..utils.tasks import compute_derived_fields
+    body = compute_derived_fields(body)
+    row_data_str = json.dumps(body, ensure_ascii=False)
+    violation.row_data = row_data_str
+    
+    col_setting = db.query(Setting).filter(Setting.key == "column_config").first()
+    col_cfg = json.loads(col_setting.value) if col_setting else {}
+    req_cols = col_cfg.get("cols", ["DETAIL TASK","PRIORITY","MANDAY (EST)","STATUS","ASSIGNED"])
+    
+    pol_setting = db.query(Setting).filter(Setting.key == "policy").first()
+    policy = json.loads(pol_setting.value) if pol_setting else {"rules":[]}
+    
+    from ..worker.policy_engine import check_row
+    hard_violations = check_row(body, policy, req_cols)
+    if hard_violations:
+        hv = hard_violations[0]
+        violation.violation_code = hv["code"]
+        violation.violation_msg = hv["message"]
+        violation.ai_verdict = "FAIL"
+        violation.ai_reason = f"Vi phạm luật cứng: {hv['message']}"
+        violation.ai_suggestion = "Sửa dữ liệu trên UI để tuân thủ quy tắc."
+        db.commit()
+        return {
+            "id": violation.id,
+            "tab_name": violation.tab_name,
+            "row_number": violation.row_number,
+            "row_data": violation.row_data,
+            "violation_code": violation.violation_code,
+            "violation_msg": violation.violation_msg,
+            "ai_verdict": violation.ai_verdict,
+            "ai_reason": violation.ai_reason,
+            "ai_suggestion": violation.ai_suggestion
+        }
+        
+    ai_setting = db.query(Setting).filter(Setting.key == "ai_config").first()
+    ai_cfg = json.loads(ai_setting.value) if ai_setting else {}
+    if not ai_cfg.get("api_key"):
+        ai_cfg["api_key"] = os.environ.get("AI_API_KEY")
+    if not ai_cfg.get("base_url"):
+        ai_cfg["base_url"] = os.environ.get("AI_BASE_URL")
+    if not ai_cfg.get("model"):
+        ai_cfg["model"] = os.environ.get("AI_MODEL","gpt-4o-mini")
+        
+    from ..worker.ai_evaluator import evaluate_task
+    try:
+        ai_res = evaluate_task(body, ai_cfg, req_cols)
+        verdict = ai_res.get("verdict", "REVIEW").strip().upper()
+        violation.violation_code = "AI_EVAL" if verdict != "PASS" else "PASS"
+        violation.violation_msg = ai_res.get("reason", "") if verdict != "PASS" else "Task hợp lệ"
+        violation.ai_verdict = verdict
+        violation.ai_reason = ai_res.get("reason", "") if verdict != "PASS" else "Task tuân thủ tiêu chuẩn."
+        violation.ai_suggestion = ai_res.get("suggestion", "") if verdict != "PASS" else ""
+        db.commit()
+    except Exception as e:
+        violation.violation_code = "AI_EVAL"
+        violation.violation_msg = f"Lỗi AI Evaluator: {str(e)}"
+        violation.ai_verdict = "REVIEW"
+        violation.ai_reason = f"Lỗi AI Evaluator: {str(e)}"
+        violation.ai_suggestion = "Vui lòng thử lại sau."
+        db.commit()
+        
+    return {
+        "id": violation.id,
+        "tab_name": violation.tab_name,
+        "row_number": violation.row_number,
+        "row_data": violation.row_data,
+        "violation_code": violation.violation_code,
+        "violation_msg": violation.violation_msg,
+        "ai_verdict": violation.ai_verdict,
+        "ai_reason": violation.ai_reason,
+        "ai_suggestion": violation.ai_suggestion
+    }
+
+
+@router.delete("/{violation_id}")
+def delete_violation(violation_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    violation = db.query(Violation).filter(Violation.id == violation_id).first()
+    if not violation:
+        raise HTTPException(404, "Task not found")
+    sheet = db.query(Sheet).filter(Sheet.id == violation.sheet_id).first()
+    if not sheet:
+        raise HTTPException(404, "Sheet not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Access denied")
+        
+    db.delete(violation)
+    db.commit()
+    return {"message": "Task deleted successfully"}

@@ -46,6 +46,9 @@ export const getSheetLogs = (id: number) => api.get(`/sheets/${id}/logs`).then(r
 export const addTask = (sheetId: number, data: { tab_name: string; after_row: number; task_data: object }) => api.post(`/sheets/${sheetId}/add-task`, data).then(r => r.data);
 export const getViolations = (params?: object) => api.get('/violations', { params }).then(r => r.data);
 export const checkSingleTask = (id: number) => api.post(`/violations/${id}/check`).then(r => r.data);
+export const updateTask = (id: number, data: object) => api.put(`/violations/${id}`, data).then(r => r.data);
+export const deleteTask = (id: number) => api.delete(`/violations/${id}`).then(r => r.data);
+export const addTaskLocal = (sheetId: number, data: { tab_name: string; after_row?: number; task_data: object }) => api.post(`/sheets/${sheetId}/add-task-local`, data).then(r => r.data);
 export const getColumnConfig = () => api.get('/settings/column-config').then(r => r.data);
 export const updateColumnConfig = (d: object) => api.put('/settings/column-config', d).then(r => r.data);
 export const getPolicy = () => api.get('/settings/policy').then(r => r.data);
@@ -62,3 +65,8 @@ export const deleteUser = (id: number) => api.delete(`/users/${id}`);
 export const getChatGroups = (sheetId: number) => api.get(`/sheets/${sheetId}/chat-groups`).then(r => r.data);
 export const createChatGroup = (sheetId: number, d: { name: string; platform: string; link: string; desc?: string }) => api.post(`/sheets/${sheetId}/chat-groups`, d).then(r => r.data);
 export const deleteChatGroup = (sheetId: number, cgid: number) => api.delete(`/sheets/${sheetId}/chat-groups/${cgid}`).then(r => r.data);
+
+export const getPhases = (sheetId: number) => api.get(`/sheets/${sheetId}/phases`).then(r => r.data);
+export const createPhase = (sheetId: number, data: { name: string }) => api.post(`/sheets/${sheetId}/phases`, data).then(r => r.data);
+export const updatePhase = (sheetId: number, pid: number, data: { name: string }) => api.put(`/sheets/${sheetId}/phases/${pid}`, data).then(r => r.data);
+export const deletePhase = (sheetId: number, pid: number) => api.delete(`/sheets/${sheetId}/phases/${pid}`).then(r => r.data);

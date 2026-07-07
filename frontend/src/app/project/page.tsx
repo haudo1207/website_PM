@@ -14,6 +14,8 @@ const getYearFromProjectCode = (projectCode: string, createdAt: string): number 
     if (match) {
       return parseInt(match[1], 10);
     }
+    const val = parseInt(projectCode, 10);
+    if (!isNaN(val)) return val;
   }
   if (createdAt) {
     try {

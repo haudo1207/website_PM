@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.sheet import Sheet
 from ..models.violation import Violation
 from ..models.chat_group import ChatGroup
+from ..models.setting import Setting
+from ..models.phase import Phase
 from ..utils.auth import get_current_user
 from ..utils.redis_fallback import fallback_redis
 import uuid, re, os, json as _json
@@ -69,7 +72,6 @@ def has_read_access(sheet, user):
 
 @router.post("")
 def add(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    auto_create = body.get("auto_create", False)
     name = body.get("name", "")
     project_code = body.get("project_code")
     customer_name = body.get("customer_name")
@@ -81,26 +83,9 @@ def add(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get
     telegram_link = body.get("telegram_link")
     teams_link = body.get("teams_link")
 
-    if auto_create:
-        from ..worker.google_sheet import create_new_sheet
-        title = f"{name} - {project_code}" if project_code else name
-        try:
-            res = create_new_sheet(
-                title=title,
-                pm_email=pm_email,
-                leader_email=leader_email,
-                member_emails=member_emails
-            )
-            sid = res["spreadsheet_id"]
-            spreadsheet_url = res["spreadsheet_url"]
-        except Exception as e:
-            raise HTTPException(500, f"Lỗi tự động tạo Google Sheet: {str(e)}")
-    else:
-        url = body.get("url")
-        if not url:
-            raise HTTPException(400, "URL Google Sheet là bắt buộc nếu không tự động tạo.")
-        sid = extract_id(url)
-        spreadsheet_url = url
+    import uuid
+    sid = f"local_{uuid.uuid4().hex}"
+    spreadsheet_url = ""
 
     sheet = Sheet(
         spreadsheet_id=sid,
@@ -120,10 +105,19 @@ def add(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get
     db.add(sheet)
     db.commit()
     db.refresh(sheet)
+
+    # Create the default Master phase
+    master_phase = Phase(
+        sheet_id=sheet.id,
+        name="Master",
+        display_order=0,
+        is_master=True
+    )
+    db.add(master_phase)
+    db.commit()
+
     run_id = str(uuid.uuid4())
-    from ..worker.tasks import check_sheet
-    background_tasks.add_task(check_sheet, sid, sheet.id, run_id)
-    return {"id":sheet.id,"run_id":run_id,"message":"Tạo dự án thành công, đang phân tích...","spreadsheet_url":spreadsheet_url}
+    return {"id":sheet.id,"run_id":run_id,"message":"Tạo dự án thành công","spreadsheet_url":spreadsheet_url}
 
 @router.get("")
 def list_all(db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -348,5 +342,254 @@ def delete_chat_group(sid: int, cgid: int, db: Session = Depends(get_db), user=D
     db.delete(group)
     db.commit()
     return {"message": "Chat group deleted"}
+
+
+@router.post("/{sid}/add-task-local")
+def add_task_local(sid: int, body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Sheet not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Not allowed to add tasks to this sheet")
+        
+    tab_name = body.get("tab_name")
+    after_row = body.get("after_row", 0)
+    task_data = body.get("task_data", {})
+    
+    if not tab_name:
+        raise HTTPException(400, "tab_name is required")
+        
+    # Determine new row number. Find the max row number in that tab, and add 1
+    max_row = db.query(Violation).filter(Violation.sheet_id == sid, Violation.tab_name == tab_name).order_by(Violation.row_number.desc()).first()
+    new_row_num = (max_row.row_number + 1) if max_row else 2
+    
+    # Rule 1: Automatically generate sequential TASK ID
+    import json
+    all_violations = db.query(Violation).filter(Violation.sheet_id == sid).all()
+    max_task_id = 0
+    for v in all_violations:
+        if v.ai_verdict == "SECTION":
+            continue
+        try:
+            rdata = json.loads(v.row_data or "{}")
+            tid_val = None
+            for k, val in rdata.items():
+                if str(k).strip().upper() in ["TASK ID", "TASKID", "ID"]:
+                    tid_val = val
+                    break
+            if tid_val:
+                tid_int = int(float(str(tid_val).strip()))
+                if tid_int > max_task_id:
+                    max_task_id = tid_int
+        except Exception:
+            pass
+    new_task_id = max_task_id + 1
+    task_data["TASK ID"] = str(new_task_id)
+    
+    from ..utils.tasks import compute_derived_fields
+    task_data = compute_derived_fields(task_data)
+    
+    row_data_str = json.dumps(task_data, ensure_ascii=False)
+    
+    violation = Violation(
+        sheet_id=sid,
+        tab_name=tab_name,
+        row_number=new_row_num,
+        row_data=row_data_str,
+        violation_code="PASS",
+        violation_msg="Task hợp lệ",
+        ai_verdict="PASS",
+        ai_reason="Task tuân thủ tiêu chuẩn.",
+        ai_suggestion="",
+        check_run_id="local_add"
+    )
+    db.add(violation)
+    db.commit()
+    db.refresh(violation)
+    
+    # Trigger checking on the new task immediately
+    col_setting = db.query(Setting).filter(Setting.key == "column_config").first()
+    col_cfg = json.loads(col_setting.value) if col_setting else {}
+    req_cols = col_cfg.get("cols", ["DETAIL TASK","PRIORITY","MANDAY (EST)","STATUS","ASSIGNED"])
+    
+    pol_setting = db.query(Setting).filter(Setting.key == "policy").first()
+    policy = json.loads(pol_setting.value) if pol_setting else {"rules":[]}
+    
+    from ..worker.policy_engine import check_row
+    hard_violations = check_row(task_data, policy, req_cols)
+    if hard_violations:
+        hv = hard_violations[0]
+        violation.violation_code = hv["code"]
+        violation.violation_msg = hv["message"]
+        violation.ai_verdict = "FAIL"
+        violation.ai_reason = f"Vi phạm luật cứng: {hv['message']}"
+        violation.ai_suggestion = "Sửa dữ liệu trên UI để tuân thủ quy tắc."
+        db.commit()
+    else:
+        ai_setting = db.query(Setting).filter(Setting.key == "ai_config").first()
+        ai_cfg = json.loads(ai_setting.value) if ai_setting else {}
+        if not ai_cfg.get("api_key"):
+            ai_cfg["api_key"] = os.environ.get("AI_API_KEY")
+        if not ai_cfg.get("base_url"):
+            ai_cfg["base_url"] = os.environ.get("AI_BASE_URL")
+        if not ai_cfg.get("model"):
+            ai_cfg["model"] = os.environ.get("AI_MODEL","gpt-4o-mini")
+            
+        from ..worker.ai_evaluator import evaluate_task
+        try:
+            ai_res = evaluate_task(task_data, ai_cfg, req_cols)
+            verdict = ai_res.get("verdict", "REVIEW").strip().upper()
+            violation.violation_code = "AI_EVAL" if verdict != "PASS" else "PASS"
+            violation.violation_msg = ai_res.get("reason", "") if verdict != "PASS" else "Task hợp lệ"
+            violation.ai_verdict = verdict
+            violation.ai_reason = ai_res.get("reason", "") if verdict != "PASS" else "Task tuân thủ tiêu chuẩn."
+            violation.ai_suggestion = ai_res.get("suggestion", "") if verdict != "PASS" else ""
+            db.commit()
+        except Exception:
+            pass
+            
+    return {
+        "id": violation.id,
+        "tab_name": violation.tab_name,
+        "row_number": violation.row_number,
+        "row_data": violation.row_data,
+        "violation_code": violation.violation_code,
+        "violation_msg": violation.violation_msg,
+        "ai_verdict": violation.ai_verdict,
+        "ai_reason": violation.ai_reason,
+        "ai_suggestion": violation.ai_suggestion
+    }
+
+
+@router.get("/{sid}/phases")
+def get_phases(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Project not found")
+    if not has_read_access(sheet, user):
+        raise HTTPException(403, "Access denied")
+        
+    phases = db.query(Phase).filter(Phase.sheet_id == sid).order_by(Phase.id).all()
+    
+    if not phases:
+        master = Phase(sheet_id=sid, name="Master", display_order=0, is_master=True)
+        db.add(master)
+        db.commit()
+        
+        distinct_tabs = db.query(Violation.tab_name).filter(
+            Violation.sheet_id == sid, 
+            Violation.tab_name != None, 
+            Violation.tab_name != ""
+        ).distinct().all()
+        
+        for (tname,) in distinct_tabs:
+            if tname != "Master":
+                new_ph = Phase(sheet_id=sid, name=tname, display_order=10, is_master=False)
+                db.add(new_ph)
+        db.commit()
+        
+        phases = db.query(Phase).filter(Phase.sheet_id == sid).order_by(Phase.id).all()
+        
+    return phases
+
+
+@router.post("/{sid}/phases")
+def create_phase(sid: int, body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Project not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Access denied")
+        
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "Tên Phase không được để trống")
+        
+    if name.lower() == "master":
+        raise HTTPException(400, "Tên 'Master' là dành riêng cho Phase mặc định")
+        
+    existing = db.query(Phase).filter(Phase.sheet_id == sid, func.lower(Phase.name) == name.lower()).first()
+    if existing:
+        raise HTTPException(400, f"Phase '{name}' đã tồn tại trong dự án")
+        
+    max_order = db.query(func.max(Phase.display_order)).filter(Phase.sheet_id == sid).scalar() or 0
+    
+    new_phase = Phase(
+        sheet_id=sid,
+        name=name,
+        display_order=max_order + 1,
+        is_master=False
+    )
+    db.add(new_phase)
+    db.commit()
+    db.refresh(new_phase)
+    return new_phase
+
+
+@router.put("/{sid}/phases/{pid}")
+def update_phase(sid: int, pid: int, body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Project not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Access denied")
+        
+    phase = db.query(Phase).filter(Phase.id == pid, Phase.sheet_id == sid).first()
+    if not phase:
+        raise HTTPException(404, "Phase not found")
+        
+    if phase.is_master:
+        raise HTTPException(400, "Không được phép đổi tên Phase Master")
+        
+    new_name = body.get("name", "").strip()
+    if not new_name:
+        raise HTTPException(400, "Tên Phase không được để trống")
+        
+    if new_name.lower() == "master":
+        raise HTTPException(400, "Tên 'Master' là dành riêng cho Phase mặc định")
+        
+    existing = db.query(Phase).filter(
+        Phase.sheet_id == sid, 
+        Phase.id != pid, 
+        func.lower(Phase.name) == new_name.lower()
+    ).first()
+    if existing:
+        raise HTTPException(400, f"Phase '{new_name}' đã tồn tại trong dự án")
+        
+    old_name = phase.name
+    phase.name = new_name
+    
+    db.query(Violation).filter(Violation.sheet_id == sid, Violation.tab_name == old_name).update(
+        {Violation.tab_name: new_name}, synchronize_session=False
+    )
+    
+    db.commit()
+    db.refresh(phase)
+    return phase
+
+
+@router.delete("/{sid}/phases/{pid}")
+def delete_phase(sid: int, pid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    sheet = db.query(Sheet).filter(Sheet.id == sid).first()
+    if not sheet:
+        raise HTTPException(404, "Project not found")
+    if not has_write_access(sheet, user):
+        raise HTTPException(403, "Access denied")
+        
+    phase = db.query(Phase).filter(Phase.id == pid, Phase.sheet_id == sid).first()
+    if not phase:
+        raise HTTPException(404, "Phase not found")
+        
+    if phase.is_master:
+        raise HTTPException(400, "Không được phép xóa Phase Master")
+        
+    db.query(Violation).filter(Violation.sheet_id == sid, Violation.tab_name == phase.name).delete(
+        synchronize_session=False
+    )
+    
+    db.delete(phase)
+    db.commit()
+    return {"message": f"Phase '{phase.name}' and all its tasks have been deleted"}
+
 
 

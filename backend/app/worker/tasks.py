@@ -156,6 +156,10 @@ def check_sheet(spreadsheet_id: str, db_sheet_id: int, run_id: str):
                     log_progress(r, db_sheet_id, f"Hàng {row_num} là Section: {detail_val}")
                     continue
 
+                from ..utils.tasks import compute_derived_fields
+                row = compute_derived_fields(row)
+                row_data_str = _json.dumps({k:v for k,v in row.items() if k != "_row"}, ensure_ascii=False)
+
                 hard_violations = check_row(row, policy, req_cols)
                 if hard_violations:
                     for hv in hard_violations:
