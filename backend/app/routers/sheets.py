@@ -7,6 +7,7 @@ from ..models.chat_group import ChatGroup
 from ..utils.auth import get_current_user
 from ..utils.redis_fallback import fallback_redis
 import uuid, re, os, json as _json
+from ..worker.google_sheet import get_worksheet_names
 
 router = APIRouter()
 
@@ -40,6 +41,34 @@ def extract_id(url):
     if not m:
         raise HTTPException(400, "Invalid Google Sheet URL")
     return m.group(1)
+
+
+
+
+
+@router.post("/worksheets")
+def get_worksheets(body: dict, user=Depends(get_current_user)):
+    url = body.get("url")
+
+    if not url:
+        raise HTTPException(400, "Google Sheet URL is required")
+
+    spreadsheet_id = extract_id(url)
+
+    try:
+        worksheets = get_worksheet_names(spreadsheet_id)
+    except Exception as e:
+        raise HTTPException(
+            500,
+            f"Không thể đọc Google Sheet: {str(e)}"
+        )
+
+    return {
+        "worksheets": worksheets
+    }
+
+
+
 
 def has_write_access(sheet, user):
     if user.role == "admin":

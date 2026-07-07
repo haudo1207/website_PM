@@ -102,7 +102,15 @@ function ProjectDetailContent() {
 
   const [newForm, setNewForm] = useState<any>({});
 
+
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showImportPhaseModal, setShowImportPhaseModal] = useState(false);
+  const [phaseName, setPhaseName] = useState('');
+  const [sheetUrl, setSheetUrl] = useState('');
+
+
+
 
   const flash = (t: string, e = false) => {
     setMsg({ t, e });
@@ -241,7 +249,7 @@ function ProjectDetailContent() {
     dynamicCols.forEach(col => {
       initialForm[col] = '';
     });
-    
+
     const idCol = dynamicCols.find(c => c.toUpperCase().includes('ID'));
     if (idCol) {
       const parsed = JSON.parse(item.row_data || '{}');
@@ -252,12 +260,12 @@ function ProjectDetailContent() {
         initialForm[idCol] = idVal.slice(0, numPart.index) + nextNum;
       }
     }
-    
+
     const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
     if (statusCol) {
       initialForm[statusCol] = 'Todo';
     }
-    
+
     setNewForm(initialForm);
     setAddingTaskBelowId(item.id);
   };
@@ -265,28 +273,28 @@ function ProjectDetailContent() {
   const handleSaveTask = async () => {
     const dynamicCols = getDynamicColumns(phaseItems);
     const detailCol = dynamicCols.find(c => c.toUpperCase().includes('DETAIL TASK') || c.toUpperCase() === 'TASK' || c.toUpperCase() === 'DESCRIPTION') || 'DETAIL TASK';
-    
+
     if (!newForm[detailCol]?.trim()) {
       alert(`Vui lòng nhập ${detailCol}!`);
       return;
     }
-    
+
     const belowItem = items.find(x => x.id === addingTaskBelowId);
     if (!belowItem) return;
-    
+
     setSavingTask(true);
     try {
       const taskData: Record<string, string> = {};
       dynamicCols.forEach(col => {
         taskData[col] = newForm[col] || '';
       });
-      
+
       await addTask(Number(id), {
         tab_name: belowItem.tab_name,
         after_row: belowItem.row_number,
         task_data: taskData
       });
-      
+
       setAddingTaskBelowId(null);
       loadTasks();
       flash('Đã thêm nhiệm vụ thành công!');
@@ -327,7 +335,7 @@ function ProjectDetailContent() {
     const cleanName = namePart
       .replace(/[._-]/g, ' ')
       .replace(/\b\w/g, c => c.toUpperCase());
-    
+
     const parts = cleanName.split(' ');
     let initials = '';
     if (parts.length >= 2) {
@@ -367,7 +375,7 @@ function ProjectDetailContent() {
       return;
     }
     const meetDate = new Date(newMeetingDate);
-    const today = new Date(); today.setHours(0,0,0,0);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
     const status = meetDate < today ? 'done' : 'upcoming';
     const meet = {
       id: String(Date.now()),
@@ -432,18 +440,18 @@ function ProjectDetailContent() {
   // --- Dynamic Stats calculation ---
   const realTasks = items.filter(x => x.ai_verdict !== 'SECTION');
   const totalTasks = realTasks.length;
-  
+
   const completedTasks = realTasks.filter(x => {
     const s = parseRowData(x.row_data).status.toLowerCase();
     return s === 'done' || s === 'completed' || s === 'hoàn tất';
   }).length;
-  
+
   const passTasks = realTasks.filter(x => x.ai_verdict === 'PASS').length;
   const evaluatedTasks = realTasks.filter(x => ['PASS', 'FAIL', 'REVIEW'].includes(x.ai_verdict)).length;
-  
+
   const complianceScore = evaluatedTasks > 0 ? Math.round((passTasks / evaluatedTasks) * 100) : null;
   const devProgressPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-  
+
   const needEditTasks = realTasks.filter(x => x.ai_verdict === 'REVIEW').length;
   const flaggedTasks = realTasks.filter(x => x.ai_verdict === 'FAIL').length;
 
@@ -454,7 +462,7 @@ function ProjectDetailContent() {
 
   const kpiTotal = kpiTasks.length;
   const kpiWarning = kpiTasks.filter(x => x.ai_verdict === 'FAIL').length;
-  
+
   // KPI Done: tasks with completed status
   const kpiDone = kpiTasks.filter(x => {
     const s = parseRowData(x.row_data).status?.toLowerCase() || '';
@@ -525,9 +533,9 @@ function ProjectDetailContent() {
   return (
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden font-body-md" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
-      
+
       <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
-        
+
         {/* TOP BAR / NAVIGATION HEADER */}
         <div className="h-[52px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
           <div className="flex items-center gap-3">
@@ -567,15 +575,31 @@ function ProjectDetailContent() {
               </div>
               <div className="flex gap-2">
                 {isAdmin() && (
-                  <button 
-                    onClick={() => setShowDeleteModal(true)}
-                    className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
-                  >
-                    <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
-                    Xóa dự án
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setShowDeleteModal(true)}
+                      className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
+                    >
+                      <span className="material-symbols-outlined text-[18px] mr-2">
+                        delete
+                      </span>
+                      Xóa dự án
+                    </button>
+
+                    <button
+                      onClick={() => setShowImportPhaseModal(true)}
+                      className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-blue-200 transition-colors shadow-sm"
+                    >
+                      <span className="material-symbols-outlined text-[18px] mr-2">
+                        upload_file
+                      </span>
+                      Import Phase
+                    </button>
+                  </>
                 )}
-                <button 
+
+
+                <button
                   onClick={() => router.push(`/project`)}
                   className="bg-white text-slate-800 px-4 py-2 rounded-lg text-[13px] font-medium flex items-center border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
                 >
@@ -652,38 +676,34 @@ function ProjectDetailContent() {
 
           {/* TAB NAVIGATION */}
           <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
-            <button 
+            <button
               onClick={() => setActiveMainTab('tasks')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">task</span>
               Tasks
             </button>
-            <button 
+            <button
               onClick={() => setActiveMainTab('meetings')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">calendar_month</span>
               Meetings
             </button>
-            <button 
+            <button
               onClick={() => setActiveMainTab('chats')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
               Chats
             </button>
-            <button 
+            <button
               onClick={() => setActiveMainTab('members')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
               Members
@@ -692,10 +712,10 @@ function ProjectDetailContent() {
 
           {/* MAIN TABS CONTENT AREA */}
           <div className="w-full">
-            
+
             {/* LEFT COLUMN: ACTIVE TAB WORKSPACE */}
             <div className="space-y-6">
-              
+
               {/* TAB 1: TASKS */}
               {activeMainTab === 'tasks' && (
                 <div className="space-y-6">
@@ -704,13 +724,12 @@ function ProjectDetailContent() {
                     <div className="flex items-center gap-1 bg-[#eff4ff] border border-[#c2c6d6]/60 rounded-xl p-1">
                       {dynamicTabs.map(p => (
                         <button key={p.key} onClick={() => setActivePhase(p.key)}
-                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                            activePhase === p.key
-                              ? p.key === 'ALL'
-                                ? 'bg-[#0058be] text-white shadow-sm'
-                                : 'bg-white text-[#0058be] shadow-sm'
-                              : 'text-[#565e74] hover:text-[#0058be]'
-                          }`}>
+                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activePhase === p.key
+                            ? p.key === 'ALL'
+                              ? 'bg-[#0058be] text-white shadow-sm'
+                              : 'bg-white text-[#0058be] shadow-sm'
+                            : 'text-[#565e74] hover:text-[#0058be]'
+                            }`}>
                           {p.label}
                         </button>
                       ))}
@@ -778,7 +797,7 @@ function ProjectDetailContent() {
 
                             if (isSection) {
                               if (activePhase === 'ALL') return <Fragment key={v.id} />;
-                              
+
                               let detail = '';
                               try {
                                 const td = JSON.parse(v.row_data || '{}');
@@ -787,7 +806,7 @@ function ProjectDetailContent() {
                               } catch {
                                 detail = '';
                               }
-                              
+
                               const isPhaseHeader = /^PHASE\s/i.test(detail);
 
                               if (isPhaseHeader) {
@@ -837,7 +856,7 @@ function ProjectDetailContent() {
                               let td: Record<string, string> = {};
                               try {
                                 td = JSON.parse(v.row_data || '{}');
-                              } catch {}
+                              } catch { }
 
                               rowElement = (
                                 <tr className={`group relative hover:bg-[#eff4ff]/50 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#f8f9ff]/30'}`}>
@@ -993,9 +1012,8 @@ function ProjectDetailContent() {
                                             type="text"
                                             value={newForm[col] || ''}
                                             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-                                            className={`w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${
-                                              colUpper.includes('DETAIL') ? 'font-semibold' : ''
-                                            }`}
+                                            className={`w-full bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${colUpper.includes('DETAIL') ? 'font-semibold' : ''
+                                              }`}
                                             placeholder={col}
                                             autoFocus={cIdx === 1}
                                           />
@@ -1327,13 +1345,13 @@ function ProjectDetailContent() {
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                       {chatGroups.map(g => {
                         const PLATFORM_STYLES: Record<string, { bg: string; icon: string; label: string }> = {
-                          Telegram:  { bg: 'bg-[#229ED9]', icon: '▶',  label: 'Telegram' },
-                          Zalo:      { bg: 'bg-[#0068FF]', icon: '💬', label: 'Zalo' },
-                          Slack:     { bg: 'bg-[#4A154B]', icon: '#',  label: 'Slack' },
-                          Teams:     { bg: 'bg-[#6264A7]', icon: 'T',  label: 'Teams' },
-                          Discord:   { bg: 'bg-[#5865F2]', icon: '⚡', label: 'Discord' },
-                          WhatsApp:  { bg: 'bg-[#25D366]', icon: '📱', label: 'WhatsApp' },
-                          Khác:      { bg: 'bg-slate-500', icon: '💬', label: 'Group' },
+                          Telegram: { bg: 'bg-[#229ED9]', icon: '▶', label: 'Telegram' },
+                          Zalo: { bg: 'bg-[#0068FF]', icon: '💬', label: 'Zalo' },
+                          Slack: { bg: 'bg-[#4A154B]', icon: '#', label: 'Slack' },
+                          Teams: { bg: 'bg-[#6264A7]', icon: 'T', label: 'Teams' },
+                          Discord: { bg: 'bg-[#5865F2]', icon: '⚡', label: 'Discord' },
+                          WhatsApp: { bg: 'bg-[#25D366]', icon: '📱', label: 'WhatsApp' },
+                          Khác: { bg: 'bg-slate-500', icon: '💬', label: 'Group' },
                         };
                         const ps = PLATFORM_STYLES[g.platform] || PLATFORM_STYLES['Khác'];
 
@@ -1541,7 +1559,73 @@ function ProjectDetailContent() {
         </div>
       )}
 
-    </div>
+
+
+      {/*Import phase Modal */}
+      {showImportPhaseModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-red-600 mb-3">
+                <span className="material-symbols-outlined text-[28px]">upload_file</span>
+                <h3 className="text-base font-bold">Import phase</h3>
+              </div>
+              {/* <p className="text-xs text-slate-600 leading-relaxed">
+                Nhập thông tin để tạo phase mới <strong>{project.name}</strong>.
+              </p> */}
+              <div className="space-y-4 mt-4">
+
+                {/* Phase Name */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Tên Phase <span className="text-red-500">*</span>
+                  </label>
+
+                  <input
+                    type="text"
+                    value={phaseName}
+                    onChange={(e) => setPhaseName(e.target.value)}
+                    placeholder="Ví dụ: Phase 5: Testing"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Sheet URL */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Google Sheet URL
+                  </label>
+
+                  <input
+                    type="url"
+                    value={sheetUrl}
+                    onChange={(e) => setSheetUrl(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowImportPhaseModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                onClick={() => setShowImportPhaseModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+      }
+
+    </div >
   );
 }
 

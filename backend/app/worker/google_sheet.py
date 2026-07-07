@@ -290,3 +290,20 @@ def insert_row_in_sheet(spreadsheet_id: str, tab_name: str, after_row: int, row_
     
     return new_row_num
 
+
+def get_worksheet_names(spreadsheet_id: str) -> list[str]:
+    """
+    Trả về danh sách tên các worksheet trong Google Spreadsheet.
+    """
+
+    svc = get_service()
+
+    meta = svc.spreadsheets().get(
+        spreadsheetId=spreadsheet_id
+    ).execute()
+
+    return [
+        sheet["properties"]["title"]
+        for sheet in meta.get("sheets", [])
+    ]
+
