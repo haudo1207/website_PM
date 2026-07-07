@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getViolations, getSheets, addTask, checkSingleTask, updateSheet, deleteSheet, getChatGroups, createChatGroup, deleteChatGroup, updateTask, deleteTask, addTaskLocal, getPhases, createPhase, updatePhase, deletePhase } from '@/lib/api';
+import { getViolations, getSheets, addTask, checkSingleTask, updateSheet, deleteSheet, getChatGroups, createChatGroup, deleteChatGroup, updateTask, deleteTask, addTaskLocal, getPhases, createPhase, updatePhase, deletePhase, getUsers } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 const PHASE_TABS = [
@@ -146,6 +146,32 @@ function ProjectDetailContent() {
 
   const [newForm, setNewForm] = useState<any>({});
 
+  // Edit Project Modal state and form values
+  const [showEditProjectModal, setShowEditProjectModal] = useState(false);
+  const [editProjectName, setEditProjectName] = useState('');
+  const [editProjectCode, setEditProjectCode] = useState('');
+  const [editCustomerName, setEditCustomerName] = useState('');
+  const [editCurrentPhase, setEditCurrentPhase] = useState('');
+  const [editLeaderEmail, setEditLeaderEmail] = useState('');
+  const [editPmEmail, setEditPmEmail] = useState('');
+  const [editMemberEmails, setEditMemberEmails] = useState('');
+  const [editZaloLink, setEditZaloLink] = useState('');
+  const [editTelegramLink, setEditTelegramLink] = useState('');
+  const [editTeamsLink, setEditTeamsLink] = useState('');
+  const [savingProject, setSavingProject] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
+  const [pmDropdownOpen, setPmDropdownOpen] = useState(false);
+  const [leaderDropdownOpen, setLeaderDropdownOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+
+  const customerRef = useRef<HTMLDivElement>(null);
+  const phaseRef = useRef<HTMLDivElement>(null);
+  const pmRef = useRef<HTMLDivElement>(null);
+  const leaderRef = useRef<HTMLDivElement>(null);
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const flash = (t: string, e = false) => {
@@ -243,6 +269,68 @@ function ProjectDetailContent() {
     loadChatGroups();
     loadPhases();
   }, [id, loadProject, loadTasks, loadChatGroups, loadPhases]);
+
+  // Load users for PM / Lead selection & set up dropdown outside clicks
+  useEffect(() => {
+    getUsers()
+      .then((data) => {
+        setUsers(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching users:', err);
+      });
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (customerDropdownOpen && customerRef.current && !customerRef.current.contains(target)) {
+        setCustomerDropdownOpen(false);
+        setCustomerSearch('');
+      }
+      if (phaseDropdownOpen && phaseRef.current && !phaseRef.current.contains(target)) {
+        setPhaseDropdownOpen(false);
+      }
+      if (pmDropdownOpen && pmRef.current && !pmRef.current.contains(target)) {
+        setPmDropdownOpen(false);
+      }
+      if (leaderDropdownOpen && leaderRef.current && !leaderRef.current.contains(target)) {
+        setLeaderDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen]);
+
+  const handleUpdateProject = async () => {
+    if (!editProjectName.trim()) {
+      flash('Tên dự án không được để trống!', true);
+      return;
+    }
+    setSavingProject(true);
+    try {
+      const updated = await updateSheet(Number(id), {
+        name: editProjectName.trim(),
+        project_code: editProjectCode.trim(),
+        customer_name: editCustomerName.trim(),
+        current_phase: editCurrentPhase.trim(),
+        leader_email: editLeaderEmail.trim(),
+        pm_email: editPmEmail.trim(),
+        member_emails: editMemberEmails.trim(),
+        zalo_link: editZaloLink.trim(),
+        telegram_link: editTelegramLink.trim(),
+        teams_link: editTeamsLink.trim()
+      });
+      setProject(updated);
+      setShowEditProjectModal(false);
+      flash('Cập nhật thông tin dự án thành công!');
+      loadProject();
+    } catch (err: any) {
+      flash('Cập nhật thông tin dự án thất bại: ' + (err.response?.data?.detail || err.message), true);
+    } finally {
+      setSavingProject(false);
+    }
+  };
 
   const handleSaveChannelLink = async (channelKey: string, value: string) => {
     setIsSavingLink(true);
@@ -1063,18 +1151,39 @@ function ProjectDetailContent() {
                   </span>
                 </div>
                 <p className="text-[12px] text-[#565e74] mt-1">
-                  Năm: {project.project_code || 'Chưa cấu hình'} | Khởi tạo: {project.created_at ? new Date(project.created_at).toLocaleDateString('vi-VN') : '12/01/2024'}
+                  Năm: {project.project_code || 'Chưa cấu hình'}
                 </p>
               </div>
               <div className="flex gap-2">
                 {isAdmin() && (
-                  <button 
-                    onClick={() => setShowDeleteModal(true)}
-                    className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
-                  >
-                    <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
-                    Xóa dự án
-                  </button>
+                  <>
+                    <button 
+                      onClick={() => {
+                        setEditProjectName(project.name || '');
+                        setEditProjectCode(project.project_code || '');
+                        setEditCustomerName(project.customer_name || '');
+                        setEditCurrentPhase(project.current_phase || '');
+                        setEditLeaderEmail(project.leader_email || '');
+                        setEditPmEmail(project.pm_email || '');
+                        setEditMemberEmails(project.member_emails || '');
+                        setEditZaloLink(project.zalo_link || '');
+                        setEditTelegramLink(project.telegram_link || '');
+                        setEditTeamsLink(project.teams_link || '');
+                        setShowEditProjectModal(true);
+                      }}
+                      className="bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-slate-200 transition-colors shadow-sm"
+                    >
+                      <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
+                      Chỉnh sửa dự án
+                    </button>
+                    <button 
+                      onClick={() => setShowDeleteModal(true)}
+                      className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
+                    >
+                      <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
+                      Xóa dự án
+                    </button>
+                  </>
                 )}
                 <button 
                   onClick={() => router.push(`/project`)}
@@ -2194,6 +2303,385 @@ function ProjectDetailContent() {
         </div>
 
       </div>
+
+      {/* Modal Chỉnh Sửa Dự Án */}
+      {showEditProjectModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3 text-[#0058be]">
+                <span className="material-symbols-outlined text-[28px]">edit_document</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">Chỉnh sửa thông tin dự án</h3>
+              </div>
+              <button
+                onClick={() => setShowEditProjectModal(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Modal Form Content */}
+            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-4">
+              {/* Row 1: Tên dự án & Năm */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">
+                    Tên dự án <span className="text-rose-500 font-bold">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editProjectName}
+                    onChange={(e) => setEditProjectName(e.target.value)}
+                    placeholder="Ví dụ: Dự án GoDN Korea"
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">
+                    Năm <span className="text-rose-500 font-bold">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    list="project-years-edit"
+                    value={editProjectCode}
+                    onChange={(e) => setEditProjectCode(e.target.value)}
+                    placeholder="VD: 2026"
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs"
+                  />
+                  <datalist id="project-years-edit">
+                    <option value="2024" />
+                    <option value="2025" />
+                    <option value="2026" />
+                    <option value="2027" />
+                    <option value="2028" />
+                    <option value="2029" />
+                    <option value="2030" />
+                  </datalist>
+                </div>
+              </div>
+
+              {/* Row 2: Khách hàng & Giai đoạn */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Khách hàng */}
+                <div ref={customerRef} className="space-y-1 relative">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">Khách hàng</label>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCustomerDropdownOpen(!customerDropdownOpen);
+                      setPhaseDropdownOpen(false);
+                      setPmDropdownOpen(false);
+                      setLeaderDropdownOpen(false);
+                    }}
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
+                  >
+                    <span className={editCustomerName ? 'text-[#0b1c30]' : 'text-[#727785]'}>
+                      {editCustomerName || 'Chọn hoặc nhập mới...'}
+                    </span>
+                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                  </button>
+                  
+                  {customerDropdownOpen && (
+                    <div 
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2"
+                    >
+                      <input
+                        type="text"
+                        value={customerSearch}
+                        onChange={(e) => setCustomerSearch(e.target.value)}
+                        placeholder="Tìm kiếm hoặc nhập mới..."
+                        className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
+                      />
+
+                      <div className="max-h-[140px] overflow-y-auto space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditCustomerName('');
+                            setCustomerSearch('');
+                            setCustomerDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 text-[#727785] rounded transition-colors"
+                        >
+                          Chọn khách hàng (Trống)
+                        </button>
+
+                        {customerSearch.trim() && !['Samsung SDS', 'LG CNS', 'Viettel', 'FPT Software', 'Vingroup', 'Khác'].some(c => c.toLowerCase() === customerSearch.trim().toLowerCase()) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditCustomerName(customerSearch.trim());
+                              setCustomerSearch('');
+                              setCustomerDropdownOpen(false);
+                            }}
+                            className="w-full text-left px-2 py-1.5 text-xs bg-[#0058be]/10 hover:bg-[#0058be]/20 text-[#0058be] rounded transition-colors font-semibold flex items-center gap-1"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">add</span>
+                            Sử dụng &quot;{customerSearch.trim()}&quot;
+                          </button>
+                        )}
+
+                        {['Samsung SDS', 'LG CNS', 'Viettel', 'FPT Software', 'Vingroup', 'Khác']
+                          .filter(c => c.toLowerCase().includes(customerSearch.toLowerCase()))
+                          .map((c) => (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => {
+                                setEditCustomerName(c);
+                                setCustomerSearch('');
+                                setCustomerDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors ${editCustomerName === c ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                            >
+                              {c}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Giai đoạn */}
+                <div ref={phaseRef} className="space-y-1 relative">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">Giai đoạn hiện tại</label>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPhaseDropdownOpen(!phaseDropdownOpen);
+                      setCustomerDropdownOpen(false);
+                      setPmDropdownOpen(false);
+                      setLeaderDropdownOpen(false);
+                    }}
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
+                  >
+                    <span>{editCurrentPhase || 'Chưa thiết lập'}</span>
+                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                  </button>
+                  
+                  {phaseDropdownOpen && (
+                    <div 
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
+                    >
+                      {[
+                        '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
+                        '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
+                        '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
+                        '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
+                        '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
+                      ].map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => {
+                            setEditCurrentPhase(p);
+                            setPhaseDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 transition-colors ${editCurrentPhase === p ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Row 3: PM & Leader */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* PM */}
+                <div ref={pmRef} className="space-y-1 relative">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">Project Manager (PM)</label>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPmDropdownOpen(!pmDropdownOpen);
+                      setCustomerDropdownOpen(false);
+                      setPhaseDropdownOpen(false);
+                      setLeaderDropdownOpen(false);
+                    }}
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
+                  >
+                    <span className={editPmEmail ? 'text-[#0b1c30]' : 'text-[#727785]'}>
+                      {editPmEmail ? (users.find(u => u.email === editPmEmail)?.full_name || editPmEmail) : 'Chọn Project Manager'}
+                    </span>
+                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                  </button>
+                  
+                  {pmDropdownOpen && (
+                    <div 
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditPmEmail('');
+                          setPmDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 text-[#727785] transition-colors"
+                      >
+                        Chọn Project Manager
+                      </button>
+                      {users.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            setEditPmEmail(u.email);
+                            setPmDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 transition-colors ${editPmEmail === u.email ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                        >
+                          {u.full_name || u.email} ({u.email})
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Leader */}
+                <div ref={leaderRef} className="space-y-1 relative">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">Technical Leader</label>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLeaderDropdownOpen(!leaderDropdownOpen);
+                      setCustomerDropdownOpen(false);
+                      setPhaseDropdownOpen(false);
+                      setPmDropdownOpen(false);
+                    }}
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
+                  >
+                    <span className={editLeaderEmail ? 'text-[#0b1c30]' : 'text-[#727785]'}>
+                      {editLeaderEmail ? (users.find(u => u.email === editLeaderEmail)?.full_name || editLeaderEmail) : 'Chọn Technical Leader'}
+                    </span>
+                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                  </button>
+                  
+                  {leaderDropdownOpen && (
+                    <div 
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditLeaderEmail('');
+                          setLeaderDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 text-[#727785] transition-colors"
+                      >
+                        Chọn Technical Leader
+                      </button>
+                      {users.filter(u => u.role === 'group_a').map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            setEditLeaderEmail(u.email);
+                            setLeaderDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 transition-colors ${editLeaderEmail === u.email ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                        >
+                          {u.full_name || u.email} ({u.email})
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Members Area */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-[#565e74] block">Email thành viên dự án</label>
+                <textarea
+                  value={editMemberEmails}
+                  onChange={(e) => setEditMemberEmails(e.target.value)}
+                  placeholder="member1@company.com, member2@company.com"
+                  rows={2}
+                  className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs resize-none"
+                />
+                <p className="text-[9px] text-[#727785]">Nhập nhiều email phân cách bởi dấu phẩy (,)</p>
+              </div>
+
+              {/* Social Channels */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <label className="text-[11px] font-bold text-[#565e74] block">Kênh liên lạc dự án</label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-semibold text-[#0068FF] block">Zalo Link</span>
+                    <input
+                      type="url"
+                      value={editZaloLink}
+                      onChange={(e) => setEditZaloLink(e.target.value)}
+                      placeholder="https://zalo.me/g/..."
+                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-[#0058be]"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-semibold text-[#2AABEE] block">Telegram Link</span>
+                    <input
+                      type="url"
+                      value={editTelegramLink}
+                      onChange={(e) => setEditTelegramLink(e.target.value)}
+                      placeholder="https://t.me/..."
+                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-[#0058be]"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-semibold text-[#4F52B2] block">Teams Link</span>
+                    <input
+                      type="url"
+                      value={editTeamsLink}
+                      onChange={(e) => setEditTeamsLink(e.target.value)}
+                      placeholder="https://teams.microsoft.com/..."
+                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-[#0058be]"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowEditProjectModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                onClick={handleUpdateProject}
+                disabled={savingProject}
+                className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {savingProject ? (
+                  <>
+                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Đang lưu...
+                  </>
+                ) : (
+                  <>Lưu thay đổi</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal xác nhận xóa */}
       {showDeleteModal && (
