@@ -505,7 +505,7 @@ function ProjectDetailContent() {
     } else {
       const isDateCol = colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'));
       const isUserCol = colUpper === 'ASSIGNED' || colUpper === 'SUPPORT';
-      const isNumeric = colUpper.includes('MANDAY') || colUpper.includes('RATIO') || colUpper.includes('BASE') || colUpper.includes('PERFORM') || colUpper.includes('OVERTIME') || colUpper.includes('FINAL') || colUpper.includes('LATE');
+      const isNumeric = colUpper.includes('MANDAY') || colUpper.includes('BASE') || colUpper.includes('PERFORM') || colUpper.includes('OVERTIME') || colUpper.includes('FINAL') || colUpper.includes('LATE');
 
       if (isDateCol) {
         inputField = (
@@ -1530,7 +1530,7 @@ function ProjectDetailContent() {
                                       }
 
                                       // Numeric editor
-                                      const isNumeric = colUpper.includes('MANDAY') || colUpper.includes('RATIO') || colUpper.includes('BASE') || colUpper.includes('PERFORM') || colUpper.includes('OVERTIME') || colUpper.includes('FINAL') || colUpper.includes('LATE');
+                                      const isNumeric = colUpper.includes('MANDAY') || colUpper.includes('BASE') || colUpper.includes('PERFORM') || colUpper.includes('OVERTIME') || colUpper.includes('FINAL') || colUpper.includes('LATE');
                                       if (isNumeric) {
                                         return (
                                           <td key={col} className="px-2 py-1.5 min-w-[110px]">
