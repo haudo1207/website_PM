@@ -14,7 +14,10 @@ import {
   deleteStatus,
   createTeam,
   updateTeam,
-  deleteTeam
+  deleteTeam,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer
 } from '@/lib/api';
 
 interface SystemCategoriesViewProps {
@@ -23,6 +26,7 @@ interface SystemCategoriesViewProps {
   priorities: any[];
   statuses: any[];
   teams: any[];
+  customers: any[];
   onReload: () => void;
   onFlash: (msg: string) => void;
 }
@@ -33,6 +37,7 @@ export default function SystemCategoriesView({
   priorities,
   statuses,
   teams,
+  customers = [],
   onReload,
   onFlash
 }: SystemCategoriesViewProps) {
@@ -59,6 +64,13 @@ export default function SystemCategoriesView({
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null);
   const [editingTeamName, setEditingTeamName] = useState('');
   const [editingTeamDesc, setEditingTeamDesc] = useState('');
+
+  const [showAddCust, setShowAddCust] = useState(false);
+  const [newCustName, setNewCustName] = useState('');
+  const [newCustDesc, setNewCustDesc] = useState('');
+  const [editingCustId, setEditingCustId] = useState<number | null>(null);
+  const [editingCustName, setEditingCustName] = useState('');
+  const [editingCustDesc, setEditingCustDesc] = useState('');
 
   // Editing states (ID mapping)
   const [editingPosId, setEditingPosId] = useState<number | null>(null);
@@ -260,6 +272,31 @@ export default function SystemCategoriesView({
     try {
       await deleteTeam(id); onReload(); onFlash('Đã xóa team thành công');
     } catch (err: any) { onFlash(err.response?.data?.detail || 'Lỗi khi xóa team'); }
+  };
+
+  const handleAddCust = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCustName.trim()) return;
+    try {
+      await createCustomer({ name: newCustName, description: newCustDesc });
+      setNewCustName(''); setNewCustDesc(''); setShowAddCust(false);
+      onReload(); onFlash('Đã thêm khách hàng mới thành công');
+    } catch (err: any) { onFlash(err.response?.data?.detail || 'Lỗi thêm khách hàng'); }
+  };
+
+  const handleUpdateCust = async (id: number) => {
+    if (!editingCustName.trim()) return;
+    try {
+      await updateCustomer(id, { name: editingCustName, description: editingCustDesc });
+      setEditingCustId(null); onReload(); onFlash('Đã cập nhật khách hàng thành công');
+    } catch (err: any) { onFlash(err.response?.data?.detail || 'Lỗi cập nhật khách hàng'); }
+  };
+
+  const handleDeleteCust = async (id: number, name: string) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa khách hàng "${name}"?`)) return;
+    try {
+      await deleteCustomer(id); onReload(); onFlash('Đã xóa khách hàng thành công');
+    } catch (err: any) { onFlash(err.response?.data?.detail || 'Lỗi khi xóa khách hàng'); }
   };
 
   return (
@@ -851,6 +888,82 @@ export default function SystemCategoriesView({
                         <button onClick={() => { setEditingTeamId(t.id); setEditingTeamName(t.name); setEditingTeamDesc(t.description || ''); }}
                           className="text-xs text-blue-600 hover:text-blue-700 font-semibold">Sửa</button>
                         <button onClick={() => handleDeleteTeam(t.id, t.name)}
+                          className="text-xs text-red-600 hover:text-red-700 font-semibold">Xóa</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* 6. KHÁCH HÀNG CARD */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+          <div>
+            <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
+              🤝 Khách hàng
+            </h3>
+            <p className="text-[11px] text-slate-400 mt-0.5 font-medium uppercase tracking-wider">Danh mục khách hàng/đối tác</p>
+          </div>
+          <button onClick={() => setShowAddCust(!showAddCust)}
+            className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold transition-all shadow-sm">
+            {showAddCust ? 'Đóng' : '+ Thêm'}
+          </button>
+        </div>
+
+        {showAddCust && (
+          <form onSubmit={handleAddCust} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col md:flex-row gap-4 items-end">
+            <div className="flex-1 flex flex-col gap-1.5">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên khách hàng</label>
+              <input required type="text" placeholder="Ví dụ: Samsung SDS, LG CNS, Viettel..."
+                value={newCustName} onChange={e => setNewCustName(e.target.value)}
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 outline-none focus:border-blue-500 transition-all" />
+            </div>
+            <div className="flex-1 flex flex-col gap-1.5">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả (tùy chọn)</label>
+              <input type="text" placeholder="Mô tả khách hàng..."
+                value={newCustDesc} onChange={e => setNewCustDesc(e.target.value)}
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 outline-none focus:border-blue-500 transition-all" />
+            </div>
+            <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0 h-[36px]">Lưu lại</button>
+          </form>
+        )}
+
+        <div className="divide-y divide-slate-100">
+          {customers.length === 0 ? (
+            <p className="text-xs text-slate-400 italic p-6 text-center">Chưa có khách hàng nào.</p>
+          ) : (
+            customers.map(c => {
+              const isEditing = editingCustId === c.id;
+              return (
+                <div key={c.id} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50/40 transition-colors">
+                  {isEditing ? (
+                    <div className="flex-1 flex gap-3 mr-4">
+                      <input required type="text" value={editingCustName} onChange={e => setEditingCustName(e.target.value)}
+                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none w-1/3" />
+                      <input type="text" value={editingCustDesc} onChange={e => setEditingCustDesc(e.target.value)}
+                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none flex-1" />
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="font-semibold text-xs text-[#0f172a]">{c.name}</span>
+                      {c.description && <span className="text-[11px] text-slate-400 ml-3 italic">({c.description})</span>}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3">
+                    {isEditing ? (
+                      <>
+                        <button onClick={() => handleUpdateCust(c.id)} className="text-[11px] bg-blue-600 text-white px-2.5 py-1 rounded font-bold hover:bg-blue-700">Lưu</button>
+                        <button onClick={() => setEditingCustId(null)} className="text-[11px] bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-300">Hủy</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => { setEditingCustId(c.id); setEditingCustName(c.name); setEditingCustDesc(c.description || ''); }}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-semibold">Sửa</button>
+                        <button onClick={() => handleDeleteCust(c.id, c.name)}
                           className="text-xs text-red-600 hover:text-red-700 font-semibold">Xóa</button>
                       </>
                     )}

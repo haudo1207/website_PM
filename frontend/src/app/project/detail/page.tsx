@@ -9,7 +9,7 @@ import {
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
-  getUsers, getCategories, getPriorities, getStatuses,
+  getMembers, getCustomers, getCategories, getPriorities, getStatuses,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks
 } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
@@ -55,6 +55,8 @@ function ProjectDetailContent() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
   const [addingTaskGroupId, setAddingTaskGroupId] = useState<number | null>(null);
   const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
+  const [addingTaskAfterCode, setAddingTaskAfterCode] = useState<string | null>(null);
+  const [hoveredSpacerPos, setHoveredSpacerPos] = useState<{ id: string; left: string } | null>(null);
   
   // Task Group CRUD States
   const [showTaskGroupModal, setShowTaskGroupModal] = useState(false);
@@ -343,33 +345,40 @@ function ProjectDetailContent() {
   // Edit Project Modal state and form values
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
   const [editProjectName, setEditProjectName] = useState('');
-  const [editProjectCode, setEditProjectCode] = useState('');
+  const [editProjectYear, setEditProjectYear] = useState<number>(new Date().getFullYear());
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCurrentPhase, setEditCurrentPhase] = useState('');
-  const [editLeaderEmail, setEditLeaderEmail] = useState('');
-  const [editPmEmail, setEditPmEmail] = useState('');
-  const [editMemberEmails, setEditMemberEmails] = useState('');
-  const [editZaloLink, setEditZaloLink] = useState('');
-  const [editTelegramLink, setEditTelegramLink] = useState('');
-  const [editTeamsLink, setEditTeamsLink] = useState('');
+
+  const [selectedPms, setSelectedPms] = useState<number[]>([]);
+  const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
+  const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
   const [savingProject, setSavingProject] = useState(false);
-  const [users, setUsers] = useState<any[]>([]);
+
   const [projectMembers, setProjectMembers] = useState<any[]>([]);
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [categories, setCategories] = useState<any[]>([]);
   const [dbPriorities, setDbPriorities] = useState<any[]>([]);
   const [dbStatuses, setDbStatuses] = useState<any[]>([]);
 
+  const [membersList, setMembersList] = useState<any[]>([]);
+  const [dbCustomers, setDbCustomers] = useState<any[]>([]);
+
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
   const [pmDropdownOpen, setPmDropdownOpen] = useState(false);
   const [leaderDropdownOpen, setLeaderDropdownOpen] = useState(false);
+  const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
+
   const [customerSearch, setCustomerSearch] = useState('');
+  const [pmSearch, setPmSearch] = useState('');
+  const [leaderSearch, setLeaderSearch] = useState('');
+  const [memberSearch, setMemberSearch] = useState('');
 
   const customerRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<HTMLDivElement>(null);
   const pmRef = useRef<HTMLDivElement>(null);
   const leaderRef = useRef<HTMLDivElement>(null);
+  const memberRef = useRef<HTMLDivElement>(null);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
@@ -481,14 +490,22 @@ function ProjectDetailContent() {
     loadProjectMembers();
   }, [id, loadProject, reloadAll, loadChatGroups, loadProjectMembers]);
 
-  // Load users for PM / Lead selection & set up dropdown outside clicks
+  // Load members, customers and categories
   useEffect(() => {
-    getUsers()
+    getMembers()
       .then((data) => {
-        setUsers(data || []);
+        setMembersList(data || []);
       })
       .catch((err) => {
-        console.error('Error fetching users:', err);
+        console.error('Error fetching members:', err);
+      });
+
+    getCustomers()
+      .then((data) => {
+        setDbCustomers(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching customers:', err);
       });
     
     getCategories()
@@ -528,14 +545,20 @@ function ProjectDetailContent() {
       }
       if (pmDropdownOpen && pmRef.current && !pmRef.current.contains(target)) {
         setPmDropdownOpen(false);
+        setPmSearch('');
       }
       if (leaderDropdownOpen && leaderRef.current && !leaderRef.current.contains(target)) {
         setLeaderDropdownOpen(false);
+        setLeaderSearch('');
+      }
+      if (memberDropdownOpen && memberRef.current && !memberRef.current.contains(target)) {
+        setMemberDropdownOpen(false);
+        setMemberSearch('');
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen]);
+  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, memberDropdownOpen]);
 
   const handleUpdateProject = async () => {
     if (!editProjectName.trim()) {
@@ -546,15 +569,13 @@ function ProjectDetailContent() {
     try {
       const updated = await updateProject(Number(id), {
         name: editProjectName.trim(),
-        project_code: editProjectCode.trim(),
+        code: `${editProjectName.trim()}-${editProjectYear}`,
+        year: editProjectYear,
         customer_name: editCustomerName.trim(),
         current_phase: editCurrentPhase.trim(),
-        leader_email: editLeaderEmail.trim(),
-        pm_email: editPmEmail.trim(),
-        member_emails: editMemberEmails.trim(),
-        zalo_link: editZaloLink.trim(),
-        telegram_link: editTelegramLink.trim(),
-        teams_link: editTeamsLink.trim()
+        pm_ids: selectedPms,
+        technical_leader_ids: selectedLeaders,
+        member_ids: selectedMembers
       });
       setProject(updated);
       setShowEditProjectModal(false);
@@ -1018,6 +1039,17 @@ function ProjectDetailContent() {
     ];
     const isRequired = REQUIRED_COLS.includes(colUpper);
 
+    const handleInputKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSaveTask();
+      } else if (e.key === 'Escape') {
+        setAddingTaskGroupId(null);
+        setAddingTaskParentCode(null);
+        setNewForm({});
+      }
+    };
+
     let inputField = null;
 
     if (colUpper === 'STATUS') {
@@ -1025,6 +1057,7 @@ function ProjectDetailContent() {
         <select
           value={newForm[col] || (dbStatuses[0]?.name || 'Todo')}
           onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+          onKeyDown={handleInputKeyDown}
           className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
             isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
           }`}
@@ -1049,6 +1082,7 @@ function ProjectDetailContent() {
         <select
           value={newForm[col] || 'Normal'}
           onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+          onKeyDown={handleInputKeyDown}
           className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
             isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
           }`}
@@ -1077,6 +1111,7 @@ function ProjectDetailContent() {
             type="date"
             value={newForm[col] ? toPickerDate(newForm[col]) : ''}
             onChange={e => setNewForm({ ...newForm, [col]: fromPickerDate(e.target.value) })}
+            onKeyDown={handleInputKeyDown}
             className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
               isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
             }`}
@@ -1087,6 +1122,7 @@ function ProjectDetailContent() {
           <select
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            onKeyDown={handleInputKeyDown}
             className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
               isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
             }`}
@@ -1104,6 +1140,7 @@ function ProjectDetailContent() {
             step="any"
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            onKeyDown={handleInputKeyDown}
             className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
               isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
             }`}
@@ -1126,6 +1163,7 @@ function ProjectDetailContent() {
                 [vendorCol]: ''
               });
             }}
+            onKeyDown={handleInputKeyDown}
             className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
               isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
             }`}
@@ -1160,6 +1198,7 @@ function ProjectDetailContent() {
           <select
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            onKeyDown={handleInputKeyDown}
             className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
               isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
             }`}
@@ -1176,6 +1215,7 @@ function ProjectDetailContent() {
             type="text"
             value={newForm[col] || '100/0'}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            onKeyDown={handleInputKeyDown}
             placeholder="100/0"
             className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
               isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
@@ -1188,6 +1228,7 @@ function ProjectDetailContent() {
             type="text"
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            onKeyDown={handleInputKeyDown}
             className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${
               colUpper.includes('DETAIL') ? 'font-semibold' : ''
             } ${
@@ -1262,6 +1303,7 @@ function ProjectDetailContent() {
       await createTask(addingTaskGroupId, payload);
       setAddingTaskGroupId(null);
       setAddingTaskParentCode(null);
+      setAddingTaskAfterCode(null);
       setNewForm({});
       reloadAll();
       flash('Đã thêm nhiệm vụ thành công!');
@@ -1368,6 +1410,7 @@ function ProjectDetailContent() {
               onClick={() => {
                 setAddingTaskGroupId(null);
                 setAddingTaskParentCode(null);
+                setAddingTaskAfterCode(null);
                 setNewForm({});
               }}
               className="bg-gray-400 hover:bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
@@ -1378,6 +1421,133 @@ function ProjectDetailContent() {
           </div>
         </td>
         {getDynamicColumns().map((col, cIdx) => renderFormCell(col, cIdx, groupId, parentCode, level))}
+      </tr>
+    );
+  };
+
+  const handleSpacerMouseEnter = (e: React.MouseEvent<HTMLDivElement>, spacerId: string) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relativeX = e.clientX - rect.left;
+    const width = rect.width;
+    const ratio = relativeX / width;
+    
+    let snapLeft = '50%';
+    if (ratio < 0.2) {
+      snapLeft = '10%';
+    } else if (ratio >= 0.2 && ratio < 0.4) {
+      snapLeft = '30%';
+    } else if (ratio >= 0.4 && ratio < 0.6) {
+      snapLeft = '50%';
+    } else if (ratio >= 0.6 && ratio < 0.8) {
+      snapLeft = '70%';
+    } else {
+      snapLeft = '90%';
+    }
+    
+    setHoveredSpacerPos({ id: spacerId, left: snapLeft });
+  };
+
+  const handleSpacerMouseLeave = () => {
+    setHoveredSpacerPos(null);
+  };
+
+  const renderHoverTgSpacerRow = (phaseId: number) => {
+    const dynamicCols = getDynamicColumns();
+    const spacerId = `spacer-tg-${phaseId}`;
+    const snappedPos = hoveredSpacerPos?.id === spacerId ? hoveredSpacerPos.left : '50%';
+
+    const handleAddTgClick = () => {
+      setAddingTaskGroupPhaseId(phaseId);
+      setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+    };
+
+    return (
+      <tr 
+        key={spacerId} 
+        className="group/spacer border-none bg-transparent"
+      >
+        <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent relative">
+          <div 
+            onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
+            onMouseLeave={handleSpacerMouseLeave}
+            className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
+          >
+            {/* Dashed line */}
+            <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
+              <div className="w-full border-t border-slate-300 border-dashed opacity-0 group-hover/spacer:opacity-100 transition-opacity duration-200"></div>
+            </div>
+            {/* Emerald pill button */}
+            <button
+              type="button"
+              onClick={handleAddTgClick}
+              style={{ left: snappedPos, transform: 'translateX(-50%)' }}
+              className="absolute opacity-0 group-hover/spacer:opacity-100 transition-all duration-200 bg-[#006847] hover:bg-[#00583b] text-white font-bold text-[10px] px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-1 active:scale-95 z-10 cursor-pointer hover:shadow-lg hover:scale-105"
+            >
+              <span className="text-[12px] font-extrabold">+</span> Thêm Task Group
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const renderHoverSpacerRow = (groupId: number, afterCode: string | null, level: number, isLast: boolean) => {
+    const dynamicCols = getDynamicColumns();
+    const spacerId = `spacer-${groupId}-${afterCode || 'root'}-${isLast ? 'last' : 'mid'}`;
+    const snappedPos = hoveredSpacerPos?.id === spacerId ? hoveredSpacerPos.left : '50%';
+
+    const handleAddClick = () => {
+      setAddingTaskGroupId(groupId);
+      const parentCode = afterCode ? (getParentCode(afterCode) || null) : null;
+      setAddingTaskParentCode(parentCode);
+      setAddingTaskAfterCode(afterCode);
+      const todayStr = fromPickerDate(new Date().toISOString().split('T')[0]);
+      const initialForm: Record<string, string> = {};
+      dynamicCols.forEach(col => {
+        const colUpper = col.toUpperCase().trim();
+        if (colUpper === 'STATUS') {
+          initialForm[col] = 'Waiting';
+        } else if (colUpper === 'PRIORITY') {
+          initialForm[col] = 'Normal';
+        } else if (colUpper === 'START DATE') {
+          initialForm[col] = todayStr;
+        } else if (colUpper === 'KPI RATIO') {
+          initialForm[col] = '100/0';
+        } else if (colUpper === 'MANDAY EST') {
+          initialForm[col] = '1.0';
+        } else {
+          initialForm[col] = '';
+        }
+      });
+      setNewForm(initialForm);
+    };
+
+    return (
+      <tr 
+        key={spacerId} 
+        className="group/spacer border-none bg-transparent"
+      >
+        <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent relative">
+          <div 
+            onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
+            onMouseLeave={handleSpacerMouseLeave}
+            className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
+          >
+            {/* Dashed line */}
+            <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
+              <div className="w-full border-t border-slate-300 border-dashed opacity-0 group-hover/spacer:opacity-100 transition-opacity duration-200"></div>
+            </div>
+            {/* Teal/emerald pill button */}
+            <button
+              type="button"
+              onClick={handleAddClick}
+              style={{ left: snappedPos, transform: 'translateX(-50%)' }}
+              className="absolute opacity-0 group-hover/spacer:opacity-100 transition-all duration-200 bg-[#006847] hover:bg-[#00583b] text-white font-bold text-[10px] px-3.5 py-1.5 rounded-lg shadow-md flex items-center gap-1 active:scale-95 z-10 cursor-pointer hover:shadow-lg hover:scale-105"
+            >
+              <span className="text-[12px] font-extrabold">+</span> Thêm Task
+            </button>
+          </div>
+        </td>
       </tr>
     );
   };
@@ -2043,28 +2213,7 @@ function ProjectDetailContent() {
         if (addingTaskGroupPhaseId === phase.id) {
           result.push(renderInlineAddGroupRow(phase.id, 'I'));
         } else {
-          result.push(
-            <tr key={`phase-empty-${phase.id}`} className="group border-b border-slate-200/40 hover:bg-slate-50 transition-colors">
-              <td className="px-2 py-3"></td>
-              <td colSpan={getDynamicColumns().length} className="px-6 py-8 text-center">
-                <div className="flex flex-col items-center justify-center gap-3">
-                  <span className="text-slate-400 text-sm font-semibold">
-                    Chưa có Task Group
-                  </span>
-                  <button
-                    onClick={() => {
-                      setAddingTaskGroupPhaseId(phase.id);
-                      setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
-                    }}
-                    className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow flex items-center gap-1.5 transition-all active:scale-95 mx-auto"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">add_box</span>
-                    Thêm Task Group
-                  </button>
-                </div>
-              </td>
-            </tr>
-          );
+          result.push(renderHoverTgSpacerRow(phase.id));
         }
         return;
       }
@@ -2345,7 +2494,7 @@ function ProjectDetailContent() {
         // ═══ TASK ROWS (child rows) ═══
         const sortedTasks = buildTaskTree(filteredTasks);
 
-        sortedTasks.forEach(task => {
+        sortedTasks.forEach((task, tIdx) => {
           if (isAncestorCollapsed(task.task_code)) {
             return;
           }
@@ -2357,37 +2506,34 @@ function ProjectDetailContent() {
 
           result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent));
 
-          if (addingTaskGroupId === group.id && addingTaskParentCode === task.task_code) {
+          // 1. Render inline add row at hover position if adding after this task
+          if (addingTaskGroupId === group.id && addingTaskAfterCode === task.task_code) {
+            result.push(renderInlineAddRow(group.id, addingTaskParentCode, level));
+          }
+
+          // 2. Render sub-task inline add row if triggered from actions menu
+          if (addingTaskGroupId === group.id && addingTaskParentCode === task.task_code && addingTaskAfterCode !== task.task_code) {
             result.push(renderInlineAddRow(group.id, task.task_code, level + 1));
+          }
+
+          // Render spacer row between tasks if there is a next visible task and we aren't currently adding there
+          let nextVisibleTask = null;
+          for (let i = tIdx + 1; i < sortedTasks.length; i++) {
+            if (!isAncestorCollapsed(sortedTasks[i].task_code)) {
+              nextVisibleTask = sortedTasks[i];
+              break;
+            }
+          }
+
+          if (nextVisibleTask && addingTaskAfterCode !== task.task_code) {
+            result.push(renderHoverSpacerRow(group.id, task.task_code, level, false));
           }
         });
 
-        if (addingTaskGroupId === group.id && addingTaskParentCode === null) {
+        if (addingTaskGroupId === group.id && addingTaskParentCode === null && addingTaskAfterCode === null) {
           result.push(renderInlineAddRow(group.id, null, 0));
-        } else {
-          result.push(
-            <tr key={`add-task-hover-${group.id}`} className="group border-b border-slate-100 bg-[#f8fafc]/40 hover:bg-[#eff6ff]/70 transition-colors">
-              <td className="px-1 py-1.5 text-center" style={{ width: '130px', minWidth: '130px' }}></td>
-              <td colSpan={dynamicCols.length} className="px-4 py-1.5 text-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingTaskGroupId(group.id);
-                    setAddingTaskParentCode(null);
-                    const initialForm: Record<string, string> = {};
-                    dynamicCols.forEach(col => { initialForm[col] = ''; });
-                    if (dynamicCols.find(c => c.toUpperCase() === 'STATUS')) {
-                      initialForm['STATUS'] = 'Waiting';
-                    }
-                    setNewForm(initialForm);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-3.5 py-1 rounded shadow flex items-center gap-1 mx-auto transition-all active:scale-95 cursor-pointer"
-                >
-                  <span>➕</span> Thêm Task
-                </button>
-              </td>
-            </tr>
-          );
+        } else if (addingTaskGroupId !== group.id || addingTaskParentCode !== null || addingTaskAfterCode !== null) {
+          result.push(renderHoverSpacerRow(group.id, null, 0, true));
         }
       });
 
@@ -2397,22 +2543,7 @@ function ProjectDetailContent() {
           const nextIndex = to_roman(groupsInPhase.length + 1);
           result.push(renderInlineAddGroupRow(phase.id, nextIndex));
         } else {
-          result.push(
-            <tr key={`add-tg-hover-${phase.id}`} className="group border-b border-slate-100 bg-slate-50/20 hover:bg-slate-100/40 transition-colors">
-              <td className="px-2 py-1.5"></td>
-              <td colSpan={getDynamicColumns().length} className="px-4 py-1.5 text-center">
-                <button
-                  onClick={() => {
-                    setAddingTaskGroupPhaseId(phase.id);
-                    setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-3.5 py-1 rounded shadow flex items-center gap-1 mx-auto transition-all active:scale-95 cursor-pointer"
-                >
-                  <span>➕</span> Thêm Task Group
-                </button>
-              </td>
-            </tr>
-          );
+          result.push(renderHoverTgSpacerRow(phase.id));
         }
       }
     });
@@ -2432,11 +2563,11 @@ if (loadingProject || !project) {
 
   const pmInfo = getPMDisplay(project.pm_email);
   const leadInfo = getPMDisplay(project.leader_email);
-  const membersList = project.member_emails ? project.member_emails.split(',').filter(Boolean) : [];
+  const localMembersList = project.member_emails ? project.member_emails.split(',').filter(Boolean) : [];
   const memberSuggestions = Array.from(new Set([
     project.leader_email,
     project.pm_email,
-    ...membersList
+    ...localMembersList
   ].filter(Boolean))) as string[];
 
   return (
@@ -2488,15 +2619,14 @@ if (loadingProject || !project) {
                     <button 
                       onClick={() => {
                         setEditProjectName(project.name || '');
-                        setEditProjectCode(project.project_code || '');
+                        setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
                         setEditCustomerName(project.customer_name || '');
                         setEditCurrentPhase(project.current_phase || '');
-                        setEditLeaderEmail(project.leader_email || '');
-                        setEditPmEmail(project.pm_email || '');
-                        setEditMemberEmails(project.member_emails || '');
-                        setEditZaloLink(project.zalo_link || '');
-                        setEditTelegramLink(project.telegram_link || '');
-                        setEditTeamsLink(project.teams_link || '');
+
+                        setSelectedPms(project.pm_ids || (project.pm_id ? [project.pm_id] : []));
+                        setSelectedLeaders(project.technical_leader_ids || (project.technical_leader_id ? [project.technical_leader_id] : []));
+                        setSelectedMembers(project.member_ids || []);
+
                         setShowEditProjectModal(true);
                       }}
                       className="bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-slate-200 transition-colors shadow-sm"
@@ -3154,7 +3284,7 @@ if (loadingProject || !project) {
                         className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-4 py-2 text-xs focus:outline-none focus:border-[#0058be]"
                       >
                         <option value="">-- Chọn thành viên muốn thêm --</option>
-                        {users
+                        {membersList
                           .filter((u: any) => !projectMembers.some((pm: any) => pm.email === u.email))
                           .map((u: any) => (
                             <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>
@@ -3266,6 +3396,7 @@ if (loadingProject || !project) {
             <div className="p-6 max-h-[70vh] overflow-y-auto space-y-4">
               {/* Row 1: Tên dự án & Năm */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Project Name */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
                     Tên dự án <span className="text-rose-500 font-bold">*</span>
@@ -3275,39 +3406,32 @@ if (loadingProject || !project) {
                     required
                     value={editProjectName}
                     onChange={(e) => setEditProjectName(e.target.value)}
-                    placeholder="Ví dụ: Dự án GoDN Korea"
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs"
+                    placeholder="Ví dụ: Portal KPI, Web Portal..."
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all placeholder:text-[#727785] text-xs font-semibold"
                   />
                 </div>
 
+                {/* Project Year */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Năm <span className="text-rose-500 font-bold">*</span>
+                    Năm dự án <span className="text-rose-500 font-bold">*</span>
                   </label>
-                  <input
-                    type="text"
+                  <select
                     required
-                    list="project-years-edit"
-                    value={editProjectCode}
-                    onChange={(e) => setEditProjectCode(e.target.value)}
-                    placeholder="VD: 2026"
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs"
-                  />
-                  <datalist id="project-years-edit">
-                    <option value="2024" />
-                    <option value="2025" />
-                    <option value="2026" />
-                    <option value="2027" />
-                    <option value="2028" />
-                    <option value="2029" />
-                    <option value="2030" />
-                  </datalist>
+                    value={editProjectYear}
+                    onChange={(e) => setEditProjectYear(parseInt(e.target.value, 10))}
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold"
+                  >
+                    {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 5 + i).map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               {/* Row 2: Khách hàng & Giai đoạn */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Khách hàng */}
+                {/* Customer Dropdown */}
                 <div ref={customerRef} className="space-y-1 relative">
                   <label className="text-[11px] font-semibold text-[#565e74] block">Khách hàng</label>
                   <button
@@ -3315,14 +3439,15 @@ if (loadingProject || !project) {
                     onClick={(e) => {
                       e.stopPropagation();
                       setCustomerDropdownOpen(!customerDropdownOpen);
-                      setPhaseDropdownOpen(false);
                       setPmDropdownOpen(false);
                       setLeaderDropdownOpen(false);
+                      setMemberDropdownOpen(false);
+                      setPhaseDropdownOpen(false);
                     }}
-                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left font-semibold"
                   >
                     <span className={editCustomerName ? 'text-[#0b1c30]' : 'text-[#727785]'}>
-                      {editCustomerName || 'Chọn hoặc nhập mới...'}
+                      {editCustomerName || 'Chọn khách hàng (Để trống nếu là dự án nội bộ)'}
                     </span>
                     <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                   </button>
@@ -3330,17 +3455,17 @@ if (loadingProject || !project) {
                   {customerDropdownOpen && (
                     <div 
                       onClick={(e) => e.stopPropagation()}
-                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2"
+                      className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2"
                     >
                       <input
                         type="text"
                         value={customerSearch}
                         onChange={(e) => setCustomerSearch(e.target.value)}
-                        placeholder="Tìm kiếm hoặc nhập mới..."
+                        placeholder="Tìm kiếm khách hàng..."
                         className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
                       />
 
-                      <div className="max-h-[140px] overflow-y-auto space-y-1">
+                      <div className="max-h-[160px] overflow-y-auto space-y-1">
                         <button
                           type="button"
                           onClick={() => {
@@ -3350,38 +3475,23 @@ if (loadingProject || !project) {
                           }}
                           className="w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 text-[#727785] rounded transition-colors"
                         >
-                          Chọn khách hàng (Trống)
+                          Chọn khách hàng (Để trống nếu là dự án nội bộ)
                         </button>
 
-                        {customerSearch.trim() && !['Samsung SDS', 'LG CNS', 'Viettel', 'FPT Software', 'Vingroup', 'Khác'].some(c => c.toLowerCase() === customerSearch.trim().toLowerCase()) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditCustomerName(customerSearch.trim());
-                              setCustomerSearch('');
-                              setCustomerDropdownOpen(false);
-                            }}
-                            className="w-full text-left px-2 py-1.5 text-xs bg-[#0058be]/10 hover:bg-[#0058be]/20 text-[#0058be] rounded transition-colors font-semibold flex items-center gap-1"
-                          >
-                            <span className="material-symbols-outlined text-[14px]">add</span>
-                            Sử dụng &quot;{customerSearch.trim()}&quot;
-                          </button>
-                        )}
-
-                        {['Samsung SDS', 'LG CNS', 'Viettel', 'FPT Software', 'Vingroup', 'Khác']
-                          .filter(c => c.toLowerCase().includes(customerSearch.toLowerCase()))
+                        {dbCustomers
+                          .filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()))
                           .map((c) => (
                             <button
-                              key={c}
+                              key={c.id}
                               type="button"
                               onClick={() => {
-                                setEditCustomerName(c);
+                                setEditCustomerName(c.name);
                                 setCustomerSearch('');
                                 setCustomerDropdownOpen(false);
                               }}
-                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors ${editCustomerName === c ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors ${editCustomerName === c.name ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
                             >
-                              {c}
+                              {c.name}
                             </button>
                           ))}
                       </div>
@@ -3389,9 +3499,11 @@ if (loadingProject || !project) {
                   )}
                 </div>
 
-                {/* Giai đoạn */}
+                {/* Phase Selection */}
                 <div ref={phaseRef} className="space-y-1 relative">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">Giai đoạn hiện tại</label>
+                  <label className="text-[11px] font-semibold text-[#565e74] block">
+                    Giai đoạn hiện tại <span className="text-rose-500 font-bold ml-0.5">*</span>
+                  </label>
                   <button
                     type="button"
                     onClick={(e) => {
@@ -3400,17 +3512,18 @@ if (loadingProject || !project) {
                       setCustomerDropdownOpen(false);
                       setPmDropdownOpen(false);
                       setLeaderDropdownOpen(false);
+                      setMemberDropdownOpen(false);
                     }}
-                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left font-semibold"
                   >
-                    <span>{editCurrentPhase || 'Chưa thiết lập'}</span>
+                    <span className="text-[#0b1c30]">{editCurrentPhase || 'Chọn giai đoạn...'}</span>
                     <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                   </button>
-                  
+
                   {phaseDropdownOpen && (
                     <div 
                       onClick={(e) => e.stopPropagation()}
-                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
+                      className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
                     >
                       {[
                         '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
@@ -3436,163 +3549,250 @@ if (loadingProject || !project) {
                 </div>
               </div>
 
-              {/* Row 3: PM & Leader */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* PM */}
-                <div ref={pmRef} className="space-y-1 relative">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">Project Manager (PM)</label>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPmDropdownOpen(!pmDropdownOpen);
-                      setCustomerDropdownOpen(false);
-                      setPhaseDropdownOpen(false);
-                      setLeaderDropdownOpen(false);
-                    }}
-                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
-                  >
-                    <span className={editPmEmail ? 'text-[#0b1c30]' : 'text-[#727785]'}>
-                      {editPmEmail ? (users.find(u => u.email === editPmEmail)?.full_name || editPmEmail) : 'Chọn Project Manager'}
-                    </span>
-                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                  </button>
-                  
-                  {pmDropdownOpen && (
-                    <div 
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditPmEmail('');
-                          setPmDropdownOpen(false);
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 text-[#727785] transition-colors"
-                      >
-                        Chọn Project Manager
-                      </button>
-                      {users.map((u) => (
-                        <button
-                          key={u.id}
-                          type="button"
-                          onClick={() => {
-                            setEditPmEmail(u.email);
-                            setPmDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 transition-colors ${editPmEmail === u.email ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                        >
-                          {u.full_name || u.email} ({u.email})
-                        </button>
-                      ))}
-                    </div>
-                  )}
+              {/* PM Selection */}
+              <div ref={pmRef} className="space-y-1 relative">
+                <label className="text-[11px] font-semibold text-[#565e74] block">
+                  Project Manager (PM)
+                </label>
+                <div 
+                  onClick={() => {
+                    setPmDropdownOpen(!pmDropdownOpen);
+                    setLeaderDropdownOpen(false);
+                    setMemberDropdownOpen(false);
+                    setCustomerDropdownOpen(false);
+                    setPhaseDropdownOpen(false);
+                  }}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
+                >
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {selectedPms.length === 0 ? (
+                      <span className="text-[#727785] px-2 py-0.5">Chọn Project Manager (PM)...</span>
+                    ) : (
+                      selectedPms.map(id => {
+                        const m = membersList.find(x => x.id === id);
+                        return (
+                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
+                            {m?.display_name || id}
+                            <button 
+                              type="button" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedPms(selectedPms.filter(x => x !== id));
+                              }}
+                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
-
-                {/* Leader */}
-                <div ref={leaderRef} className="space-y-1 relative">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">Technical Leader</label>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setLeaderDropdownOpen(!leaderDropdownOpen);
-                      setCustomerDropdownOpen(false);
-                      setPhaseDropdownOpen(false);
-                      setPmDropdownOpen(false);
-                    }}
-                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left"
+                
+                {pmDropdownOpen && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
                   >
-                    <span className={editLeaderEmail ? 'text-[#0b1c30]' : 'text-[#727785]'}>
-                      {editLeaderEmail ? (users.find(u => u.email === editLeaderEmail)?.full_name || editLeaderEmail) : 'Chọn Technical Leader'}
-                    </span>
-                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                  </button>
-                  
-                  {leaderDropdownOpen && (
-                    <div 
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditLeaderEmail('');
-                          setLeaderDropdownOpen(false);
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 text-[#727785] transition-colors"
-                      >
-                        Chọn Technical Leader
-                      </button>
-                      {users.filter(u => u.role === 'group_a').map((u) => (
-                        <button
-                          key={u.id}
-                          type="button"
-                          onClick={() => {
-                            setEditLeaderEmail(u.email);
-                            setLeaderDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 transition-colors ${editLeaderEmail === u.email ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                        >
-                          {u.full_name || u.email} ({u.email})
-                        </button>
-                      ))}
+                    <input
+                      type="text"
+                      value={pmSearch}
+                      onChange={(e) => setPmSearch(e.target.value)}
+                      placeholder="Tìm kiếm PM..."
+                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
+                    />
+                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
+                      {membersList
+                        .filter(u => u.display_name?.toLowerCase().includes(pmSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(pmSearch.toLowerCase()))
+                        .map((u) => {
+                          const isSelected = selectedPms.includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedPms(selectedPms.filter(id => id !== u.id));
+                                } else {
+                                  setSelectedPms([...selectedPms, u.id]);
+                                }
+                              }}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                            >
+                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
+                            </button>
+                          );
+                        })}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
 
-              {/* Members Area */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-[#565e74] block">Email thành viên dự án</label>
-                <textarea
-                  value={editMemberEmails}
-                  onChange={(e) => setEditMemberEmails(e.target.value)}
-                  placeholder="member1@company.com, member2@company.com"
-                  rows={2}
-                  className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs resize-none"
-                />
-                <p className="text-[9px] text-[#727785]">Nhập nhiều email phân cách bởi dấu phẩy (,)</p>
+              {/* Technical Leader Selection */}
+              <div ref={leaderRef} className="space-y-1 relative">
+                <label className="text-[11px] font-semibold text-[#565e74] block">
+                  Technical Leader
+                </label>
+                <div 
+                  onClick={() => {
+                    setLeaderDropdownOpen(!leaderDropdownOpen);
+                    setPmDropdownOpen(false);
+                    setMemberDropdownOpen(false);
+                    setCustomerDropdownOpen(false);
+                    setPhaseDropdownOpen(false);
+                  }}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
+                >
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {selectedLeaders.length === 0 ? (
+                      <span className="text-[#727785] px-2 py-0.5">Chọn Technical Leader...</span>
+                    ) : (
+                      selectedLeaders.map(id => {
+                        const m = membersList.find(x => x.id === id);
+                        return (
+                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
+                            {m?.display_name || id}
+                            <button 
+                              type="button" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedLeaders(selectedLeaders.filter(x => x !== id));
+                              }}
+                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                </div>
+                
+                {leaderDropdownOpen && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
+                  >
+                    <input
+                      type="text"
+                      value={leaderSearch}
+                      onChange={(e) => setLeaderSearch(e.target.value)}
+                      placeholder="Tìm kiếm Technical Leader..."
+                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
+                    />
+                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
+                      {membersList
+                        .filter(u => u.display_name?.toLowerCase().includes(leaderSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(leaderSearch.toLowerCase()))
+                        .map((u) => {
+                          const isSelected = selectedLeaders.includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedLeaders(selectedLeaders.filter(id => id !== u.id));
+                                } else {
+                                  setSelectedLeaders([...selectedLeaders, u.id]);
+                                }
+                              }}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                            >
+                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Social Channels */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <label className="text-[11px] font-bold text-[#565e74] block">Kênh liên lạc dự án</label>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-semibold text-[#0068FF] block">Zalo Link</span>
-                    <input
-                      type="url"
-                      value={editZaloLink}
-                      onChange={(e) => setEditZaloLink(e.target.value)}
-                      placeholder="https://zalo.me/g/..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-[#0058be]"
-                    />
+              {/* Members Selection */}
+              <div ref={memberRef} className="space-y-1 relative">
+                <label className="text-[11px] font-semibold text-[#565e74] block">
+                  Danh sách thành viên dự án
+                </label>
+                <div 
+                  onClick={() => {
+                    setMemberDropdownOpen(!memberDropdownOpen);
+                    setPmDropdownOpen(false);
+                    setLeaderDropdownOpen(false);
+                    setCustomerDropdownOpen(false);
+                    setPhaseDropdownOpen(false);
+                  }}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
+                >
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {selectedMembers.length === 0 ? (
+                      <span className="text-[#727785] px-2 py-0.5">Chọn thành viên tham gia...</span>
+                    ) : (
+                      selectedMembers.map(id => {
+                        const m = membersList.find(x => x.id === id);
+                        return (
+                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
+                            {m?.display_name || id}
+                            <button 
+                              type="button" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedMembers(selectedMembers.filter(x => x !== id));
+                              }}
+                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })
+                    )}
                   </div>
-
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-semibold text-[#2AABEE] block">Telegram Link</span>
-                    <input
-                      type="url"
-                      value={editTelegramLink}
-                      onChange={(e) => setEditTelegramLink(e.target.value)}
-                      placeholder="https://t.me/..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-[#0058be]"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-semibold text-[#4F52B2] block">Teams Link</span>
-                    <input
-                      type="url"
-                      value={editTeamsLink}
-                      onChange={(e) => setEditTeamsLink(e.target.value)}
-                      placeholder="https://teams.microsoft.com/..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-[#0058be]"
-                    />
-                  </div>
+                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
+                
+                {memberDropdownOpen && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
+                  >
+                    <input
+                      type="text"
+                      value={memberSearch}
+                      onChange={(e) => setMemberSearch(e.target.value)}
+                      placeholder="Tìm kiếm thành viên..."
+                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
+                    />
+                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
+                      {membersList
+                        .filter(u => u.display_name?.toLowerCase().includes(memberSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(memberSearch.toLowerCase()))
+                        .map((u) => {
+                          const isSelected = selectedMembers.includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedMembers(selectedMembers.filter(id => id !== u.id));
+                                } else {
+                                  setSelectedMembers([...selectedMembers, u.id]);
+                                }
+                              }}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                            >
+                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

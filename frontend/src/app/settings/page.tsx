@@ -39,7 +39,8 @@ import {
   getTeams,
   createTeam,
   updateTeam,
-  deleteTeam
+  deleteTeam,
+  getCustomers
 } from '@/lib/api';
 
 export default function SettingsPage() {
@@ -63,6 +64,7 @@ export default function SettingsPage() {
   const [dbPriorities, setDbPriorities] = useState<any[]>([]);
   const [dbStatuses, setDbStatuses] = useState<any[]>([]);
   const [dbTeams, setDbTeams] = useState<any[]>([]);
+  const [dbCustomers, setDbCustomers] = useState<any[]>([]);
 
   // Form states for creating master data
   const [newCatName, setNewCatName] = useState('');
@@ -107,6 +109,7 @@ export default function SettingsPage() {
     getPriorities().then(setDbPriorities).catch(() => {});
     getStatuses().then(setDbStatuses).catch(() => {});
     getTeams().then(setDbTeams).catch(() => {});
+    getCustomers().then(setDbCustomers).catch(() => {});
   };
 
   const flash = (msg: string) => {
@@ -744,6 +747,7 @@ export default function SettingsPage() {
               priorities={dbPriorities}
               statuses={dbStatuses}
               teams={dbTeams}
+              customers={dbCustomers}
               onReload={reloadSystemCategories}
               onFlash={flash}
             />

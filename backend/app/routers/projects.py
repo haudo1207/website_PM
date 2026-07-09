@@ -20,15 +20,6 @@ router = APIRouter(tags=["projects"])
 
 def serialize_project(p, db):
     """Serialize a Project ORM object to dict with PM/Leader names, stats, and member list."""
-    pm_name = None
-    leader_name = None
-    if p.pm_id:
-        m = db.query(Member).filter(Member.id == p.pm_id).first()
-        pm_name = m.display_name if m else None
-    if p.technical_leader_id:
-        m = db.query(Member).filter(Member.id == p.technical_leader_id).first()
-        leader_name = m.display_name if m else None
-
     # Count phases
     phase_count = db.query(Phase).filter(Phase.project_id == p.id).count()
 
@@ -59,25 +50,45 @@ def serialize_project(p, db):
         .count()
     )
 
-    # Fetch project members
-    members_query = (
+    # Fetch PMs
+    pms = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "PM").all()
+    pm_ids = [m.id for m in pms]
+    pm_names = ", ".join([m.display_name for m in pms])
+
+    # Fetch Leaders
+    leaders = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Leader").all()
+    leader_ids = [m.id for m in leaders]
+    leader_names = ", ".join([m.display_name for m in leaders])
+
+    # Fetch Members
+    members = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Member").all()
+    member_ids = [m.id for m in members]
+    member_names = ", ".join([m.display_name for m in members])
+
+    # Combine all unique members for display
+    all_members_query = (
         db.query(Member.display_name, Member.email)
         .join(project_members, Member.id == project_members.c.member_id)
         .filter(project_members.c.project_id == p.id)
         .all()
     )
-    members_list = [{"name": m_name, "email": m_email} for m_name, m_email in members_query]
+    members_list = [{"name": m_name, "email": m_email} for m_name, m_email in all_members_query]
 
     return {
         "id": p.id,
         "name": p.name,
         "code": p.code,
+        "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer_name,
         "year": p.year,
         "pm_id": p.pm_id,
-        "pm_name": pm_name,
+        "pm_name": pm_names if pm_names else None,
+        "pm_ids": pm_ids,
         "technical_leader_id": p.technical_leader_id,
-        "technical_leader_name": leader_name,
+        "technical_leader_name": leader_names if leader_names else None,
+        "technical_leader_ids": leader_ids,
+        "member_ids": member_ids,
+        "member_names": member_names,
         "description": p.description,
         "status": p.status,
         "current_phase": p.current_phase,
@@ -104,24 +115,32 @@ def create_project(body: dict, db: Session = Depends(get_db)):
         code=body.get("project_code") or body.get("code"),
         customer_name=body.get("customer_name"),
         year=body.get("year"),
-        pm_id=body.get("pm_id"),
-        technical_leader_id=body.get("technical_leader_id"),
         description=body.get("description"),
         status=body.get("status", "Planning"),
         current_phase=body.get("current_phase") or "1. Tư vấn",
     )
     if not p.name:
         raise HTTPException(400, "Project name is required.")
+
+    # Convert/parse fields
+    pm_ids = body.get("pm_ids", [])
+    if body.get("pm_id") and not pm_ids:
+        pm_ids = [body.get("pm_id")]
     
-    # Try parsing year if not explicitly provided
-    if not p.year and p.code:
-        import re
-        match = re.search(r"(19\d{2}|20\d{2})", p.code)
-        if match:
-            p.year = int(match.group(1))
+    technical_leader_ids = body.get("technical_leader_ids", [])
+    if body.get("technical_leader_id") and not technical_leader_ids:
+        technical_leader_ids = [body.get("technical_leader_id")]
+
+    member_ids = body.get("member_ids", [])
+
+    # Set single fallback values for backward compatibility
+    if pm_ids:
+        p.pm_id = pm_ids[0]
+    if technical_leader_ids:
+        p.technical_leader_id = technical_leader_ids[0]
 
     db.add(p)
-    db.flush()  # get p.id
+    db.flush()
 
     # 1. Auto-create default phases
     from ..models.setting import Setting
@@ -136,7 +155,15 @@ def create_project(body: dict, db: Session = Depends(get_db)):
         except Exception:
             pass
 
-
+    # If setting is not configured, load from default list
+    if not default_phases:
+        default_phases = [
+            '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
+            '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
+            '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
+            '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
+            '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
+        ]
 
     for idx, pname in enumerate(default_phases):
         ph = Phase(
@@ -147,7 +174,7 @@ def create_project(body: dict, db: Session = Depends(get_db)):
         )
         db.add(ph)
 
-    # 2. Add initial links/channels
+    # 2. Add initial links/channels (Legacy cleanup - only if they exist)
     links_to_create = []
     if body.get("zalo_link"):
         links_to_create.append(("Zalo Group", body["zalo_link"], "Zalo"))
@@ -168,13 +195,20 @@ def create_project(body: dict, db: Session = Depends(get_db)):
         )
         db.add(lnk)
 
-    # 3. Add PM & Leader as project members initially
-    if p.pm_id:
-        db.execute(project_members.insert().values(project_id=p.id, member_id=p.pm_id, role="PM"))
-    if p.technical_leader_id:
-        # Check if already added (avoid duplicate if PM is leader)
-        if p.technical_leader_id != p.pm_id:
-            db.execute(project_members.insert().values(project_id=p.id, member_id=p.technical_leader_id, role="Leader"))
+    # 3. Add PM, Leader and Members to junction table
+    inserted = set()
+    for m_id in pm_ids:
+        if m_id and (m_id, "PM") not in inserted:
+            db.execute(project_members.insert().values(project_id=p.id, member_id=m_id, role="PM"))
+            inserted.add((m_id, "PM"))
+    for m_id in technical_leader_ids:
+        if m_id and (m_id, "Leader") not in inserted:
+            db.execute(project_members.insert().values(project_id=p.id, member_id=m_id, role="Leader"))
+            inserted.add((m_id, "Leader"))
+    for m_id in member_ids:
+        if m_id and (m_id, "Member") not in inserted:
+            db.execute(project_members.insert().values(project_id=p.id, member_id=m_id, role="Member"))
+            inserted.add((m_id, "Member"))
 
     db.commit()
     db.refresh(p)
@@ -195,10 +229,67 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db)):
     if not p:
         raise HTTPException(404, "Project not found.")
 
-    for field in ["name", "code", "customer_name", "year", "pm_id",
-                  "technical_leader_id", "description", "status", "current_phase"]:
+    for field in ["name", "code", "customer_name", "year", "description", "status", "current_phase"]:
         if field in body:
             setattr(p, field, body[field])
+
+    # Synchronize project members
+    sync_members = False
+    pm_ids = body.get("pm_ids")
+    if pm_ids is not None:
+        sync_members = True
+        if pm_ids:
+            p.pm_id = pm_ids[0]
+        else:
+            p.pm_id = None
+    else:
+        if "pm_id" in body:
+            sync_members = True
+            p.pm_id = body["pm_id"]
+            pm_ids = [body["pm_id"]] if body["pm_id"] else []
+
+    tl_ids = body.get("technical_leader_ids")
+    if tl_ids is not None:
+        sync_members = True
+        if tl_ids:
+            p.technical_leader_id = tl_ids[0]
+        else:
+            p.technical_leader_id = None
+    else:
+        if "technical_leader_id" in body:
+            sync_members = True
+            p.technical_leader_id = body["technical_leader_id"]
+            tl_ids = [body["technical_leader_id"]] if body["technical_leader_id"] else []
+
+    member_ids = body.get("member_ids")
+    if member_ids is not None:
+        sync_members = True
+
+    if sync_members:
+        if pm_ids is None:
+            pm_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "PM").all()]
+        if tl_ids is None:
+            tl_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "Leader").all()]
+        if member_ids is None:
+            member_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "Member").all()]
+
+        # Delete existing entries
+        db.execute(project_members.delete().where(project_members.c.project_id == pid))
+
+        inserted = set()
+        for m_id in pm_ids:
+            if m_id and (m_id, "PM") not in inserted:
+                db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="PM"))
+                inserted.add((m_id, "PM"))
+        for m_id in tl_ids:
+            if m_id and (m_id, "Leader") not in inserted:
+                db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Leader"))
+                inserted.add((m_id, "Leader"))
+        for m_id in member_ids:
+            if m_id and (m_id, "Member") not in inserted:
+                db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Member"))
+                inserted.add((m_id, "Member"))
+
     db.commit()
     db.refresh(p)
     return serialize_project(p, db)

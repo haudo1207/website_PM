@@ -30,3 +30,9 @@ class TaskStatus(Base):
     __tablename__ = "task_statuses"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
+
+class Customer(Base):
+    __tablename__ = "customers"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    description = Column(String, nullable=True)

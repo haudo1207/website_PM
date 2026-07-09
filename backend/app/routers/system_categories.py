@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 import json
 
 from ..database import get_db
-from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team
+from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer
 from ..models.user import User
 from ..models.task import Task
 from ..utils.auth import require_admin, get_current_user
@@ -339,3 +339,47 @@ def delete_team(id: int, db: Session = Depends(get_db), _=Depends(require_admin)
     db.delete(t)
     db.commit()
     return {"message": "Đã xóa team thành công"}
+
+# ----------------- CUSTOMERS -----------------
+@router.get("/customers")
+def list_customers(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return db.query(Customer).order_by(Customer.name.asc()).all()
+
+@router.post("/customers")
+def create_customer(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise HTTPException(400, "Tên khách hàng không được để trống")
+    if db.query(Customer).filter(Customer.name.ilike(name)).first():
+        raise HTTPException(400, f"Khách hàng '{name}' đã tồn tại")
+    c = Customer(name=name, description=body.get("description") or None)
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return c
+
+@router.put("/customers/{id}")
+def update_customer(id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    c = db.query(Customer).filter(Customer.id == id).first()
+    if not c:
+        raise HTTPException(404, "Không tìm thấy khách hàng")
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise HTTPException(400, "Tên khách hàng không được để trống")
+    dup = db.query(Customer).filter(Customer.name.ilike(name), Customer.id != id).first()
+    if dup:
+        raise HTTPException(400, f"Khách hàng '{name}' đã tồn tại")
+    c.name = name
+    c.description = body.get("description") or None
+    db.commit()
+    db.refresh(c)
+    return c
+
+@router.delete("/customers/{id}")
+def delete_customer(id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    c = db.query(Customer).filter(Customer.id == id).first()
+    if not c:
+        raise HTTPException(404, "Không tìm thấy khách hàng")
+    db.delete(c)
+    db.commit()
+    return {"message": "Đã xóa khách hàng thành công"}

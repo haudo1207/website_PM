@@ -160,7 +160,7 @@ def init_db_defaults():
                 print("[*] Seeded skills from excel")
 
         # 4. Seed system categories
-        from .models.system_category import Position, Department, TaskPriority, TaskStatus, Team
+        from .models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer
         if db.query(Position).count() == 0:
             for name in ["PM", "Leader", "Developer", "Tester", "Intern"]:
                 db.add(Position(name=name))
@@ -188,6 +188,11 @@ def init_db_defaults():
             statuses = ["Waiting", "Process", "Done", "Cancel", "Rework", "To Do"]
             for name in statuses:
                 db.add(TaskStatus(name=name))
+
+        if db.query(Customer).count() == 0:
+            customers = ["Samsung SDS", "LG CNS", "Viettel", "FPT Software", "Vingroup"]
+            for name in customers:
+                db.add(Customer(name=name))
 
         # 5. Seed default platforms
         from .models.project import Platform
