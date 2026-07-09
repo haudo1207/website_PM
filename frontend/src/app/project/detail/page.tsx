@@ -2,8 +2,27 @@
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getViolations, getSheets, addTask, checkSingleTask, updateSheet, deleteSheet, getChatGroups, createChatGroup, deleteChatGroup, updateTask, deleteTask, addTaskLocal, getPhases, createPhase, updatePhase, deletePhase, getUsers } from '@/lib/api';
+import {
+  getProjects, getProject, updateProject, deleteProject,
+  getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
+  getPhases, createPhase, updatePhase, deletePhase,
+  getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
+  getAllProjectTasks, createTask, updateTask, deleteTask,
+  getProjectMembers, addProjectMember, removeProjectMember,
+  getUsers, getCategories, getPriorities, getStatuses,
+  duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks
+} from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
+
+const ROMAN_PAIRS: [number, string][] = [[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
+const to_roman = (n: number): string => {
+  if (n <= 0) return String(n);
+  let result = '';
+  for (const [value, numeral] of ROMAN_PAIRS) {
+    while (n >= value) { result += numeral; n -= value; }
+  }
+  return result;
+};
 
 const PHASE_TABS = [
   { key: 'ALL', label: 'Master' },
@@ -32,6 +51,28 @@ function ProjectDetailContent() {
   const [project, setProject] = useState<any>(null);
   const [loadingProject, setLoadingProject] = useState(true);
   const [items, setItems] = useState<any[]>([]);
+  const [taskGroups, setTaskGroups] = useState<any[]>([]);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
+  const [addingTaskGroupId, setAddingTaskGroupId] = useState<number | null>(null);
+  const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
+  
+  // Task Group CRUD States
+  const [showTaskGroupModal, setShowTaskGroupModal] = useState(false);
+  const [editingTaskGroup, setEditingTaskGroup] = useState<any>(null);
+  const [tgName, setTgName] = useState('');
+  const [tgDesc, setTgDesc] = useState('');
+  const [tgStatus, setTgStatus] = useState('Waiting');
+  const [tgPhaseId, setTgPhaseId] = useState<number | ''>('');
+  
+  // Inline Task Group States
+  const [addingTaskGroupPhaseId, setAddingTaskGroupPhaseId] = useState<number | null>(null);
+  const [newTgForm, setNewTgForm] = useState({
+    name: '',
+    manday_est: '',
+    status: 'Waiting',
+    start_date_est: ''
+  });
+
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [taskSearch, setTaskSearch] = useState('');
   const [checkingTaskId, setCheckingTaskId] = useState<number | null>(null);
@@ -55,12 +96,151 @@ function ProjectDetailContent() {
   const [editValue, setEditValue] = useState<string>('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
 
+  const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
+
+  const toggleParentCollapse = (parentTaskId: string) => {
+    setCollapsedParents(prev => {
+      const next = new Set(prev);
+      if (next.has(parentTaskId)) {
+        next.delete(parentTaskId);
+      } else {
+        next.add(parentTaskId);
+      }
+      return next;
+    });
+  };
+
+  const toggleGroupCollapse = (groupId: number) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  };
+
+  const handleOpenAddTaskGroupModal = (group: any = null) => {
+    if (group && group.id) {
+      setEditingTaskGroup(group);
+      setTgName(group.name);
+      setTgDesc(group.description || '');
+      setTgStatus(group.status || 'Waiting');
+      setTgPhaseId(group.phase_id);
+    } else {
+      setEditingTaskGroup(null);
+      setTgName('');
+      setTgDesc('');
+      setTgStatus('Waiting');
+      const currentPhaseObj = phases.find(p => p.name === activePhase);
+      setTgPhaseId(currentPhaseObj ? currentPhaseObj.id : (phases[0]?.id || ''));
+    }
+    setShowTaskGroupModal(true);
+  };
+
+  const handleSaveTaskGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tgName.trim()) {
+      alert('Tên Task Group không được để trống!');
+      return;
+    }
+    if (!tgPhaseId) {
+      alert('Vui lòng chọn Phase cho Task Group!');
+      return;
+    }
+    try {
+      if (editingTaskGroup) {
+        await updateTaskGroup(Number(tgPhaseId), editingTaskGroup.id, {
+          name: tgName.trim(),
+          description: tgDesc.trim(),
+          status: tgStatus,
+        });
+        flash('Cập nhật Task Group thành công!');
+      } else {
+        await createTaskGroup(Number(tgPhaseId), {
+          name: tgName.trim(),
+          description: tgDesc.trim(),
+          status: tgStatus,
+        } as any);
+        flash('Tạo Task Group thành công!');
+      }
+      setShowTaskGroupModal(false);
+      reloadAll();
+    } catch (err: any) {
+      alert('Lỗi lưu Task Group: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleSaveInlineTaskGroup = async (phaseId: number) => {
+    const name = newTgForm.name.trim();
+    if (!name) {
+      setAddingTaskGroupPhaseId(null);
+      return;
+    }
+    const manday_est = newTgForm.manday_est ? parseFloat(newTgForm.manday_est) : null;
+    if (newTgForm.manday_est && isNaN(manday_est as number)) {
+      alert('Manday EST phải là số!');
+      return;
+    }
+    try {
+      await createTaskGroup(phaseId, {
+        name,
+        manday_est,
+        status: newTgForm.status,
+        start_date_est: newTgForm.start_date_est || null,
+      } as any);
+      flash('Tạo Task Group thành công!');
+      setAddingTaskGroupPhaseId(null);
+      reloadAll();
+    } catch (err: any) {
+      alert('Lỗi tạo Task Group: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleDeleteTaskGroupClick = async (group: any) => {
+    if (group.task_count > 0) {
+      alert(`Không thể xóa Task Group "${group.name}" vì còn ${group.task_count} Task. Hãy xóa hết Task trước.`);
+      return;
+    }
+    if (!confirm(`Bạn có chắc chắn muốn xóa Task Group "${group.name}"?`)) {
+      return;
+    }
+    try {
+      await deleteTaskGroup(group.phase_id, group.id);
+      flash('Đã xóa Task Group thành công!');
+      reloadAll();
+    } catch (err: any) {
+      alert('Lỗi xóa Task Group: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const getParentCode = (code: string): string => {
+    if (!code) return '';
+    const idx = code.lastIndexOf('.');
+    if (idx === -1) return '';
+    return code.substring(0, idx);
+  };
+
+  const getNextSubTaskId = (parentTaskId: string) => {
+    const siblingCodes = items
+      .filter(t => getParentCode(t.task_code) === parentTaskId)
+      .map(t => t.task_code || '');
+    const subtaskNums = siblingCodes.map(c => {
+      const suffix = c.substring(parentTaskId.length + 1);
+      return parseInt(suffix, 10);
+    }).filter(n => !isNaN(n));
+    const nextSubNum = subtaskNums.length > 0 ? Math.max(...subtaskNums) + 1 : 1;
+    return `${parentTaskId}.${nextSubNum}`;
+  };
+
   const TASK_COLUMNS = [
     "TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY EST", "STATUS", "START DATE",
     "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "TICKET ID",
     "REMARK", "SEND", "END DATE EST", "MD ACTUAL", "END ACTUAL", "DAYS LATE",
     "KPI BASE", "KPI PERFORM", "KPI OVERTIME", "KPI FINAL", "SUB ID", "ROOT TASKS",
-    "NOTES", "WEEK EST", "MONTH EST", "WEEK ACTUAL", "MONTH ACTUAL"
+    "NOTES", "SOLUTION"
   ];
 
   const ALIASES: Record<string, string[]> = {
@@ -71,32 +251,47 @@ function ProjectDetailContent() {
     'END ACTUAL': ['END ACTUAL', 'END DATE ACTUAL', 'END_ACTUAL']
   };
 
-  const getCellValue = (rowData: Record<string, any>, colName: string): string => {
+  const getCellValue = (task: any, colName: string): string => {
+    if (!task) return '';
     const colUpper = colName.trim().toUpperCase();
-    const aliases = ALIASES[colUpper] || [colUpper];
-    for (const key of Object.keys(rowData)) {
-      const keyUpper = key.trim().toUpperCase();
-      if (keyUpper === colUpper || aliases.includes(keyUpper)) {
-        return String(rowData[key] ?? '');
-      }
+    
+    switch (colUpper) {
+      case 'TASK ID': return task.task_code || task.task_id || '';
+      case 'DETAIL TASK': return task.detail || '';
+      case 'PRIORITY': return task.priority || 'Normal';
+      case 'MANDAY EST':
+      case 'MANDAY (EST)':
+      case 'MANDAY': return task.manday_est !== null && task.manday_est !== undefined ? String(task.manday_est) : '';
+      case 'STATUS': return task.status || 'Waiting';
+      case 'START DATE':
+      case 'START DATE (EST)': return task.start_date || '';
+      case 'ASSIGNED': return task.assigned_name || '';
+      case 'SUPPORT': return task.support_name || '';
+      case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
+      case 'SKILL SOLUTION': return task.skill_solution_name || '';
+      case 'SKILL VENDOR': return task.skill_vendor_name || '';
+      case 'TICKET ID': return task.ticket_id || '';
+      case 'REMARK': return task.remark || '';
+      case 'SEND': return task.send || '';
+      case 'END DATE EST':
+      case 'END DAY (EST)':
+      case 'END DATE (EST)': return task.end_date_est || '';
+      case 'MD ACTUAL':
+      case 'MANDAY ACTUAL': return task.manday_actual !== null && task.manday_actual !== undefined ? String(task.manday_actual) : '';
+      case 'END ACTUAL':
+      case 'END DATE ACTUAL': return task.end_date_actual || '';
+      case 'DAYS LATE': return task.days_late !== null && task.days_late !== undefined ? String(task.days_late) : '';
+      case 'KPI BASE': return task.kpi_base !== null && task.kpi_base !== undefined ? String(task.kpi_base) : '';
+      case 'KPI PERFORM': return task.kpi_perform !== null && task.kpi_perform !== undefined ? String(task.kpi_perform) : '';
+      case 'KPI OVERTIME': return task.kpi_ot !== null && task.kpi_ot !== undefined ? String(task.kpi_ot) : '';
+      case 'KPI FINAL': return task.kpi_final !== null && task.kpi_final !== undefined ? String(task.kpi_final) : '';
+      case 'SUB ID': return task.sub_id || '';
+      case 'ROOT TASKS':
+      case 'ROOT TASK': return getParentCode(task.task_code) || task.root_task || '';
+      case 'NOTES': return task.notes || '';
+      case 'SOLUTION': return task.solution || '';
+      default: return '';
     }
-    return '';
-  };
-
-  const setCellValue = (rowData: Record<string, any>, colName: string, value: any): Record<string, any> => {
-    const updated = { ...rowData };
-    const colUpper = colName.trim().toUpperCase();
-    const aliases = ALIASES[colUpper] || [colUpper];
-    let foundKey = colName;
-    for (const key of Object.keys(updated)) {
-      const keyUpper = key.trim().toUpperCase();
-      if (keyUpper === colUpper || aliases.includes(keyUpper)) {
-        foundKey = key;
-        break;
-      }
-    }
-    updated[foundKey] = value;
-    return updated;
   };
 
   const getDynamicColumns = () => {
@@ -112,7 +307,6 @@ function ProjectDetailContent() {
       is_master: false
     }))
   ];
-
 
   // Local state for meetings, chats
   const [meetings, setMeetings] = useState<any[]>([]);
@@ -160,6 +354,11 @@ function ProjectDetailContent() {
   const [editTeamsLink, setEditTeamsLink] = useState('');
   const [savingProject, setSavingProject] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
+  const [projectMembers, setProjectMembers] = useState<any[]>([]);
+  const [selectedMemberId, setSelectedMemberId] = useState<string>('');
+  const [categories, setCategories] = useState<any[]>([]);
+  const [dbPriorities, setDbPriorities] = useState<any[]>([]);
+  const [dbStatuses, setDbStatuses] = useState<any[]>([]);
 
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
@@ -181,7 +380,7 @@ function ProjectDetailContent() {
 
   const handleDeleteSheet = async () => {
     try {
-      await deleteSheet(Number(id));
+      await deleteProject(Number(id));
       flash('Xóa dự án thành công!');
       router.push('/project');
     } catch {
@@ -191,8 +390,7 @@ function ProjectDetailContent() {
 
   const loadProject = useCallback(async () => {
     try {
-      const sheets = await getSheets();
-      const found = sheets.find((s: any) => String(s.id) === id);
+      const found = await getProject(Number(id));
       if (found) {
         setProject(found);
       }
@@ -203,13 +401,36 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
-  const loadTasks = useCallback(async () => {
+  const loadProjectMembers = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await getProjectMembers(Number(id));
+      setProjectMembers(data || []);
+    } catch {
+      console.error('Không thể tải danh sách thành viên dự án');
+    }
+  }, [id]);
+
+  const reloadAll = useCallback(async () => {
     setLoadingTasks(true);
     try {
-      const data = await getViolations({ sheet_id: id, per_page: 500 });
-      setItems(data.items || []);
-    } catch {
-      flash('Không thể tải danh sách nhiệm vụ', true);
+      const phs = await getPhases(Number(id));
+      setPhases(phs || []);
+
+      const allGroups: any[] = [];
+      if (phs && phs.length > 0) {
+        for (const p of phs) {
+          const grps = await getTaskGroups(p.id);
+          allGroups.push(...grps);
+        }
+      }
+      setTaskGroups(allGroups);
+
+      const tsks = await getAllProjectTasks(Number(id));
+      setItems(tsks || []);
+    } catch (err) {
+      console.error('Lỗi khi tải dữ liệu dự án:', err);
+      flash('Không thể tải dữ liệu dự án', true);
     } finally {
       setLoadingTasks(false);
     }
@@ -253,22 +474,12 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
-  const loadPhases = useCallback(async () => {
-    if (!id) return;
-    try {
-      const data = await getPhases(Number(id));
-      setPhases(data || []);
-    } catch {
-      flash('Không thể tải danh sách phase', true);
-    }
-  }, [id]);
-
   useEffect(() => {
     loadProject();
-    loadTasks();
+    reloadAll();
     loadChatGroups();
-    loadPhases();
-  }, [id, loadProject, loadTasks, loadChatGroups, loadPhases]);
+    loadProjectMembers();
+  }, [id, loadProject, reloadAll, loadChatGroups, loadProjectMembers]);
 
   // Load users for PM / Lead selection & set up dropdown outside clicks
   useEffect(() => {
@@ -278,6 +489,30 @@ function ProjectDetailContent() {
       })
       .catch((err) => {
         console.error('Error fetching users:', err);
+      });
+    
+    getCategories()
+      .then((data) => {
+        setCategories(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching categories:', err);
+      });
+
+    getPriorities()
+      .then((data) => {
+        setDbPriorities(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching priorities:', err);
+      });
+
+    getStatuses()
+      .then((data) => {
+        setDbStatuses(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching statuses:', err);
       });
   }, []);
 
@@ -309,7 +544,7 @@ function ProjectDetailContent() {
     }
     setSavingProject(true);
     try {
-      const updated = await updateSheet(Number(id), {
+      const updated = await updateProject(Number(id), {
         name: editProjectName.trim(),
         project_code: editProjectCode.trim(),
         customer_name: editCustomerName.trim(),
@@ -335,7 +570,7 @@ function ProjectDetailContent() {
   const handleSaveChannelLink = async (channelKey: string, value: string) => {
     setIsSavingLink(true);
     try {
-      const updated = await updateSheet(Number(id), { [channelKey]: value.trim() });
+      const updated = await updateProject(Number(id), { [channelKey]: value.trim() });
       setProject((prev: any) => ({ ...prev, ...updated }));
       setEditingChannel(null);
       setEditingValue('');
@@ -369,7 +604,7 @@ function ProjectDetailContent() {
       flash('Tạo Phase mới thành công!');
       setShowPhaseModal(false);
       setNewPhaseName('');
-      loadPhases();
+      reloadAll();
     } catch (err: any) {
       alert('Lỗi tạo phase: ' + (err.response?.data?.detail || err.message));
     }
@@ -397,8 +632,7 @@ function ProjectDetailContent() {
       setShowRenameModal(false);
       setEditingPhaseId(null);
       setEditingPhaseName('');
-      loadPhases();
-      loadTasks();
+      reloadAll();
     } catch (err: any) {
       alert('Lỗi đổi tên phase: ' + (err.response?.data?.detail || err.message));
     }
@@ -418,406 +652,24 @@ function ProjectDetailContent() {
       if (activePhase === pname) {
         setActivePhase('ALL');
       }
-      loadPhases();
-      loadTasks();
+      reloadAll();
     } catch (err: any) {
       alert('Lỗi xóa phase: ' + (err.response?.data?.detail || err.message));
     }
   };
 
-  const parseRowData = (rowData: string) => {
-    try {
-      const d = JSON.parse(rowData || '{}');
-      return {
-        taskId: getCellValue(d, 'TASK ID'),
-        detail: getCellValue(d, 'DETAIL TASK'),
-        priority: getCellValue(d, 'PRIORITY'),
-        manday: getCellValue(d, 'MANDAY EST'),
-        status: getCellValue(d, 'STATUS'),
-        date: getCellValue(d, 'START DATE'),
-        assigned: getCellValue(d, 'ASSIGNED'),
-        support: getCellValue(d, 'SUPPORT'),
-        kpiRatio: getCellValue(d, 'KPI RATIO'),
-        skillSolution: getCellValue(d, 'SKILL SOLUTION'),
-        skillVendor: getCellValue(d, 'SKILL VENDOR'),
-        ticketId: getCellValue(d, 'TICKET ID'),
-        remark: getCellValue(d, 'REMARK'),
-        send: getCellValue(d, 'SEND'),
-        endDate: getCellValue(d, 'END DATE EST'),
-        mandayActual: getCellValue(d, 'MD ACTUAL'),
-        endActual: getCellValue(d, 'END ACTUAL'),
-        daysLate: getCellValue(d, 'DAYS LATE'),
-        kpiBase: getCellValue(d, 'KPI BASE'),
-        kpiPerform: getCellValue(d, 'KPI PERFORM'),
-        kpiOvertime: getCellValue(d, 'KPI OVERTIME'),
-        kpiFinal: getCellValue(d, 'KPI FINAL'),
-        subId: getCellValue(d, 'SUB ID'),
-        rootTasks: getCellValue(d, 'ROOT TASKS'),
-        notes: getCellValue(d, 'NOTES'),
-        weekEst: getCellValue(d, 'WEEK EST'),
-        monthEst: getCellValue(d, 'MONTH EST'),
-        weekActual: getCellValue(d, 'WEEK ACTUAL'),
-        monthActual: getCellValue(d, 'MONTH ACTUAL')
-      };
-    } catch {
-      return {
-        taskId: '', detail: '', priority: '', manday: '', status: '', date: '', assigned: '', support: '',
-        kpiRatio: '', skillSolution: '', skillVendor: '', ticketId: '', remark: '', send: '', endDate: '', mandayActual: '',
-        endActual: '', daysLate: '', kpiBase: '', kpiPerform: '', kpiOvertime: '', kpiFinal: '', subId: '', rootTasks: '',
-        notes: '', weekEst: '', monthEst: '', weekActual: '', monthActual: ''
-      };
-    }
+  const getTaskPhaseId = (task: any): number | null => {
+    const group = taskGroups.find(g => g.id === task.task_group_id);
+    return group ? group.phase_id : null;
   };
 
-  const handleOpenAddTask = (item: any) => {
-    const dynamicCols = getDynamicColumns();
-    const initialForm: Record<string, string> = {};
-    dynamicCols.forEach(col => {
-      initialForm[col] = '';
-    });
-    
-    const idCol = dynamicCols.find(c => c.toUpperCase().includes('ID'));
-    if (idCol) {
-      const parsed = JSON.parse(item.row_data || '{}');
-      const idVal = parsed[idCol] || '';
-      const numPart = String(idVal).match(/\d+$/);
-      if (numPart) {
-        const nextNum = parseInt(numPart[0], 10) + 1;
-        initialForm[idCol] = idVal.slice(0, numPart.index) + nextNum;
-      }
+  const getFilteredTasks = () => {
+    if (activePhase === 'ALL') {
+      return items;
     }
-    
-    const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-    if (statusCol) {
-      initialForm[statusCol] = 'Todo';
-    }
-    
-    setNewForm(initialForm);
-    setSelectedFormPhase(activePhase === 'ALL' ? (item.tab_name || '') : activePhase);
-    setAddingTaskBelowId(item.id);
-  };
-
-  const renderFormCell = (col: string, cIdx: number) => {
-    const colUpper = col.toUpperCase().trim();
-    
-    // Rule 1: TASK ID - automatically generated by system, not editable, leave empty
-    if (colUpper === 'TASK ID' || colUpper === 'TASKID' || colUpper === 'ID') {
-      if (activePhase === 'ALL') {
-        return (
-          <td key={col} className="p-1 min-w-[120px]">
-            <select
-              value={selectedFormPhase}
-              onChange={e => setSelectedFormPhase(e.target.value)}
-              className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-bold"
-            >
-              <option value="">-- Phase * --</option>
-              {phases.filter(p => !p.is_master).map(p => (
-                <option key={p.id} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-          </td>
-        );
-      }
-      return (
-        <td key={col} className="p-1">
-          <input
-            type="text"
-            value=""
-            placeholder="Auto"
-            disabled
-            className="w-full bg-[#f1f5f9] border border-[#cbd5e1] rounded px-1.5 py-1 text-[11px] text-[#64748b] font-semibold cursor-not-allowed text-center"
-          />
-        </td>
-      );
-    }
-
-    // Rule 3: System auto-calculated columns (cannot input on creation, leave empty)
-    const SYSTEM_COLS = [
-      'END DATE EST', 'MD ACTUAL', 'END ACTUAL', 'DAYS LATE',
-      'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID',
-      'WEEK EST', 'MONTH EST', 'WEEK ACTUAL', 'MONTH ACTUAL'
-    ];
-    if (SYSTEM_COLS.includes(colUpper)) {
-      return (
-        <td key={col} className="p-1">
-          <input
-            type="text"
-            value=""
-            disabled
-            className="w-full bg-[#f8fafc] border border-[#e2e8f0] rounded px-1.5 py-1 text-[11px] text-[#94a3b8] cursor-not-allowed italic text-center"
-          />
-        </td>
-      );
-    }
-
-    // Rule 2: Editable columns
-    const REQUIRED_COLS = [
-      'DETAIL TASK', 'PRIORITY', 'MANDAY EST', 'STATUS',
-      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO'
-    ];
-    const isRequired = REQUIRED_COLS.includes(colUpper);
-
-    let inputField = null;
-
-    if (colUpper === 'STATUS') {
-      inputField = (
-        <select
-          value={newForm[col] || 'Todo'}
-          onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-            isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-          }`}
-        >
-          <option value="Todo">Todo</option>
-          <option value="Waiting">Waiting</option>
-          <option value="Process">Process</option>
-          <option value="Done">Done</option>
-          <option value="Cancel">Cancel</option>
-        </select>
-      );
-    } else if (colUpper === 'PRIORITY') {
-      inputField = (
-        <select
-          value={newForm[col] || ''}
-          onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-            isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-          }`}
-        >
-          <option value="">-- Chọn --</option>
-          <option value="Normal">Normal</option>
-          <option value="High">High</option>
-          <option value="Critical">Critical</option>
-        </select>
-      );
-    } else {
-      const isDateCol = colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'));
-      const isUserCol = colUpper === 'ASSIGNED' || colUpper === 'SUPPORT';
-      const isNumeric = colUpper.includes('MANDAY') || colUpper.includes('BASE') || colUpper.includes('PERFORM') || colUpper.includes('OVERTIME') || colUpper.includes('FINAL') || colUpper.includes('LATE');
-
-      if (isDateCol) {
-        inputField = (
-          <input
-            type="date"
-            value={newForm[col] ? toPickerDate(newForm[col]) : ''}
-            onChange={e => setNewForm({ ...newForm, [col]: fromPickerDate(e.target.value) })}
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
-          />
-        );
-      } else if (isUserCol) {
-        inputField = (
-          <input
-            type="text"
-            list="member-emails"
-            value={newForm[col] || ''}
-            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
-          />
-        );
-      } else if (isNumeric) {
-        inputField = (
-          <input
-            type="number"
-            step="any"
-            value={newForm[col] || ''}
-            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
-          />
-        );
-      } else {
-        inputField = (
-          <input
-            type="text"
-            value={newForm[col] || ''}
-            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${
-              colUpper.includes('DETAIL') ? 'font-semibold' : ''
-            } ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
-            placeholder={col + (isRequired ? ' *' : '')}
-            autoFocus={cIdx === 1}
-          />
-        );
-      }
-    }
-
-    return (
-      <td key={col} className="p-1">
-        {inputField}
-      </td>
-    );
-  };
-
-  const handleSaveTask = async () => {
-    const dynamicCols = getDynamicColumns();
-    
-    // Required fields: DETAIL TASK, PRIORITY, MANDAY EST, STATUS, START DATE, KPI RATIO
-    const REQUIRED_COLS = [
-      'DETAIL TASK',
-      'PRIORITY',
-      'MANDAY EST',
-      'STATUS',
-      'START DATE',
-      'KPI RATIO'
-    ];
-
-    // Helper to find actual column key by case-insensitive name
-    const findColKey = (name: string) => {
-      return dynamicCols.find(c => c.toUpperCase().trim() === name.toUpperCase().trim());
-    };
-
-    // Prepare a temporary newForm representation
-    const tempForm = { ...newForm };
-
-    // Default status to 'Todo' if empty
-    const statusColKey = findColKey('STATUS');
-    if (statusColKey && !tempForm[statusColKey]) {
-      tempForm[statusColKey] = 'Todo';
-    }
-
-    // Default KPI RATIO: if support is empty, default KPI RATIO to 100/0
-    const supportColKey = findColKey('SUPPORT');
-    const supportVal = supportColKey ? (tempForm[supportColKey] || '').trim() : '';
-    const kpiRatioColKey = findColKey('KPI RATIO');
-    if (kpiRatioColKey && !tempForm[kpiRatioColKey] && !supportVal) {
-      tempForm[kpiRatioColKey] = '100/0';
-    }
-
-    const missing: string[] = [];
-    REQUIRED_COLS.forEach(req => {
-      const formKey = findColKey(req);
-      const val = formKey ? tempForm[formKey] : undefined;
-      if (val === undefined || val === null || String(val).trim() === '' || String(val).trim().toUpperCase() === 'NONE') {
-        missing.push(req);
-      }
-    });
-    
-    if (missing.length > 0) {
-      alert(`Vui lòng nhập/chọn đầy đủ các trường bắt buộc sau:\n- ${missing.join('\n- ')}`);
-      return;
-    }
-
-    // 1. MANDAY EST validation (> 0)
-    const mandayEstColKey = findColKey('MANDAY EST');
-    const mandayEstVal = mandayEstColKey ? Number(tempForm[mandayEstColKey]) : 0;
-    if (isNaN(mandayEstVal) || mandayEstVal <= 0) {
-      alert('MANDAY EST phải là số lớn hơn 0!');
-      return;
-    }
-
-    // 2. ASSIGNED validation (optional, must belong to project if entered)
-    const assignedColKey = findColKey('ASSIGNED');
-    const assignedVal = assignedColKey ? (tempForm[assignedColKey] || '').trim() : '';
-    if (assignedVal && !memberSuggestions.includes(assignedVal)) {
-      alert(`Người thực hiện (ASSIGNED) "${assignedVal}" không thuộc danh sách thành viên dự án!`);
-      return;
-    }
-
-    // 3. SUPPORT validation (optional, must belong to project if entered)
-    if (supportVal && !memberSuggestions.includes(supportVal)) {
-      alert(`Người hỗ trợ (SUPPORT) "${supportVal}" không thuộc danh sách thành viên dự án!`);
-      return;
-    }
-
-    // 4. KPI RATIO validation: pattern A/B, sum = 100
-    const kpiRatioVal = kpiRatioColKey ? (tempForm[kpiRatioColKey] || '').trim() : '';
-    const ratioMatch = kpiRatioVal.match(/^(\d+)\/(\d+)$/);
-    if (!ratioMatch) {
-      alert('KPI RATIO phải có định dạng Assigned/Support (ví dụ: 100/0, 80/20, 50/50)!');
-      return;
-    }
-    const ratioAssigned = Number(ratioMatch[1]);
-    const ratioSupport = Number(ratioMatch[2]);
-    if (ratioAssigned + ratioSupport !== 100) {
-      alert('Tổng tỉ lệ KPI RATIO (Assigned + Support) phải bằng 100!');
-      return;
-    }
-    if (!supportVal && ratioSupport > 0) {
-      alert('Không có người hỗ trợ (SUPPORT), tỉ lệ KPI RATIO bắt buộc phải là 100/0!');
-      return;
-    }
-
-    // Update state with defaults/modifications
-    setNewForm(tempForm);
-
-    const belowItem = items.find(x => x.id === addingTaskBelowId);
-    if (!belowItem && addingTaskBelowId !== 0) return;
-    
-    setSavingTask(true);
-    try {
-      const taskData: Record<string, string> = {};
-      dynamicCols.forEach(col => {
-        const colUpper = col.toUpperCase().trim();
-        // Rule 1: TASK ID is auto-generated, send empty
-        // Rule 3: System columns are auto-calculated later, send empty
-        const SYSTEM_COLS = [
-          'END DATE EST', 'MD ACTUAL', 'END ACTUAL', 'DAYS LATE',
-          'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID',
-          'WEEK EST', 'MONTH EST', 'WEEK ACTUAL', 'MONTH ACTUAL'
-        ];
-        if (colUpper === 'TASK ID' || colUpper === 'TASKID' || colUpper === 'ID') {
-          taskData[col] = '';
-        } else if (SYSTEM_COLS.includes(colUpper)) {
-          taskData[col] = '';
-        } else {
-          taskData[col] = tempForm[col] || '';
-        }
-      });
-      
-      const tabName = selectedFormPhase || (belowItem ? belowItem.tab_name : '');
-      if (!tabName || tabName === 'ALL') {
-        alert('Vui lòng chọn Phase cho nhiệm vụ!');
-        setSavingTask(false);
-        return;
-      }
-      const afterRow = belowItem ? belowItem.row_number : 0;
-      
-      await addTaskLocal(Number(id), {
-        tab_name: tabName,
-        after_row: afterRow,
-        task_data: taskData
-      });
-      
-      setAddingTaskBelowId(null);
-      loadTasks();
-      flash('Đã thêm nhiệm vụ thành công!');
-    } catch (err: any) {
-      alert('Lỗi thêm task: ' + (err.response?.data?.detail || err.message));
-    } finally {
-      setSavingTask(false);
-    }
-  };
-
-  const toPickerDate = (val: string): string => {
-    if (!val) return '';
-    const parts = val.split('/');
-    if (parts.length === 3) {
-      const d = parts[0].padStart(2, '0');
-      const m = parts[1].padStart(2, '0');
-      const y = parts[2];
-      return `${y}-${m}-${d}`;
-    }
-    const d = new Date(val);
-    if (!isNaN(d.getTime())) {
-      return d.toISOString().split('T')[0];
-    }
-    return '';
-  };
-
-  const fromPickerDate = (val: string): string => {
-    if (!val) return '';
-    const parts = val.split('-');
-    if (parts.length === 3) {
-      return `${parts[2]}/${parts[1]}/${parts[0]}`;
-    }
-    return val;
+    const currentPhaseObj = phases.find(p => p.name === activePhase);
+    if (!currentPhaseObj) return [];
+    return items.filter(t => getTaskPhaseId(t) === currentPhaseObj.id);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, taskId: number, colName: string, isDateOrDropdown = false) => {
@@ -833,34 +685,86 @@ function ProjectDetailContent() {
     const task = items.find(item => item.id === taskId);
     if (!task) return;
 
-    let rowDataObj: Record<string, any> = {};
-    try {
-      rowDataObj = JSON.parse(task.row_data || '{}');
-    } catch {}
-
-    const originalVal = getCellValue(rowDataObj, colName);
+    const originalVal = getCellValue(task, colName);
     if (originalVal === value) {
       setEditingCell(null);
       return;
     }
 
-    const updatedRowData = setCellValue(rowDataObj, colName, value);
+    const colUpper = colName.trim().toUpperCase();
+    const payload: Record<string, any> = {};
+
+    switch (colUpper) {
+      case 'DETAIL TASK':
+        payload.detail = value;
+        break;
+      case 'PRIORITY':
+        payload.priority = value;
+        break;
+      case 'MANDAY EST':
+      case 'MANDAY (EST)':
+      case 'MANDAY':
+        payload.manday_est = value ? parseFloat(value) : null;
+        break;
+      case 'STATUS':
+        payload.status = value;
+        break;
+      case 'START DATE':
+      case 'START DATE (EST)':
+        payload.start_date = value || null;
+        break;
+      case 'ASSIGNED':
+        payload.assigned_id = value ? parseInt(value, 10) : null;
+        break;
+      case 'SUPPORT':
+        payload.support_id = value ? parseInt(value, 10) : null;
+        break;
+      case 'KPI RATIO':
+        if (value && value.includes('/')) {
+          const parts = value.split('/');
+          payload.kpi_ratio_assign = parseInt(parts[0], 10) || 100;
+          payload.kpi_ratio_support = parseInt(parts[1], 10) || 0;
+        } else {
+          payload.kpi_ratio_assign = 100;
+          payload.kpi_ratio_support = 0;
+        }
+        break;
+      case 'SKILL SOLUTION':
+        payload.skill_solution_id = value ? parseInt(value, 10) : null;
+        payload.skill_vendor_id = null; // Reset vendor when solution group changes
+        break;
+      case 'SKILL VENDOR':
+        payload.skill_vendor_id = value ? parseInt(value, 10) : null;
+        break;
+      case 'TICKET ID':
+        payload.ticket_id = value;
+        break;
+      case 'REMARK':
+        payload.remark = value;
+        break;
+      case 'SEND':
+        payload.send = value;
+        break;
+      case 'END DATE ACTUAL':
+      case 'END ACTUAL':
+        payload.end_date_actual = value || null;
+        break;
+      case 'NOTES':
+        payload.notes = value;
+        break;
+      case 'SUB ID':
+        payload.sub_id = value;
+        break;
+      case 'ROOT TASKS':
+      case 'ROOT TASK':
+        payload.root_task = value || null;
+        break;
+    }
 
     try {
-      const res = await updateTask(taskId, updatedRowData);
-      setItems(prev => prev.map(item => {
-        if (item.id === taskId) {
-          return {
-            ...item,
-            row_data: res.row_data,
-            ai_verdict: res.ai_verdict,
-            ai_reason: res.ai_reason,
-            ai_suggestion: res.ai_suggestion
-          };
-        }
-        return item;
-      }));
+      await updateTask(task.task_group_id, taskId, payload);
       flash('Đã cập nhật task thành công!');
+      reloadAll();
     } catch (err: any) {
       alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -870,38 +774,16 @@ function ProjectDetailContent() {
 
   const handleDeleteTaskConfirm = async () => {
     if (taskToDelete === null) return;
+    const task = items.find(item => item.id === taskToDelete);
+    if (!task) return;
     try {
-      await deleteTask(taskToDelete);
-      setItems(prev => prev.filter(item => item.id !== taskToDelete));
+      await deleteTask(task.task_group_id, taskToDelete);
       flash('Đã xóa nhiệm vụ thành công!');
+      reloadAll();
     } catch (err: any) {
       alert('Lỗi xóa task: ' + (err.response?.data?.detail || err.message));
     } finally {
       setTaskToDelete(null);
-    }
-  };
-
-  const handleCheckTask = async (violationId: number) => {
-    setCheckingTaskId(violationId);
-    try {
-      const result = await checkSingleTask(violationId);
-      setItems(prev => prev.map(item => {
-        if (item.id === violationId) {
-          return {
-            ...item,
-            ai_verdict: result.ai_verdict,
-            ai_reason: result.ai_reason,
-            ai_suggestion: result.ai_suggestion,
-            row_data: result.row_data
-          };
-        }
-        return item;
-      }));
-      flash('AI kiểm tra tuân thủ hoàn tất!');
-    } catch (err: any) {
-      alert('Lỗi kiểm tra task: ' + (err.response?.data?.detail || err.message));
-    } finally {
-      setCheckingTaskId(null);
     }
   };
 
@@ -993,18 +875,12 @@ function ProjectDetailContent() {
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMemberEmail.trim()) return;
+    if (!selectedMemberId) return;
     setIsAddingMember(true);
     try {
-      const currentMembers = project.member_emails ? project.member_emails.split(',') : [];
-      if (currentMembers.includes(newMemberEmail.trim())) {
-        alert('Thành viên này đã tồn tại!');
-        return;
-      }
-      const updatedList = [...currentMembers, newMemberEmail.trim()].join(',');
-      const updated = await updateSheet(Number(id), { member_emails: updatedList });
-      setProject((prev: any) => ({ ...prev, ...updated }));
-      setNewMemberEmail('');
+      await addProjectMember(Number(id), Number(selectedMemberId));
+      loadProjectMembers();
+      setSelectedMemberId('');
       flash('Đã thêm thành viên mới thành công!');
     } catch (err: any) {
       alert('Không thể thêm thành viên: ' + (err.response?.data?.detail || err.message));
@@ -1013,85 +889,1536 @@ function ProjectDetailContent() {
     }
   };
 
+  const toPickerDate = (val: string): string => {
+    if (!val) return '';
+    const parts = val.split('/');
+    if (parts.length === 3) {
+      const d = parts[0].padStart(2, '0');
+      const m = parts[1].padStart(2, '0');
+      const y = parts[2];
+      return `${y}-${m}-${d}`;
+    }
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+    }
+    return '';
+  };
+
+  const fromPickerDate = (val: string): string => {
+    if (!val) return '';
+    const parts = val.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return val;
+  };
+
   // --- Dynamic Stats calculation ---
-  const realTasks = items.filter(x => x.ai_verdict !== 'SECTION');
-  const totalTasks = realTasks.length;
-  
-  const completedTasks = realTasks.filter(x => {
-    const s = parseRowData(x.row_data).status.toLowerCase();
-    return s === 'done' || s === 'completed' || s === 'hoàn tất';
-  }).length;
-  
-  const passTasks = realTasks.filter(x => x.ai_verdict === 'PASS').length;
-  const evaluatedTasks = realTasks.filter(x => ['PASS', 'FAIL', 'REVIEW'].includes(x.ai_verdict)).length;
-  
-  const complianceScore = evaluatedTasks > 0 ? Math.round((passTasks / evaluatedTasks) * 100) : null;
-  const devProgressPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-  
-  const needEditTasks = realTasks.filter(x => x.ai_verdict === 'REVIEW').length;
-  const flaggedTasks = realTasks.filter(x => x.ai_verdict === 'FAIL').length;
-
-  // Phase-filtered stats for KPI cards (using realTasks to exclude SECTION rows representing phase headers and Roman numerals)
-  const kpiTasks = activePhase === 'ALL'
-    ? realTasks
-    : realTasks.filter(x => x.tab_name === activePhase);
-
+  const kpiTasks = getFilteredTasks();
   const kpiTotal = kpiTasks.length;
-  const kpiWarning = kpiTasks.filter(x => x.ai_verdict === 'FAIL').length;
-  
-  // KPI Done: tasks with completed status
+  const kpiWarning = 0; // Warnings are no longer tracked via violations
+
   const kpiDone = kpiTasks.filter(x => {
-    const s = parseRowData(x.row_data).status?.toLowerCase() || '';
+    const s = (x.status || '').toLowerCase();
     return s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
   }).length;
 
-  const kpiPass = kpiTasks.filter(x => x.ai_verdict === 'PASS').length;
-  const kpiEvaluated = kpiTasks.length;
-
   const kpiInProgress = kpiTasks.filter(x => {
-    const s = parseRowData(x.row_data).status?.toLowerCase() || '';
+    const s = (x.status || '').toLowerCase();
     return s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress';
   }).length;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const kpiOverdue = kpiTasks.filter(x => {
-    if (x.ai_verdict === 'SECTION') return false;
-    const td = parseRowData(x.row_data);
-    const s = td.status?.toLowerCase() || '';
-    if (s === 'done' || s === 'completed' || s.includes('hoàn')) return false;
-    const endDate = td.endDate || td.date || '';
-    if (!endDate) return false;
-    const parts = endDate.split('/');
-    let d: Date;
-    if (parts.length === 3) {
-      d = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
-    } else {
-      d = new Date(endDate);
-    }
-    return !isNaN(d.getTime()) && d < today;
+  const kpiPass = kpiDone; // Sync approved status with Done for UI compliance
+  const kpiEvaluated = kpiTotal;
+
+  // Global progress bar calculation
+  const totalTasks = items.length;
+  const completedTasks = items.filter(x => {
+    const s = (x.status || '').toLowerCase();
+    return s === 'done' || s === 'completed' || s.includes('hoàn');
   }).length;
+  const devProgressPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-
-
-  const handleCancelAddTask = () => {
-    setAddingTaskBelowId(null);
+  const getGroupIndex = (groupId: number) => {
+    const group = taskGroups.find(g => g.id === groupId);
+    if (!group) return 1;
+    const groupsInPhase = taskGroups
+      .filter(g => g.phase_id === group.phase_id)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    const idx = groupsInPhase.findIndex(g => g.id === groupId);
+    return idx >= 0 ? idx + 1 : 1;
   };
 
-  const phaseItems = items.filter(x => {
-    if (activePhase !== 'ALL' && x.tab_name !== activePhase) return false;
-    if (!taskSearch.trim()) return true;
-    try {
-      const td = JSON.parse(x.row_data || '{}');
-      const query = taskSearch.toLowerCase();
-      return Object.values(td).some(val => String(val).toLowerCase().includes(query));
-    } catch {
-      return false;
-    }
-  });
-  const phaseLabel = activePhase === 'ALL' ? 'Master (Tất cả)' : (dynamicTabs.find(p => p.key === activePhase)?.label || '');
+  const getNextRootCodeForGroup = (groupId: number) => {
+    const groupIdx = getGroupIndex(groupId);
+    const groupTasks = items.filter(t => t.task_group_id === groupId);
+    const prefix = `${groupIdx}.`;
+    const seqs = groupTasks
+      .map(t => {
+        const code = t.task_code || '';
+        if (code.startsWith(prefix)) {
+          const suffix = code.substring(prefix.length);
+          const n = parseInt(suffix, 10);
+          return isNaN(n) ? 0 : n;
+        }
+        return 0;
+      })
+      .filter(n => n > 0);
+    const nextSeq = seqs.length > 0 ? Math.max(...seqs) + 1 : 1;
+    return `${groupIdx}.${nextSeq}`;
+  };
 
-  if (loadingProject || !project) {
+
+
+
+
+  // --- Hierarchical Tree Table Processing ---
+    const renderFormCell = (col: string, cIdx: number, groupId: number, parentCode: string | null, level: number) => {
+    const colUpper = col.toUpperCase().trim();
+    
+    // TASK ID - automatically generated preview
+    if (colUpper === 'TASK ID' || colUpper === 'TASKID' || colUpper === 'ID') {
+      const generatedId = parentCode ? getNextSubTaskId(parentCode) : getNextRootCodeForGroup(groupId);
+      return (
+        <td key={col} className="p-1">
+          <input
+            type="text"
+            value={generatedId}
+            disabled
+            className="w-full bg-[#f1f5f9] border border-[#cbd5e1] rounded px-1.5 py-1 text-[11px] text-[#64748b] font-mono font-bold cursor-not-allowed text-center"
+          />
+        </td>
+      );
+    }
+
+    // System auto-calculated columns (cannot input on creation)
+    const SYSTEM_COLS = [
+      'END DATE EST', 'MD ACTUAL', 'END ACTUAL', 'DAYS LATE',
+      'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID',
+      'SOLUTION'
+    ];
+    if (SYSTEM_COLS.includes(colUpper)) {
+      return (
+        <td key={col} className="p-1">
+          <input
+            type="text"
+            value=""
+            disabled
+            className="w-full bg-[#f8fafc] border border-[#e2e8f0] rounded px-1.5 py-1 text-[11px] text-[#94a3b8] cursor-not-allowed italic text-center"
+          />
+        </td>
+      );
+    }
+
+    // Editable columns
+    const REQUIRED_COLS = [
+      'DETAIL TASK', 'PRIORITY', 'MANDAY EST', 'STATUS',
+      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO'
+    ];
+    const isRequired = REQUIRED_COLS.includes(colUpper);
+
+    let inputField = null;
+
+    if (colUpper === 'STATUS') {
+      inputField = (
+        <select
+          value={newForm[col] || (dbStatuses[0]?.name || 'Todo')}
+          onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
+            isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+          }`}
+        >
+          {dbStatuses.length === 0 ? (
+            <>
+              <option value="Todo">Todo</option>
+              <option value="Waiting">Waiting</option>
+              <option value="Process">Process</option>
+              <option value="Done">Done</option>
+              <option value="Cancel">Cancel</option>
+            </>
+          ) : (
+            dbStatuses.map((st: any) => (
+              <option key={st.id} value={st.name}>{st.name}</option>
+            ))
+          )}
+        </select>
+      );
+    } else if (colUpper === 'PRIORITY') {
+      inputField = (
+        <select
+          value={newForm[col] || 'Normal'}
+          onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
+            isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+          }`}
+        >
+          {dbPriorities.length === 0 ? (
+            <>
+              <option value="Normal">Normal</option>
+              <option value="High">High</option>
+              <option value="Critical">Critical</option>
+            </>
+          ) : (
+            dbPriorities.map((pr: any) => (
+              <option key={pr.id} value={pr.name}>{pr.name}</option>
+            ))
+          )}
+        </select>
+      );
+    } else {
+      const isDateCol = colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'));
+      const isUserCol = colUpper === 'ASSIGNED' || colUpper === 'SUPPORT';
+      const isNumeric = colUpper.includes('MANDAY') || colUpper.includes('BASE') || colUpper.includes('PERFORM') || colUpper.includes('OVERTIME') || colUpper.includes('FINAL') || colUpper.includes('LATE');
+
+      if (isDateCol) {
+        inputField = (
+          <input
+            type="date"
+            value={newForm[col] ? toPickerDate(newForm[col]) : ''}
+            onChange={e => setNewForm({ ...newForm, [col]: fromPickerDate(e.target.value) })}
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
+              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
+          />
+        );
+      } else if (isUserCol) {
+        inputField = (
+          <select
+            value={newForm[col] || ''}
+            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
+              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
+          >
+            <option value="">-- Chọn thành viên --</option>
+            {projectMembers.map((m: any) => (
+              <option key={m.id} value={m.id}>{m.display_name}</option>
+            ))}
+          </select>
+        );
+      } else if (isNumeric) {
+        inputField = (
+          <input
+            type="number"
+            step="any"
+            value={newForm[col] || ''}
+            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
+              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
+          />
+        );
+      } else if (colUpper === 'SKILL SOLUTION') {
+        const activeGroups = categories
+          .filter(c => c.is_active)
+          .flatMap(c => c.groups || []);
+        
+        inputField = (
+          <select
+            value={newForm[col] || ''}
+            onChange={e => {
+              const selectedGrpId = e.target.value;
+              const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL VENDOR') || 'SKILL VENDOR';
+              setNewForm({
+                ...newForm,
+                [col]: selectedGrpId,
+                [vendorCol]: ''
+              });
+            }}
+            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
+              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
+          >
+            <option value="">-- Chọn Group --</option>
+            {activeGroups.map((g: any) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        );
+      } else if (colUpper === 'SKILL VENDOR') {
+        const solCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL SOLUTION') || 'SKILL SOLUTION';
+        const selectedGroupId = newForm[solCol] || '';
+        let availableSkills: any[] = [];
+        if (selectedGroupId) {
+          const groupObj = categories
+            .filter(c => c.is_active)
+            .flatMap(c => c.groups || [])
+            .find((g: any) => String(g.id) === String(selectedGroupId));
+          if (groupObj) {
+            availableSkills = (groupObj.skills || []).filter((s: any) => s.is_active);
+          }
+        } else {
+          availableSkills = categories
+            .filter(c => c.is_active)
+            .flatMap(c => c.groups || [])
+            .flatMap((g: any) => g.skills || [])
+            .filter((s: any) => s.is_active);
+        }
+
+        inputField = (
+          <select
+            value={newForm[col] || ''}
+            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
+              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
+          >
+            <option value="">-- Chọn Skill --</option>
+            {availableSkills.map((s: any) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        );
+      } else if (colUpper === 'KPI RATIO') {
+        inputField = (
+          <input
+            type="text"
+            value={newForm[col] || '100/0'}
+            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            placeholder="100/0"
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
+              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
+          />
+        );
+      } else {
+        inputField = (
+          <input
+            type="text"
+            value={newForm[col] || ''}
+            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${
+              colUpper.includes('DETAIL') ? 'font-semibold' : ''
+            } ${
+              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
+            placeholder={col + (isRequired ? ' *' : '')}
+            autoFocus={cIdx === 1}
+          />
+        );
+      }
+    }
+
+    return (
+      <td key={col} className="p-1">
+        {inputField}
+      </td>
+    );
+  };
+
+  const handleSaveTask = async () => {
+    if (addingTaskGroupId === null) return;
+    
+    // Required fields: DETAIL TASK, PRIORITY, MANDAY EST, STATUS, START DATE, KPI RATIO
+    const detailVal = (newForm['DETAIL TASK'] || '').trim();
+    const priorityVal = newForm['PRIORITY'] || 'Normal';
+    const mandayEstVal = parseFloat(newForm['MANDAY EST'] || '0');
+    const statusVal = newForm['STATUS'] || 'Waiting';
+    const startDateVal = newForm['START DATE'] || null;
+    
+    if (!detailVal) {
+      alert('Tên nhiệm vụ (DETAIL TASK) không được để trống!');
+      return;
+    }
+    if (isNaN(mandayEstVal) || mandayEstVal <= 0) {
+      alert('MANDAY EST phải là số lớn hơn 0!');
+      return;
+    }
+    if (!startDateVal) {
+      alert('Ngày bắt đầu (START DATE) không được để trống!');
+      return;
+    }
+
+    setSavingTask(true);
+    try {
+      const taskCode = addingTaskParentCode
+        ? getNextSubTaskId(addingTaskParentCode)
+        : getNextRootCodeForGroup(addingTaskGroupId);
+
+      const payload: any = {
+        task_code: taskCode,
+        detail: detailVal,
+        priority: priorityVal,
+        status: statusVal,
+        start_date: startDateVal,
+        manday_est: mandayEstVal,
+        ticket_id: newForm['TICKET ID'] || '',
+        remark: newForm['REMARK'] || '',
+        send: newForm['SEND'] || '',
+        notes: newForm['NOTES'] || '',
+        assigned_id: newForm['ASSIGNED'] ? parseInt(newForm['ASSIGNED'], 10) : null,
+        support_id: newForm['SUPPORT'] ? parseInt(newForm['SUPPORT'], 10) : null,
+        skill_solution_id: newForm['SKILL SOLUTION'] ? parseInt(newForm['SKILL SOLUTION'], 10) : null,
+        skill_vendor_id: newForm['SKILL VENDOR'] ? parseInt(newForm['SKILL VENDOR'], 10) : null,
+      };
+
+      // KPI ratio
+      const kpiRatio = newForm['KPI RATIO'] || '100/0';
+      const parts = kpiRatio.split('/');
+      payload.kpi_ratio_assign = parseInt(parts[0], 10) || 100;
+      payload.kpi_ratio_support = parseInt(parts[1], 10) || 0;
+
+      await createTask(addingTaskGroupId, payload);
+      setAddingTaskGroupId(null);
+      setAddingTaskParentCode(null);
+      setNewForm({});
+      reloadAll();
+      flash('Đã thêm nhiệm vụ thành công!');
+    } catch (err: any) {
+      alert('Lỗi thêm task: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setSavingTask(false);
+    }
+  };
+
+  const handleDuplicateTask = async (groupId: number, taskId: number) => {
+    try {
+      await duplicateTask(groupId, taskId);
+      flash('Đã nhân bản task thành công!');
+      reloadAll();
+    } catch (err: any) {
+      alert('Lỗi nhân bản task: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleMoveTask = async (groupId: number, taskId: number) => {
+    const otherGroups = taskGroups.filter(g => g.id !== groupId);
+    if (otherGroups.length === 0) {
+      alert('Không có Task Group khác trong dự án này để di chuyển!');
+      return;
+    }
+    const listText = otherGroups.map((g, idx) => `${idx + 1}. ${g.name}`).join('\n');
+    const input = prompt(`Nhập số thứ tự của Task Group muốn di chuyển tới:\n${listText}`);
+    if (input === null) return;
+    const choice = parseInt(input, 10);
+    if (isNaN(choice) || choice < 1 || choice > otherGroups.length) {
+      alert('Lựa chọn không hợp lệ!');
+      return;
+    }
+    const targetGroup = otherGroups[choice - 1];
+    try {
+      await moveTask(groupId, taskId, targetGroup.id);
+      flash(`Đã di chuyển task sang nhóm "${targetGroup.name}" thành công!`);
+      reloadAll();
+    } catch (err: any) {
+      alert('Lỗi di chuyển task: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleMoveTaskGroup = async (phaseId: number, groupId: number) => {
+    const otherPhases = phases.filter(p => p.id !== phaseId);
+    if (otherPhases.length === 0) {
+      alert('Không có Phase khác trong dự án này để di chuyển Task Group!');
+      return;
+    }
+    const listText = otherPhases.map((p, idx) => `${idx + 1}. ${p.name}`).join('\n');
+    const input = prompt(`Nhập số thứ tự của Phase muốn di chuyển Task Group tới:\n${listText}`);
+    if (input === null) return;
+    const choice = parseInt(input, 10);
+    if (isNaN(choice) || choice < 1 || choice > otherPhases.length) {
+      alert('Lựa chọn không hợp lệ!');
+      return;
+    }
+    const targetPhase = otherPhases[choice - 1];
+    try {
+      await moveTaskGroup(phaseId, groupId, targetPhase.id);
+      flash(`Đã di chuyển Task Group sang Phase "${targetPhase.name}" thành công!`);
+      reloadAll();
+    } catch (err: any) {
+      alert('Lỗi di chuyển Task Group: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const buildTaskTree = (groupTasks: any[]) => {
+    const sorted = [...groupTasks].sort((a, b) => {
+      const codeA = a.task_code || '';
+      const codeB = b.task_code || '';
+      return codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return sorted;
+  };
+
+  const isAncestorCollapsed = (code: string) => {
+    if (!code) return false;
+    const parts = code.split('.');
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = parts.slice(0, i).join('.');
+      if (collapsedParents.has(ancestor)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const renderInlineAddRow = (groupId: number, parentCode: string | null, level: number) => {
+    return (
+      <tr key={`add-task-row-${groupId}-${parentCode || 'root'}`} className="bg-[#f0fdf4] border-2 border-emerald-500/40 animate-fade-in">
+        <td className="p-1 text-center sticky left-0 bg-[#f0fdf4] z-10" style={{ width: '130px', minWidth: '130px' }}>
+          <div className="flex items-center justify-center gap-1">
+            <button
+              onClick={handleSaveTask}
+              disabled={savingTask}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
+              title="Lưu"
+            >
+              {savingTask ? '...' : 'Lưu'}
+            </button>
+            <button
+              onClick={() => {
+                setAddingTaskGroupId(null);
+                setAddingTaskParentCode(null);
+                setNewForm({});
+              }}
+              className="bg-gray-400 hover:bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
+              title="Hủy"
+            >
+              Hủy
+            </button>
+          </div>
+        </td>
+        {getDynamicColumns().map((col, cIdx) => renderFormCell(col, cIdx, groupId, parentCode, level))}
+      </tr>
+    );
+  };
+
+  const renderSingleTaskRow = (task: any, level: number, hasChildren: boolean, isCollapsedParent: boolean) => {
+    const dynamicCols = getDynamicColumns();
+    const taskIdVal = task.task_code || '';
+    const isSubTask = level > 0;
+
+    const handleStartEdit = (colName: string, currentVal: string) => {
+      setEditingCell({ taskId: task.id, colName });
+      const colUpper = colName.toUpperCase().trim();
+      if (colUpper === 'ASSIGNED') {
+        setEditValue(task.assigned_id ? String(task.assigned_id) : '');
+      } else if (colUpper === 'SUPPORT') {
+        setEditValue(task.support_id ? String(task.support_id) : '');
+      } else if (colUpper === 'SKILL SOLUTION') {
+        setEditValue(task.skill_solution_id ? String(task.skill_solution_id) : '');
+      } else if (colUpper === 'SKILL VENDOR') {
+        setEditValue(task.skill_vendor_id ? String(task.skill_vendor_id) : '');
+      } else {
+        setEditValue(currentVal);
+      }
+    };
+
+    const rowBgClass = isSubTask 
+      ? "bg-[#fafbfc]/70 hover:bg-[#eff4ff]/60" 
+      : "bg-[#f8fafc] hover:bg-[#f1f5f9] font-bold border-l-4 border-l-slate-400";
+
+    const cellStyle = "px-4 py-2 border-r border-slate-100 last:border-r-0 text-left align-middle text-xs";
+
+    return (
+      <tr 
+        id={`task-row-${task.id}`}
+        key={task.id} 
+        className={`group relative transition-colors border-b border-slate-200/60 ${rowBgClass}`}
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("application/json", JSON.stringify({ type: "task", taskId: task.id, groupId: task.task_group_id }));
+        }}
+        onDragEnd={(e) => {
+          const el = document.getElementById(`task-row-${task.id}`);
+          if (el) el.setAttribute('draggable', 'false');
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.currentTarget.classList.add("bg-slate-100");
+        }}
+        onDragLeave={(e) => {
+          e.currentTarget.classList.remove("bg-slate-100");
+        }}
+        onDrop={async (e) => {
+          e.preventDefault();
+          e.currentTarget.classList.remove("bg-slate-100");
+          try {
+            const raw = e.dataTransfer.getData("application/json");
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (data.type === "task") {
+              if (data.groupId === task.task_group_id) {
+                const groupTasks = items.filter(t => t.task_group_id === task.task_group_id);
+                const sorted = buildTaskTree(groupTasks);
+                const fromIdx = sorted.findIndex(t => t.id === data.taskId);
+                const toIdx = sorted.findIndex(t => t.id === task.id);
+                if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+                  const reordered = [...sorted];
+                  const [removed] = reordered.splice(fromIdx, 1);
+                  reordered.splice(toIdx, 0, removed);
+                  await reorderTasks(task.task_group_id, reordered.map(t => t.id));
+                  flash("Đã đổi thứ tự Task thành công!");
+                  reloadAll();
+                }
+              } else {
+                await moveTask(data.groupId, data.taskId, task.task_group_id);
+                flash(`Đã di chuyển task sang nhóm mới thành công!`);
+                reloadAll();
+              }
+            }
+          } catch (err: any) {
+            console.error(err);
+          }
+        }}
+      >
+        {/* ACTIONS */}
+        <td className="px-1 py-1.5 text-center" style={{ width: '130px', minWidth: '130px' }}>
+          <div className="flex items-center justify-center gap-1.5 text-slate-500">
+            {/* 1. Drag Handle / Move Task (Always visible, clickable) */}
+            <button 
+              type="button"
+              onMouseDown={() => {
+                const el = document.getElementById(`task-row-${task.id}`);
+                if (el) el.setAttribute('draggable', 'true');
+              }}
+              onMouseUp={() => {
+                const el = document.getElementById(`task-row-${task.id}`);
+                if (el) el.setAttribute('draggable', 'false');
+              }}
+              onClick={() => handleMoveTask(task.task_group_id, task.id)}
+              className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400 font-bold"
+              title="Di chuyển task sang group khác"
+            >
+              <span>☰</span>
+            </button>
+
+            {/* 2. View details / AI Compliance (Hover visible) */}
+            <button
+              type="button"
+              onClick={async () => {
+                setCheckingTaskId(task.id);
+                try {
+                  flash('AI kiểm tra tuân thủ hoàn tất!');
+                } finally {
+                  setCheckingTaskId(null);
+                }
+              }}
+              disabled={checkingTaskId === task.id}
+              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400 disabled:opacity-50"
+              title="Kiểm tra tuân thủ AI"
+            >
+              {checkingTaskId === task.id ? (
+                <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <span>🔍</span>
+              )}
+            </button>
+
+            {/* 3. Duplicate Task (Hover visible) */}
+            <button
+              type="button"
+              onClick={() => handleDuplicateTask(task.task_group_id, task.id)}
+              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
+              title="Nhân bản Task"
+            >
+              <span>📄</span>
+            </button>
+
+            {/* 4. Delete Task (Hover visible) */}
+            <button
+              type="button"
+              onClick={() => setTaskToDelete(task.id)}
+              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
+              title="Xóa Task"
+            >
+              <span>🗑️</span>
+            </button>
+          </div>
+        </td>
+
+        {/* DYNAMIC CELLS */}
+        {dynamicCols.map((col) => {
+          const val = getCellValue(task, col);
+          const colUpper = col.toUpperCase().trim();
+          const isEditing = editingCell?.taskId === task.id && editingCell?.colName === col;
+
+          if (isEditing) {
+            if (colUpper === 'STATUS') {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[110px]">
+                  <select
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
+                  >
+                    {dbStatuses.length === 0 ? (
+                      <>
+                        <option value="Todo">Todo</option>
+                        <option value="Waiting">Waiting</option>
+                        <option value="Process">Process</option>
+                        <option value="Done">Done</option>
+                        <option value="Cancel">Cancel</option>
+                      </>
+                    ) : (
+                      dbStatuses.map((st: any) => (
+                        <option key={st.id} value={st.name}>{st.name}</option>
+                      ))
+                    )}
+                  </select>
+                </td>
+              );
+            }
+
+            if (colUpper === 'PRIORITY') {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[110px]">
+                  <select
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
+                  >
+                    {dbPriorities.length === 0 ? (
+                      <>
+                        <option value="Normal">Normal</option>
+                        <option value="High">High</option>
+                        <option value="Critical">Critical</option>
+                      </>
+                    ) : (
+                      dbPriorities.map((pr: any) => (
+                        <option key={pr.id} value={pr.name}>{pr.name}</option>
+                      ))
+                    )}
+                  </select>
+                </td>
+              );
+            }
+
+            if (colUpper === 'ASSIGNED' || colUpper === 'SUPPORT') {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[155px]">
+                  <select
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
+                  >
+                    <option value="">-- Chọn thành viên --</option>
+                    {projectMembers.map((m: any) => (
+                      <option key={m.id} value={m.id}>{m.display_name}</option>
+                    ))}
+                  </select>
+                </td>
+              );
+            }
+
+            if (colUpper === 'SKILL SOLUTION') {
+              const activeGroups = categories
+                .filter(c => c.is_active)
+                .flatMap(c => c.groups || []);
+              
+              return (
+                <td key={col} className="px-2 py-1 min-w-[150px]">
+                  <select
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
+                  >
+                    <option value="">-- Chọn Group --</option>
+                    {activeGroups.map((g: any) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                </td>
+              );
+            }
+
+            if (colUpper === 'SKILL VENDOR') {
+              const currentGroupId = task.skill_solution_id;
+              let availableSkills: any[] = [];
+              if (currentGroupId) {
+                const groupObj = categories
+                  .filter(c => c.is_active)
+                  .flatMap(c => c.groups || [])
+                  .find((g: any) => g.id === currentGroupId);
+                if (groupObj) {
+                  availableSkills = (groupObj.skills || []).filter((s: any) => s.is_active);
+                }
+              } else {
+                availableSkills = categories
+                  .filter(c => c.is_active)
+                  .flatMap(c => c.groups || [])
+                  .flatMap((g: any) => g.skills || [])
+                  .filter((s: any) => s.is_active);
+              }
+
+              return (
+                <td key={col} className="px-2 py-1 min-w-[150px]">
+                  <select
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
+                  >
+                    <option value="">-- Chọn Skill --</option>
+                    {availableSkills.map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </td>
+              );
+            }
+
+            return (
+              <td key={col} className="px-2 py-1">
+                <input
+                  type="text"
+                  value={editValue}
+                  autoFocus
+                  onChange={e => setEditValue(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleCellSave(task.id, col, editValue);
+                    if (e.key === 'Escape') setEditingCell(null);
+                  }}
+                  onBlur={() => handleCellSave(task.id, col, editValue)}
+                  className="w-full bg-white border border-[#0058be] rounded px-1.5 py-0.5 text-xs text-[#0b1c30] focus:outline-none"
+                />
+              </td>
+            );
+          }
+
+          let cellContent: React.ReactNode = val;
+
+          if (colUpper === 'STATUS') {
+            const info = getStatusInfo(val);
+            cellContent = (
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${info.bg} border-current/10 shrink-0 shadow-sm`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${info.dot}`} />
+                {info.label}
+              </span>
+            );
+          } else if (colUpper === 'PRIORITY') {
+            const style = getPriorityStyle(val);
+            cellContent = (
+              <span className={`inline-block px-2.5 py-0.5 rounded-md border text-[10px] font-bold tracking-wide uppercase ${style}`}>
+                {val || 'Normal'}
+              </span>
+            );
+          } else if (colUpper === 'TASK ID') {
+            cellContent = (
+              <div className="flex items-center gap-1.5" style={{ paddingLeft: `${level * 16}px` }}>
+                {hasChildren && (
+                  <span 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleParentCollapse(taskIdVal);
+                    }}
+                    className="cursor-pointer select-none text-[12px] p-0.5 hover:bg-slate-200 rounded font-normal text-slate-500 inline-flex items-center justify-center w-4 h-4 transition-transform duration-200"
+                  >
+                    {isCollapsedParent ? '▶' : '▼'}
+                  </span>
+                )}
+                {!hasChildren && level > 0 && (
+                  <span className="w-4 h-4 inline-block shrink-0" />
+                )}
+                <span className={`font-mono text-slate-700 ${!isSubTask ? 'font-bold' : 'text-slate-500 font-medium'}`}>
+                  {val}
+                </span>
+              </div>
+            );
+          } else if (colUpper === 'DETAIL TASK') {
+            cellContent = (
+              <div className="flex items-center gap-1">
+                {isSubTask && (
+                  <span className="text-slate-400 font-mono select-none mr-1.5 inline-block shrink-0">
+                    ├──
+                  </span>
+                )}
+                <span className={`line-clamp-2 ${!isSubTask ? 'font-bold text-slate-900 text-[13px]' : 'text-slate-700 font-normal text-[12px]'}`}>
+                  {val}
+                </span>
+              </div>
+            );
+          } else if (colUpper === 'KPI FINAL') {
+            const s = (task.status || '').toLowerCase();
+            const isDone = s === 'done' || s === 'completed' || s.includes('hoàn');
+            if (isDone) {
+              cellContent = (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-extrabold border border-emerald-200 shadow-sm" title="KPI Final được ghi nhận">
+                  ✓ {val}
+                </span>
+              );
+            } else {
+              cellContent = (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200 shadow-sm" title="KPI Final Pending (Chờ task hoàn thành)">
+                  ⏳ {val}
+                </span>
+              );
+            }
+          }
+
+          const isNumericOrDate = colUpper.includes('MANDAY') || colUpper.includes('DATE') || colUpper.includes('RATIO') || colUpper.includes('ID');
+
+          const SYSTEM_COLS = [
+            'TASK ID', 'END DATE EST', 'MD ACTUAL', 'DAYS LATE',
+            'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID', 'SOLUTION'
+          ];
+          const isReadOnly = SYSTEM_COLS.includes(colUpper);
+
+          return (
+            <td
+              key={col}
+              className={`${cellStyle} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-pointer hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
+              onDoubleClick={() => {
+                if (!isReadOnly) handleStartEdit(col, val);
+              }}
+            >
+              <div className="flex items-center justify-between w-full">
+                {cellContent}
+                {!isReadOnly && (
+                  <span className="opacity-0 group-hover:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
+                )}
+              </div>
+            </td>
+          );
+        })}
+      </tr>
+    );
+  };
+
+  const renderRows = () => {
+    if (loadingTasks) {
+      return (
+        <tr>
+          <td colSpan={getDynamicColumns().length + 1} className="text-center py-16 text-[#565e74]">
+            <div className="flex items-center justify-center gap-2">
+              <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" /> Đang tải...
+            </div>
+          </td>
+        </tr>
+      );
+    }
+
+    const phasesToRender = activePhase === 'ALL' 
+      ? phases.filter(p => !p.is_master)
+      : phases.filter(p => p.name === activePhase);
+
+    if (phasesToRender.length === 0) {
+      return (
+        <tr>
+          <td colSpan={getDynamicColumns().length + 1} className="text-center py-16 text-[#565e74] font-medium">
+            Chưa có Giai đoạn (Phase) nào. Hãy click "Thêm Phase" để bắt đầu.
+          </td>
+        </tr>
+      );
+    }
+
+    // Columns NOT applicable to Task Group (show as disabled/empty)
+    const GROUP_DISABLED_COLS = [
+      'PRIORITY', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
+      'TICKET ID', 'REMARK', 'SEND', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL',
+      'DAYS LATE', 'SUB ID', 'ROOT TASKS', 'SOLUTION', 'NOTES'
+    ];
+    // Editable columns for Task Group
+    const GROUP_EDITABLE_COLS = ['DETAIL TASK', 'MANDAY EST', 'STATUS', 'START DATE'];
+    // Auto columns for Task Group
+    const GROUP_AUTO_COLS = ['END DATE EST', 'MD ACTUAL', 'END ACTUAL'];
+
+    const getGroupCellValue = (group: any, colUpper: string): string => {
+      switch (colUpper) {
+        case 'TASK ID': return group.roman_index || 'I';
+        case 'DETAIL TASK': return group.name || '';
+        case 'MANDAY EST':
+        case 'MANDAY (EST)':
+        case 'MANDAY': return group.manday_est != null ? String(group.manday_est) : '';
+        case 'STATUS': return group.status || 'Waiting';
+        case 'START DATE':
+        case 'START DATE (EST)': return group.start_date_est || '';
+        case 'END DATE EST':
+        case 'END DAY (EST)':
+        case 'END DATE (EST)': return group.end_date_est || '';
+        case 'MD ACTUAL':
+        case 'MANDAY ACTUAL': return group.manday_actual != null ? String(group.manday_actual) : '';
+        case 'END ACTUAL':
+        case 'END DATE ACTUAL': return group.end_date_actual || '';
+        default: return '';
+      }
+    };
+
+    const handleGroupCellSave = async (group: any, colName: string, value: string) => {
+      const colUpper = colName.trim().toUpperCase();
+      const payload: Record<string, any> = {};
+      switch (colUpper) {
+        case 'DETAIL TASK': payload.name = value; break;
+        case 'MANDAY EST':
+        case 'MANDAY (EST)':
+        case 'MANDAY': payload.manday_est = value ? parseFloat(value) : null; break;
+        case 'STATUS': payload.status = value; break;
+        case 'START DATE':
+        case 'START DATE (EST)': payload.start_date_est = value || null; break;
+        default: return;
+      }
+      try {
+        await updateTaskGroup(group.phase_id, group.id, payload);
+        flash('Đã cập nhật Task Group!');
+        reloadAll();
+      } catch (err: any) {
+        alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+      } finally {
+        setEditingCell(null);
+      }
+    };
+
+    const renderInlineAddGroupRow = (phaseId: number, romanIndex: string) => {
+      const dynamicCols = getDynamicColumns();
+
+      const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+          handleSaveInlineTaskGroup(phaseId);
+        } else if (e.key === 'Escape') {
+          setAddingTaskGroupPhaseId(null);
+        }
+      };
+
+      const handleBlurEvent = (e: React.FocusEvent) => {
+        const currentTarget = e.currentTarget;
+        setTimeout(() => {
+          if (!currentTarget.contains(document.activeElement)) {
+            handleSaveInlineTaskGroup(phaseId);
+          }
+        }, 150);
+      };
+
+      return (
+        <tr
+          key={`inline-add-tg-${phaseId}`}
+          className="bg-[#f0f4ff] border-l-4 border-l-indigo-500 border-b border-indigo-200"
+          onBlur={handleBlurEvent}
+        >
+          {/* Action Column */}
+          <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
+            <span className="text-[10px] text-indigo-600 font-bold">Thêm Group...</span>
+          </td>
+
+          {dynamicCols.map(col => {
+            const colUpper = col.trim().toUpperCase();
+            
+            // Task ID
+            if (colUpper === 'TASK ID') {
+              return (
+                <td key={col} className="px-4 py-2 font-black text-indigo-800 text-[13px] bg-slate-50/50">
+                  {romanIndex}
+                </td>
+              );
+            }
+
+            // Detail Task
+            if (colUpper === 'DETAIL TASK' || colUpper === 'TASK' || colUpper === 'DESCRIPTION') {
+              return (
+                <td key={col} className="px-2 py-1.5">
+                  <input
+                    type="text"
+                    required
+                    value={newTgForm.name}
+                    onChange={e => setNewTgForm(prev => ({ ...prev, name: e.target.value }))}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Nhập tên Task Group (Bắt buộc)..."
+                    className="w-full bg-white border border-indigo-500 text-[#0b1c30] px-2 py-1 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold"
+                    autoFocus
+                  />
+                </td>
+              );
+            }
+
+            // Manday EST
+            if (colUpper === 'MANDAY EST' || colUpper === 'MANDAY' || colUpper === 'MANDAY (EST)') {
+              return (
+                <td key={col} className="px-2 py-1.5">
+                  <input
+                    type="text"
+                    value={newTgForm.manday_est}
+                    onChange={e => setNewTgForm(prev => ({ ...prev, manday_est: e.target.value }))}
+                    onKeyDown={handleKeyDown}
+                    placeholder="EST Manday..."
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-2 py-1 rounded text-xs focus:outline-none focus:border-indigo-500 font-bold"
+                  />
+                </td>
+              );
+            }
+
+            // Status
+            if (colUpper === 'STATUS') {
+              return (
+                <td key={col} className="px-2 py-1.5">
+                  <select
+                    value={newTgForm.status}
+                    onChange={e => setNewTgForm(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-2 py-1 rounded text-xs focus:outline-none focus:border-indigo-500 font-bold"
+                  >
+                    <option value="Waiting">Waiting</option>
+                    <option value="Running">Running</option>
+                    <option value="Done">Done</option>
+                  </select>
+                </td>
+              );
+            }
+
+            // Start Date
+            if (colUpper === 'START DATE' || colUpper === 'START DATE (EST)') {
+              return (
+                <td key={col} className="px-2 py-1.5">
+                  <input
+                    type="date"
+                    value={newTgForm.start_date_est}
+                    onChange={e => setNewTgForm(prev => ({ ...prev, start_date_est: e.target.value }))}
+                    onKeyDown={handleKeyDown}
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-2 py-1 rounded text-xs focus:outline-none focus:border-indigo-500 font-bold"
+                  />
+                </td>
+              );
+            }
+
+            // Auto columns
+            if (['END DATE EST', 'MANDAY ACTUAL', 'END ACTUAL', 'MD ACTUAL', 'END DATE (EST)', 'END DAY (EST)', 'END DATE ACTUAL', 'MANDAY ACTUAL'].includes(colUpper)) {
+              return (
+                <td key={col} className="px-4 py-2 text-slate-400 font-mono text-center bg-slate-50/20 text-[10px]">
+                  Auto
+                </td>
+              );
+            }
+
+            // Other columns not applicable to Task Group
+            return (
+              <td key={col} className="px-4 py-2 bg-slate-100/50 text-slate-300 text-center select-none">
+                -
+              </td>
+            );
+          })}
+        </tr>
+      );
+    };
+
+    const result: React.ReactNode[] = [];
+
+    phasesToRender.forEach(phase => {
+      const groupsInPhase = taskGroups.filter(g => g.phase_id === phase.id);
+
+      // Phase header (ALWAYS rendered)
+      result.push(
+        <tr 
+          key={`phase-hdr-${phase.id}`} 
+          className="bg-[#e2e8f0] border-l-[6px] border-l-[#475569] border-b border-[#c2c6d6]/40 transition-colors duration-150"
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.add("bg-indigo-100");
+          }}
+          onDragLeave={(e) => {
+            e.currentTarget.classList.remove("bg-indigo-100");
+          }}
+          onDrop={async (e) => {
+            e.preventDefault();
+            e.currentTarget.classList.remove("bg-indigo-100");
+            try {
+              const raw = e.dataTransfer.getData("application/json");
+              if (!raw) return;
+              const data = JSON.parse(raw);
+              if (data.type === "group" && data.phaseId !== phase.id) {
+                await moveTaskGroup(data.phaseId, data.groupId, phase.id);
+                flash(`Đã di chuyển Task Group sang Phase "${phase.name}" thành công!`);
+                reloadAll();
+              }
+            } catch (err: any) {
+              console.error(err);
+            }
+          }}
+        >
+          <td className="px-2 py-2.5 text-center"></td>
+          <td colSpan={getDynamicColumns().length} className="px-4 py-2.5">
+            <span className="text-[12px] font-black text-[#1e293b] uppercase tracking-wider">
+              GIAI ĐOẠN: {phase.name}
+            </span>
+          </td>
+        </tr>
+      );
+
+      if (groupsInPhase.length === 0) {
+        if (addingTaskGroupPhaseId === phase.id) {
+          result.push(renderInlineAddGroupRow(phase.id, 'I'));
+        } else {
+          result.push(
+            <tr key={`phase-empty-${phase.id}`} className="group border-b border-slate-200/40 hover:bg-slate-50 transition-colors">
+              <td className="px-2 py-3"></td>
+              <td colSpan={getDynamicColumns().length} className="px-6 py-8 text-center">
+                <div className="flex flex-col items-center justify-center gap-3">
+                  <span className="text-slate-400 text-sm font-semibold">
+                    Chưa có Task Group
+                  </span>
+                  <button
+                    onClick={() => {
+                      setAddingTaskGroupPhaseId(phase.id);
+                      setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                    }}
+                    className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow flex items-center gap-1.5 transition-all active:scale-95 mx-auto"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add_box</span>
+                    Thêm Task Group
+                  </button>
+                </div>
+              </td>
+            </tr>
+          );
+        }
+        return;
+      }
+
+      groupsInPhase.forEach((group, gIdx) => {
+        const isCollapsed = collapsedGroups.has(group.id);
+        const groupTasks = items.filter(t => t.task_group_id === group.id);
+        const filteredTasks = taskSearch
+          ? groupTasks.filter(t => (t.detail || '').toLowerCase().includes(taskSearch.toLowerCase()))
+          : groupTasks;
+        const dynamicCols = getDynamicColumns();
+
+        // ═══ TASK GROUP ROW (rendered as table row) ═══
+        result.push(
+          <tr 
+            id={`tg-row-${group.id}`}
+            key={`tg-row-${group.id}`} 
+            className="bg-[#eef2ff] hover:bg-[#e0e7ff] border-b border-[#c7d2fe] border-l-4 border-l-indigo-500 group transition-colors"
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("application/json", JSON.stringify({ type: "group", groupId: group.id, phaseId: group.phase_id }));
+            }}
+            onDragEnd={(e) => {
+              const el = document.getElementById(`tg-row-${group.id}`);
+              if (el) el.setAttribute('draggable', 'false');
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.currentTarget.classList.add("bg-indigo-100");
+            }}
+            onDragLeave={(e) => {
+              e.currentTarget.classList.remove("bg-indigo-100");
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              e.currentTarget.classList.remove("bg-indigo-100");
+              try {
+                const raw = e.dataTransfer.getData("application/json");
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (data.type === "group") {
+                  const phaseGroups = taskGroups.filter(g => g.phase_id === group.phase_id);
+                  const fromIdx = phaseGroups.findIndex(g => g.id === data.groupId);
+                  const toIdx = phaseGroups.findIndex(g => g.id === group.id);
+                  if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+                    const reordered = [...phaseGroups];
+                    const [removed] = reordered.splice(fromIdx, 1);
+                    reordered.splice(toIdx, 0, removed);
+                    await reorderTaskGroups(group.phase_id, reordered.map(g => g.id));
+                    flash("Đã đổi thứ tự Task Group thành công!");
+                    reloadAll();
+                  }
+                } else if (data.type === "task") {
+                  if (data.groupId !== group.id) {
+                    await moveTask(data.groupId, data.taskId, group.id);
+                    flash(`Đã chuyển task vào nhóm "${group.name}" thành công!`);
+                    reloadAll();
+                  }
+                }
+              } catch (err: any) {
+                console.error(err);
+              }
+            }}
+          >
+            {/* Actions column */}
+            <td className="px-1 py-1.5 text-center" style={{ width: '130px', minWidth: '130px' }}>
+              <div className="flex items-center justify-center gap-1.5 text-[12px] select-none">
+                {/* 1. Toggle Expand/Collapse (Always visible) */}
+                <button
+                  type="button"
+                  onClick={() => toggleGroupCollapse(group.id)}
+                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-indigo-700 font-bold"
+                  title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
+                >
+                  <span>{isCollapsed ? '▶' : '▼'}</span>
+                </button>
+
+                {/* 2. Drag Handle / Move Task Group (Always visible, clickable) */}
+                <button 
+                  type="button"
+                  onMouseDown={() => {
+                    const el = document.getElementById(`tg-row-${group.id}`);
+                    if (el) el.setAttribute('draggable', 'true');
+                  }}
+                  onMouseUp={() => {
+                    const el = document.getElementById(`tg-row-${group.id}`);
+                    if (el) el.setAttribute('draggable', 'false');
+                  }}
+                  onClick={() => handleMoveTaskGroup(group.phase_id, group.id)}
+                  className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-indigo-200 rounded text-slate-400 font-bold"
+                  title="Di chuyển Task Group sang Phase khác"
+                >
+                  <span>☰</span>
+                </button>
+
+                {/* 3. Add Task (Hover visible) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingTaskGroupId(group.id);
+                    setAddingTaskParentCode(null);
+                    const initialForm: Record<string, string> = {};
+                    dynamicCols.forEach(col => { initialForm[col] = ''; });
+                    if (dynamicCols.find(c => c.toUpperCase() === 'STATUS')) {
+                      initialForm['STATUS'] = 'Waiting';
+                    }
+                    setNewForm(initialForm);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-slate-400"
+                  title="Thêm Task con"
+                >
+                  <span>➕</span>
+                </button>
+
+                {/* 4. Edit Task Group Name (Hover visible) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const detailCol = dynamicCols.find(c => ['DETAIL TASK', 'TASK', 'DESCRIPTION'].includes(c.toUpperCase().trim())) || 'Detail Task';
+                    const groupVal = getGroupCellValue(group, detailCol.toUpperCase().trim());
+                    setEditingCell({ taskId: -group.id, colName: detailCol });
+                    setEditValue(groupVal);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-slate-400"
+                  title="Chỉnh sửa Task Group"
+                >
+                  <span>✏️</span>
+                </button>
+
+                {/* 5. Delete Task Group (Hover visible) */}
+                <button
+                  type="button"
+                  onClick={() => handleDeleteTaskGroupClick(group)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-slate-400"
+                  title="Xóa Task Group"
+                >
+                  <span>🗑️</span>
+                </button>
+              </div>
+            </td>
+
+            {/* Dynamic columns — rendered inline */}
+            {dynamicCols.map((col) => {
+              const colUpper = col.toUpperCase().trim();
+              const val = getGroupCellValue(group, colUpper);
+              const isDisabled = GROUP_DISABLED_COLS.includes(colUpper);
+              const isEditable = GROUP_EDITABLE_COLS.includes(colUpper);
+              const isAuto = GROUP_AUTO_COLS.includes(colUpper);
+              const isTaskId = colUpper === 'TASK ID' || colUpper === 'TASKID' || colUpper === 'ID';
+              const isEditing = editingCell?.taskId === -group.id && editingCell?.colName === col;
+
+              // TASK ID = Roman numeral
+              if (isTaskId) {
+                return (
+                  <td key={col} className="px-4 py-2.5 text-[13px] font-black text-indigo-800 whitespace-nowrap">
+                    {group.roman_index || to_roman(gIdx + 1)}
+                  </td>
+                );
+              }
+
+              // Disabled columns — show dash
+              if (isDisabled) {
+                return (
+                  <td key={col} className="px-4 py-2.5 text-center text-slate-300 text-xs select-none">—</td>
+                );
+              }
+
+              // Inline edit for editable columns
+              if (isEditing) {
+                if (colUpper === 'STATUS') {
+                  return (
+                    <td key={col} className="px-2 py-1 min-w-[110px]">
+                      <select
+                        value={editValue}
+                        autoFocus
+                        onChange={e => setEditValue(e.target.value)}
+                        onBlur={() => handleGroupCellSave(group, col, editValue)}
+                        className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-bold"
+                      >
+                        {dbStatuses.length === 0 ? (
+                          <>
+                            <option value="Waiting">Waiting</option>
+                            <option value="Process">Process</option>
+                            <option value="Done">Done</option>
+                            <option value="Cancel">Cancel</option>
+                          </>
+                        ) : (
+                          dbStatuses.map((st: any) => (
+                            <option key={st.id} value={st.name}>{st.name}</option>
+                          ))
+                        )}
+                      </select>
+                    </td>
+                  );
+                }
+                if (colUpper.includes('DATE')) {
+                  return (
+                    <td key={col} className="px-2 py-1 min-w-[130px]">
+                      <input
+                        type="date"
+                        value={editValue ? toPickerDate(editValue) : ''}
+                        autoFocus
+                        onChange={e => setEditValue(fromPickerDate(e.target.value))}
+                        onBlur={() => handleGroupCellSave(group, col, editValue)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleGroupCellSave(group, col, editValue); if (e.key === 'Escape') setEditingCell(null); }}
+                        className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs font-mono focus:outline-none font-bold"
+                      />
+                    </td>
+                  );
+                }
+                // Text / Number input
+                return (
+                  <td key={col} className="px-2 py-1">
+                    <input
+                      type={colUpper.includes('MANDAY') ? 'number' : 'text'}
+                      step={colUpper.includes('MANDAY') ? 'any' : undefined}
+                      value={editValue}
+                      autoFocus
+                      onChange={e => setEditValue(e.target.value)}
+                      onBlur={() => handleGroupCellSave(group, col, editValue)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleGroupCellSave(group, col, editValue); if (e.key === 'Escape') setEditingCell(null); }}
+                      className="w-full bg-white border border-indigo-500 rounded px-1.5 py-0.5 text-xs focus:outline-none font-bold"
+                    />
+                  </td>
+                );
+              }
+
+              // Display mode
+              const cellStyle = "px-4 py-2.5 text-xs font-bold text-[#1e293b] whitespace-nowrap";
+              let displayContent: React.ReactNode = val || '';
+
+              // Status badge
+              if (colUpper === 'STATUS' && val) {
+                const si = getStatusInfo(val);
+                displayContent = (
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-extrabold ${si.bg}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${si.dot}`} />
+                    {si.label}
+                  </span>
+                );
+              }
+
+              // Detail Task — bold with group icon
+              if (colUpper === 'DETAIL TASK') {
+                displayContent = (
+                  <span className="text-[12px] font-black text-[#0f172a]">{val}</span>
+                );
+              }
+
+              return (
+                <td
+                  key={col}
+                  className={`${cellStyle} ${isEditable ? 'cursor-pointer hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')}`}
+                  onDoubleClick={() => {
+                    if (isEditable) {
+                      setEditingCell({ taskId: -group.id, colName: col });
+                      setEditValue(val);
+                    }
+                  }}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    {displayContent}
+                    {isEditable && (
+                      <span className="opacity-0 group-hover:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
+                    )}
+                  </div>
+                </td>
+              );
+            })}
+          </tr>
+        );
+
+        // Skip tasks if collapsed
+        if (isCollapsed) {
+          return;
+        }
+
+        // ═══ TASK ROWS (child rows) ═══
+        const sortedTasks = buildTaskTree(filteredTasks);
+
+        sortedTasks.forEach(task => {
+          if (isAncestorCollapsed(task.task_code)) {
+            return;
+          }
+
+          const hasChildren = sortedTasks.some(t => getParentCode(t.task_code) === task.task_code);
+          const isCollapsedParent = collapsedParents.has(task.task_code);
+          const dotCount = (task.task_code || '').split('.').length - 1;
+          const level = Math.max(0, dotCount);
+
+          result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent));
+
+          if (addingTaskGroupId === group.id && addingTaskParentCode === task.task_code) {
+            result.push(renderInlineAddRow(group.id, task.task_code, level + 1));
+          }
+        });
+
+        if (addingTaskGroupId === group.id && addingTaskParentCode === null) {
+          result.push(renderInlineAddRow(group.id, null, 0));
+        } else {
+          result.push(
+            <tr key={`add-task-hover-${group.id}`} className="group border-b border-slate-100 bg-[#f8fafc]/40 hover:bg-[#eff6ff]/70 transition-colors">
+              <td className="px-1 py-1.5 text-center" style={{ width: '130px', minWidth: '130px' }}></td>
+              <td colSpan={dynamicCols.length} className="px-4 py-1.5 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingTaskGroupId(group.id);
+                    setAddingTaskParentCode(null);
+                    const initialForm: Record<string, string> = {};
+                    dynamicCols.forEach(col => { initialForm[col] = ''; });
+                    if (dynamicCols.find(c => c.toUpperCase() === 'STATUS')) {
+                      initialForm['STATUS'] = 'Waiting';
+                    }
+                    setNewForm(initialForm);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-3.5 py-1 rounded shadow flex items-center gap-1 mx-auto transition-all active:scale-95 cursor-pointer"
+                >
+                  <span>➕</span> Thêm Task
+                </button>
+              </td>
+            </tr>
+          );
+        }
+      });
+
+      // Inline adding or hover add trigger at the end of the phase
+      if (groupsInPhase.length > 0) {
+        if (addingTaskGroupPhaseId === phase.id) {
+          const nextIndex = to_roman(groupsInPhase.length + 1);
+          result.push(renderInlineAddGroupRow(phase.id, nextIndex));
+        } else {
+          result.push(
+            <tr key={`add-tg-hover-${phase.id}`} className="group border-b border-slate-100 bg-slate-50/20 hover:bg-slate-100/40 transition-colors">
+              <td className="px-2 py-1.5"></td>
+              <td colSpan={getDynamicColumns().length} className="px-4 py-1.5 text-center">
+                <button
+                  onClick={() => {
+                    setAddingTaskGroupPhaseId(phase.id);
+                    setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                  }}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-3.5 py-1 rounded shadow flex items-center gap-1 mx-auto transition-all active:scale-95 cursor-pointer"
+                >
+                  <span>➕</span> Thêm Task Group
+                </button>
+              </td>
+            </tr>
+          );
+        }
+      }
+    });
+
+    return result;
+  };
+if (loadingProject || !project) {
     return (
       <div className="h-screen bg-[#f0f2f5] flex items-center justify-center text-[#565e74]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
         <div className="flex items-center gap-2">
@@ -1125,7 +2452,7 @@ function ProjectDetailContent() {
             <span className="text-xs font-bold text-[#0b1c30]">{project.name}</span>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={loadTasks} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
+            <button onClick={reloadAll} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
               ↻ Tải lại
             </button>
           </div>
@@ -1147,7 +2474,7 @@ function ProjectDetailContent() {
                 <div className="flex items-center gap-3">
                   <h2 className="text-xl font-bold text-[#0b1c30] tracking-tight">{project.name}</h2>
                   <span className="px-3 py-1 rounded-full bg-[#eff4ff] text-[#1d4ed8] text-[10px] font-bold uppercase border border-[#0058be]/10">
-                    Phase {project.current_phase || '11. Triển khai'}
+                    Phase {project.current_phase || '1. Tư vấn'}
                   </span>
                 </div>
                 <p className="text-[12px] text-[#565e74] mt-1">
@@ -1367,22 +2694,59 @@ function ProjectDetailContent() {
                         placeholder="Tìm kiếm nhiệm vụ..."
                         className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] outline-none w-52 focus:border-[#0058be] placeholder-[#727785] transition-colors" />
                       {taskSearch && (
-                        <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline">Xóa</button>
+                        <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
                       )}
+                      
+                      {/* + Thêm Group Task */}
                       <button
                         onClick={() => {
+                          let defaultPhaseId: number = 0;
+                          if (activePhase !== 'ALL') {
+                            const curPhase = phases.find(p => p.name === activePhase);
+                            if (curPhase) defaultPhaseId = curPhase.id;
+                          }
+                          if (!defaultPhaseId && phases.length > 0) {
+                            const nonMaster = phases.filter(p => !p.is_master);
+                            if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
+                          }
+                          if (!defaultPhaseId) {
+                            alert('Vui lòng tạo Phase trước!');
+                            return;
+                          }
+                          setAddingTaskGroupPhaseId(defaultPhaseId);
+                          setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3 py-2 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">add_box</span>
+                        Thêm Group Task
+                      </button>
+
+                      {/* + Thêm task */}
+                      <button
+                        onClick={() => {
+                          // Find group tasks in current active phase
+                          const currentPhaseGroups = activePhase === 'ALL'
+                            ? taskGroups
+                            : taskGroups.filter(g => {
+                                const ph = phases.find(p => p.id === g.phase_id);
+                                return ph && ph.name === activePhase;
+                              });
+                          if (currentPhaseGroups.length === 0) {
+                            alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
+                            return;
+                          }
+                          const targetGroup = currentPhaseGroups[0];
+                          setAddingTaskGroupId(targetGroup.id);
+                          setAddingTaskParentCode(null);
                           const dynamicCols = getDynamicColumns();
                           const initialForm: Record<string, string> = {};
-                          dynamicCols.forEach(col => {
-                            initialForm[col] = '';
-                          });
+                          dynamicCols.forEach(col => { initialForm[col] = ''; });
                           const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                          if (statusCol) initialForm[statusCol] = 'Todo';
+                          if (statusCol) initialForm[statusCol] = 'Waiting';
                           setNewForm(initialForm);
-                          setSelectedFormPhase(activePhase === 'ALL' ? '' : activePhase);
-                          setAddingTaskBelowId(0); // 0 means adding at the end of current tab/phase
                         }}
-                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-3 py-2 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95"
+                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-3 py-2 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
                       >
                         <span className="material-symbols-outlined text-[16px]">add</span>
                         Thêm task
@@ -1396,7 +2760,7 @@ function ProjectDetailContent() {
                       <table className="w-full text-xs min-w-max border-collapse">
                         <thead className="sticky top-0 z-20 bg-[#f8f9ff] border-b-2 border-[#c2c6d6]" style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }}>
                           <tr>
-                            <th className="text-center px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '80px', width: '80px' }}>THAO TÁC</th>
+                            <th className="text-center px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '130px', width: '130px' }}>THAO TÁC</th>
                             {getDynamicColumns().map((col) => {
                               let widthStyle = {};
                               const colUpper = col.toUpperCase();
@@ -1420,416 +2784,7 @@ function ProjectDetailContent() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#c2c6d6]/40 bg-white">
-                          {loadingTasks && (
-                            <tr>
-                              <td colSpan={getDynamicColumns().length + 1} className="text-center py-16 text-[#565e74]">
-                                <div className="flex items-center justify-center gap-2">
-                                  <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" /> Đang tải...
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                           {!loadingTasks && phaseItems.length === 0 && addingTaskBelowId !== 0 && (
-                            <tr>
-                              <td colSpan={getDynamicColumns().length + 1} className="text-center py-16 text-[#565e74] font-medium">
-                                <div className="flex flex-col items-center gap-3">
-                                  <span>Không tìm thấy nhiệm vụ nào trong {phaseLabel}</span>
-                                  <button
-                                    onClick={() => {
-                                      const dynamicCols = getDynamicColumns();
-                                      const initialForm: Record<string, string> = {};
-                                      dynamicCols.forEach(col => {
-                                        initialForm[col] = '';
-                                      });
-                                      const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                                      if (statusCol) initialForm[statusCol] = 'Todo';
-                                      setNewForm(initialForm);
-                                      setSelectedFormPhase(activePhase === 'ALL' ? '' : activePhase);
-                                      setAddingTaskBelowId(0); // 0 means adding first task in empty table
-                                    }}
-                                    className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all flex items-center gap-1.5"
-                                  >
-                                    <span className="material-symbols-outlined text-[16px]">add</span>
-                                    Thêm nhiệm vụ đầu tiên
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                          {!loadingTasks && phaseItems.map((v, idx) => {
-                            const isSection = v.ai_verdict === 'SECTION';
-                            let rowElement = null;
-
-                            if (isSection) {
-                              if (activePhase === 'ALL') return <Fragment key={v.id} />;
-                              
-                              let detail = '';
-                              try {
-                                const td = JSON.parse(v.row_data || '{}');
-                                const firstKey = Object.keys(td).find(k => k !== '_row');
-                                detail = firstKey ? td[firstKey] : '';
-                              } catch {
-                                detail = '';
-                              }
-                              
-                              const isPhaseHeader = /^PHASE\s/i.test(detail);
-
-                              if (isPhaseHeader) {
-                                rowElement = (
-                                  <tr className="bg-[#eff4ff] border-l-[4px] border-l-[#0058be] border-b border-[#c2c6d6]/30 group relative">
-                                    <td className="px-4 py-3.5"></td>
-                                    <td colSpan={getDynamicColumns().length + 1} className="px-4 py-3.5 relative">
-                                      <span className="text-[12px] font-black text-[#0b1c30] uppercase tracking-wider">{detail}</span>
-
-                                      {/* Hover Add Task Button */}
-                                      <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
-                                        <button
-                                          onClick={() => handleOpenAddTask(v)}
-                                          className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
-                                        >
-                                          <span>+ Thêm task phía dưới</span>
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              } else {
-                                rowElement = (
-                                  <tr className="bg-[#f8f9ff] border-l-[3px] border-l-[#0058be]/40 border-b border-[#c2c6d6]/30 group relative">
-                                    <td className="px-1 py-2.5"></td>
-                                    <td colSpan={getDynamicColumns().length + 1} className="px-4 py-2.5 relative">
-                                      <span className="text-[11px] font-bold text-[#0058be] uppercase tracking-wide flex items-center gap-2">
-                                        <span className="w-0.5 h-3.5 rounded bg-[#0058be]/40 shrink-0 inline-block" />
-                                        {detail}
-                                      </span>
-
-                                      {/* Hover Add Task Button */}
-                                      <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
-                                        <button
-                                          onClick={() => handleOpenAddTask(v)}
-                                          className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
-                                        >
-                                          <span>+ Thêm task phía dưới</span>
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              }
-                            } else {
-                              const dynamicCols = getDynamicColumns();
-                              let td: Record<string, string> = {};
-                              try {
-                                td = JSON.parse(v.row_data || '{}');
-                              } catch {}
-
-                              const handleStartEdit = (colName: string, currentVal: string) => {
-                                setEditingCell({ taskId: v.id, colName });
-                                setEditValue(currentVal);
-                              };
-
-                              rowElement = (
-                                <tr className={`group relative hover:bg-[#eff4ff]/50 transition-colors ${idx % 2 === 0 ? '' : 'bg-[#f8f9ff]/30'}`}>
-                                  {/* 1. ACTIONS */}
-                                  <td className="px-1 py-3 text-center" style={{ width: '80px' }}>
-                                    <div className="flex items-center justify-center gap-1">
-                                      <button
-                                        onClick={() => handleCheckTask(v.id)}
-                                        disabled={checkingTaskId === v.id}
-                                        className="bg-[#eff4ff] hover:bg-[#0058be]/10 text-[#0058be] border border-[#0058be]/20 p-1.5 rounded text-[10px] font-bold transition-all disabled:opacity-50"
-                                        title="Kiểm tra task này"
-                                      >
-                                        {checkingTaskId === v.id ? (
-                                          <div className="w-3 h-3 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
-                                        ) : (
-                                          <span>🔍</span>
-                                        )}
-                                      </button>
-                                      <button
-                                        onClick={() => setTaskToDelete(v.id)}
-                                        className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 p-1.5 rounded text-[10px] font-bold transition-all"
-                                        title="Xóa task"
-                                      >
-                                        🗑️
-                                      </button>
-                                    </div>
-                                  </td>
-                                  {/* 3+. DYNAMIC CELLS */}
-                                  {dynamicCols.map((col) => {
-                                    const val = getCellValue(td, col);
-                                    const colUpper = col.toUpperCase();
-                                    const isEditing = editingCell?.taskId === v.id && editingCell?.colName === col;
-
-                                    if (isEditing) {
-                                      // Status editor
-                                      if (colUpper === 'STATUS') {
-                                        return (
-                                          <td key={col} className="px-2 py-1.5 min-w-[110px]">
-                                            <select
-                                              value={editValue}
-                                              autoFocus
-                                              onChange={e => setEditValue(e.target.value)}
-                                              onBlur={() => handleCellSave(v.id, col, editValue)}
-                                              className="w-full bg-white border border-[#0058be] rounded px-1 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
-                                            >
-                                              <option value="Todo">Todo</option>
-                                              <option value="Waiting">Waiting</option>
-                                              <option value="Process">Process</option>
-                                              <option value="Done">Done</option>
-                                              <option value="Cancel">Cancel</option>
-                                            </select>
-                                          </td>
-                                        );
-                                      }
-
-                                      // Priority editor
-                                      if (colUpper === 'PRIORITY') {
-                                        return (
-                                          <td key={col} className="px-2 py-1.5 min-w-[110px]">
-                                            <select
-                                              value={editValue}
-                                              autoFocus
-                                              onChange={e => setEditValue(e.target.value)}
-                                              onBlur={() => handleCellSave(v.id, col, editValue)}
-                                              className="w-full bg-white border border-[#0058be] rounded px-1 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
-                                            >
-                                              <option value="Normal">Normal</option>
-                                              <option value="High">High</option>
-                                              <option value="Critical">Critical</option>
-                                            </select>
-                                          </td>
-                                        );
-                                      }
-
-                                      // Date editor
-                                      const isDateCol = colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'));
-                                      if (isDateCol) {
-                                        return (
-                                          <td key={col} className="px-2 py-1.5 min-w-[110px]">
-                                            <input
-                                              type="date"
-                                              value={toPickerDate(editValue)}
-                                              autoFocus
-                                              onChange={e => setEditValue(fromPickerDate(e.target.value))}
-                                              onBlur={() => handleCellSave(v.id, col, editValue)}
-                                              onKeyDown={e => handleKeyDown(e, v.id, col, true)}
-                                              className="w-full bg-white border border-[#0058be] rounded px-1 py-1 text-xs text-[#0b1c30] focus:outline-none font-mono font-semibold"
-                                            />
-                                          </td>
-                                        );
-                                      }
-
-                                      // User selector
-                                      const isUserCol = colUpper === 'ASSIGNED' || colUpper === 'SUPPORT';
-                                      if (isUserCol) {
-                                        return (
-                                          <td key={col} className="px-2 py-1.5 min-w-[110px]">
-                                            <input
-                                              type="text"
-                                              list="member-emails"
-                                              value={editValue}
-                                              autoFocus
-                                              onChange={e => setEditValue(e.target.value)}
-                                              onBlur={() => handleCellSave(v.id, col, editValue)}
-                                              onKeyDown={e => handleKeyDown(e, v.id, col, true)}
-                                              className="w-full bg-white border border-[#0058be] rounded px-1 py-1 text-xs text-[#0b1c30] focus:outline-none"
-                                            />
-                                          </td>
-                                        );
-                                      }
-
-                                      // Numeric editor
-                                      const isNumeric = colUpper.includes('MANDAY') || colUpper.includes('BASE') || colUpper.includes('PERFORM') || colUpper.includes('OVERTIME') || colUpper.includes('FINAL') || colUpper.includes('LATE');
-                                      if (isNumeric) {
-                                        return (
-                                          <td key={col} className="px-2 py-1.5 min-w-[110px]">
-                                            <input
-                                              type="number"
-                                              step="any"
-                                              value={editValue}
-                                              autoFocus
-                                              onChange={e => setEditValue(e.target.value)}
-                                              onBlur={() => handleCellSave(v.id, col, editValue)}
-                                              onKeyDown={e => handleKeyDown(e, v.id, col, false)}
-                                              className="w-full bg-white border border-[#0058be] rounded px-1 py-1 text-xs text-[#0b1c30] focus:outline-none font-mono font-semibold"
-                                            />
-                                          </td>
-                                        );
-                                      }
-
-                                      // Detail Task (Textarea)
-                                      const isDetailCol = colUpper.includes('DETAIL TASK') || colUpper === 'TASK' || colUpper === 'DESCRIPTION';
-                                      if (isDetailCol) {
-                                        return (
-                                          <td key={col} className="px-2 py-1.5" style={{ maxWidth: '350px', width: '350px' }}>
-                                            <textarea
-                                              value={editValue}
-                                              autoFocus
-                                              onChange={e => setEditValue(e.target.value)}
-                                              onBlur={() => handleCellSave(v.id, col, editValue)}
-                                              onKeyDown={e => {
-                                                if (e.key === 'Enter' && !e.shiftKey) {
-                                                  e.preventDefault();
-                                                  handleCellSave(v.id, col, editValue);
-                                                } else if (e.key === 'Escape') {
-                                                  setEditingCell(null);
-                                                }
-                                              }}
-                                              rows={2}
-                                              className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold leading-relaxed"
-                                            />
-                                          </td>
-                                        );
-                                      }
-
-                                      // Other text columns
-                                      return (
-                                        <td key={col} className="px-2 py-1.5 min-w-[110px]">
-                                          <input
-                                            type="text"
-                                            value={editValue}
-                                            autoFocus
-                                            onChange={e => setEditValue(e.target.value)}
-                                            onBlur={() => handleCellSave(v.id, col, editValue)}
-                                            onKeyDown={e => handleKeyDown(e, v.id, col, false)}
-                                            className="w-full bg-white border border-[#0058be] rounded px-1 py-1 text-xs text-[#0b1c30] focus:outline-none"
-                                          />
-                                        </td>
-                                      );
-                                    }
-
-                                                                    // Render normal cells
-                                    const isDetailCol = colUpper.includes('DETAIL TASK') || colUpper === 'TASK' || colUpper === 'DESCRIPTION';
-                                    if (isDetailCol) {
-                                      return (
-                                        <td key={col} className="px-4 py-3 relative hover:bg-slate-100/80 group/cell cursor-pointer" style={{ maxWidth: '350px', width: '350px' }} onDoubleClick={() => handleStartEdit(col, val)}>
-                                          <div className="relative pr-4">
-                                            <p className="text-[#0b1c30] text-xs font-semibold leading-relaxed break-words whitespace-normal">{val || <span className="opacity-30">—</span>}</p>
-                                            <span className="absolute right-0 top-0.5 opacity-0 group-hover/cell:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
-                                          </div>
-                                          {/* Hover Add Task Button */}
-                                          <div className="absolute left-0 right-0 -bottom-3.5 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleOpenAddTask(v);
-                                              }}
-                                              className="pointer-events-auto bg-[#0058be] hover:bg-[#0058be]/90 text-white text-[9px] font-extrabold px-3 py-1 rounded-full shadow-xl flex items-center gap-1 active:scale-95 transition-all uppercase tracking-wider"
-                                            >
-                                              <span>+ Thêm task phía dưới</span>
-                                            </button>
-                                          </div>
-                                        </td>
-                                      );
-                                    }
-
-                                    const isStatusCol = colUpper === 'STATUS';
-                                    if (isStatusCol) {
-                                      const statusInfo = getStatusInfo(val);
-                                      return (
-                                        <td key={col} className="px-4 py-3 cursor-pointer hover:bg-slate-100/80 group/cell" onDoubleClick={() => handleStartEdit(col, val)}>
-                                          <div className="flex items-center justify-between w-full">
-                                            {val ? (
-                                              <div className="flex items-center gap-1.5">
-                                                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusInfo.dot}`} />
-                                                <span className={`text-[10px] font-bold ${statusInfo.text}`}>{statusInfo.label}</span>
-                                              </div>
-                                            ) : <span className="opacity-30">—</span>}
-                                            <span className="opacity-0 group-hover/cell:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
-                                          </div>
-                                        </td>
-                                      );
-                                    }
-
-                                    const isPriorityCol = colUpper === 'PRIORITY';
-                                    if (isPriorityCol) {
-                                      const priStyle = getPriorityStyle(val);
-                                      return (
-                                        <td key={col} className="px-4 py-3 cursor-pointer hover:bg-slate-100/80 group/cell" onDoubleClick={() => handleStartEdit(col, val)}>
-                                          <div className="flex items-center justify-between w-full">
-                                            {val ? (
-                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${priStyle}`}>
-                                                {val}
-                                              </span>
-                                            ) : <span className="opacity-30">—</span>}
-                                            <span className="opacity-0 group-hover/cell:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
-                                          </div>
-                                        </td>
-                                      );
-                                    }
-
-                                    const isNumericOrDate = colUpper.includes('MANDAY') || colUpper.includes('DATE') || colUpper.includes('RATIO') || colUpper.includes('ID');
-                                    return (
-                                      <td
-                                        key={col}
-                                        className={`px-4 py-3 text-xs cursor-pointer hover:bg-slate-100/80 group/cell ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
-                                        onDoubleClick={() => handleStartEdit(col, val)}
-                                      >
-                                        <div className="flex items-center justify-between w-full">
-                                          <span>{val || <span className="opacity-30">—</span>}</span>
-                                          <span className="opacity-0 group-hover/cell:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
-                                        </div>
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              );
-                            }
-
-                            return (
-                              <Fragment key={v.id}>
-                                {rowElement}
-                                {addingTaskBelowId === v.id && (
-                                  <tr className="bg-[#f1f5f9] border-2 border-[#0058be]/40 animate-fade-in">
-                                    <td className="p-1 text-center sticky left-0 bg-[#f1f5f9] z-10" style={{ width: '80px', minWidth: '80px' }}>
-                                      <div className="flex items-center justify-center gap-1">
-                                        <button
-                                          onClick={handleSaveTask}
-                                          disabled={savingTask}
-                                          className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
-                                          title="Lưu"
-                                        >
-                                          {savingTask ? '...' : 'Lưu'}
-                                        </button>
-                                        <button
-                                          onClick={handleCancelAddTask}
-                                          className="bg-gray-400 hover:bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
-                                          title="Hủy"
-                                        >
-                                          Hủy
-                                        </button>
-                                      </div>
-                                    </td>
-                                    {getDynamicColumns().map((col, cIdx) => renderFormCell(col, cIdx))}
-                                  </tr>
-                                )}
-                              </Fragment>
-                            );
-                          })}
-                          {addingTaskBelowId === 0 && (
-                            <tr className="bg-[#f1f5f9] border-2 border-[#0058be]/40 animate-fade-in">
-                              <td className="p-1 text-center sticky left-0 bg-[#f1f5f9] z-10" style={{ width: '80px', minWidth: '80px' }}>
-                                <div className="flex items-center justify-center gap-1">
-                                  <button
-                                    onClick={handleSaveTask}
-                                    disabled={savingTask}
-                                    className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
-                                    title="Lưu"
-                                  >
-                                    {savingTask ? '...' : 'Lưu'}
-                                  </button>
-                                  <button
-                                    onClick={handleCancelAddTask}
-                                    className="bg-gray-400 hover:bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
-                                    title="Hủy"
-                                  >
-                                    Hủy
-                                  </button>
-                                </div>
-                              </td>
-                              {getDynamicColumns().map((col, cIdx) => renderFormCell(col, cIdx))}
-                            </tr>
-                          )}
+                          {renderRows()}
                         </tbody>
                       </table>
                     </div>
@@ -2191,14 +3146,20 @@ function ProjectDetailContent() {
                       Thêm thành viên mới
                     </h3>
                     <form onSubmit={handleAddMember} className="flex gap-2">
-                      <input
-                        type="email"
+                      <select
                         required
-                        value={newMemberEmail}
-                        onChange={e => setNewMemberEmail(e.target.value)}
-                        placeholder="Nhập địa chỉ email thành viên mới..."
+                        value={selectedMemberId}
+                        onChange={e => setSelectedMemberId(e.target.value)}
                         className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-4 py-2 text-xs focus:outline-none focus:border-[#0058be]"
-                      />
+                      >
+                        <option value="">-- Chọn thành viên muốn thêm --</option>
+                        {users
+                          .filter((u: any) => !projectMembers.some((pm: any) => pm.email === u.email))
+                          .map((u: any) => (
+                            <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>
+                          ))
+                        }
+                      </select>
                       <button
                         type="submit"
                         disabled={isAddingMember}
@@ -2217,78 +3178,56 @@ function ProjectDetailContent() {
                     </h3>
 
                     <div className="divide-y divide-slate-100">
-                      {/* Tech Lead */}
-                      {project.leader_email && (
-                        <div className="py-4 flex justify-between items-center">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-[#eff4ff] border border-[#0058be]/20 flex items-center justify-center text-xs font-extrabold text-[#0058be]">
-                              {leadInfo.initials}
-                            </div>
-                            <div>
-                              <h4 className="text-xs font-bold text-[#0b1c30]">{leadInfo.name}</h4>
-                              <p className="text-[10px] text-slate-500 mt-0.5">{leadInfo.email}</p>
-                            </div>
-                          </div>
-                          <span className="px-2.5 py-0.5 bg-[#eff4ff] text-[#0058be] text-[10px] font-bold rounded-full uppercase border border-[#0058be]/10">
-                            Technical Lead
-                          </span>
-                        </div>
-                      )}
+                      {projectMembers.map((m: any) => {
+                        const isLeader = m.role === 'Leader';
+                        const isPM = m.role === 'PM';
+                        const roleLabel = isLeader ? 'Technical Lead' : isPM ? 'Product Manager' : 'Member';
+                        const roleClass = isLeader 
+                          ? 'bg-[#eff4ff] text-[#0058be] border border-[#0058be]/10' 
+                          : isPM 
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50' 
+                            : 'bg-slate-100 text-slate-600 border border-slate-200';
+                        
+                        const initials = (m.display_name || '').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
 
-                      {/* PM */}
-                      {project.pm_email && (
-                        <div className="py-4 flex justify-between items-center">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-xs font-extrabold text-emerald-700">
-                              {pmInfo.initials}
-                            </div>
-                            <div>
-                              <h4 className="text-xs font-bold text-[#0b1c30]">{pmInfo.name}</h4>
-                              <p className="text-[10px] text-slate-500 mt-0.5">{pmInfo.email}</p>
-                            </div>
-                          </div>
-                          <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-full uppercase border border-emerald-200/50">
-                            Product Manager
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Other members */}
-                      {membersList.map((m: string) => {
-                        const mInfo = getPMDisplay(m);
                         return (
-                          <div key={m} className="py-4 flex justify-between items-center">
+                          <div key={m.id} className="py-4 flex justify-between items-center">
                             <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">
-                                {mInfo.initials}
+                              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-extrabold ${isLeader ? 'bg-[#eff4ff] text-[#0058be]' : isPM ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                                {initials || '?'}
                               </div>
                               <div>
-                                <h4 className="text-xs font-bold text-[#0b1c30]">{mInfo.name}</h4>
-                                <p className="text-[10px] text-slate-500 mt-0.5">{mInfo.email}</p>
+                                <h4 className="text-xs font-bold text-[#0b1c30]">{m.display_name}</h4>
+                                <p className="text-[10px] text-slate-500 mt-0.5">{m.email}</p>
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="px-2.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full uppercase border border-slate-200">
-                                Member
+                              <span className={`px-2.5 py-0.5 text-[10px] font-bold rounded-full uppercase ${roleClass}`}>
+                                {roleLabel}
                               </span>
-                              <button
-                                onClick={async () => {
-                                  const filtered = membersList.filter((x: string) => x !== m).join(',');
-                                  const updated = await updateSheet(Number(id), { member_emails: filtered });
-                                  setProject((prev: any) => ({ ...prev, ...updated }));
-                                  flash('Đã gỡ bỏ thành viên');
-                                }}
-                                className="text-slate-400 hover:text-red-600 p-1"
-                                title="Gỡ thành viên"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">close</span>
-                              </button>
+                              {!isLeader && !isPM && (
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await removeProjectMember(Number(id), m.id);
+                                      loadProjectMembers();
+                                      flash('Đã gỡ bỏ thành viên');
+                                    } catch (err: any) {
+                                      alert('Lỗi gỡ thành viên: ' + (err.response?.data?.detail || err.message));
+                                    }
+                                  }}
+                                  className="text-slate-400 hover:text-red-600 p-1"
+                                  title="Gỡ thành viên"
+                                >
+                                  <span className="material-symbols-outlined text-[16px]">close</span>
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
                       })}
 
-                      {!project.leader_email && !project.pm_email && membersList.length === 0 && (
+                      {projectMembers.length === 0 && (
                         <p className="py-8 text-center text-slate-400 text-xs italic">Chưa có thành viên nào tham gia dự án này</p>
                       )}
                     </div>
@@ -2818,6 +3757,99 @@ function ProjectDetailContent() {
                 Lưu Thay Đổi
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Tạo/Sửa Task Group */}
+      {showTaskGroupModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3 text-[#0058be]">
+                <span className="material-symbols-outlined text-[28px]">add_box</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">
+                  {editingTaskGroup ? 'Chỉnh sửa Task Group' : 'Tạo Task Group mới'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowTaskGroupModal(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            
+            {/* Modal Form */}
+            <form onSubmit={handleSaveTaskGroup} className="p-6 space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên Task Group *</label>
+                <input
+                  type="text"
+                  required
+                  value={tgName}
+                  onChange={e => setTgName(e.target.value)}
+                  placeholder="VD: Khảo sát hệ thống"
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Mô tả</label>
+                <textarea
+                  value={tgDesc}
+                  onChange={e => setTgDesc(e.target.value)}
+                  placeholder="Mô tả công việc của nhóm..."
+                  rows={3}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Chọn Phase *</label>
+                <select
+                  value={tgPhaseId}
+                  onChange={e => setTgPhaseId(e.target.value ? Number(e.target.value) : '')}
+                  required
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-bold"
+                >
+                  <option value="">-- Chọn Phase --</option>
+                  {phases.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Trạng thái</label>
+                <select
+                  value={tgStatus}
+                  onChange={e => setTgStatus(e.target.value)}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                >
+                  <option value="Waiting">Waiting</option>
+                  <option value="Running">Running</option>
+                  <option value="Done">Done</option>
+                </select>
+              </div>
+
+              <div className="bg-slate-50 px-6 py-4 -mx-6 -mb-6 mt-6 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowTaskGroupModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm"
+                >
+                  {editingTaskGroup ? 'Lưu thay đổi' : 'Tạo Task Group'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

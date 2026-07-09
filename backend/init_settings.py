@@ -9,7 +9,7 @@ def init():
         if not db.query(Setting).filter(Setting.key == "column_config").first():
             cols = {
                 "cols": ["DETAIL TASK", "PRIORITY", "MANDAY (EST)", "STATUS", "ASSIGNED"],
-                "tab_names": ["1.Sale/Admin", "2.Init", "2.1.Lab/PoC", "3.Implement", "4.MA"]
+                "tab_names": []
             }
             db.add(Setting(key="column_config", value=json.dumps(cols, ensure_ascii=False)))
             print("Initialized column_config")

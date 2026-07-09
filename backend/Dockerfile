@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY create_admin.py .
 COPY init_settings.py .
+COPY Skill_Master_From_Sheet.xlsx .
 
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser

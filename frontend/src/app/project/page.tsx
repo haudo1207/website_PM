@@ -1,427 +1,316 @@
 'use client';
-import { useEffect, useState, useRef, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState, Suspense } from 'react';
+import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getSheets, addSheet, checkSheet, deleteSheet, getSheetLogs } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { getProjects, deleteProject } from '@/lib/api';
 
-interface Log { time: string; msg: string; level: string; }
-interface CS { id: number; status: string; logs: Log[]; }
-
-const getYearFromProjectCode = (projectCode: string, createdAt: string): number => {
-  if (projectCode) {
-    const match = projectCode.match(/(19\d{2}|20\d{2})/);
-    if (match) {
-      return parseInt(match[1], 10);
-    }
-    const val = parseInt(projectCode, 10);
-    if (!isNaN(val)) return val;
-  }
-  if (createdAt) {
-    try {
-      return new Date(createdAt).getFullYear();
-    } catch {}
-  }
-  return new Date().getFullYear();
+const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
+  'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
+  'Developing': { bg: 'bg-[#dbeafe] text-[#1d4ed8]', bar: 'bg-[#0058be]' },
+  'Completed':  { bg: 'bg-[#dcfce7] text-[#15803d]', bar: 'bg-[#15803d]' },
+  'Archived':   { bg: 'bg-[#f1f5f9] text-[#64748b]', bar: 'bg-[#94a3b8]' },
 };
 
-function SheetsPageContent() {
+const PROJECT_PHASES = [
+  '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
+  '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
+  '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
+  '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
+  '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
+];
+
+const getPhaseBadgeStyle = (phase: string) => {
+  if (!phase) return 'bg-slate-100 text-slate-600 border border-slate-200/50';
+  const clean = phase.toLowerCase();
+  if (clean.includes('tư vấn') || clean.includes('báo giá')) {
+    return 'bg-blue-50 text-blue-700 border border-blue-200/30';
+  }
+  if (clean.includes('triển khai') || clean.includes('hoàn thành')) {
+    return 'bg-indigo-50 text-indigo-700 border border-indigo-200/30';
+  }
+  if (clean.includes('duyệt') || clean.includes('hợp đồng') || clean.includes('ký')) {
+    return 'bg-purple-50 text-purple-700 border border-purple-200/30';
+  }
+  if (clean.includes('init') || clean.includes('khởi tạo')) {
+    return 'bg-pink-50 text-pink-700 border border-pink-200/30';
+  }
+  if (clean.includes('nghiệm thu') || clean.includes('trúng')) {
+    return 'bg-emerald-50 text-emerald-700 border border-emerald-200/30';
+  }
+  if (clean.includes('huỷ') || clean.includes('rớt')) {
+    return 'bg-red-50 text-red-700 border border-red-200/30';
+  }
+  return 'bg-sky-50 text-sky-700 border border-sky-200/30';
+};
+
+function ProjectListContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const [sheets, setSheets] = useState<any[]>([]);
-  const [syncingSheetId, setSyncingSheetId] = useState<number | null>(null);
-  const [url, setUrl] = useState('');
-  const [name, setName] = useState('');
-  const [leaderEmail, setLeaderEmail] = useState('');
-  const [pmEmail, setPmEmail] = useState('');
-  const [memberEmails, setMemberEmails] = useState('');
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [sheetToDelete, setSheetToDelete] = useState<number | null>(null);
-  const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [cs, setCs] = useState<CS | null>(null);
-  const [showLog, setShowLog] = useState(false);
-  const logRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<any>(null);
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [pmFilter, setPmFilter] = useState('All');
+  const [projects, setProjects] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
+  const [phaseFilter, setPhaseFilter] = useState('All');
   const [customerFilter, setCustomerFilter] = useState('All');
+  const [pmFilter, setPmFilter] = useState('All');
   const [yearFilter, setYearFilter] = useState('All');
-  const [currentPage, setCurrentPage] = useState(1);
+  const [sortBy, setSortBy] = useState('newest');
+
+  const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
   const PAGE_SIZE = 9;
 
-  const phases = [
-    '1. Tư vấn',
-    '2. Báo giá',
-    '3. Làm specs',
-    '4. Duyệt HSMT',
-    '5. Chờ ra thầu',
-    '6. Tham gia thầu POP',
-    '6. Tham gia thầu nhà phụ',
-    '7. Trúng Thầu',
-    '7. Rớt thầu',
-    '8. Ký hợp đồng',
-    '9. Đặt hàng',
-    '10. Giao hàng',
-    '11. Triển khai',
-    '12. Hoàn thành triển khai',
-    '13. Nghiệm thu',
-    '14. Thanh toán',
-    '15. Kết thúc dự án',
-    '0. Huỷ'
-  ];
-
-  const uniquePMs = Array.from(new Set(sheets.map(s => s.pm_email).filter(Boolean)));
-  const uniqueCustomers = Array.from(new Set(sheets.map(s => s.customer_name).filter(Boolean)));
-  const uniqueYears = Array.from(
-    new Set(
-      sheets.map(s => getYearFromProjectCode(s.project_code, s.created_at))
-    )
-  ).sort((a: any, b: any) => b - a);
-  const reload = () => getSheets().then(setSheets).catch(() => {});
-
+  const reload = () => getProjects().then(setProjects).catch(() => {});
   useEffect(() => { reload(); }, []);
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [cs?.logs]);
-  useEffect(() => {
-    const pollId = searchParams.get('poll');
-    if (pollId) {
-      flash('Đang khởi tạo đồng bộ dữ liệu dự án mới...');
-      setSyncingSheetId(Number(pollId));
-      poll(Number(pollId), false);
-      const newUrl = window.location.pathname;
-      window.history.replaceState({ ...window.history.state, as: newUrl, url: newUrl }, '', newUrl);
-    }
-  }, [searchParams]);
 
   const flash = (t: string, e = false) => { setMsg({ t, e }); setTimeout(() => setMsg(null), 4000); };
 
-  const poll = (id: number, showTerminal = true) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    setCs({ id, status: 'running', logs: [] });
-    if (showTerminal) {
-      setShowLog(true);
-    }
-    pollRef.current = setInterval(async () => {
-      try {
-        const r = await getSheetLogs(id);
-        setCs({ id, status: r.status, logs: r.logs || [] });
-        if (['success', 'failed', 'error'].includes(r.status)) {
-          clearInterval(pollRef.current);
-          setSyncingSheetId(null);
-          reload();
-        }
-      } catch {}
-    }, 2000);
+  const getInitials = (name: string) => {
+    if (!name) return '—';
+    return name
+      .trim()
+      .split(/\s+/)
+      .map(n => n[0])
+      .join('')
+      .substring(0, 2)
+      .toUpperCase();
   };
 
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const d = await addSheet({ url, name: name || 'Sheet', leader_email: leaderEmail || undefined, pm_email: pmEmail || undefined, member_emails: memberEmails || undefined, auto_create: false });
-      setUrl(''); setName(''); setLeaderEmail(''); setPmEmail(''); setMemberEmails(''); setShowAddModal(false);
-      flash('Đã thêm dự án!'); reload(); poll(d.id);
-    } catch { flash('URL không hợp lệ hoặc chưa cấp quyền truy cập', true); }
+  const handleResetFilters = () => {
+    setSearch('');
+    setPhaseFilter('All');
+    setCustomerFilter('All');
+    setPmFilter('All');
+    setYearFilter('All');
+    setPage(1);
   };
 
-  const getPhaseStyle = (phase: string) => {
-    const p = (phase || '').toLowerCase();
-    if (p.includes('hoàn thành') || p.includes('done') || p.includes('close') || p.includes('15. kết thúc')) {
-      return { label: phase || 'Hoàn tất', bg: 'bg-[#dcfce7] text-[#15803d]', bar: 'bg-[#15803d]' };
-    }
-    if (p.includes('trì hoãn') || p.includes('delay') || p.includes('huỷ') || p.includes('rớt')) {
-      return { label: phase || 'Trì hoãn/Huỷ', bg: 'bg-[#fee2e2] text-[#dc2626]', bar: 'bg-[#dc2626]' };
-    }
-    if (p.includes('thiết kế') || p.includes('design') || p.includes('tư vấn') || p.includes('báo giá') || p.includes('specs') || p.includes('thầu')) {
-      return { label: phase || 'Khởi tạo', bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' };
-    }
-    return { label: phase || 'Triển khai', bg: 'bg-[#dbeafe] text-[#1d4ed8]', bar: 'bg-[#0058be]' };
-  };
+  // Dynamic lists from loaded data
+  const uniqueCustomers = Array.from(new Set(projects.map(p => p.customer_name).filter(Boolean)));
+  const uniquePms = Array.from(new Set(projects.map(p => p.pm_name).filter(Boolean)));
+  const uniqueYears = Array.from(new Set(projects.map(p => p.year).filter(v => v !== null && v !== undefined))).sort((a, b) => b - a);
 
-  const getPMName = (email: string) => {
-    if (!email) return 'Chưa có PM';
-    return email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  };
-
-  const getInitials = (email: string) => {
-    if (!email) return 'PM';
-    const n = getPMName(email).split(' ');
-    return (n[0]?.[0] || '') + (n[n.length - 1]?.[0] || '');
-  };
-
-  const filteredSheets = sheets.filter(s => {
-    if (syncingSheetId !== null && s.id === syncingSheetId) {
-      return false;
-    }
-    const q = searchTerm.toLowerCase();
-    const matchSearch = [(s.name || ''), (s.customer_name || ''), (s.pm_email || ''), (s.project_code || '')].some(v => v.toLowerCase().includes(q));
-    const matchPhase = statusFilter === 'All' || s.current_phase === statusFilter;
-    const matchPM = pmFilter === 'All' || s.pm_email === pmFilter;
-    const matchCustomer = customerFilter === 'All' || s.customer_name === customerFilter;
-    const sheetYear = getYearFromProjectCode(s.project_code, s.created_at);
-    const matchYear = yearFilter === 'All' || String(sheetYear) === yearFilter;
-    return matchSearch && matchPhase && matchPM && matchCustomer && matchYear;
+  // Filter
+  const filtered = projects.filter(p => {
+    const q = search.toLowerCase();
+    const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
+    const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
+    const matchCustomer = customerFilter === 'All' || p.customer_name === customerFilter;
+    const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
+    const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
+    return matchSearch && matchPhase && matchCustomer && matchPm && matchYear;
   });
 
-  const totalPages = Math.max(1, Math.ceil(filteredSheets.length / PAGE_SIZE));
-  const pagedSheets = filteredSheets.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const lc: Record<string, string> = { info: 'text-gray-500', warn: 'text-amber-600', error: 'text-red-500', success: 'text-emerald-600' };
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === 'newest') return b.id - a.id;
+    if (sortBy === 'oldest') return a.id - b.id;
+    if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
+    if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
+    return 0;
+  });
 
-  const AVATAR_COLORS = ['bg-blue-500', 'bg-violet-500', 'bg-teal-500', 'bg-orange-500', 'bg-pink-500'];
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const paged = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <div className="min-h-screen flex" style={{ backgroundColor: '#f0f2f5', fontFamily: "'Work Sans', sans-serif" }}>
+    <div className="min-h-screen flex bg-[#f8fafc]" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
       <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
-        <div className="p-6 space-y-6">
-
-          {/* Toast */}
+        <div className="p-8 space-y-6 max-w-[1400px] w-full mx-auto">
           {msg && (
-            <div className={`fixed top-4 right-4 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border ${msg.e ? 'bg-[#fee2e2] text-[#dc2626] border-[#fca5a5]' : 'bg-[#dcfce7] text-[#15803d] border-[#86efac]'}`}>
+            <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border backdrop-blur-sm transition-all duration-300 transform translate-y-0 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
             </div>
           )}
 
-          {/* Page Header */}
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
             <div>
-              <h2 className="text-xl font-bold text-[#0b1c30]">Danh sách dự án</h2>
-              <p className="text-sm text-[#565e74]">Quản lý và theo dõi tiến độ các dự án tuân thủ bảo mật.</p>
+              <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Danh sách dự án</h1>
+              <p className="text-sm text-slate-500 mt-1">Quản lý và theo dõi tiến độ các dự án tuân thủ bảo mật.</p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-[#565e74]">Sắp xếp:</span>
-                <select className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#0058be]/20 text-[#0b1c30]">
-                  <option>Mới nhất</option>
-                  <option>Tên (A-Z)</option>
+            
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-slate-200 rounded-lg shadow-sm">
+                <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
+                  <option value="newest">Mới nhất</option>
+                  <option value="oldest">Cũ nhất</option>
+                  <option value="name_asc">Tên (A-Z)</option>
+                  <option value="name_desc">Tên (Z-A)</option>
                 </select>
               </div>
-              <button
-                onClick={() => router.push('/projects/new')}
-                className="flex items-center gap-2 bg-[#0058be] hover:bg-[#004bb2] text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition-all duration-150 hover:shadow-md active:scale-95"
-              >
-                <span className="material-symbols-outlined text-[18px]">add</span>
+
+              <button onClick={() => router.push('/projects/new')} className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-5 py-2 rounded-lg text-sm font-bold shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 transition-all duration-200">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
                 Thêm dự án
               </button>
             </div>
           </div>
 
-          {/* Filter Bar */}
-          <div className="bg-white border border-[#c2c6d6] rounded-xl p-4 flex flex-wrap items-end gap-4 shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm">
             <div className="relative flex-1 min-w-[240px]">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#727785] text-[20px]">search</span>
-              <input
-                type="text"
-                placeholder="Tìm kiếm tên dự án, khách hàng..."
-                value={searchTerm}
-                onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-                className="w-full pl-10 pr-4 py-2 border border-[#c2c6d6] rounded-lg text-sm focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] outline-none text-[#0b1c30] placeholder-[#727785]"
-              />
+              <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input type="text" placeholder="Tìm kiếm tên dự án, khách hàng..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
+                className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none text-slate-700 focus:border-indigo-500 bg-slate-50/20" />
             </div>
-            <div className="flex flex-col min-w-[150px]">
-              <label className="text-[10px] font-bold text-[#424754] uppercase mb-1 ml-1">Giai đoạn</label>
-              <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setCurrentPage(1); }} className="bg-[#eff4ff] border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#0058be] text-[#0b1c30]">
+            
+            <div className="flex flex-col flex-shrink-0 w-[170px]">
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Giai đoạn</label>
+              <select value={phaseFilter} onChange={e => { setPhaseFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
                 <option value="All">Tất cả giai đoạn</option>
-                {phases.map(p => (
-                  <option key={p} value={p}>{p}</option>
+                {PROJECT_PHASES.map(ph => (
+                  <option key={ph} value={ph}>{ph}</option>
                 ))}
               </select>
             </div>
-            <div className="flex flex-col min-w-[150px]">
-              <label className="text-[10px] font-bold text-[#424754] uppercase mb-1 ml-1">Khách hàng</label>
-              <select value={customerFilter} onChange={e => { setCustomerFilter(e.target.value); setCurrentPage(1); }} className="bg-[#eff4ff] border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#0058be] text-[#0b1c30]">
+
+            <div className="flex flex-col flex-shrink-0 w-[170px]">
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Khách hàng</label>
+              <select value={customerFilter} onChange={e => { setCustomerFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
                 <option value="All">Tất cả khách hàng</option>
-                {uniqueCustomers.map(c => (
-                  <option key={c} value={c}>{c}</option>
+                {uniqueCustomers.map(cust => (
+                  <option key={cust} value={cust}>{cust}</option>
                 ))}
               </select>
             </div>
-            <div className="flex flex-col min-w-[150px]">
-              <label className="text-[10px] font-bold text-[#424754] uppercase mb-1 ml-1">Quản lý (PM)</label>
-              <select value={pmFilter} onChange={e => { setPmFilter(e.target.value); setCurrentPage(1); }} className="bg-[#eff4ff] border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#0058be] text-[#0b1c30]">
+
+            <div className="flex flex-col flex-shrink-0 w-[170px]">
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Quản lý (PM)</label>
+              <select value={pmFilter} onChange={e => { setPmFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
                 <option value="All">Tất cả PM</option>
-                {uniquePMs.map(e => <option key={e} value={e}>{getPMName(e)}</option>)}
+                {uniquePms.map(pm => (
+                  <option key={pm} value={pm}>{pm}</option>
+                ))}
               </select>
             </div>
-            <div className="flex flex-col min-w-[100px]">
-              <label className="text-[10px] font-bold text-[#424754] uppercase mb-1 ml-1">Năm</label>
-              <select value={yearFilter} onChange={e => { setYearFilter(e.target.value); setCurrentPage(1); }} className="bg-[#eff4ff] border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#0058be] text-[#0b1c30]">
+
+            <div className="flex flex-col flex-shrink-0 w-[120px]">
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Năm</label>
+              <select value={yearFilter} onChange={e => { setYearFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
                 <option value="All">Tất cả năm</option>
-                {uniqueYears.map(y => <option key={y} value={String(y)}>{y}</option>)}
+                {uniqueYears.map(yr => (
+                  <option key={yr} value={String(yr)}>{yr}</option>
+                ))}
               </select>
             </div>
-            <button
-              type="button"
-              onClick={() => { setSearchTerm(''); setStatusFilter('All'); setPmFilter('All'); setCustomerFilter('All'); setYearFilter('All'); setCurrentPage(1); }}
-              className="flex items-center gap-2 bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#565e74] px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]">filter_alt_off</span>
+
+            <button onClick={handleResetFilters} className="flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors flex-shrink-0 h-[34px]">
+              <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" stroke="red" strokeWidth={1.5} />
+              </svg>
               Xóa lọc
             </button>
           </div>
 
-          {/* Log Terminal (Admin) */}
-          {isAdmin() && showLog && cs && (
-            <div className="bg-white border border-[#c2c6d6] rounded-xl overflow-hidden shadow-sm">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-[#c2c6d6] bg-[#eff4ff]">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${cs.status === 'running' ? 'bg-green-500 animate-pulse' : cs.status === 'success' ? 'bg-green-500' : 'bg-red-500'}`} />
-                  <span className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">
-                    {cs.status === 'running' ? 'ĐANG CHẠY' : cs.status === 'success' ? 'HOÀN TẤT' : 'LỖI'} · Sheet #{cs.id}
-                  </span>
-                </div>
-                <button onClick={() => setShowLog(false)} className="text-xs font-semibold text-[#565e74] hover:text-[#0b1c30] px-3 py-1 rounded bg-white border border-[#c2c6d6]">Đóng</button>
-              </div>
-              <div ref={logRef} className="h-44 overflow-y-auto p-4 space-y-1 font-mono text-[11px] leading-relaxed bg-[#f8f9ff]">
-                {cs.logs.length === 0 && <p className="text-[#727785] animate-pulse">Đang khởi tạo worker...</p>}
-                {cs.logs.map((l, i) => (
-                  <div key={i} className="flex gap-2">
-                    <span className="text-[#727785] w-20 flex-shrink-0">{l.time.split(' ')[1] || l.time}</span>
-                    <span className={lc[l.level] || 'text-[#0b1c30]'}>{l.msg}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Project Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {syncingSheetId !== null && (
-              <div className="bg-white border border-dashed border-[#0058be]/40 rounded-[10px] p-5 flex flex-col justify-center items-center shadow-sm animate-pulse min-h-[220px]">
-                <div className="w-10 h-10 rounded-full border-4 border-[#0058be] border-t-transparent animate-spin mb-3" />
-                <h4 className="text-[13px] font-bold text-[#0b1c30]">Đang đồng bộ dự án mới...</h4>
-                <p className="text-[11px] text-[#565e74] text-center mt-1 px-4">
-                  Vui lòng đợi giây lát khi hệ thống đồng bộ dữ liệu từ Google Sheet.
-                </p>
-              </div>
-            )}
-            {pagedSheets.map(s => {
-              const phaseStyle = getPhaseStyle(s.current_phase);
-              const members = (s.member_emails || '').split(',').filter(Boolean);
-              const allMembers = [s.leader_email, s.pm_email, ...members].filter(Boolean);
-              const year = getYearFromProjectCode(s.project_code, s.created_at);
-
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {paged.map(p => {
+              const phaseBadge = getPhaseBadgeStyle(p.current_phase);
               return (
-                <div
-                  key={s.id}
-                  onClick={() => router.push(`/project/detail?id=${s.id}`)}
-                  className="bg-white border border-[#c2c6d6] rounded-[10px] overflow-hidden flex flex-col cursor-pointer group shadow-sm hover:shadow-md transition-all duration-150 hover:-translate-y-0.5"
-                >
-                  <div className={`h-1.5 w-full ${phaseStyle.bar}`} />
-                  <div className="p-5 flex-1 flex flex-col">
-                    {/* Top row */}
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-[11px] text-[#424754] bg-[#e5eeff] rounded px-2 py-0.5 font-medium">Năm: {year}</span>
-                      <span className={`text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-tight ${phaseStyle.bg}`}>{phaseStyle.label}</span>
+                <div key={p.id} onClick={() => router.push(`/project/detail?id=${p.id}`)}
+                  className="bg-white border border-slate-200/80 rounded-xl overflow-hidden flex flex-col cursor-pointer group shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-300 hover:-translate-y-0.5 relative">
+                  <div className="p-6 flex-1 flex flex-col">
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200 px-2 py-0.5 rounded">Năm: {p.year || '—'}</span>
+                      <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
                     </div>
-
-                    {/* Name & Customer */}
-                    <h3 className="text-[14px] font-bold text-[#0b1c30] mb-0.5 group-hover:text-[#0058be] transition-colors leading-snug">
-                      {s.name || 'Unnamed Project'}
-                    </h3>
-                    <p className="text-[13px] text-[#565e74] mb-4 line-clamp-1">{s.customer_name || <span className="italic text-[#727785]">Chưa có khách hàng</span>}</p>
-
-                    {/* PM & Leader */}
-                    <div className="grid grid-cols-2 gap-y-3 mb-5">
+                    <h3 className="text-base font-bold text-slate-800 mb-0.5 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
+                    <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic">{p.customer_name || 'Chưa có khách hàng'}</p>
+                    
+                    <div className="grid grid-cols-2 gap-y-4 mb-6">
                       <div>
-                        <p className="text-[10px] text-[#424754] uppercase font-bold tracking-wide mb-0.5">Project Manager</p>
-                        <p className="text-[13px] font-medium text-[#0b1c30]">{s.pm_email ? getPMName(s.pm_email) : <span className="text-[#727785] italic">—</span>}</p>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Project Manager</p>
+                        <p className="text-[13px] font-semibold text-slate-700 truncate">{p.pm_name || <span className="text-slate-400 italic">—</span>}</p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-[#424754] uppercase font-bold tracking-wide mb-0.5">Technical Lead</p>
-                        <p className="text-[13px] font-medium text-[#0b1c30]">{s.leader_email ? getPMName(s.leader_email) : <span className="text-[#727785] italic">—</span>}</p>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Technical Lead</p>
+                        <p className="text-[13px] font-semibold text-slate-700 truncate">{p.technical_leader_name || <span className="text-slate-400 italic">—</span>}</p>
                       </div>
                     </div>
 
-                    {/* Stats + Avatars */}
-                    <div className="border-t border-[#f1f5f9] pt-4 mt-auto">
-                      <div className="flex justify-between items-center">
-                        <div className="flex gap-5">
-                          <div className="text-center">
-                            <p className="text-[10px] text-[#424754] font-medium">Tổng</p>
-                            <p className="text-[13px] font-bold text-[#0b1c30]">{s.violation_count ?? 0}</p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-[10px] text-[#15803d] font-medium">Hoàn thành</p>
-                            <p className="text-[13px] font-bold text-[#15803d]">{s.completed_count ?? 0}</p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-[10px] text-[#dc2626] font-medium">Cảnh báo</p>
-                            <p className="text-[13px] font-bold text-[#dc2626]">{s.fail_count ?? 0}</p>
-                          </div>
+                    <div className="border-t border-slate-100 pt-4 mt-auto flex justify-between items-center">
+                      <div className="flex gap-6">
+                        <div className="text-left">
+                          <p className="text-[11px] text-slate-500 font-medium">Tổng</p>
+                          <p className="text-[14px] font-bold text-slate-800 mt-0.5">{p.task_count ?? 0}</p>
                         </div>
-
-                        {/* Team Avatars */}
-                        <div className="flex -space-x-2">
-                          {allMembers.slice(0, 3).map((m: string, i: number) => (
-                            <div key={i} className={`h-7 w-7 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold text-white ${AVATAR_COLORS[i % AVATAR_COLORS.length]}`} title={m}>
-                              {getInitials(m).toUpperCase()}
-                            </div>
-                          ))}
-                          {allMembers.length > 3 && (
-                            <div className="h-7 w-7 rounded-full border-2 border-white bg-[#e5eeff] flex items-center justify-center text-[10px] font-bold text-[#565e74]">
-                              +{allMembers.length - 3}
-                            </div>
-                          )}
+                        <div className="text-left">
+                          <p className="text-[11px] text-emerald-600 font-medium">Hoàn thành</p>
+                          <p className="text-[14px] font-bold text-emerald-600 mt-0.5">{p.completed_task_count ?? 0}</p>
+                        </div>
+                        <div className="text-left">
+                          <p className="text-[11px] text-rose-600 font-medium">Cảnh báo</p>
+                          <p className="text-[14px] font-bold text-rose-600 mt-0.5">{p.warning_task_count ?? 0}</p>
                         </div>
                       </div>
 
+                      <div className="flex -space-x-1.5 overflow-hidden">
+                        {p.members?.slice(0, 3).map((m: any, idx: number) => {
+                          const COLORS = ['bg-blue-600', 'bg-purple-600', 'bg-indigo-600', 'bg-pink-600', 'bg-emerald-600'];
+                          const bg = COLORS[idx % COLORS.length];
+                          return (
+                            <div key={idx} className={`inline-block h-6 w-6 rounded-full ring-2 ring-white ${bg} flex items-center justify-center text-[9px] font-bold text-white uppercase`} title={m.name}>
+                              {getInitials(m.name)}
+                            </div>
+                          );
+                        })}
+                        {p.members?.length > 3 && (
+                          <div className="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 uppercase" title="Xem thêm thành viên">
+                            +{p.members.length - 3}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               );
             })}
 
-            {/* Add New Card */}
-            <div
-              onClick={() => router.push('/projects/new')}
-              className="border-2 border-dashed border-[#c2c6d6] rounded-[10px] bg-[#f8f9ff] flex flex-col items-center justify-center p-8 text-center cursor-pointer hover:bg-[#eff4ff] hover:border-[#0058be] transition-all group min-h-[200px]"
-            >
-              <div className="w-12 h-12 rounded-full bg-white border border-[#c2c6d6] flex items-center justify-center mb-4 group-hover:scale-110 transition-transform shadow-sm">
-                <span className="material-symbols-outlined text-[#0058be] text-[32px]">add</span>
+            <div onClick={() => router.push('/projects/new')}
+              className="border-2 border-dashed border-slate-200 rounded-xl bg-white/60 flex flex-col items-center justify-center p-8 cursor-pointer hover:bg-slate-50 hover:border-indigo-500 transition-all duration-300 group min-h-[220px] shadow-sm text-center">
+              <div className="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-indigo-50 group-hover:border-indigo-200 transition-all duration-300 shadow-sm">
+                <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
               </div>
-              <h4 className="text-[14px] font-bold text-[#0b1c30]">Thêm dự án mới</h4>
-              <p className="text-[13px] text-[#565e74] mt-1">Bắt đầu khởi tạo quy trình tuân thủ mới cho khách hàng.</p>
+              <h4 className="text-[14px] font-bold text-slate-800">Thêm dự án mới</h4>
+              <p className="text-xs text-slate-500 mt-2 px-4 max-w-[280px]">Bắt đầu khởi tạo quy trình tuân thủ mới cho khách hàng.</p>
             </div>
-
-            {filteredSheets.length === 0 && (
-              <div className="col-span-full text-center py-16 text-[#727785]">
-                <span className="material-symbols-outlined text-[48px] mb-3 block">folder_off</span>
-                Chưa có dự án nào khớp với bộ lọc
-              </div>
-            )}
           </div>
 
-          {/* Pagination */}
-          <div className="flex flex-col md:flex-row justify-between items-center border-t border-[#e2e8f0] pt-6 mt-2">
-            <p className="text-sm text-[#565e74] mb-4 md:mb-0">
-              Hiển thị <span className="font-bold text-[#0b1c30]">{Math.min((currentPage - 1) * PAGE_SIZE + 1, filteredSheets.length)}-{Math.min(currentPage * PAGE_SIZE, filteredSheets.length)}</span> trên tổng số <span className="font-bold text-[#0b1c30]">{filteredSheets.length}</span> dự án
-            </p>
+          <div className="flex justify-between items-center border-t border-slate-200 pt-6">
+            <p className="text-sm text-slate-500">Hiển thị <span className="font-bold text-slate-700">{paged.length}</span> / <span className="font-bold text-slate-700">{filtered.length}</span> dự án</p>
             <div className="flex items-center gap-2">
-              <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className="w-9 h-9 border border-[#c2c6d6] rounded-lg flex items-center justify-center bg-white hover:bg-[#f1f5f9] transition-colors disabled:opacity-40">
-                <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+              <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="w-9 h-9 border border-slate-200 rounded-lg flex items-center justify-center bg-white hover:bg-slate-50 disabled:opacity-40 transition-colors">
+                <svg className="w-4 h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
               </button>
               {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                <button key={p} onClick={() => setCurrentPage(p)} className={`w-9 h-9 border rounded-lg flex items-center justify-center text-sm font-medium transition-colors ${p === currentPage ? 'border-[#0058be] bg-[#0058be] text-white' : 'border-[#c2c6d6] bg-white text-[#0b1c30] hover:bg-[#f1f5f9]'}`}>{p}</button>
+                <button key={p} onClick={() => setPage(p)} className={`w-9 h-9 border rounded-lg flex items-center justify-center text-sm font-bold transition-all ${p === page ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm shadow-indigo-600/10' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>{p}</button>
               ))}
-              <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)} className="w-9 h-9 border border-[#c2c6d6] rounded-lg flex items-center justify-center bg-white hover:bg-[#f1f5f9] transition-colors disabled:opacity-40">
-                <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+              <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="w-9 h-9 border border-slate-200 rounded-lg flex items-center justify-center bg-white hover:bg-slate-50 disabled:opacity-40 transition-colors">
+                <svg className="w-4 h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* MODAL: Delete Confirmation */}
-      {sheetToDelete !== null && (
+      {deleteId !== null && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
-            <h2 className="text-base font-bold text-[#0b1c30] mb-2 flex items-center gap-2"><span className="text-[#dc2626]">⚠️</span> Xóa dự án</h2>
-            <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa dự án này? Toàn bộ dữ liệu vi phạm sẽ bị xóa vĩnh viễn và không thể khôi phục.</p>
+            <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa dự án</h2>
+            <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa dự án này?</p>
             <div className="flex justify-end gap-3">
-              <button onClick={() => setSheetToDelete(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30] transition-colors">Hủy</button>
-              <button onClick={async () => { const id = sheetToDelete; setSheetToDelete(null); try { await deleteSheet(id); reload(); } catch { flash('Xóa thất bại', true); } }} className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white transition-colors shadow-sm">Xóa</button>
+              <button onClick={() => setDeleteId(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
+              <button onClick={async () => { try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null); }}
+                className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm">Xóa</button>
             </div>
           </div>
         </div>
@@ -430,10 +319,10 @@ function SheetsPageContent() {
   );
 }
 
-export default function SheetsPage() {
+export default function ProjectsPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-[#f0f2f5]" />}>
-      <SheetsPageContent />
+      <ProjectListContent />
     </Suspense>
   );
 }

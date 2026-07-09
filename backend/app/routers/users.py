@@ -8,7 +8,17 @@ router = APIRouter()
 
 @router.get("")
 def list_users(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    return [{"id":u.id,"email":u.email,"full_name":u.full_name,"role":u.role,"is_active":u.is_active} for u in db.query(User).all()]
+    return [
+        {
+            "id": u.id,
+            "email": u.email,
+            "full_name": u.full_name,
+            "role": u.role,
+            "is_active": u.is_active,
+            "skills": [s.id for s in u.skills]
+        }
+        for u in db.query(User).all()
+    ]
 
 VALID_ROLES = {"admin", "group_a", "group_b"}
 
@@ -19,7 +29,18 @@ def create_user(body: dict, db: Session = Depends(get_db), _=Depends(require_adm
     role = body.get("role", "group_a")
     if role not in VALID_ROLES:
         raise HTTPException(400, f"Invalid role. Must be one of: {VALID_ROLES}")
-    u = User(email=body["email"], full_name=body.get("full_name",""), hashed_pw=hash_password(body["password"]), role=role)
+    
+    from ..models.skill_master import Skill
+    skills = body.get("skills", [])
+    skill_objs = db.query(Skill).filter(Skill.id.in_(skills)).all()
+    
+    u = User(
+        email=body["email"],
+        full_name=body.get("full_name",""),
+        hashed_pw=hash_password(body["password"]),
+        role=role,
+        skills=skill_objs
+    )
     db.add(u)
     db.commit()
     db.refresh(u)
@@ -33,6 +54,10 @@ def update_user(uid: int, body: dict, db: Session = Depends(get_db), _=Depends(r
     for k, v in body.items():
         if k == "password":
             setattr(u, "hashed_pw", hash_password(v))
+        elif k == "skills":
+            from ..models.skill_master import Skill
+            skill_objs = db.query(Skill).filter(Skill.id.in_(v)).all()
+            u.skills = skill_objs
         elif hasattr(u, k) and k not in ["id","hashed_pw"]:
             setattr(u, k, v)
     db.commit()

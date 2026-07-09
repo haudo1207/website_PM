@@ -24,7 +24,10 @@ def save_setting(key, value, db, user_email="system"):
 
 @router.get("/column-config")
 def get_col(db=Depends(get_db), _=Depends(get_current_user)):
-    return get_setting("column_config", db) or {"cols":["DETAIL TASK","PRIORITY","MANDAY (EST)","STATUS","ASSIGNED"],"tab_names":["1.Sale/Admin","2.Init","2.1.Lab/PoC","3.Implement","4.MA"]}
+    return get_setting("column_config", db) or {
+        "cols": ["DETAIL TASK", "PRIORITY", "MANDAY (EST)", "STATUS", "ASSIGNED"],
+        "tab_names": []
+    }
 
 @router.put("/column-config")
 def set_col(body: dict, db=Depends(get_db), admin=Depends(require_admin)):

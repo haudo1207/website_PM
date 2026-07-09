@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { getName, logout, getRole } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
-import { getSheets } from '@/lib/api';
+import { getProjects } from '@/lib/api';
 
 function NavbarContent() {
   const path = usePathname();
@@ -15,7 +15,7 @@ function NavbarContent() {
   useEffect(() => {
     setName(getName() ?? '');
     setRole(getRole() ?? '');
-    getSheets().then(setSheets).catch(() => {});
+    getProjects().then(setSheets).catch(() => {});
   }, [path]);
 
   const currentProjId = searchParams.get('project') || searchParams.get('id');
