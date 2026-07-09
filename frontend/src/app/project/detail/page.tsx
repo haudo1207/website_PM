@@ -1953,8 +1953,9 @@ function ProjectDetailContent() {
                     className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-2 py-1 rounded text-xs focus:outline-none focus:border-indigo-500 font-bold"
                   >
                     <option value="Waiting">Waiting</option>
-                    <option value="Running">Running</option>
+                    <option value="Process">Process</option>
                     <option value="Done">Done</option>
+                    <option value="Cancel">Cancel</option>
                   </select>
                 </td>
               );
@@ -3826,11 +3827,12 @@ if (loadingProject || !project) {
                 <select
                   value={tgStatus}
                   onChange={e => setTgStatus(e.target.value)}
-                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-bold"
                 >
                   <option value="Waiting">Waiting</option>
-                  <option value="Running">Running</option>
+                  <option value="Process">Process</option>
                   <option value="Done">Done</option>
+                  <option value="Cancel">Cancel</option>
                 </select>
               </div>
 
