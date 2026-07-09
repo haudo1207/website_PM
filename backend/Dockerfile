@@ -10,6 +10,7 @@ COPY app/ ./app/
 COPY create_admin.py .
 COPY init_settings.py .
 COPY sync_members.py .
+COPY migrate_db.py .
 COPY Skill_Master_From_Sheet.xlsx .
 
 RUN useradd -m appuser && chown -R appuser /app
