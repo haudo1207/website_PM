@@ -1896,7 +1896,7 @@ function ProjectDetailContent() {
                     ├──
                   </span>
                 )}
-                <span className={`line-clamp-2 ${!isSubTask ? 'font-bold text-slate-900 text-[13px]' : 'text-slate-700 font-normal text-[12px]'}`}>
+                <span className={`whitespace-pre-wrap break-words block max-h-[90px] overflow-y-auto leading-relaxed pr-4 ${!isSubTask ? 'font-bold text-slate-900 text-[13px]' : 'text-slate-700 font-normal text-[12px]'}`}>
                   {val}
                 </span>
               </div>
@@ -1930,7 +1930,7 @@ function ProjectDetailContent() {
           return (
             <td
               key={col}
-              className={`${cellStyle} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-pointer hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
+              className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-pointer hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
               onDoubleClick={() => {
                 if (!isReadOnly) handleStartEdit(col, val);
               }}
