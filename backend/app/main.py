@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .database import engine, Base
-from .models import user, setting, member, skill_master, system_category
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
@@ -269,12 +269,6 @@ def init_db_defaults():
 # Run database auto-seeding
 init_db_defaults()
 
-# Run v5 migration (old data → new structure)
-try:
-    from .migrate_v5 import migrate_v4_to_v5
-    migrate_v4_to_v5()
-except Exception as e:
-    print(f"[!] v5 migration failed: {e}")
 
 app = FastAPI(
     title="Task Compliance Portal",
@@ -297,6 +291,7 @@ app.include_router(settings_router.router,     prefix="/api/settings")
 app.include_router(skills.router,              prefix="/api/skills")
 app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
+app.include_router(meetings_router.router,    prefix="/api/meetings")
 
 @app.get("/health")
 def health():

@@ -468,7 +468,9 @@ def serialize_link(link, db):
         "platform_color": platform_color,
         "name": link.name,
         "url": link.url,
+        "link": link.url,
         "description": link.description,
+        "desc": link.description,
         "sort_order": link.sort_order,
         "created_at": str(link.created_at) if link.created_at else None,
     }

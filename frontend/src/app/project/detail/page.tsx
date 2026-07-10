@@ -2,6 +2,9 @@
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
+import MeetingCard from '@/components/meetings/MeetingCard';
+import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
+import SummarizeModal from '@/components/meetings/SummarizeModal';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
@@ -10,7 +13,8 @@ import {
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
   getMembers, getCustomers, getCategories, getPriorities, getStatuses,
-  duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks
+  duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
+  getMeetings, createMeeting, updateMeeting, deleteMeeting
 } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
@@ -77,7 +81,6 @@ function ProjectDetailContent() {
 
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [taskSearch, setTaskSearch] = useState('');
-  const [checkingTaskId, setCheckingTaskId] = useState<number | null>(null);
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
@@ -313,11 +316,11 @@ function ProjectDetailContent() {
   // Local state for meetings, chats
   const [meetings, setMeetings] = useState<any[]>([]);
   const [showMeetingModal, setShowMeetingModal] = useState(false);
-  const [newMeetingTitle, setNewMeetingTitle] = useState('');
-  const [newMeetingPlatform, setNewMeetingPlatform] = useState('Microsoft Teams');
-  const [newMeetingDate, setNewMeetingDate] = useState('');
-  const [newMeetingTime, setNewMeetingTime] = useState('');
-  const [newMeetingEndTime, setNewMeetingEndTime] = useState('');
+  const [editingMeeting, setEditingMeeting] = useState<any>(null);
+  const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
+  const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
 
   const [chats, setChats] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -455,21 +458,26 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
-  // Load meetings and chats from localStorage
+  const loadMeetings = useCallback(async () => {
+    if (!project?.name) return;
+    try {
+      const data = await getMeetings();
+      if (data.success) {
+        const filtered = data.data.filter((m: any) => m.project === project.name);
+        setMeetings(filtered);
+      }
+    } catch (error) {
+      console.error("Failed to fetch meetings", error);
+    }
+  }, [project?.name]);
+
+  useEffect(() => {
+    loadMeetings();
+  }, [project?.name, loadMeetings]);
+
+  // Load chats from localStorage
   useEffect(() => {
     if (!id) return;
-    const savedMeetings = localStorage.getItem(`meetings_${id}`);
-    if (savedMeetings) {
-      setMeetings(JSON.parse(savedMeetings));
-    } else {
-      const defaultMeetings = [
-        { id: '1', title: 'Review tiến độ tuần 24', platform: 'Microsoft Teams', date: '2024-10-24', time: '09:00', endTime: '10:30', status: 'done', aiSummary: ['Hoàn thành 80% giai đoạn PoC, cần đẩy nhanh tích hợp API.', 'Vấn đề: Chậm trễ trong việc kết nối phụ lục gia hạn thiết bị.', 'Action: Lê Hoa liên hệ phòng mua hàng trong ngày mai.'] },
-        { id: '2', title: 'Họp kỹ thuật: Tối ưu hóa Database', platform: 'Zoom Meeting', date: '2026-10-26', time: '14:00', endTime: '15:00', status: 'upcoming' },
-      ];
-      setMeetings(defaultMeetings);
-      localStorage.setItem(`meetings_${id}`, JSON.stringify(defaultMeetings));
-    }
-
     const savedChats = localStorage.getItem(`chats_${id}`);
     if (savedChats) {
       setChats(JSON.parse(savedChats));
@@ -847,34 +855,44 @@ function ProjectDetailContent() {
     return 'bg-slate-50 text-slate-700 border-slate-200';
   };
 
-  const handleAddMeeting = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMeetingTitle.trim() || !newMeetingDate || !newMeetingTime) {
-      alert('Vui lòng điền đầy đủ thông tin cuộc họp!');
-      return;
+  const handleSaveMeeting = async (meetingData: any) => {
+    try {
+      const payload = {
+        ...meetingData,
+        project: project?.name || ''
+      };
+      if (meetingData.id) {
+        const data = await updateMeeting(meetingData.id, payload);
+        if (data.success) {
+          flash('Cập nhật cuộc họp thành công!');
+          loadMeetings();
+        }
+      } else {
+        const data = await createMeeting(payload);
+        if (data.success) {
+          flash('Tạo cuộc họp mới thành công!');
+          loadMeetings();
+        }
+      }
+      setShowMeetingModal(false);
+      setEditingMeeting(null);
+    } catch (error: any) {
+      console.error("Failed to save meeting", error);
+      alert(error.response?.data?.detail || "Có lỗi xảy ra khi lưu cuộc họp");
     }
-    const meetDate = new Date(newMeetingDate);
-    const today = new Date(); today.setHours(0,0,0,0);
-    const status = meetDate < today ? 'done' : 'upcoming';
-    const meet = {
-      id: String(Date.now()),
-      title: newMeetingTitle,
-      platform: newMeetingPlatform,
-      date: newMeetingDate,
-      time: newMeetingTime,
-      endTime: newMeetingEndTime,
-      status,
-    };
-    const updated = [meet, ...meetings];
-    setMeetings(updated);
-    localStorage.setItem(`meetings_${id}`, JSON.stringify(updated));
-    setNewMeetingTitle('');
-    setNewMeetingPlatform('Microsoft Teams');
-    setNewMeetingDate('');
-    setNewMeetingTime('');
-    setNewMeetingEndTime('');
-    setShowMeetingModal(false);
-    flash('Đã tạo cuộc họp mới!');
+  };
+
+  const executeDeleteMeeting = async () => {
+    if (!deleteConfirmId) return;
+    try {
+      await deleteMeeting(parseInt(deleteConfirmId));
+      flash('Đã xóa cuộc họp thành công!');
+      loadMeetings();
+      setDeleteConfirmId(null);
+    } catch (error: any) {
+      console.error("Failed to delete meeting", error);
+      alert(error.response?.data?.detail || "Có lỗi xảy ra khi xóa cuộc họp");
+    }
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -938,7 +956,7 @@ function ProjectDetailContent() {
   // --- Dynamic Stats calculation ---
   const kpiTasks = getFilteredTasks();
   const kpiTotal = kpiTasks.length;
-  const kpiWarning = 0; // Warnings are no longer tracked via violations
+  const kpiWarning = kpiTasks.filter(x => x.days_late != null && x.days_late > 0).length;
 
   const kpiDone = kpiTasks.filter(x => {
     const s = (x.status || '').toLowerCase();
@@ -949,9 +967,6 @@ function ProjectDetailContent() {
     const s = (x.status || '').toLowerCase();
     return s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress';
   }).length;
-
-  const kpiPass = kpiDone; // Sync approved status with Done for UI compliance
-  const kpiEvaluated = kpiTotal;
 
   // Global progress bar calculation
   const totalTasks = items.length;
@@ -1652,27 +1667,7 @@ function ProjectDetailContent() {
               <span>☰</span>
             </button>
 
-            {/* 2. View details / AI Compliance (Hover visible) */}
-            <button
-              type="button"
-              onClick={async () => {
-                setCheckingTaskId(task.id);
-                try {
-                  flash('AI kiểm tra tuân thủ hoàn tất!');
-                } finally {
-                  setCheckingTaskId(null);
-                }
-              }}
-              disabled={checkingTaskId === task.id}
-              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400 disabled:opacity-50"
-              title="Kiểm tra tuân thủ AI"
-            >
-              {checkingTaskId === task.id ? (
-                <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <span>🔍</span>
-              )}
-            </button>
+
 
             {/* 3. Duplicate Task (Hover visible) */}
             <button
@@ -2668,15 +2663,14 @@ if (loadingProject || !project) {
                 </div>
               </div>
 
-              {/* KPI 2 - Đã phê duyệt */}
+              {/* KPI 2 - Tiến độ dự án */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Đã phê duyệt (AI OK)</p>
+                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tiến độ dự án</p>
                 <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-bold text-emerald-600">{kpiPass}</span>
-                  <span className="text-[#565e74] text-xs">/ {kpiEvaluated}</span>
+                  <span className="text-2xl font-bold text-indigo-600">{devProgressPercent}%</span>
                 </div>
                 <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                  <div className="bg-emerald-500 h-full" style={{ width: `${kpiEvaluated > 0 ? (kpiPass / kpiEvaluated) * 100 : 0}%` }}></div>
+                  <div className="bg-indigo-500 h-full" style={{ width: `${devProgressPercent}%` }}></div>
                 </div>
               </div>
 
@@ -2688,7 +2682,7 @@ if (loadingProject || !project) {
                   <span className="material-symbols-outlined text-blue-400 text-[18px]">pending_actions</span>
                 </div>
                 <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                  <div className="bg-blue-500 h-full" style={{ width: `${kpiEvaluated > 0 ? (kpiInProgress / kpiEvaluated) * 100 : 0}%` }}></div>
+                  <div className="bg-blue-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiInProgress / kpiTotal) * 100 : 0}%` }}></div>
                 </div>
               </div>
 
@@ -2930,7 +2924,7 @@ if (loadingProject || !project) {
                   <div className="flex items-center justify-between mb-5">
                     <h2 className="text-sm font-bold text-[#0b1c30]">Lịch họp dự án</h2>
                     <button
-                      onClick={() => setShowMeetingModal(true)}
+                      onClick={() => { setEditingMeeting(null); setShowMeetingModal(true); }}
                       className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all"
                     >
                       <span className="material-symbols-outlined text-[16px]">add</span>
@@ -2939,7 +2933,7 @@ if (loadingProject || !project) {
                   </div>
 
                   {/* Meeting Cards */}
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {meetings.length === 0 ? (
                       <div className="bg-white border border-[#c2c6d6]/60 rounded-xl py-16 text-center">
                         <span className="material-symbols-outlined text-slate-300 text-[48px] block mb-3">event</span>
@@ -2947,164 +2941,48 @@ if (loadingProject || !project) {
                         <p className="text-xs text-slate-400 mt-1">Nhấn "+ Tạo meeting" để thêm cuộc họp đầu tiên</p>
                       </div>
                     ) : (
-                      meetings.map(m => {
-                        const isDone = m.status === 'done';
-                        const timeLabel = [m.time, m.endTime].filter(Boolean).join(' - ');
-                        const dateLabel = m.date
-                          ? new Date(m.date + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
-                          : '';
-
-                        return (
-                          <div key={m.id} className="bg-white border border-[#c2c6d6]/60 rounded-xl p-5 shadow-sm hover:shadow-md transition-all">
-                            {/* Row 1: icon + title + badge + delete */}
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-start gap-3">
-                                <div className="w-9 h-9 rounded-lg bg-[#eff4ff] border border-[#0058be]/10 flex items-center justify-center shrink-0 mt-0.5">
-                                  <span className="material-symbols-outlined text-[#0058be] text-[18px]">{isDone ? 'event_available' : 'event_upcoming'}</span>
-                                </div>
-                                <div>
-                                  <p className="text-sm font-bold text-[#0b1c30] leading-snug">{m.title}</p>
-                                  <p className="text-[11px] text-slate-400 mt-0.5">
-                                    {m.platform || 'Online Meeting'}
-                                    {dateLabel ? ` • ${dateLabel}` : ''}
-                                    {timeLabel ? ` • ${timeLabel}` : ''}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {isDone ? (
-                                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wide border border-emerald-200">
-                                    Đã diễn ra
-                                  </span>
-                                ) : (
-                                  <span className="px-2.5 py-1 rounded-full bg-[#eff4ff] text-[#0058be] text-[10px] font-bold uppercase tracking-wide border border-[#0058be]/20">
-                                    Sắp tới
-                                  </span>
-                                )}
-                                <button
-                                  onClick={() => {
-                                    const updated = meetings.filter(x => x.id !== m.id);
-                                    setMeetings(updated);
-                                    localStorage.setItem(`meetings_${id}`, JSON.stringify(updated));
-                                    flash('Đã xóa cuộc họp');
-                                  }}
-                                  className="text-slate-300 hover:text-red-500 p-1 rounded transition-colors"
-                                  title="Xóa cuộc họp"
-                                >
-                                  <span className="material-symbols-outlined text-[16px]">close</span>
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* AI Summary (for done meetings) */}
-                            {isDone && m.aiSummary && m.aiSummary.length > 0 && (
-                              <div className="mt-4 ml-12 bg-[#f8f9fe] border border-[#0058be]/10 rounded-lg p-4">
-                                <p className="text-[11px] font-bold text-[#0058be] mb-2 flex items-center gap-1.5">
-                                  <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
-                                  AI Summary
-                                </p>
-                                <ul className="space-y-1">
-                                  {m.aiSummary.map((line: string, idx: number) => (
-                                    <li key={idx} className="text-[11px] text-[#0058be]/80 flex items-start gap-1.5">
-                                      <span className="mt-1.5 w-1 h-1 rounded-full bg-[#0058be]/40 shrink-0" />
-                                      {line}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
+                      meetings.map(m => (
+                        <MeetingCard
+                          key={m.id}
+                          meeting={m}
+                          onEdit={meeting => { setEditingMeeting(meeting); setShowMeetingModal(true); }}
+                          onDelete={id => setDeleteConfirmId(id)}
+                          onSummarize={meeting => { setSummarizingMeeting(meeting); setIsSummarizeOpen(true); }}
+                        />
+                      ))
                     )}
                   </div>
 
-                  {/* Create Meeting Modal */}
-                  {showMeetingModal && (
+                  {/* Modals */}
+                  <CreateMeetingModal
+                    isOpen={showMeetingModal}
+                    onClose={() => { setShowMeetingModal(false); setEditingMeeting(null); }}
+                    onSave={handleSaveMeeting}
+                    initialData={editingMeeting}
+                  />
+
+                  <SummarizeModal
+                    isOpen={isSummarizeOpen}
+                    onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }}
+                    meeting={summarizingMeeting}
+                    onSave={(updatedMeeting) => {
+                      setMeetings(prev => prev.map(x => x.id === updatedMeeting.id ? updatedMeeting : x));
+                    }}
+                  />
+
+                  {/* Delete Confirm Modal */}
+                  {deleteConfirmId && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-                      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
-                        <div className="flex items-center justify-between mb-5">
-                          <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
-                            <span className="material-symbols-outlined text-[#0058be] text-[20px]">event_add</span>
-                            Tạo cuộc họp mới
-                          </h3>
-                          <button onClick={() => setShowMeetingModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded">
-                            <span className="material-symbols-outlined text-[20px]">close</span>
-                          </button>
+                      <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                        <div className="flex items-center gap-3 mb-3 text-red-600">
+                          <div className="w-10 h-10 bg-red-50 rounded-full flex items-center justify-center"><span className="material-symbols-outlined text-[20px]">delete</span></div>
+                          <h3 className="text-sm font-bold text-[#0b1c30]">Xóa cuộc họp</h3>
                         </div>
-                        <form onSubmit={handleAddMeeting} className="space-y-4">
-                          <div>
-                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên cuộc họp *</label>
-                            <input
-                              type="text"
-                              required
-                              value={newMeetingTitle}
-                              onChange={e => setNewMeetingTitle(e.target.value)}
-                              placeholder="VD: Review tiến độ tuần 25"
-                              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nền tảng</label>
-                            <select
-                              value={newMeetingPlatform}
-                              onChange={e => setNewMeetingPlatform(e.target.value)}
-                              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                            >
-                              <option>Microsoft Teams</option>
-                              <option>Zoom Meeting</option>
-                              <option>Google Meet</option>
-                              <option>Họp trực tiếp</option>
-                              <option>Khác</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Ngày họp *</label>
-                            <input
-                              type="date"
-                              required
-                              value={newMeetingDate}
-                              onChange={e => setNewMeetingDate(e.target.value)}
-                              className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Giờ bắt đầu *</label>
-                              <input
-                                type="time"
-                                required
-                                value={newMeetingTime}
-                                onChange={e => setNewMeetingTime(e.target.value)}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Giờ kết thúc</label>
-                              <input
-                                type="time"
-                                value={newMeetingEndTime}
-                                onChange={e => setNewMeetingEndTime(e.target.value)}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                              />
-                            </div>
-                          </div>
-                          <div className="flex gap-3 pt-2">
-                            <button
-                              type="button"
-                              onClick={() => setShowMeetingModal(false)}
-                              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 rounded-lg transition-all"
-                            >
-                              Huỷ
-                            </button>
-                            <button
-                              type="submit"
-                              className="flex-1 bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-xs py-2.5 rounded-lg shadow-sm transition-all"
-                            >
-                              Tạo meeting
-                            </button>
-                          </div>
-                        </form>
+                        <p className="text-xs text-[#565e74] mb-6">Bạn có chắc chắn muốn xóa cuộc họp này? Hành động này không thể hoàn tác.</p>
+                        <div className="flex justify-end gap-3">
+                          <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-2 text-xs font-bold text-[#565e74] bg-white border border-[#c2c6d6] hover:bg-[#f0f2f5] rounded-lg transition-colors">Hủy</button>
+                          <button onClick={executeDeleteMeeting} className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-sm">Xác nhận xóa</button>
+                        </div>
                       </div>
                     </div>
                   )}

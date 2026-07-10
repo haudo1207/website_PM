@@ -101,15 +101,7 @@ export const reorderTasks = (groupId: number, order: number[]) =>
 // LEGACY COMPATIBLE (kept for Settings, Skills, System Categories, Members)
 // ═══════════════════════════════════════════════════════════
 
-// Settings
-export const getColumnConfig = () => api.get('/settings/column-config').then(r => r.data);
-export const updateColumnConfig = (d: object) => api.put('/settings/column-config', d).then(r => r.data);
-export const getPolicy = () => api.get('/settings/policy').then(r => r.data);
-export const updatePolicy = (d: object) => api.put('/settings/policy', d).then(r => r.data);
-export const getAuditLog = () => api.get('/settings/audit-log').then(r => r.data);
-export const getAIConfig = () => api.get('/settings/ai-config').then(r => r.data);
-export const updateAIConfig = (d: object) => api.put('/settings/ai-config', d).then(r => r.data);
-export const getAIModels = () => api.get('/settings/ai-models').then(r => r.data);
+
 
 // Users
 export const getUsers = () => api.get('/users').then(r => r.data);
@@ -164,3 +156,14 @@ export const getCustomers = () => api.get('/system-categories/customers').then(r
 export const createCustomer = (data: { name: string; description?: string }) => api.post('/system-categories/customers', data).then(r => r.data);
 export const updateCustomer = (id: number, data: { name: string; description?: string }) => api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
 export const deleteCustomer = (id: number) => api.delete(`/system-categories/customers/${id}`).then(r => r.data);
+
+// Meetings
+export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string }) =>
+  api.get('/meetings', { params }).then(r => r.data);
+export const getMeeting = (id: number) => api.get(`/meetings/${id}`).then(r => r.data);
+export const createMeeting = (data: object) => api.post('/meetings', data).then(r => r.data);
+export const updateMeeting = (id: number, data: object) => api.put(`/meetings/${id}`, data).then(r => r.data);
+export const deleteMeeting = (id: number) => api.delete(`/meetings/${id}`).then(r => r.data);
+export const updateTranscript = (id: number, transcript: string) => api.post(`/meetings/${id}/transcript`, { transcript }).then(r => r.data);
+export const addMeetingMember = (id: number, memberId: number, role?: string) => api.post(`/meetings/${id}/members`, { member_id: memberId, role }).then(r => r.data);
+export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);

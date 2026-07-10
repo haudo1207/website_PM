@@ -43,3 +43,9 @@ desktop.ini
 artifacts/
 .gemini/
 
+# Cloned External Repositories
+pm-new/
+
+# Local data databases/settings
+frontend/data/
+

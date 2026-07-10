@@ -18,21 +18,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7
-    container_name: task_redis
-    restart: unless-stopped
-    command: redis-server --requirepass MyPassRedis2026 --appendonly yes --maxmemory 512mb
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "MyPassRedis2026", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   backend:
     image: task-portal-backend:latest
     container_name: task_backend
@@ -49,44 +34,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  worker:
-    image: task-portal-backend:latest
-    container_name: task_worker
-    restart: unless-stopped
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: celery -A app.worker.celery_app:celery_app worker --loglevel=info --concurrency=2
-    env_file:
-      - .env
-    volumes:
-      - ./secrets:/app/secrets:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  scheduler:
-    image: task-portal-backend:latest
-    container_name: task_scheduler
-    restart: unless-stopped
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: celery -A app.worker.celery_app:celery_app beat --loglevel=info
-    env_file:
-      - .env
-    volumes:
-      - ./secrets:/app/secrets:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
 
   frontend:
     image: task-portal-frontend:latest
@@ -97,13 +44,16 @@ services:
       dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_API_BASE_URL=/api
+    env_file:
+      - .env
     environment:
       - BACKEND_INTERNAL_URL=http://backend:8000
     ports:
       - "3000:3000"
+    volumes:
+      - ./frontend/data:/app/data
     depends_on:
       - backend
 
 volumes:
   postgres_data:
-  redis_data:

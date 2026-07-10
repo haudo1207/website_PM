@@ -17,7 +17,7 @@ export default function NewProjectPage() {
     '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
     '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
   ];
-  
+
   const [name, setName] = useState('');
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [customerName, setCustomerName] = useState('');
@@ -25,7 +25,7 @@ export default function NewProjectPage() {
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
-  
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -49,7 +49,7 @@ export default function NewProjectPage() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      
+
       if (customerDropdownOpen && customerRef.current && !customerRef.current.contains(target)) {
         setCustomerDropdownOpen(false);
         setCustomerSearch('');
@@ -241,9 +241,9 @@ export default function NewProjectPage() {
                     </span>
                     <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                   </button>
-                  
+
                   {customerDropdownOpen && (
-                    <div 
+                    <div
                       onClick={(e) => e.stopPropagation()}
                       className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2"
                     >
@@ -265,7 +265,7 @@ export default function NewProjectPage() {
                           }}
                           className="w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 text-[#727785] rounded transition-colors"
                         >
-                          Chọn khách hàng (Để trống nếu là dự án nội bộ)
+                          Chọn khách hàng
                         </button>
 
                         {dbCustomers
@@ -311,7 +311,7 @@ export default function NewProjectPage() {
                   </button>
 
                   {phaseDropdownOpen && (
-                    <div 
+                    <div
                       onClick={(e) => e.stopPropagation()}
                       className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
                     >
@@ -345,7 +345,7 @@ export default function NewProjectPage() {
                 <label className="text-[11px] font-semibold text-[#565e74] block">
                   Project Manager (PM)
                 </label>
-                <div 
+                <div
                   onClick={() => {
                     setPmDropdownOpen(!pmDropdownOpen);
                     setLeaderDropdownOpen(false);
@@ -364,8 +364,8 @@ export default function NewProjectPage() {
                         return (
                           <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[11px] flex items-center gap-1">
                             {m?.display_name || id}
-                            <button 
-                              type="button" 
+                            <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedPms(selectedPms.filter(x => x !== id));
@@ -381,9 +381,9 @@ export default function NewProjectPage() {
                   </div>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
-                
+
                 {pmDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[250px] flex flex-col"
                   >
@@ -427,7 +427,7 @@ export default function NewProjectPage() {
                 <label className="text-[11px] font-semibold text-[#565e74] block">
                   Technical Leader
                 </label>
-                <div 
+                <div
                   onClick={() => {
                     setLeaderDropdownOpen(!leaderDropdownOpen);
                     setPmDropdownOpen(false);
@@ -446,8 +446,8 @@ export default function NewProjectPage() {
                         return (
                           <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[11px] flex items-center gap-1">
                             {m?.display_name || id}
-                            <button 
-                              type="button" 
+                            <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedLeaders(selectedLeaders.filter(x => x !== id));
@@ -463,9 +463,9 @@ export default function NewProjectPage() {
                   </div>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
-                
+
                 {leaderDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[250px] flex flex-col"
                   >
@@ -509,7 +509,7 @@ export default function NewProjectPage() {
                 <label className="text-[11px] font-semibold text-[#565e74] block">
                   Danh sách thành viên dự án
                 </label>
-                <div 
+                <div
                   onClick={() => {
                     setMemberDropdownOpen(!memberDropdownOpen);
                     setPmDropdownOpen(false);
@@ -528,8 +528,8 @@ export default function NewProjectPage() {
                         return (
                           <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[11px] flex items-center gap-1">
                             {m?.display_name || id}
-                            <button 
-                              type="button" 
+                            <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedMembers(selectedMembers.filter(x => x !== id));
@@ -545,9 +545,9 @@ export default function NewProjectPage() {
                   </div>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
-                
+
                 {memberDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[250px] flex flex-col"
                   >
