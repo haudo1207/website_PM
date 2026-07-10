@@ -52,6 +52,8 @@ function ProjectDetailContent() {
   const router = useRouter();
   const id = searchParams.get('id') || '';
 
+  const isSavingRef = useRef(false);
+
   const [project, setProject] = useState<any>(null);
   const [loadingProject, setLoadingProject] = useState(true);
   const [items, setItems] = useState<any[]>([]);
@@ -710,13 +712,151 @@ function ProjectDetailContent() {
     }
   };
 
-  const handleCellSave = async (taskId: number, colName: string, value: string) => {
+  const getGroupCellValue = (group: any, colName: string): string => {
+    if (!group) return '';
+    const colUpper = colName.toUpperCase().trim();
+    switch (colUpper) {
+      case 'TASK ID': return group.roman_index || '';
+      case 'DETAIL TASK': return group.name || '';
+      case 'MANDAY EST':
+      case 'MANDAY (EST)':
+      case 'MANDAY': return group.manday_est != null ? String(group.manday_est) : '';
+      case 'STATUS': return group.status || 'Waiting';
+      case 'START DATE':
+      case 'START DATE (EST)': return group.start_date_est || '';
+      case 'END DATE EST':
+      case 'END DAY (EST)':
+      case 'END DATE (EST)': return group.end_date_est || '';
+      case 'MD ACTUAL':
+      case 'MANDAY ACTUAL': return group.manday_actual != null ? String(group.manday_actual) : '';
+      case 'END ACTUAL':
+      case 'END DATE ACTUAL': return group.end_date_actual || '';
+      default: return '';
+    }
+  };
+
+  const getOrderedRows = () => {
+    const rows: { type: 'group' | 'task'; id: number; task?: any; group?: any }[] = [];
+    const phasesToRender = activePhase === 'ALL' 
+      ? phases.filter(p => !p.is_master)
+      : phases.filter(p => p.name === activePhase);
+
+    for (const p of phasesToRender) {
+      const groups = taskGroups
+        .filter(g => g.phase_id === p.id)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+      for (const g of groups) {
+        rows.push({ type: 'group', id: -g.id, group: g });
+
+        const isCollapsed = collapsedGroups.has(g.id);
+        if (!isCollapsed) {
+          const groupTasks = items.filter(t => t.task_group_id === g.id);
+          const sortedTasks = buildTaskTree(groupTasks);
+
+          for (const task of sortedTasks) {
+            if (!isAncestorCollapsed(task.task_code)) {
+              rows.push({ type: 'task', id: task.id, task });
+            }
+          }
+        }
+      }
+    }
+    return rows;
+  };
+
+  const activateNextCell = (taskId: number, colName: string, keyAction: 'Enter' | 'Tab' | 'ShiftTab') => {
+    const rows = getOrderedRows();
+    const columns = getDynamicColumns();
+    const rIdx = rows.findIndex(r => r.id === taskId);
+    const cIdx = columns.indexOf(colName);
+    if (rIdx === -1 || cIdx === -1) return;
+
+    let nextRIdx = rIdx;
+    let nextCIdx = cIdx;
+
+    const moveNext = () => {
+      if (keyAction === 'Enter') {
+        nextRIdx += 1;
+      } else if (keyAction === 'Tab') {
+        if (nextCIdx < columns.length - 1) {
+          nextCIdx += 1;
+        } else {
+          nextCIdx = 0;
+          nextRIdx += 1;
+        }
+      } else if (keyAction === 'ShiftTab') {
+        if (nextCIdx > 0) {
+          nextCIdx -= 1;
+        } else {
+          nextCIdx = columns.length - 1;
+          nextRIdx -= 1;
+        }
+      }
+    };
+
+    const SYSTEM_COLS = [
+      'TASK ID', 'END DATE EST', 'MD ACTUAL', 'DAYS LATE',
+      'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID', 'SOLUTION'
+    ];
+
+    const isCellEditable = (rowObj: any, col: string) => {
+      const colUpper = col.toUpperCase().trim();
+      if (rowObj.type === 'group') {
+        return ['DETAIL TASK', 'MANDAY EST', 'STATUS', 'START DATE'].includes(colUpper);
+      } else {
+        return !SYSTEM_COLS.includes(colUpper);
+      }
+    };
+
+    for (let attempt = 0; attempt < 50; attempt++) {
+      moveNext();
+      if (nextRIdx < 0 || nextRIdx >= rows.length) break;
+
+      const targetRow = rows[nextRIdx];
+      const targetCol = columns[nextCIdx];
+
+      if (isCellEditable(targetRow, targetCol)) {
+        setEditingCell({ taskId: targetRow.id, colName: targetCol });
+        
+        if (targetRow.type === 'group') {
+          setEditValue(getGroupCellValue(targetRow.group, targetCol));
+        } else {
+          const val = getCellValue(targetRow.task, targetCol);
+          const colUpper = targetCol.toUpperCase().trim();
+          if (colUpper === 'ASSIGNED') {
+            setEditValue(targetRow.task.assigned_id ? String(targetRow.task.assigned_id) : '');
+          } else if (colUpper === 'SUPPORT') {
+            setEditValue(targetRow.task.support_id ? String(targetRow.task.support_id) : '');
+          } else if (colUpper === 'SKILL SOLUTION') {
+            setEditValue(targetRow.task.skill_solution_id ? String(targetRow.task.skill_solution_id) : '');
+          } else if (colUpper === 'SKILL VENDOR') {
+            setEditValue(targetRow.task.skill_vendor_id ? String(targetRow.task.skill_vendor_id) : '');
+          } else {
+            setEditValue(val);
+          }
+        }
+        return;
+      }
+      
+      if (keyAction === 'Enter') break;
+    }
+
+    setEditingCell(null);
+  };
+
+  const handleCellSave = async (taskId: number, colName: string, value: string, nextAction?: 'Enter' | 'Tab' | 'ShiftTab') => {
+    if (isSavingRef.current) return;
     const task = items.find(item => item.id === taskId);
     if (!task) return;
 
     const originalVal = getCellValue(task, colName);
     if (originalVal === value) {
-      setEditingCell(null);
+      if (nextAction) {
+        activateNextCell(taskId, colName, nextAction);
+      } else {
+        setEditingCell(null);
+      }
       return;
     }
 
@@ -760,7 +900,7 @@ function ProjectDetailContent() {
         break;
       case 'SKILL SOLUTION':
         payload.skill_solution_id = value ? parseInt(value, 10) : null;
-        payload.skill_vendor_id = null; // Reset vendor when solution group changes
+        payload.skill_vendor_id = null;
         break;
       case 'SKILL VENDOR':
         payload.skill_vendor_id = value ? parseInt(value, 10) : null;
@@ -790,14 +930,64 @@ function ProjectDetailContent() {
         break;
     }
 
+    isSavingRef.current = true;
     try {
       await updateTask(task.task_group_id, taskId, payload);
       flash('Đã cập nhật task thành công!');
       reloadAll();
+      if (nextAction) {
+        activateNextCell(taskId, colName, nextAction);
+      } else {
+        setEditingCell(null);
+      }
     } catch (err: any) {
       alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
-    } finally {
       setEditingCell(null);
+    } finally {
+      isSavingRef.current = false;
+    }
+  };
+
+  const handleGroupCellSave = async (group: any, colName: string, value: string, nextAction?: 'Enter' | 'Tab' | 'ShiftTab') => {
+    if (isSavingRef.current) return;
+    const originalVal = getGroupCellValue(group, colName);
+    if (originalVal === value) {
+      if (nextAction) {
+        activateNextCell(-group.id, colName, nextAction);
+      } else {
+        setEditingCell(null);
+      }
+      return;
+    }
+
+    const colUpper = colName.trim().toUpperCase();
+    const payload: Record<string, any> = {};
+    switch (colUpper) {
+      case 'DETAIL TASK': payload.name = value; break;
+      case 'MANDAY EST':
+      case 'MANDAY (EST)':
+      case 'MANDAY': payload.manday_est = value ? parseFloat(value) : null; break;
+      case 'STATUS': payload.status = value; break;
+      case 'START DATE':
+      case 'START DATE (EST)': payload.start_date_est = value || null; break;
+      default: return;
+    }
+
+    isSavingRef.current = true;
+    try {
+      await updateTaskGroup(group.phase_id, group.id, payload);
+      flash('Đã cập nhật Task Group!');
+      reloadAll();
+      if (nextAction) {
+        activateNextCell(-group.id, colName, nextAction);
+      } else {
+        setEditingCell(null);
+      }
+    } catch (err: any) {
+      alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+      setEditingCell(null);
+    } finally {
+      isSavingRef.current = false;
     }
   };
 
@@ -1705,7 +1895,19 @@ function ProjectDetailContent() {
                     value={editValue}
                     autoFocus
                     onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    onBlur={e => handleCellSave(task.id, col, e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, e.currentTarget.value, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
                     className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
                   >
                     {dbStatuses.length === 0 ? (
@@ -1733,7 +1935,19 @@ function ProjectDetailContent() {
                     value={editValue}
                     autoFocus
                     onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    onBlur={e => handleCellSave(task.id, col, e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, e.currentTarget.value, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
                     className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
                   >
                     {dbPriorities.length === 0 ? (
@@ -1754,20 +1968,15 @@ function ProjectDetailContent() {
 
             if (colUpper === 'ASSIGNED' || colUpper === 'SUPPORT') {
               return (
-                <td key={col} className="px-2 py-1 min-w-[155px]">
-                  <select
-                    value={editValue}
-                    autoFocus
-                    onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => handleCellSave(task.id, col, editValue)}
-                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
-                  >
-                    <option value="">-- Chọn thành viên --</option>
-                    {projectMembers.map((m: any) => (
-                      <option key={m.id} value={m.id}>{m.display_name}</option>
-                    ))}
-                  </select>
-                </td>
+                <MemberSearchCell
+                  key={col}
+                  col={col}
+                  task={task}
+                  editValue={editValue}
+                  projectMembers={projectMembers}
+                  onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
+                  onCancel={() => setEditingCell(null)}
+                />
               );
             }
 
@@ -1782,7 +1991,19 @@ function ProjectDetailContent() {
                     value={editValue}
                     autoFocus
                     onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    onBlur={e => handleCellSave(task.id, col, e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, e.currentTarget.value, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
                     className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
                   >
                     <option value="">-- Chọn Group --</option>
@@ -1819,7 +2040,19 @@ function ProjectDetailContent() {
                     value={editValue}
                     autoFocus
                     onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    onBlur={e => handleCellSave(task.id, col, e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, e.currentTarget.value, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
                     className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
                   >
                     <option value="">-- Chọn Skill --</option>
@@ -1827,6 +2060,40 @@ function ProjectDetailContent() {
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
+                </td>
+              );
+            }
+
+            if (colUpper === 'DETAIL TASK') {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[320px] whitespace-normal break-words">
+                  <textarea
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        if (!e.shiftKey) {
+                          e.preventDefault();
+                          handleCellSave(task.id, col, editValue, 'Enter');
+                        }
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, editValue, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    ref={el => {
+                      if (el) {
+                        el.style.height = 'auto';
+                        el.style.height = el.scrollHeight + 'px';
+                      }
+                    }}
+                    className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none resize-none overflow-hidden min-h-[40px] h-auto whitespace-pre-wrap break-words leading-relaxed"
+                  />
                 </td>
               );
             }
@@ -1839,8 +2106,16 @@ function ProjectDetailContent() {
                   autoFocus
                   onChange={e => setEditValue(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter') handleCellSave(task.id, col, editValue);
-                    if (e.key === 'Escape') setEditingCell(null);
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCellSave(task.id, col, editValue, 'Enter');
+                    } else if (e.key === 'Tab') {
+                      e.preventDefault();
+                      const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                      handleCellSave(task.id, col, editValue, act);
+                    } else if (e.key === 'Escape') {
+                      setEditingCell(null);
+                    }
                   }}
                   onBlur={() => handleCellSave(task.id, col, editValue)}
                   className="w-full bg-white border border-[#0058be] rounded px-1.5 py-0.5 text-xs text-[#0b1c30] focus:outline-none"
@@ -1930,8 +2205,8 @@ function ProjectDetailContent() {
           return (
             <td
               key={col}
-              className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-pointer hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
-              onDoubleClick={() => {
+              className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-text hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
+              onClick={() => {
                 if (!isReadOnly) handleStartEdit(col, val);
               }}
             >
@@ -1986,50 +2261,7 @@ function ProjectDetailContent() {
     // Auto columns for Task Group
     const GROUP_AUTO_COLS = ['END DATE EST', 'MD ACTUAL', 'END ACTUAL'];
 
-    const getGroupCellValue = (group: any, colUpper: string): string => {
-      switch (colUpper) {
-        case 'TASK ID': return group.roman_index || 'I';
-        case 'DETAIL TASK': return group.name || '';
-        case 'MANDAY EST':
-        case 'MANDAY (EST)':
-        case 'MANDAY': return group.manday_est != null ? String(group.manday_est) : '';
-        case 'STATUS': return group.status || 'Waiting';
-        case 'START DATE':
-        case 'START DATE (EST)': return group.start_date_est || '';
-        case 'END DATE EST':
-        case 'END DAY (EST)':
-        case 'END DATE (EST)': return group.end_date_est || '';
-        case 'MD ACTUAL':
-        case 'MANDAY ACTUAL': return group.manday_actual != null ? String(group.manday_actual) : '';
-        case 'END ACTUAL':
-        case 'END DATE ACTUAL': return group.end_date_actual || '';
-        default: return '';
-      }
-    };
 
-    const handleGroupCellSave = async (group: any, colName: string, value: string) => {
-      const colUpper = colName.trim().toUpperCase();
-      const payload: Record<string, any> = {};
-      switch (colUpper) {
-        case 'DETAIL TASK': payload.name = value; break;
-        case 'MANDAY EST':
-        case 'MANDAY (EST)':
-        case 'MANDAY': payload.manday_est = value ? parseFloat(value) : null; break;
-        case 'STATUS': payload.status = value; break;
-        case 'START DATE':
-        case 'START DATE (EST)': payload.start_date_est = value || null; break;
-        default: return;
-      }
-      try {
-        await updateTaskGroup(group.phase_id, group.id, payload);
-        flash('Đã cập nhật Task Group!');
-        reloadAll();
-      } catch (err: any) {
-        alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
-      } finally {
-        setEditingCell(null);
-      }
-    };
 
     const renderInlineAddGroupRow = (phaseId: number, romanIndex: string) => {
       const dynamicCols = getDynamicColumns();
@@ -2385,7 +2617,19 @@ function ProjectDetailContent() {
                         value={editValue}
                         autoFocus
                         onChange={e => setEditValue(e.target.value)}
-                        onBlur={() => handleGroupCellSave(group, col, editValue)}
+                        onBlur={e => handleGroupCellSave(group, col, e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleGroupCellSave(group, col, e.currentTarget.value, 'Enter');
+                          } else if (e.key === 'Tab') {
+                            e.preventDefault();
+                            const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                            handleGroupCellSave(group, col, e.currentTarget.value, act);
+                          } else if (e.key === 'Escape') {
+                            setEditingCell(null);
+                          }
+                        }}
                         className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-bold"
                       >
                         {dbStatuses.length === 0 ? (
@@ -2404,6 +2648,41 @@ function ProjectDetailContent() {
                     </td>
                   );
                 }
+
+                if (colUpper === 'DETAIL TASK') {
+                  return (
+                    <td key={col} className="px-2 py-1 min-w-[320px] whitespace-normal break-words">
+                      <textarea
+                        value={editValue}
+                        autoFocus
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            if (!e.shiftKey) {
+                              e.preventDefault();
+                              handleGroupCellSave(group, col, editValue, 'Enter');
+                            }
+                          } else if (e.key === 'Tab') {
+                            e.preventDefault();
+                            const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                            handleGroupCellSave(group, col, editValue, act);
+                          } else if (e.key === 'Escape') {
+                            setEditingCell(null);
+                          }
+                        }}
+                        onBlur={() => handleGroupCellSave(group, col, editValue)}
+                        ref={el => {
+                          if (el) {
+                            el.style.height = 'auto';
+                            el.style.height = el.scrollHeight + 'px';
+                          }
+                        }}
+                        className="w-full bg-white border border-indigo-500 rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none resize-none overflow-hidden min-h-[40px] h-auto whitespace-pre-wrap break-words leading-relaxed font-bold"
+                      />
+                    </td>
+                  );
+                }
+
                 if (colUpper.includes('DATE')) {
                   return (
                     <td key={col} className="px-2 py-1 min-w-[130px]">
@@ -2413,7 +2692,18 @@ function ProjectDetailContent() {
                         autoFocus
                         onChange={e => setEditValue(fromPickerDate(e.target.value))}
                         onBlur={() => handleGroupCellSave(group, col, editValue)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleGroupCellSave(group, col, editValue); if (e.key === 'Escape') setEditingCell(null); }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleGroupCellSave(group, col, editValue, 'Enter');
+                          } else if (e.key === 'Tab') {
+                            e.preventDefault();
+                            const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                            handleGroupCellSave(group, col, editValue, act);
+                          } else if (e.key === 'Escape') {
+                            setEditingCell(null);
+                          }
+                        }}
                         className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs font-mono focus:outline-none font-bold"
                       />
                     </td>
@@ -2429,7 +2719,18 @@ function ProjectDetailContent() {
                       autoFocus
                       onChange={e => setEditValue(e.target.value)}
                       onBlur={() => handleGroupCellSave(group, col, editValue)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleGroupCellSave(group, col, editValue); if (e.key === 'Escape') setEditingCell(null); }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleGroupCellSave(group, col, editValue, 'Enter');
+                        } else if (e.key === 'Tab') {
+                          e.preventDefault();
+                          const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                          handleGroupCellSave(group, col, editValue, act);
+                        } else if (e.key === 'Escape') {
+                          setEditingCell(null);
+                        }
+                      }}
                       className="w-full bg-white border border-indigo-500 rounded px-1.5 py-0.5 text-xs focus:outline-none font-bold"
                     />
                   </td>
@@ -2461,8 +2762,8 @@ function ProjectDetailContent() {
               return (
                 <td
                   key={col}
-                  className={`${cellStyle} ${isEditable ? 'cursor-pointer hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')}`}
-                  onDoubleClick={() => {
+                  className={`${cellStyle} ${isEditable ? 'cursor-text hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')}`}
+                  onClick={() => {
                     if (isEditable) {
                       setEditingCell({ taskId: -group.id, colName: col });
                       setEditValue(val);
@@ -3957,5 +4258,113 @@ export default function ProjectDetailPage() {
     }>
       <ProjectDetailContent />
     </Suspense>
+  );
+}
+
+interface MemberSearchCellProps {
+  col: string;
+  task: any;
+  editValue: string;
+  projectMembers: any[];
+  onSaveWithAction: (val: string, action?: 'Enter' | 'Tab' | 'ShiftTab') => void;
+  onCancel: () => void;
+}
+
+function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithAction, onCancel }: MemberSearchCellProps) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isOpen, setIsOpen] = useState(true);
+  const containerRef = useRef<HTMLTableDataCellElement>(null);
+
+  useEffect(() => {
+    const currentMember = projectMembers.find(m => String(m.id) === String(editValue));
+    if (currentMember) {
+      setSearchTerm(currentMember.display_name || '');
+    }
+  }, [editValue, projectMembers]);
+
+  const filteredMembers = projectMembers.filter(m => {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return true;
+    return (
+      (m.display_name || '').toLowerCase().includes(term) ||
+      (m.email || '').toLowerCase().includes(term)
+    );
+  });
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        onCancel();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [onCancel]);
+
+  const handleSelect = (memberId: number, action?: 'Enter' | 'Tab' | 'ShiftTab') => {
+    onSaveWithAction(String(memberId), action);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredMembers.length > 0) {
+        handleSelect(filteredMembers[0].id, 'Enter');
+      } else {
+        onSaveWithAction('', 'Enter');
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const action = e.shiftKey ? 'ShiftTab' : 'Tab';
+      if (filteredMembers.length > 0) {
+        handleSelect(filteredMembers[0].id, action);
+      } else {
+        onSaveWithAction('', action);
+      }
+    } else if (e.key === 'Escape') {
+      onCancel();
+    }
+  };
+
+  return (
+    <td key={col} className="px-2 py-1 min-w-[180px] relative" ref={containerRef}>
+      <div className="relative">
+        <input
+          type="text"
+          value={searchTerm}
+          placeholder="Tìm thành viên..."
+          autoFocus
+          onChange={e => setSearchTerm(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="w-full bg-white border border-[#0058be] rounded px-2 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
+        />
+        {isOpen && (
+          <div className="absolute left-0 right-0 mt-1 max-h-[160px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
+            <div 
+              onClick={() => onSaveWithAction('')}
+              className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
+            >
+              -- Không gán --
+            </div>
+            {filteredMembers.length === 0 ? (
+              <div className="px-2.5 py-1.5 text-xs text-slate-400 italic">Không tìm thấy</div>
+            ) : (
+              filteredMembers.map((m: any) => (
+                <div
+                  key={m.id}
+                  onClick={() => handleSelect(m.id)}
+                  className="px-2.5 py-1.5 text-xs text-slate-700 hover:bg-[#eff4ff] hover:text-[#0058be] cursor-pointer font-semibold transition-colors flex items-center justify-between"
+                >
+                  <span>{m.display_name}</span>
+                  <span className="text-[10px] text-slate-400 font-mono font-normal">{m.email?.split('@')[0]}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </td>
   );
 }
