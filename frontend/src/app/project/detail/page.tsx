@@ -1899,7 +1899,7 @@ function ProjectDetailContent() {
                     onKeyDown={e => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
-                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                        handleCellSave(task.id, col, e.currentTarget.value);
                       } else if (e.key === 'Tab') {
                         e.preventDefault();
                         const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -1939,7 +1939,7 @@ function ProjectDetailContent() {
                     onKeyDown={e => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
-                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                        handleCellSave(task.id, col, e.currentTarget.value);
                       } else if (e.key === 'Tab') {
                         e.preventDefault();
                         const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -1995,7 +1995,7 @@ function ProjectDetailContent() {
                     onKeyDown={e => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
-                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                        handleCellSave(task.id, col, e.currentTarget.value);
                       } else if (e.key === 'Tab') {
                         e.preventDefault();
                         const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -2044,7 +2044,7 @@ function ProjectDetailContent() {
                     onKeyDown={e => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
-                        handleCellSave(task.id, col, e.currentTarget.value, 'Enter');
+                        handleCellSave(task.id, col, e.currentTarget.value);
                       } else if (e.key === 'Tab') {
                         e.preventDefault();
                         const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -2075,7 +2075,7 @@ function ProjectDetailContent() {
                       if (e.key === 'Enter') {
                         if (!e.shiftKey) {
                           e.preventDefault();
-                          handleCellSave(task.id, col, editValue, 'Enter');
+                          handleCellSave(task.id, col, editValue);
                         }
                       } else if (e.key === 'Tab') {
                         e.preventDefault();
@@ -2108,7 +2108,7 @@ function ProjectDetailContent() {
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      handleCellSave(task.id, col, editValue, 'Enter');
+                      handleCellSave(task.id, col, editValue);
                     } else if (e.key === 'Tab') {
                       e.preventDefault();
                       const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -2621,7 +2621,7 @@ function ProjectDetailContent() {
                         onKeyDown={e => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
-                            handleGroupCellSave(group, col, e.currentTarget.value, 'Enter');
+                            handleGroupCellSave(group, col, e.currentTarget.value);
                           } else if (e.key === 'Tab') {
                             e.preventDefault();
                             const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -2660,7 +2660,7 @@ function ProjectDetailContent() {
                           if (e.key === 'Enter') {
                             if (!e.shiftKey) {
                               e.preventDefault();
-                              handleGroupCellSave(group, col, editValue, 'Enter');
+                              handleGroupCellSave(group, col, editValue);
                             }
                           } else if (e.key === 'Tab') {
                             e.preventDefault();
@@ -2695,7 +2695,7 @@ function ProjectDetailContent() {
                         onKeyDown={e => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
-                            handleGroupCellSave(group, col, editValue, 'Enter');
+                            handleGroupCellSave(group, col, editValue);
                           } else if (e.key === 'Tab') {
                             e.preventDefault();
                             const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -2722,7 +2722,7 @@ function ProjectDetailContent() {
                       onKeyDown={e => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
-                          handleGroupCellSave(group, col, editValue, 'Enter');
+                          handleGroupCellSave(group, col, editValue);
                         } else if (e.key === 'Tab') {
                           e.preventDefault();
                           const act = e.shiftKey ? 'ShiftTab' : 'Tab';
@@ -4311,9 +4311,9 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
     if (e.key === 'Enter') {
       e.preventDefault();
       if (filteredMembers.length > 0) {
-        handleSelect(filteredMembers[0].id, 'Enter');
+        handleSelect(filteredMembers[0].id);
       } else {
-        onSaveWithAction('', 'Enter');
+        onSaveWithAction('');
       }
     } else if (e.key === 'Tab') {
       e.preventDefault();
