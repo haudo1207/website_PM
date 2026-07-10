@@ -425,8 +425,10 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
-  const reloadAll = useCallback(async () => {
-    setLoadingTasks(true);
+  const reloadAll = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoadingTasks(true);
+    }
     try {
       const phs = await getPhases(Number(id));
       setPhases(phs || []);
@@ -446,7 +448,9 @@ function ProjectDetailContent() {
       console.error('Lỗi khi tải dữ liệu dự án:', err);
       flash('Không thể tải dữ liệu dự án', true);
     } finally {
-      setLoadingTasks(false);
+      if (!silent) {
+        setLoadingTasks(false);
+      }
     }
   }, [id]);
 
@@ -934,7 +938,7 @@ function ProjectDetailContent() {
     try {
       await updateTask(task.task_group_id, taskId, payload);
       flash('Đã cập nhật task thành công!');
-      reloadAll();
+      await reloadAll(true);
       if (nextAction) {
         activateNextCell(taskId, colName, nextAction);
       } else {
@@ -977,7 +981,7 @@ function ProjectDetailContent() {
     try {
       await updateTaskGroup(group.phase_id, group.id, payload);
       flash('Đã cập nhật Task Group!');
-      reloadAll();
+      await reloadAll(true);
       if (nextAction) {
         activateNextCell(-group.id, colName, nextAction);
       } else {
@@ -2880,7 +2884,7 @@ if (loadingProject || !project) {
             <span className="text-xs font-bold text-[#0b1c30]">{project.name}</span>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={reloadAll} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
+            <button onClick={() => reloadAll()} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
               ↻ Tải lại
             </button>
           </div>
