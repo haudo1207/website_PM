@@ -2175,7 +2175,7 @@ function ProjectDetailContent() {
                     ├──
                   </span>
                 )}
-                <span className={`whitespace-pre-wrap break-words block max-h-[90px] overflow-y-auto leading-relaxed pr-4 ${!isSubTask ? 'font-bold text-slate-900 text-[13px]' : 'text-slate-700 font-normal text-[12px]'}`}>
+                <span className={`whitespace-pre-wrap break-words block leading-relaxed pr-4 ${!isSubTask ? 'font-bold text-slate-900 text-[13px]' : 'text-slate-700 font-normal text-[12px]'}`}>
                   {val}
                 </span>
               </div>
@@ -2759,14 +2759,14 @@ function ProjectDetailContent() {
               // Detail Task — bold with group icon
               if (colUpper === 'DETAIL TASK') {
                 displayContent = (
-                  <span className="text-[12px] font-black text-[#0f172a]">{val}</span>
+                  <span className="text-[12px] font-black text-[#0f172a] whitespace-pre-wrap break-words block leading-relaxed pr-4">{val}</span>
                 );
               }
 
               return (
                 <td
                   key={col}
-                  className={`${cellStyle} ${isEditable ? 'cursor-text hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')}`}
+                  className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : ''} ${isEditable ? 'cursor-text hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')}`}
                   onClick={() => {
                     if (isEditable) {
                       setEditingCell({ taskId: -group.id, colName: col });
