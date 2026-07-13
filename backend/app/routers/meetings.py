@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 import datetime
+import logging
 
 from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
@@ -9,6 +10,7 @@ from ..models.project import Project
 from ..models.member import Member
 from ..utils.auth import get_current_user
 
+logger = logging.getLogger("meetings")
 router = APIRouter()
 
 # Mapping between Database Enums and Frontend text labels
@@ -224,8 +226,33 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         if member:
             created_by = member.id
 
-    # Handle Link mappings
+    # Handle Link mappings — auto-generate if empty
     meeting_url = body.get("meeting_url") or body.get("link")
+    platform = body.get("platform", "")
+
+    if not meeting_url and platform:
+        # Build ISO start_time for API calls
+        start_datetime = f"{meeting_date.isoformat()}T{start_time.strftime('%H:%M')}:00Z"
+        dur_mins = 60
+        try:
+            dur_mins = int(body.get("duration", 60))
+        except Exception:
+            pass
+
+        if platform.lower() == "zoom":
+            try:
+                from ..services.meeting_sync import create_zoom_meeting
+                result = create_zoom_meeting(title, start_datetime, dur_mins)
+                meeting_url = result["join_url"]
+            except Exception as e:
+                logger.warning(f"Auto-generate Zoom link failed: {e}")
+        elif platform.lower() == "google meet":
+            try:
+                from ..services.meeting_sync import create_google_meet_link
+                result = create_google_meet_link(title, start_datetime, dur_mins)
+                meeting_url = result["join_url"]
+            except Exception as e:
+                logger.warning(f"Auto-generate Google Meet link failed: {e}")
 
     # Handle AI summary formatting
     ai_summary = body.get("ai_summary") or body.get("summary")
@@ -480,3 +507,129 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
     ).filter(Meeting.id == id).first()
 
     return {"success": True, "data": meeting_to_dict(m)}
+
+# ─── SYNC MEETING (Zoom / Google Meet) ───────────────────
+@router.post("/{id}/sync")
+def sync_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Sync a meeting: fetch transcript and generate AI summary from Zoom/Google Meet."""
+    m = db.query(Meeting).filter(Meeting.id == id).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy cuộc họp")
+
+    if not m.meeting_url:
+        raise HTTPException(400, "Cuộc họp không có link. Không thể đồng bộ.")
+
+    platform = (m.platform or "").lower()
+    meeting_info = {
+        "title": m.title,
+        "date": m.meeting_date.isoformat() if m.meeting_date else "",
+        "meeting_date": m.meeting_date,
+        "start_time": m.start_time,
+        "duration": None,
+    }
+    if m.start_time and m.end_time:
+        start_dt = datetime.datetime.combine(datetime.date.today(), m.start_time)
+        end_dt = datetime.datetime.combine(datetime.date.today(), m.end_time)
+        meeting_info["duration"] = int((end_dt - start_dt).total_seconds() / 60)
+
+    try:
+        if "zoom" in platform:
+            from ..services.meeting_sync import sync_zoom_meeting
+            result = sync_zoom_meeting(m.meeting_url, meeting_info)
+        elif "google" in platform or "meet" in platform:
+            from ..services.meeting_sync import sync_google_meet
+            result = sync_google_meet(m.meeting_url, meeting_info)
+        else:
+            raise HTTPException(400, f"Nền tảng '{m.platform}' không hỗ trợ đồng bộ tự động.")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"Sync meeting {id} failed: {e}")
+        raise HTTPException(500, f"Lỗi đồng bộ cuộc họp: {str(e)}")
+
+    # Update meeting with sync results
+    m.transcript = result.get("transcript", m.transcript)
+    m.ai_summary = result.get("summary", m.ai_summary)
+    if result.get("status") == "DONE":
+        m.status = "DONE"
+
+    db.commit()
+
+    # Re-fetch with relationships
+    m = db.query(Meeting).options(
+        joinedload(Meeting.project),
+        joinedload(Meeting.creator),
+        joinedload(Meeting.members).joinedload(MeetingMember.member)
+    ).filter(Meeting.id == id).first()
+
+    return {"success": True, "data": meeting_to_dict(m)}
+
+
+# ─── GOOGLE OAUTH — Connect/Disconnect/Status ───────────
+@router.get("/google/status")
+def google_status():
+    """Check if Google Calendar/Drive is connected."""
+    from ..services.meeting_sync import is_google_connected
+    return {"connected": is_google_connected()}
+
+
+@router.get("/google/auth")
+def google_auth_url():
+    """Generate Google OAuth2 authorization URL."""
+    from ..config import settings
+    client_id = settings.GOOGLE_CLIENT_ID
+    client_secret = settings.GOOGLE_CLIENT_SECRET
+    if not client_id or not client_secret:
+        raise HTTPException(400, "Thiếu GOOGLE_CLIENT_ID hoặc GOOGLE_CLIENT_SECRET trong .env")
+
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        redirect_uri=settings.GOOGLE_CLIENT_ID and f"{settings.AI_BASE_URL.replace('/v1','')}/api/meetings/google/callback" or "http://localhost:8000/api/meetings/google/callback",
+    )
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    return {"auth_url": auth_url}
+
+
+@router.get("/google/callback")
+def google_callback(code: str):
+    """Handle Google OAuth2 callback and save tokens."""
+    from ..config import settings
+    from google_auth_oauthlib.flow import Flow
+    from ..services.meeting_sync import _save_google_tokens
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        redirect_uri=settings.GOOGLE_CLIENT_ID and f"{settings.AI_BASE_URL.replace('/v1','')}/api/meetings/google/callback" or "http://localhost:8000/api/meetings/google/callback",
+    )
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
+    _save_google_tokens({
+        "access_token": creds.token,
+        "refresh_token": creds.refresh_token,
+    })
+
+    return {"success": True, "message": "Đã kết nối Google Calendar & Drive thành công!"}

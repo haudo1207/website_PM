@@ -6,7 +6,7 @@ import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
-import { getMeetings, createMeeting, updateMeeting, deleteMeeting } from '@/lib/api';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting } from '@/lib/api';
 
 export default function MeetingsPage() {
   const [meetings, setMeetings] = useState<any[]>([]);
@@ -69,6 +69,13 @@ export default function MeetingsPage() {
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
       alert(error.response?.data?.detail || "Có lỗi xảy ra khi xóa cuộc họp");
+    }
+  };
+
+  const handleSync = async (meeting: any) => {
+    const data = await syncMeeting(parseInt(meeting.id));
+    if (data.success) {
+      setMeetings(prev => prev.map(m => m.id === meeting.id ? data.data : m));
     }
   };
 
@@ -158,6 +165,7 @@ export default function MeetingsPage() {
                   onEdit={m => { setEditingMeeting(m); setIsModalOpen(true); }}
                   onDelete={id => setDeleteConfirmId(id)}
                   onSummarize={m => { setSummarizingMeeting(m); setIsSummarizeOpen(true); }}
+                  onSync={handleSync}
                 />
               ))
             )}

@@ -12,6 +12,18 @@ class Settings(BaseSettings):
     AI_TIMEOUT_SECONDS: int = 60
     CHECK_INTERVAL_SECONDS: int = 3600
 
+    # Zoom Server-to-Server OAuth
+    ZOOM_ACCOUNT_ID: str = ""
+    ZOOM_CLIENT_ID: str = ""
+    ZOOM_CLIENT_SECRET: str = ""
+
+    # Google OAuth2 (for Google Meet & Google Drive)
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+
+    # AssemblyAI (for speech-to-text transcription)
+    ASSEMBLYAI_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
 

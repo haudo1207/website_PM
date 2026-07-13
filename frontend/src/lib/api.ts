@@ -167,3 +167,5 @@ export const deleteMeeting = (id: number) => api.delete(`/meetings/${id}`).then(
 export const updateTranscript = (id: number, transcript: string) => api.post(`/meetings/${id}/transcript`, { transcript }).then(r => r.data);
 export const addMeetingMember = (id: number, memberId: number, role?: string) => api.post(`/meetings/${id}/members`, { member_id: memberId, role }).then(r => r.data);
 export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);
+export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
+export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);

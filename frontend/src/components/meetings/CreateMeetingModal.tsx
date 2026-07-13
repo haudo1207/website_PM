@@ -212,9 +212,25 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 type="text" 
                 value={formData.link}
                 onChange={e => setFormData({...formData, link: e.target.value})}
-                placeholder="https://..." 
+                placeholder={formData.platform === 'Zoom' ? 'https://zoom.us/j/...' : formData.platform === 'Google Meet' ? 'https://meet.google.com/...' : 'https://...'} 
                 className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors placeholder:text-[#c2c6d6]"
               />
+              {!initialData && !formData.link && (
+                <>
+                  {formData.platform === 'Zoom' && (
+                    <p className="text-[11px] text-[#0058be] mt-1 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
+                      Link Zoom sẽ tự động được tạo nếu bạn để trống.
+                    </p>
+                  )}
+                  {formData.platform === 'Google Meet' && (
+                    <p className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
+                      Link Google Meet sẽ tự động được tạo nếu bạn để trống.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
           </form>
         </div>

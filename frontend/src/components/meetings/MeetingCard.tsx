@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Video, Users, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { Video, Users, Sparkles, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 
 interface MeetingCardProps {
   meeting: {
@@ -19,12 +19,17 @@ interface MeetingCardProps {
   onEdit?: (meeting: any) => void;
   onDelete?: (id: string) => void;
   onSummarize?: (meeting: any) => void;
+  onSync?: (meeting: any) => Promise<any>;
 }
 
-export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize }: MeetingCardProps) {
+export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, onSync }: MeetingCardProps) {
   const [isExpanded, setIsExpanded] = useState(meeting.status === 'ĐÃ DIỄN RA');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const isUpcoming = meeting.status === 'SẮP TỚI';
+  const canSync = (meeting.status === 'SẮP TỚI' || meeting.status === 'ĐANG XỬ LÝ AI') &&
+    meeting.link &&
+    (meeting.platform?.toLowerCase().includes('zoom') || meeting.platform?.toLowerCase().includes('google') || meeting.platform?.toLowerCase().includes('meet'));
   
   const Icon = meeting.platform.toLowerCase().includes('zoom') ? Video : Users;
   const borderColor = isUpcoming ? 'border-l-[#0058be]' : 'border-l-emerald-500';
@@ -33,6 +38,19 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize }: 
     : meeting.status === 'ĐANG XỬ LÝ AI'
       ? 'bg-amber-50 text-amber-700 border border-amber-200'
       : 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+
+  const handleSync = async () => {
+    if (!onSync || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await onSync(meeting);
+    } catch (error: any) {
+      console.error("Sync failed:", error);
+      alert(error.response?.data?.detail || error.message || "Lỗi đồng bộ cuộc họp");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   return (
     <div className={`bg-white rounded-xl border border-[#c2c6d6]/60 overflow-hidden shadow-sm hover:shadow-md transition-all relative ${borderColor} border-l-[6px]`}>
@@ -77,6 +95,17 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize }: 
                    <a href={meeting.link} target="_blank" rel="noreferrer" className="text-[11px] text-[#0058be] hover:underline font-semibold">
                      Tham gia
                    </a>
+                )}
+                {canSync && (
+                  <button
+                    onClick={handleSync}
+                    disabled={isSyncing}
+                    className="text-[11px] font-semibold flex items-center gap-0.5 text-violet-600 hover:text-violet-700 transition-colors disabled:opacity-60"
+                    title="Đồng bộ transcript & tóm tắt AI từ nền tảng cuộc họp"
+                  >
+                    <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
+                    {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ'}
+                  </button>
                 )}
                 <button onClick={() => onEdit?.(meeting)} className="text-[11px] text-[#565e74] hover:text-[#0058be] font-medium transition-colors">Sửa</button>
                 <button onClick={() => onDelete?.(meeting.id)} className="text-[11px] text-[#565e74] hover:text-red-600 font-medium transition-colors">Xóa</button>
