@@ -18,7 +18,7 @@ import {
 } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
-const ROMAN_PAIRS: [number, string][] = [[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
+const ROMAN_PAIRS: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
 const to_roman = (n: number): string => {
   if (n <= 0) return String(n);
   let result = '';
@@ -63,7 +63,7 @@ function ProjectDetailContent() {
   const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
   const [addingTaskAfterCode, setAddingTaskAfterCode] = useState<string | null>(null);
   const [hoveredSpacerPos, setHoveredSpacerPos] = useState<{ id: string; left: string } | null>(null);
-  
+
   // Task Group CRUD States
   const [showTaskGroupModal, setShowTaskGroupModal] = useState(false);
   const [editingTaskGroup, setEditingTaskGroup] = useState<any>(null);
@@ -71,7 +71,7 @@ function ProjectDetailContent() {
   const [tgDesc, setTgDesc] = useState('');
   const [tgStatus, setTgStatus] = useState('Waiting');
   const [tgPhaseId, setTgPhaseId] = useState<number | ''>('');
-  
+
   // Inline Task Group States
   const [addingTaskGroupPhaseId, setAddingTaskGroupPhaseId] = useState<number | null>(null);
   const [newTgForm, setNewTgForm] = useState({
@@ -104,6 +104,7 @@ function ProjectDetailContent() {
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
 
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
+  const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
 
   const toggleParentCollapse = (parentTaskId: string) => {
     setCollapsedParents(prev => {
@@ -261,7 +262,7 @@ function ProjectDetailContent() {
   const getCellValue = (task: any, colName: string): string => {
     if (!task) return '';
     const colUpper = colName.trim().toUpperCase();
-    
+
     switch (colUpper) {
       case 'TASK ID': return task.task_code || task.task_id || '';
       case 'DETAIL TASK': return task.detail || '';
@@ -521,7 +522,7 @@ function ProjectDetailContent() {
       .catch((err) => {
         console.error('Error fetching customers:', err);
       });
-    
+
     getCategories()
       .then((data) => {
         setCategories(data || []);
@@ -741,7 +742,7 @@ function ProjectDetailContent() {
 
   const getOrderedRows = () => {
     const rows: { type: 'group' | 'task'; id: number; task?: any; group?: any }[] = [];
-    const phasesToRender = activePhase === 'ALL' 
+    const phasesToRender = activePhase === 'ALL'
       ? phases.filter(p => !p.is_master)
       : phases.filter(p => p.name === activePhase);
 
@@ -822,7 +823,7 @@ function ProjectDetailContent() {
 
       if (isCellEditable(targetRow, targetCol)) {
         setEditingCell({ taskId: targetRow.id, colName: targetCol });
-        
+
         if (targetRow.type === 'group') {
           setEditValue(getGroupCellValue(targetRow.group, targetCol));
         } else {
@@ -842,7 +843,7 @@ function ProjectDetailContent() {
         }
         return;
       }
-      
+
       if (keyAction === 'Enter') break;
     }
 
@@ -1016,7 +1017,7 @@ function ProjectDetailContent() {
     const cleanName = namePart
       .replace(/[._-]/g, ' ')
       .replace(/\b\w/g, c => c.toUpperCase());
-    
+
     const parts = cleanName.split(' ');
     let initials = '';
     if (parts.length >= 2) {
@@ -1150,11 +1151,37 @@ function ProjectDetailContent() {
   // --- Dynamic Stats calculation ---
   const kpiTasks = getFilteredTasks();
   const kpiTotal = kpiTasks.length;
-  const kpiWarning = kpiTasks.filter(x => x.days_late != null && x.days_late > 0).length;
 
+  // 1 & 2. Số task hoàn thành & % Tiến độ
   const kpiDone = kpiTasks.filter(x => {
     const s = (x.status || '').toLowerCase();
     return s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+  }).length;
+  const devProgressPercent = kpiTotal > 0 ? Math.round((kpiDone / kpiTotal) * 100) : 0;
+
+  // 3. Tổng Manday
+  const kpiTotalManday = kpiTasks.reduce((sum, task) => {
+    const md = parseFloat(task.manday_est as string);
+    return sum + (isNaN(md) ? 0 : md);
+  }, 0);
+
+  // 4. Trễ deadline
+  const kpiWarning = kpiTasks.filter(x => x.days_late != null && x.days_late > 0).length;
+
+  // 5. Critical thực hiện tuần này
+  const today = new Date();
+  const firstDay = new Date(today);
+  firstDay.setDate(today.getDate() - today.getDay() + 1);
+  const lastDay = new Date(today);
+  lastDay.setDate(today.getDate() - today.getDay() + 7);
+  firstDay.setHours(0, 0, 0, 0);
+  lastDay.setHours(23, 59, 59, 999);
+
+  const kpiCriticalThisWeek = kpiTasks.filter(x => {
+    if ((x.priority || '').toLowerCase() !== 'critical') return false;
+    if (!x.start_date) return false;
+    const d = new Date(x.start_date);
+    return d >= firstDay && d <= lastDay;
   }).length;
 
   const kpiInProgress = kpiTasks.filter(x => {
@@ -1162,13 +1189,34 @@ function ProjectDetailContent() {
     return s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress';
   }).length;
 
-  // Global progress bar calculation
-  const totalTasks = items.length;
-  const completedTasks = items.filter(x => {
-    const s = (x.status || '').toLowerCase();
-    return s === 'done' || s === 'completed' || s.includes('hoàn');
-  }).length;
-  const devProgressPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  // --- Leaderboard / Workload Chart Calculation ---
+  const workloadStats = (() => {
+    const totalCounts: Record<string, number> = {};
+    const doneCounts: Record<string, number> = {};
+    let unassignedTotal = 0;
+    let unassignedDone = 0;
+    items.forEach(t => {
+      const s = (t.status || '').toLowerCase();
+      const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+      const name = (t.assigned_name || '').trim();
+      if (name === '') {
+        unassignedTotal += 1;
+        if (isDone) unassignedDone += 1;
+      } else {
+        totalCounts[name] = (totalCounts[name] || 0) + 1;
+        if (isDone) doneCounts[name] = (doneCounts[name] || 0) + 1;
+      }
+    });
+    const rows = Object.keys(totalCounts)
+      .map(name => ({ name, total: totalCounts[name], done: doneCounts[name] || 0 }))
+      .sort((a, b) => b.total - a.total);
+    if (unassignedTotal > 0) {
+      rows.unshift({ name: 'Chưa gắn', total: unassignedTotal, done: unassignedDone });
+    }
+    return rows;
+  })();
+
+  const leaderboardStats = workloadStats.filter(r => r.name !== 'Chưa gắn').map(r => ({ name: r.name, count: r.done }));
 
   const getGroupIndex = (groupId: number) => {
     const group = taskGroups.find(g => g.id === groupId);
@@ -1204,9 +1252,9 @@ function ProjectDetailContent() {
 
 
   // --- Hierarchical Tree Table Processing ---
-    const renderFormCell = (col: string, cIdx: number, groupId: number, parentCode: string | null, level: number) => {
+  const renderFormCell = (col: string, cIdx: number, groupId: number, parentCode: string | null, level: number) => {
     const colUpper = col.toUpperCase().trim();
-    
+
     // TASK ID - automatically generated preview
     if (colUpper === 'TASK ID' || colUpper === 'TASKID' || colUpper === 'ID') {
       const generatedId = parentCode ? getNextSubTaskId(parentCode) : getNextRootCodeForGroup(groupId);
@@ -1267,9 +1315,8 @@ function ProjectDetailContent() {
           value={newForm[col] || (dbStatuses[0]?.name || 'Todo')}
           onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
           onKeyDown={handleInputKeyDown}
-          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-            isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-          }`}
+          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
         >
           {dbStatuses.length === 0 ? (
             <>
@@ -1292,9 +1339,8 @@ function ProjectDetailContent() {
           value={newForm[col] || 'Normal'}
           onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
           onKeyDown={handleInputKeyDown}
-          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-            isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-          }`}
+          className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+            }`}
         >
           {dbPriorities.length === 0 ? (
             <>
@@ -1321,9 +1367,8 @@ function ProjectDetailContent() {
             value={newForm[col] ? toPickerDate(newForm[col]) : ''}
             onChange={e => setNewForm({ ...newForm, [col]: fromPickerDate(e.target.value) })}
             onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
           />
         );
       } else if (isUserCol) {
@@ -1332,9 +1377,8 @@ function ProjectDetailContent() {
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
           >
             <option value="">-- Chọn thành viên --</option>
             {projectMembers.map((m: any) => (
@@ -1350,16 +1394,15 @@ function ProjectDetailContent() {
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
           />
         );
       } else if (colUpper === 'SKILL SOLUTION') {
         const activeGroups = categories
           .filter(c => c.is_active)
           .flatMap(c => c.groups || []);
-        
+
         inputField = (
           <select
             value={newForm[col] || ''}
@@ -1373,9 +1416,8 @@ function ProjectDetailContent() {
               });
             }}
             onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
           >
             <option value="">-- Chọn Group --</option>
             {activeGroups.map((g: any) => (
@@ -1408,9 +1450,8 @@ function ProjectDetailContent() {
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
           >
             <option value="">-- Chọn Skill --</option>
             {availableSkills.map((s: any) => (
@@ -1426,9 +1467,8 @@ function ProjectDetailContent() {
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
             placeholder="100/0"
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
           />
         );
       } else {
@@ -1438,11 +1478,9 @@ function ProjectDetailContent() {
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${
-              colUpper.includes('DETAIL') ? 'font-semibold' : ''
-            } ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] ${colUpper.includes('DETAIL') ? 'font-semibold' : ''
+              } ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
             placeholder={col + (isRequired ? ' *' : '')}
             autoFocus={cIdx === 1}
           />
@@ -1459,14 +1497,14 @@ function ProjectDetailContent() {
 
   const handleSaveTask = async () => {
     if (addingTaskGroupId === null) return;
-    
+
     // Required fields: DETAIL TASK, PRIORITY, MANDAY EST, STATUS, START DATE, KPI RATIO
     const detailVal = (newForm['DETAIL TASK'] || '').trim();
     const priorityVal = newForm['PRIORITY'] || 'Normal';
     const mandayEstVal = parseFloat(newForm['MANDAY EST'] || '0');
     const statusVal = newForm['STATUS'] || 'Waiting';
     const startDateVal = newForm['START DATE'] || null;
-    
+
     if (!detailVal) {
       alert('Tên nhiệm vụ (DETAIL TASK) không được để trống!');
       return;
@@ -1639,7 +1677,7 @@ function ProjectDetailContent() {
     const relativeX = e.clientX - rect.left;
     const width = rect.width;
     const ratio = relativeX / width;
-    
+
     let snapLeft = '50%';
     if (ratio < 0.2) {
       snapLeft = '10%';
@@ -1652,7 +1690,7 @@ function ProjectDetailContent() {
     } else {
       snapLeft = '90%';
     }
-    
+
     setHoveredSpacerPos({ id: spacerId, left: snapLeft });
   };
 
@@ -1671,12 +1709,12 @@ function ProjectDetailContent() {
     };
 
     return (
-      <tr 
-        key={spacerId} 
+      <tr
+        key={spacerId}
         className="group/spacer border-none bg-transparent"
       >
         <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent relative">
-          <div 
+          <div
             onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
             onMouseLeave={handleSpacerMouseLeave}
             className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
@@ -1732,12 +1770,12 @@ function ProjectDetailContent() {
     };
 
     return (
-      <tr 
-        key={spacerId} 
+      <tr
+        key={spacerId}
         className="group/spacer border-none bg-transparent"
       >
         <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent relative">
-          <div 
+          <div
             onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
             onMouseLeave={handleSpacerMouseLeave}
             className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
@@ -1782,16 +1820,16 @@ function ProjectDetailContent() {
       }
     };
 
-    const rowBgClass = isSubTask 
-      ? "bg-[#fafbfc]/70 hover:bg-[#eff4ff]/60" 
+    const rowBgClass = isSubTask
+      ? "bg-[#fafbfc]/70 hover:bg-[#eff4ff]/60"
       : "bg-[#f8fafc] hover:bg-[#f1f5f9] font-bold border-l-4 border-l-slate-400";
 
     const cellStyle = "px-4 py-2 border-r border-slate-100 last:border-r-0 text-left align-middle text-xs";
 
     return (
-      <tr 
+      <tr
         id={`task-row-${task.id}`}
-        key={task.id} 
+        key={task.id}
         className={`group relative transition-colors border-b border-slate-200/60 ${rowBgClass}`}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = "move";
@@ -1844,7 +1882,7 @@ function ProjectDetailContent() {
         <td className="px-1 py-1.5 text-center" style={{ width: '130px', minWidth: '130px' }}>
           <div className="flex items-center justify-center gap-1.5 text-slate-500">
             {/* 1. Drag Handle / Move Task (Always visible, clickable) */}
-            <button 
+            <button
               type="button"
               onMouseDown={() => {
                 const el = document.getElementById(`task-row-${task.id}`);
@@ -1988,7 +2026,7 @@ function ProjectDetailContent() {
               const activeGroups = categories
                 .filter(c => c.is_active)
                 .flatMap(c => c.groups || []);
-              
+
               return (
                 <td key={col} className="px-2 py-1 min-w-[150px]">
                   <select
@@ -2149,7 +2187,7 @@ function ProjectDetailContent() {
             cellContent = (
               <div className="flex items-center gap-1.5" style={{ paddingLeft: `${level * 16}px` }}>
                 {hasChildren && (
-                  <span 
+                  <span
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleParentCollapse(taskIdVal);
@@ -2240,7 +2278,7 @@ function ProjectDetailContent() {
       );
     }
 
-    const phasesToRender = activePhase === 'ALL' 
+    const phasesToRender = activePhase === 'ALL'
       ? phases.filter(p => !p.is_master)
       : phases.filter(p => p.name === activePhase);
 
@@ -2300,7 +2338,7 @@ function ProjectDetailContent() {
 
           {dynamicCols.map(col => {
             const colUpper = col.trim().toUpperCase();
-            
+
             // Task ID
             if (colUpper === 'TASK ID') {
               return (
@@ -2404,8 +2442,8 @@ function ProjectDetailContent() {
 
       // Phase header (ALWAYS rendered)
       result.push(
-        <tr 
-          key={`phase-hdr-${phase.id}`} 
+        <tr
+          key={`phase-hdr-${phase.id}`}
           className="bg-[#e2e8f0] border-l-[6px] border-l-[#475569] border-b border-[#c2c6d6]/40 transition-colors duration-150"
           onDragOver={(e) => {
             e.preventDefault();
@@ -2459,9 +2497,9 @@ function ProjectDetailContent() {
 
         // ═══ TASK GROUP ROW (rendered as table row) ═══
         result.push(
-          <tr 
+          <tr
             id={`tg-row-${group.id}`}
-            key={`tg-row-${group.id}`} 
+            key={`tg-row-${group.id}`}
             className="bg-[#eef2ff] hover:bg-[#e0e7ff] border-b border-[#c7d2fe] border-l-4 border-l-indigo-500 group transition-colors"
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
@@ -2523,7 +2561,7 @@ function ProjectDetailContent() {
                 </button>
 
                 {/* 2. Drag Handle / Move Task Group (Always visible, clickable) */}
-                <button 
+                <button
                   type="button"
                   onMouseDown={() => {
                     const el = document.getElementById(`tg-row-${group.id}`);
@@ -2850,7 +2888,7 @@ function ProjectDetailContent() {
 
     return result;
   };
-if (loadingProject || !project) {
+  if (loadingProject || !project) {
     return (
       <div className="h-screen bg-[#f0f2f5] flex items-center justify-center text-[#565e74]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
         <div className="flex items-center gap-2">
@@ -2873,9 +2911,9 @@ if (loadingProject || !project) {
   return (
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden font-body-md" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
-      
+
       <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
-        
+
         {/* TOP BAR / NAVIGATION HEADER */}
         <div className="h-[52px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
           <div className="flex items-center gap-3">
@@ -2916,7 +2954,7 @@ if (loadingProject || !project) {
               <div className="flex gap-2">
                 {isAdmin() && (
                   <>
-                    <button 
+                    <button
                       onClick={() => {
                         setEditProjectName(project.name || '');
                         setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
@@ -2934,7 +2972,7 @@ if (loadingProject || !project) {
                       <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
                       Chỉnh sửa dự án
                     </button>
-                    <button 
+                    <button
                       onClick={() => setShowDeleteModal(true)}
                       className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
                     >
@@ -2943,7 +2981,7 @@ if (loadingProject || !project) {
                     </button>
                   </>
                 )}
-                <button 
+                <button
                   onClick={() => router.push(`/project`)}
                   className="bg-white text-slate-800 px-4 py-2 rounded-lg text-[13px] font-medium flex items-center border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
                 >
@@ -2954,103 +2992,178 @@ if (loadingProject || !project) {
             </div>
           </div>
 
-          {/* KPI ROW */}
-          <div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* KPI 1 - Tổng nhiệm vụ */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tổng nhiệm vụ</p>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-bold text-[#0b1c30]">{kpiTotal}</span>
-                </div>
-                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                  <div className="bg-[#0058be] h-full" style={{ width: '100%' }}></div>
-                </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            {/* Thẻ 1: Tổng số task hoàn thành / tổng task */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Hoàn thành / Tổng số</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-[#0b1c30]">{kpiDone} / {kpiTotal}</span>
               </div>
-
-              {/* KPI 2 - Tiến độ dự án */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tiến độ dự án</p>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-bold text-indigo-600">{devProgressPercent}%</span>
-                </div>
-                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                  <div className="bg-indigo-500 h-full" style={{ width: `${devProgressPercent}%` }}></div>
-                </div>
+              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                <div className="bg-[#0058be] h-full" style={{ width: '100%' }}></div>
               </div>
+            </div>
 
-              {/* KPI 3 - Đang thực hiện */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Đang thực hiện</p>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="text-2xl font-bold text-blue-600">{kpiInProgress}</span>
-                  <span className="material-symbols-outlined text-blue-400 text-[18px]">pending_actions</span>
-                </div>
-                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                  <div className="bg-blue-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiInProgress / kpiTotal) * 100 : 0}%` }}></div>
-                </div>
+            {/* Thẻ 2: % Tiến độ (Tính dựa trên thẻ 1) */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tiến độ dự án</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-indigo-600">{devProgressPercent}%</span>
               </div>
-
-              {/* KPI 4 - Cảnh báo */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-                <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Cảnh báo</p>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="text-2xl font-bold text-red-600">{kpiWarning}</span>
-                  <span className="material-symbols-outlined text-red-500 text-[18px]">warning</span>
-                </div>
-                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                  <div className="bg-red-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiWarning / kpiTotal) * 100 : 0}%` }}></div>
-                </div>
+              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                <div className="bg-indigo-500 h-full" style={{ width: `${devProgressPercent}%` }}></div>
               </div>
+            </div>
 
-              {/* KPI 5 - Hoàn thành */}
-              <div className="bg-white p-5 rounded-xl border border-emerald-200 border-2 shadow-sm transition-transform hover:-translate-y-0.5">
-                <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Hoàn thành</p>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="text-2xl font-bold text-emerald-600">{kpiDone}</span>
-                  <span className="material-symbols-outlined text-emerald-500 text-[18px]">task_alt</span>
-                </div>
-                <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                  <div className="bg-emerald-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiDone / kpiTotal) * 100 : 0}%` }}></div>
-                </div>
+            {/* Thẻ 3: Tổng Manday */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tổng Manday</p>
+              <div className="flex items-baseline justify-between mt-1">
+                <span className="text-2xl font-bold text-blue-600">{kpiTotalManday}</span>
+                <span className="material-symbols-outlined text-blue-400 text-[18px]">calendar_month</span>
+              </div>
+              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                <div className="bg-blue-500 h-full" style={{ width: '100%' }}></div>
+              </div>
+            </div>
+
+            {/* Thẻ 4: Trễ deadline */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Trễ deadline</p>
+              <div className="flex items-baseline justify-between mt-1">
+                <span className="text-2xl font-bold text-red-600">{kpiWarning}</span>
+                <span className="material-symbols-outlined text-red-500 text-[18px]">warning</span>
+              </div>
+              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                <div className="bg-red-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiWarning / kpiTotal) * 100 : 0}%` }}></div>
+              </div>
+            </div>
+
+            {/* Thẻ 5: Critical tuần này */}
+            <div className="bg-white p-5 rounded-xl border border-emerald-200 border-2 shadow-sm transition-transform hover:-translate-y-0.5">
+              <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Critical Tuần Này</p>
+              <div className="flex items-baseline justify-between mt-1">
+                <span className="text-2xl font-bold text-emerald-600">{kpiCriticalThisWeek}</span>
+                <span className="material-symbols-outlined text-emerald-500 text-[18px]">priority_high</span>
+              </div>
+              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                <div className="bg-emerald-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiCriticalThisWeek / kpiTotal) * 100 : 0}%` }}></div>
               </div>
             </div>
           </div>
 
+          {/* WORKLOAD CHART */}
+          <div className="mt-6 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-1">
+              <div>
+                <h3 className="text-sm font-bold text-[#0b1c30]">Khối lượng theo người phụ trách</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">Số task đã nhận theo trạng thái</p>
+              </div>
+              {workloadStats.length > 3 && (
+                <button
+                  onClick={() => setShowAllLeaderboard(!showAllLeaderboard)}
+                  className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
+                >
+                  {showAllLeaderboard ? 'Thu gọn' : 'Xem thêm'}
+                </button>
+              )}
+            </div>
+
+            {workloadStats.length === 0 ? (
+              <p className="text-xs text-slate-500 italic text-center py-4">Chưa có dữ liệu để hiển thị.</p>
+            ) : (() => {
+              const displayRows = showAllLeaderboard ? workloadStats : workloadStats.slice(0, 3);
+              const maxTotal = Math.max(...workloadStats.map(r => r.total), 1);
+              const xTicks = Array.from({ length: 6 }, (_, i) => Math.round((maxTotal / 5) * i));
+              return (
+                <div className="mt-4">
+                  <div className="space-y-3">
+                    {displayRows.map((row) => {
+                      const isUnassigned = row.name === 'Chưa gắn';
+                      const barColor = isUnassigned ? '#c8c8c8' : '#22c55e';
+                      const doneBarColor = isUnassigned ? '#9ca3af' : '#16a34a';
+                      const totalWidth = (row.total / maxTotal) * 100;
+                      const doneWidth = (row.done / maxTotal) * 100;
+                      return (
+                        <div key={row.name} className="flex items-center gap-3">
+                          <span className="text-[11px] text-slate-600 w-24 shrink-0 text-right truncate" title={row.name}>{row.name}</span>
+                          <div className="flex-1 relative h-7 bg-slate-100 rounded overflow-hidden">
+                            {/* Total bar (background) */}
+                            <div
+                              className="absolute inset-y-0 left-0 rounded transition-all duration-500"
+                              style={{ width: `${totalWidth}%`, backgroundColor: barColor }}
+                            />
+                            {/* Done bar (foreground) */}
+                            {row.done > 0 && (
+                              <div
+                                className="absolute inset-y-0 left-0 rounded transition-all duration-500"
+                                style={{ width: `${doneWidth}%`, backgroundColor: doneBarColor }}
+                              />
+                            )}
+                            <span className="absolute right-2 inset-y-0 flex items-center text-[11px] font-bold text-white drop-shadow">
+                              {row.total}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* X-axis ticks */}
+                  <div className="flex ml-[7.5rem] mt-2">
+                    {xTicks.map((tick) => (
+                      <div key={tick} className="flex-1 text-center text-[10px] text-slate-400">{tick}</div>
+                    ))}
+                  </div>
+                  {/* Legend */}
+                  <div className="flex items-center gap-4 mt-3 ml-[7.5rem]">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#22c55e' }} />
+                      <span className="text-[11px] text-slate-500">Tổng task</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }} />
+                      <span className="text-[11px] text-slate-500">Đã hoàn thành</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded-sm bg-slate-300" />
+                      <span className="text-[11px] text-slate-500">Chưa gắn</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
           {/* TAB NAVIGATION */}
           <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
-            <button 
+            <button
               onClick={() => setActiveMainTab('tasks')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">task</span>
               Tasks
             </button>
-            <button 
+            <button
               onClick={() => setActiveMainTab('meetings')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
-              <span className="material-symbols-outlined mr-2 text-[18px]">calendar_month</span>
+              <span className="material-symbols-outlined mr-2 text-[18px]">meeting_room</span>
               Meetings
             </button>
-            <button 
+            <button
               onClick={() => setActiveMainTab('chats')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
               Chats
             </button>
-            <button 
+            <button
               onClick={() => setActiveMainTab('members')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${
-                activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-              }`}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
               Members
@@ -3059,10 +3172,10 @@ if (loadingProject || !project) {
 
           {/* MAIN TABS CONTENT AREA */}
           <div className="w-full">
-            
+
             {/* LEFT COLUMN: ACTIVE TAB WORKSPACE */}
             <div className="space-y-6">
-              
+
               {/* TAB 1: TASKS */}
               {activeMainTab === 'tasks' && (
                 <div className="space-y-6">
@@ -3071,13 +3184,12 @@ if (loadingProject || !project) {
                     <div className="flex items-center gap-1 bg-[#eff4ff] border border-[#c2c6d6]/60 rounded-xl p-1 flex-wrap">
                       {dynamicTabs.map(p => (
                         <button key={p.key} onClick={() => setActivePhase(p.key)}
-                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                            activePhase === p.key
+                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${activePhase === p.key
                               ? p.key === 'ALL'
                                 ? 'bg-[#0058be] text-white shadow-sm'
                                 : 'bg-white text-[#0058be] shadow-sm'
                               : 'text-[#565e74] hover:text-[#0058be]'
-                          }`}>
+                            }`}>
                           <span>{p.label}</span>
                           {activePhase === p.key && !p.is_master && (
                             <span className="flex items-center gap-1 shrink-0">
@@ -3126,7 +3238,7 @@ if (loadingProject || !project) {
                       {taskSearch && (
                         <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
                       )}
-                      
+
                       {/* + Thêm Group Task */}
                       <button
                         onClick={() => {
@@ -3159,9 +3271,9 @@ if (loadingProject || !project) {
                           const currentPhaseGroups = activePhase === 'ALL'
                             ? taskGroups
                             : taskGroups.filter(g => {
-                                const ph = phases.find(p => p.id === g.phase_id);
-                                return ph && ph.name === activePhase;
-                              });
+                              const ph = phases.find(p => p.id === g.phase_id);
+                              return ph && ph.name === activePhase;
+                            });
                           if (currentPhaseGroups.length === 0) {
                             alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
                             return;
@@ -3390,13 +3502,13 @@ if (loadingProject || !project) {
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                       {chatGroups.map(g => {
                         const PLATFORM_STYLES: Record<string, { bg: string; icon: string; label: string }> = {
-                          Telegram:  { bg: 'bg-[#229ED9]', icon: '▶',  label: 'Telegram' },
-                          Zalo:      { bg: 'bg-[#0068FF]', icon: '💬', label: 'Zalo' },
-                          Slack:     { bg: 'bg-[#4A154B]', icon: '#',  label: 'Slack' },
-                          Teams:     { bg: 'bg-[#6264A7]', icon: 'T',  label: 'Teams' },
-                          Discord:   { bg: 'bg-[#5865F2]', icon: '⚡', label: 'Discord' },
-                          WhatsApp:  { bg: 'bg-[#25D366]', icon: '📱', label: 'WhatsApp' },
-                          Khác:      { bg: 'bg-slate-500', icon: '💬', label: 'Group' },
+                          Telegram: { bg: 'bg-[#229ED9]', icon: '▶', label: 'Telegram' },
+                          Zalo: { bg: 'bg-[#0068FF]', icon: '💬', label: 'Zalo' },
+                          Slack: { bg: 'bg-[#4A154B]', icon: '#', label: 'Slack' },
+                          Teams: { bg: 'bg-[#6264A7]', icon: 'T', label: 'Teams' },
+                          Discord: { bg: 'bg-[#5865F2]', icon: '⚡', label: 'Discord' },
+                          WhatsApp: { bg: 'bg-[#25D366]', icon: '📱', label: 'WhatsApp' },
+                          Khác: { bg: 'bg-slate-500', icon: '💬', label: 'Group' },
                         };
                         const ps = PLATFORM_STYLES[g.platform] || PLATFORM_STYLES['Khác'];
 
@@ -3496,12 +3608,12 @@ if (loadingProject || !project) {
                         const isLeader = m.role === 'Leader';
                         const isPM = m.role === 'PM';
                         const roleLabel = isLeader ? 'Technical Lead' : isPM ? 'Product Manager' : 'Member';
-                        const roleClass = isLeader 
-                          ? 'bg-[#eff4ff] text-[#0058be] border border-[#0058be]/10' 
-                          : isPM 
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50' 
+                        const roleClass = isLeader
+                          ? 'bg-[#eff4ff] text-[#0058be] border border-[#0058be]/10'
+                          : isPM
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50'
                             : 'bg-slate-100 text-slate-600 border border-slate-200';
-                        
+
                         const initials = (m.display_name || '').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
 
                         return (
@@ -3634,9 +3746,9 @@ if (loadingProject || !project) {
                     </span>
                     <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                   </button>
-                  
+
                   {customerDropdownOpen && (
-                    <div 
+                    <div
                       onClick={(e) => e.stopPropagation()}
                       className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2"
                     >
@@ -3704,7 +3816,7 @@ if (loadingProject || !project) {
                   </button>
 
                   {phaseDropdownOpen && (
-                    <div 
+                    <div
                       onClick={(e) => e.stopPropagation()}
                       className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
                     >
@@ -3737,7 +3849,7 @@ if (loadingProject || !project) {
                 <label className="text-[11px] font-semibold text-[#565e74] block">
                   Project Manager (PM)
                 </label>
-                <div 
+                <div
                   onClick={() => {
                     setPmDropdownOpen(!pmDropdownOpen);
                     setLeaderDropdownOpen(false);
@@ -3756,8 +3868,8 @@ if (loadingProject || !project) {
                         return (
                           <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
                             {m?.display_name || id}
-                            <button 
-                              type="button" 
+                            <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedPms(selectedPms.filter(x => x !== id));
@@ -3773,9 +3885,9 @@ if (loadingProject || !project) {
                   </div>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
-                
+
                 {pmDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
                   >
@@ -3819,7 +3931,7 @@ if (loadingProject || !project) {
                 <label className="text-[11px] font-semibold text-[#565e74] block">
                   Technical Leader
                 </label>
-                <div 
+                <div
                   onClick={() => {
                     setLeaderDropdownOpen(!leaderDropdownOpen);
                     setPmDropdownOpen(false);
@@ -3838,8 +3950,8 @@ if (loadingProject || !project) {
                         return (
                           <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
                             {m?.display_name || id}
-                            <button 
-                              type="button" 
+                            <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedLeaders(selectedLeaders.filter(x => x !== id));
@@ -3855,9 +3967,9 @@ if (loadingProject || !project) {
                   </div>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
-                
+
                 {leaderDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
                   >
@@ -3901,7 +4013,7 @@ if (loadingProject || !project) {
                 <label className="text-[11px] font-semibold text-[#565e74] block">
                   Danh sách thành viên dự án
                 </label>
-                <div 
+                <div
                   onClick={() => {
                     setMemberDropdownOpen(!memberDropdownOpen);
                     setPmDropdownOpen(false);
@@ -3920,8 +4032,8 @@ if (loadingProject || !project) {
                         return (
                           <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
                             {m?.display_name || id}
-                            <button 
-                              type="button" 
+                            <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedMembers(selectedMembers.filter(x => x !== id));
@@ -3937,9 +4049,9 @@ if (loadingProject || !project) {
                   </div>
                   <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                 </div>
-                
+
                 {memberDropdownOpen && (
-                  <div 
+                  <div
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
                   >
@@ -4164,7 +4276,7 @@ if (loadingProject || !project) {
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
-            
+
             {/* Modal Form */}
             <form onSubmit={handleSaveTaskGroup} className="p-6 space-y-4">
               <div>
@@ -4346,7 +4458,7 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
         />
         {isOpen && (
           <div className="absolute left-0 right-0 mt-1 max-h-[160px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
-            <div 
+            <div
               onClick={() => onSaveWithAction('')}
               className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
             >
