@@ -5,7 +5,7 @@ on:
 
 jobs:
   deploy-both-brands:
-    runs-on: [self-hosted, security-host]
+    runs-on: [self-hosted, security]
     steps:
       - uses: actions/checkout@v4
       - name: Sync and deploy both brands
