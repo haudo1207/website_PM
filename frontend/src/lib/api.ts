@@ -175,3 +175,13 @@ export const getPerformanceSettings = () => api.get('/performance-settings').the
 export const createPerformanceSetting = (data: { performance: string; kpi: number; sort_order?: number; is_active?: boolean }) => api.post('/performance-settings', data).then(r => r.data);
 export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; sort_order?: number; is_active?: boolean }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
 export const deletePerformanceSetting = (id: number) => api.delete(`/performance-settings/${id}`).then(r => r.data);
+
+// Accounts Management
+export const getAccounts = () => api.get('/accounts').then(r => r.data);
+export const getAvailableMembers = () => api.get('/accounts/available-members').then(r => r.data);
+export const createAccount = (data: { email: string; password: string; role: string; full_name?: string; member_id?: number }) => api.post('/accounts', data).then(r => r.data);
+export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string }) => api.put(`/accounts/${id}`, data).then(r => r.data);
+export const resetAccountPassword = (id: number, password: string) => api.post(`/accounts/${id}/reset-password`, { password }).then(r => r.data);
+export const lockAccount = (id: number) => api.post(`/accounts/${id}/lock`).then(r => r.data);
+export const unlockAccount = (id: number) => api.post(`/accounts/${id}/unlock`).then(r => r.data);
+export const deleteAccount = (id: number) => api.delete(`/accounts/${id}`).then(r => r.data);

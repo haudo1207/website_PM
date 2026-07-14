@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
 from ..database import Base
 
@@ -13,6 +13,8 @@ class User(Base):
     position = Column(String, nullable=True)
     department = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+    member_id = Column(Integer, ForeignKey("members.id"), nullable=True, unique=True)
 
+    member = relationship("Member", foreign_keys=[member_id], lazy="joined")
     skills = relationship("Skill", secondary="user_skills", backref="users")
 

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, accounts
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .database import engine, Base
@@ -348,6 +348,7 @@ app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
 app.include_router(meetings_router.router,    prefix="/api/meetings")
 app.include_router(performance_settings.router, prefix="/api/performance-settings")
+app.include_router(accounts.router,            prefix="/api/accounts")
 
 @app.get("/health")
 def health():
