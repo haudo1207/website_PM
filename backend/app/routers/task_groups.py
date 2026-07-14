@@ -23,8 +23,10 @@ from ..models.task import Task
 from ..models.member import Member
 from ..models.project import project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
+from ..utils.access import require_project, require_route_project_access
+from ..utils.auth import get_current_user
 
-router = APIRouter(tags=["task-groups-and-tasks"])
+router = APIRouter(tags=["task-groups-and-tasks"], dependencies=[Depends(require_route_project_access)])
 
 
 # ═══════════════════════════════════════════════════════════
@@ -236,7 +238,7 @@ def reorder_task_groups(phid: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/phases/{phid}/task-groups/{gid}/move")
-def move_task_group_to_phase(phid: int, gid: int, body: dict, db: Session = Depends(get_db)):
+def move_task_group_to_phase(phid: int, gid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     target_phase_id = body.get("target_phase_id")
     if not target_phase_id:
         raise HTTPException(400, "target_phase_id is required.")
@@ -248,6 +250,7 @@ def move_task_group_to_phase(phid: int, gid: int, body: dict, db: Session = Depe
     target_phase = db.query(Phase).filter(Phase.id == target_phase_id).first()
     if not target_phase:
         raise HTTPException(404, "Target Phase not found.")
+    require_project(db, current_user, target_phase.project_id)
         
     max_order = db.query(sql_func.max(TaskGroup.sort_order)).filter(TaskGroup.phase_id == target_phase_id).scalar() or 0
     
@@ -615,7 +618,7 @@ def duplicate_task(gid: int, tid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/task-groups/{gid}/tasks/{tid}/move")
-def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
+def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Move a task to a different task group. Auto-generates new task_code."""
     new_group_id = body.get("target_group_id")
     if not new_group_id:
@@ -628,6 +631,10 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
     new_group = db.query(TaskGroup).filter(TaskGroup.id == new_group_id).first()
     if not new_group:
         raise HTTPException(404, "Target task group not found.")
+    target_phase = db.query(Phase).filter(Phase.id == new_group.phase_id).first()
+    if not target_phase:
+        raise HTTPException(404, "Target phase not found.")
+    require_project(db, current_user, target_phase.project_id)
 
     old_group_id = task.task_group_id
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == new_group_id).scalar() or 0

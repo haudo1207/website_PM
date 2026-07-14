@@ -1,12 +1,14 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
+import { brand } from '@/lib/brand'
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Task Compliance Portal',
+  title: brand.productName,
   description: 'Project task compliance checking tool',
+  icons: { icon: brand.logo },
 }
 
 export default function RootLayout({

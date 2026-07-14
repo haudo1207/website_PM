@@ -9,9 +9,35 @@ from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
 from .models import task as task_model
+from sqlalchemy import text
 
 # Create all tables (new v5 schema)
 Base.metadata.create_all(bind=engine)
+
+def apply_schema_updates():
+    """Small idempotent migrations for existing installs without Alembic."""
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
+            "NOT NULL DEFAULT 'infrastructure'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
+            "NOT NULL DEFAULT 'infrastructure'"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_projects_data_scope ON projects (data_scope)"
+        ))
+        conn.execute(text(
+            "UPDATE users SET data_scope = 'all' WHERE role = 'admin' AND data_scope = 'infrastructure'"
+        ))
+        # The legacy seed inserted users.id=1 explicitly and left the sequence at 1.
+        conn.execute(text(
+            "SELECT setval(pg_get_serial_sequence('users', 'id'), "
+            "GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1), true)"
+        ))
+
+apply_schema_updates()
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -294,5 +320,6 @@ app.include_router(members.router,             prefix="/api/members")
 app.include_router(meetings_router.router,    prefix="/api/meetings")
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "ok", "version": "5.0.0"}

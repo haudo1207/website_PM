@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { login } from '@/lib/api';
 import { saveToken } from '@/lib/auth';
+import { brand } from '@/lib/brand';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -30,9 +31,9 @@ export default function LoginPage() {
     <div className="min-h-screen bg-[#f0f2f5] flex items-center justify-center p-4 text-[#0b1c30]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <div className="bg-white border border-[#c2c6d6]/60 rounded-2xl shadow-xl p-8 w-full max-w-sm">
         <div className="text-center mb-8">
-          <img src="/logo.jpg" alt="Logo" className="w-14 h-14 rounded-2xl mx-auto mb-4 object-cover shadow-sm border border-slate-200" />
-          <h1 className="text-lg font-bold text-[#0b1c30] tracking-tight">COMPLIANCE PORTAL</h1>
-          <p className="text-[#565e74] text-xs mt-1">Đăng nhập hệ thống giám sát SecurityZone</p>
+          <img src={brand.logo} alt={`${brand.name} logo`} className="w-14 h-14 rounded-2xl mx-auto mb-4 object-cover shadow-sm border border-slate-200" />
+          <h1 className="text-lg font-bold text-[#0b1c30] tracking-tight">{brand.productName.toUpperCase()}</h1>
+          <p className="text-[#565e74] text-xs mt-1">{brand.loginSubtitle}</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">

@@ -9,9 +9,10 @@ from ..models.meeting import Meeting, MeetingMember
 from ..models.project import Project
 from ..models.member import Member
 from ..utils.auth import get_current_user
+from ..utils.access import ALL_SCOPE, project_query_for_user, require_project, require_route_project_access, user_scope
 
 logger = logging.getLogger("meetings")
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_route_project_access)])
 
 # Mapping between Database Enums and Frontend text labels
 STATUS_DB_TO_FE = {
@@ -129,13 +130,16 @@ def list_meetings(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    current_user=Depends(get_current_user)
 ):
     q = db.query(Meeting).options(
         joinedload(Meeting.project),
         joinedload(Meeting.creator),
         joinedload(Meeting.members).joinedload(MeetingMember.member)
     )
+    if user_scope(current_user) != ALL_SCOPE:
+        allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
+        q = q.filter(Meeting.project_id.in_(allowed_projects))
 
     if project_id is not None:
         q = q.filter(Meeting.project_id == project_id)
@@ -209,12 +213,13 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # Support mapping project name string to project_id if it's sent as a string name
     project_input = body.get("project")
     if project_id:
-        proj = db.query(Project).filter(Project.id == project_id).first()
+        proj = require_project(db, current_user, int(project_id))
         if not proj:
             raise HTTPException(404, "Không tìm thấy dự án được liên kết")
     elif project_input:
         proj = db.query(Project).filter(Project.name.ilike(str(project_input).strip())).first()
         if proj:
+            require_project(db, current_user, proj.id)
             project_id = proj.id
     else:
         project_id = None
@@ -301,7 +306,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 
 # ─── UPDATE ──────────────────────────────────────────────
 @router.put("/{id}")
-def update_meeting(id: int, body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
@@ -375,7 +380,7 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), _=Depends
     project_input = body.get("project")
     if project_id is not None:
         if project_id:
-            proj = db.query(Project).filter(Project.id == project_id).first()
+            proj = require_project(db, current_user, int(project_id))
             if not proj:
                 raise HTTPException(404, "Không tìm thấy dự án được liên kết")
             m.project_id = project_id
@@ -385,6 +390,7 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), _=Depends
         if project_input:
             proj = db.query(Project).filter(Project.name.ilike(str(project_input).strip())).first()
             if proj:
+                require_project(db, current_user, proj.id)
                 m.project_id = proj.id
         else:
             m.project_id = None

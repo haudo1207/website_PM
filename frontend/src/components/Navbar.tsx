@@ -4,6 +4,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { getName, logout, getRole } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
 import { getProjects } from '@/lib/api';
+import { brand } from '@/lib/brand';
 
 function NavbarContent() {
   const path = usePathname();
@@ -50,10 +51,10 @@ function NavbarContent() {
       {/* Logo */}
       <div className="p-5 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
+          <img src={brand.logo} alt={`${brand.name} logo`} className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
           <div>
-            <div className="text-sm font-extrabold text-white tracking-tight leading-none">Plane.so</div>
-            <div className="text-[10px] text-slate-400 font-semibold mt-0.5">SecurityZone · v2.1</div>
+            <div className="text-sm font-extrabold text-white tracking-tight leading-none">{brand.productName}</div>
+            <div className="text-[10px] text-slate-400 font-semibold mt-0.5">{brand.subtitle}</div>
           </div>
         </div>
       </div>
@@ -120,7 +121,7 @@ function NavbarContent() {
           className="w-full text-center py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/40 text-xs font-semibold text-slate-300 hover:text-red-400 transition-colors border border-slate-700/60">
           Sign out
         </button>
-        <div className="text-[9px] text-slate-600 text-center">© 2026 SecurityZone Team</div>
+        <div className="text-[9px] text-slate-600 text-center">{brand.footer}</div>
       </div>
     </aside>
   );

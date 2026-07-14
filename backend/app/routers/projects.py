@@ -10,8 +10,16 @@ from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
 from sqlalchemy import func as sql_func
+from ..utils.access import (
+    ALL_SCOPE,
+    VALID_DATA_SCOPES,
+    project_query_for_user,
+    require_route_project_access,
+    user_scope,
+)
+from ..utils.auth import get_current_user
 
-router = APIRouter(tags=["projects"])
+router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
 
 # ═══════════════════════════════════════════════════════════
@@ -92,6 +100,7 @@ def serialize_project(p, db):
         "description": p.description,
         "status": p.status,
         "current_phase": p.current_phase,
+        "data_scope": p.data_scope,
         "phase_count": phase_count,
         "task_count": task_count,
         "completed_task_count": completed_task_count,
@@ -103,13 +112,18 @@ def serialize_project(p, db):
 
 
 @router.get("/projects")
-def list_projects(db: Session = Depends(get_db)):
-    projects = db.query(Project).order_by(Project.id.desc()).all()
+def list_projects(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    projects = project_query_for_user(db, current_user).order_by(Project.id.desc()).all()
     return [serialize_project(p, db) for p in projects]
 
 
 @router.post("/projects")
-def create_project(body: dict, db: Session = Depends(get_db)):
+def create_project(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    requested_scope = str(body.get("data_scope") or user_scope(current_user)).strip().lower()
+    if requested_scope not in VALID_DATA_SCOPES:
+        raise HTTPException(400, "Invalid data scope.")
+    if user_scope(current_user) != ALL_SCOPE:
+        requested_scope = user_scope(current_user)
     p = Project(
         name=body.get("name", "").strip(),
         code=body.get("project_code") or body.get("code"),
@@ -117,6 +131,7 @@ def create_project(body: dict, db: Session = Depends(get_db)):
         year=body.get("year"),
         description=body.get("description"),
         status=body.get("status", "Planning"),
+        data_scope=requested_scope,
         current_phase=body.get("current_phase") or "1. Tư vấn",
     )
     if not p.name:
@@ -224,7 +239,7 @@ def get_project(pid: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/projects/{pid}")
-def update_project(pid: int, body: dict, db: Session = Depends(get_db)):
+def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
         raise HTTPException(404, "Project not found.")
@@ -232,6 +247,13 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db)):
     for field in ["name", "code", "customer_name", "year", "description", "status", "current_phase"]:
         if field in body:
             setattr(p, field, body[field])
+    if "data_scope" in body:
+        requested_scope = str(body["data_scope"]).strip().lower()
+        if requested_scope not in VALID_DATA_SCOPES:
+            raise HTTPException(400, "Invalid data scope.")
+        if user_scope(current_user) != ALL_SCOPE:
+            raise HTTPException(403, "Only full-scope users can change project scope.")
+        p.data_scope = requested_scope
 
     # Synchronize project members
     sync_members = False

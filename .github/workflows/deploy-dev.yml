@@ -1,0 +1,33 @@
+name: Deploy shared dev
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: portal-shared-dev
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, security-host]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync source and compose
+        run: |
+          set -euo pipefail
+          mkdir -p /home/portalkpi/security-dev-src /home/portalkpi/security-dev
+          rsync -a --delete --exclude .git ./ /home/portalkpi/security-dev-src/
+          cp deploy/security-dev.compose.yml /home/portalkpi/security-dev/compose.yml
+      - name: Build and deploy
+        working-directory: /home/portalkpi/security-dev
+        env:
+          APP_COMMIT: ${{ github.sha }}
+          SOURCE_DIR: /home/portalkpi/security-dev-src
+          FRONTEND_PORT: "3100"
+        run: |
+          set -euo pipefail
+          docker compose --env-file .env -f compose.yml up -d --build --remove-orphans
+          timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3100/api/health; do sleep 5; done'
+          docker image prune -f --filter 'until=168h'
