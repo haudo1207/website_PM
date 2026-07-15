@@ -307,7 +307,7 @@ function ProjectDetailContent() {
 
   const dynamicTabs = [
     { key: 'ALL', label: 'Master', is_master: true, id: undefined as any },
-    ...phases.filter(p => !p.is_master).map(p => ({
+    ...phases.filter(p => !p.is_master && p.name.toLowerCase() !== 'master').map(p => ({
       key: p.name,
       label: p.name,
       id: p.id,

@@ -132,7 +132,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         description=body.get("description"),
         status=body.get("status", "Planning"),
         data_scope=requested_scope,
-        current_phase=body.get("current_phase") or "1. Tư vấn",
+        current_phase="Master",
     )
     if not p.name:
         raise HTTPException(400, "Project name is required.")
@@ -157,61 +157,14 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     db.add(p)
     db.flush()
 
-    # 1. Auto-create phases based on template or custom list
-    from ..models.setting import Setting
-    import json
-
-    phases_to_create = []
-    custom_phases = body.get("phases")
-    if isinstance(custom_phases, list) and custom_phases:
-        phases_to_create = [str(ph).strip() for ph in custom_phases if str(ph).strip()]
-    else:
-        template = str(body.get("template") or "single").strip().lower()
-        if template == "full":
-            setting_row = db.query(Setting).filter(Setting.key == "column_config").first()
-            if setting_row:
-                try:
-                    config_data = json.loads(setting_row.value)
-                    phases_to_create = config_data.get("tab_names", [])
-                except Exception:
-                    pass
-            
-            if not phases_to_create:
-                phases_to_create = [
-                    '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
-                    '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
-                    '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
-                    '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
-                    '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
-                ]
-        elif template == "minimal":
-            phases_to_create = [
-                '1. Tư vấn', '2. Báo giá', '8. Ký hợp đồng', '11. Triển khai',
-                '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
-            ]
-        else:
-            phases_to_create = [p.current_phase]
-
-    # Ensure the current_phase is always one of the created phases
-    if p.current_phase not in phases_to_create:
-        phases_to_create.insert(0, p.current_phase)
-
-    # Dedup while preserving order
-    seen = set()
-    deduped_phases = []
-    for pname in phases_to_create:
-        if pname not in seen:
-            seen.add(pname)
-            deduped_phases.append(pname)
-
-    for idx, pname in enumerate(deduped_phases):
-        ph = Phase(
-            project_id=p.id,
-            name=pname,
-            sort_order=idx,
-            status="Waiting"
-        )
-        db.add(ph)
+    # 1. Create a single phase named "Master"
+    ph = Phase(
+        project_id=p.id,
+        name="Master",
+        sort_order=0,
+        status="Waiting"
+    )
+    db.add(ph)
 
     # 2. Add initial links/channels (Legacy cleanup - only if they exist)
     links_to_create = []
