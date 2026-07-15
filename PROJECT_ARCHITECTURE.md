@@ -366,7 +366,7 @@ Plane.so/
 
 ```bash
 # Tạo/reset admin bằng lệnh thủ công
-python create_admin.py admin@company.com "Admin" "admin123"
+python create_admin.py admin@company.com "Admin" "password123"
 
 # Reset cấu hình cài đặt về mặc định
 python init_settings.py

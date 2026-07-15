@@ -34,12 +34,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
 
   frontend:
     image: task-portal-frontend:latest
@@ -60,8 +54,7 @@ services:
     volumes:
       - ./frontend/data:/app/data
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
 
 volumes:
   postgres_data:

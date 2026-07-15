@@ -169,3 +169,9 @@ export const addMeetingMember = (id: number, memberId: number, role?: string) =>
 export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);
 export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
 export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);
+
+// Performance Settings CRUD
+export const getPerformanceSettings = () => api.get('/performance-settings').then(r => r.data);
+export const createPerformanceSetting = (data: { performance: string; kpi: number; sort_order?: number; is_active?: boolean }) => api.post('/performance-settings', data).then(r => r.data);
+export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; sort_order?: number; is_active?: boolean }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
+export const deletePerformanceSetting = (id: number) => api.delete(`/performance-settings/${id}`).then(r => r.data);
