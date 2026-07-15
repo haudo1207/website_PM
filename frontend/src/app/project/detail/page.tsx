@@ -2534,43 +2534,45 @@ function ProjectDetailContent() {
     phasesToRender.forEach(phase => {
       const groupsInPhase = taskGroups.filter(g => g.phase_id === phase.id);
 
-      // Phase header (ALWAYS rendered)
-      result.push(
-        <tr 
-          key={`phase-hdr-${phase.id}`} 
-          className="bg-[#e2e8f0] border-l-[6px] border-l-[#475569] border-b border-[#c2c6d6]/40 transition-colors duration-150"
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.currentTarget.classList.add("bg-indigo-100");
-          }}
-          onDragLeave={(e) => {
-            e.currentTarget.classList.remove("bg-indigo-100");
-          }}
-          onDrop={async (e) => {
-            e.preventDefault();
-            e.currentTarget.classList.remove("bg-indigo-100");
-            try {
-              const raw = e.dataTransfer.getData("application/json");
-              if (!raw) return;
-              const data = JSON.parse(raw);
-              if (data.type === "group" && data.phaseId !== phase.id) {
-                await moveTaskGroup(data.phaseId, data.groupId, phase.id);
-                flash(`Đã di chuyển Task Group sang Phase "${phase.name}" thành công!`);
-                reloadAll();
+      // Phase header (Rendered only if the phase is not "Master")
+      if (phase.name.trim().toLowerCase() !== 'master') {
+        result.push(
+          <tr 
+            key={`phase-hdr-${phase.id}`} 
+            className="bg-[#e2e8f0] border-l-[6px] border-l-[#475569] border-b border-[#c2c6d6]/40 transition-colors duration-150"
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.currentTarget.classList.add("bg-indigo-100");
+            }}
+            onDragLeave={(e) => {
+              e.currentTarget.classList.remove("bg-indigo-100");
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              e.currentTarget.classList.remove("bg-indigo-100");
+              try {
+                const raw = e.dataTransfer.getData("application/json");
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (data.type === "group" && data.phaseId !== phase.id) {
+                  await moveTaskGroup(data.phaseId, data.groupId, phase.id);
+                  flash(`Đã di chuyển Task Group sang Phase "${phase.name}" thành công!`);
+                  reloadAll();
+                }
+              } catch (err: any) {
+                console.error(err);
               }
-            } catch (err: any) {
-              console.error(err);
-            }
-          }}
-        >
-          <td className="px-2 py-2.5 text-center"></td>
-          <td colSpan={getDynamicColumns().length} className="px-4 py-2.5">
-            <span className="text-[12px] font-black text-[#1e293b] uppercase tracking-wider">
-              GIAI ĐOẠN: {phase.name}
-            </span>
-          </td>
-        </tr>
-      );
+            }}
+          >
+            <td className="px-2 py-2.5 text-center"></td>
+            <td colSpan={getDynamicColumns().length} className="px-4 py-2.5">
+              <span className="text-[12px] font-black text-[#1e293b] uppercase tracking-wider">
+                GIAI ĐOẠN: {phase.name}
+              </span>
+            </td>
+          </tr>
+        );
+      }
 
       if (groupsInPhase.length === 0) {
         if (addingTaskGroupPhaseId === phase.id) {
