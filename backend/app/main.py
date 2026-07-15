@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, accounts
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .database import engine, Base
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
@@ -285,61 +285,6 @@ def init_db_defaults():
                     db.rollback()
             print("[*] Seeded initial members")
 
-        # 4. Seed initial Performance KPI rules
-        from .models.performance_setting import PerformanceSetting
-        from decimal import Decimal
-        if db.query(PerformanceSetting).count() == 0:
-            initial_kpi_rules = [
-                # I. Tasks khen thưởng
-                {"performance": "(T) Có tài liệu đào tạo upload lên securityzone.vn", "kpi": Decimal("5")},
-                {"performance": "(T) Có video đào tạo upload lên Youtube Securityzone", "kpi": Decimal("5")},
-                {"performance": "(T) Khách hàng phản ảnh tốt", "kpi": Decimal("5")},
-                {"performance": "(T) Hoàn thành sớm task NORMAL", "kpi": Decimal("5")},
-                {"performance": "(T) Hoàn thành sớm task HIGH", "kpi": Decimal("10")},
-
-                # II. Tasks bị phạt
-                {"performance": "(P) Điền sai thông tin form", "kpi": Decimal("-5")},
-                {"performance": "(P) Không trao đổi localteam", "kpi": Decimal("-5")},
-                {"performance": "(P) Không update email tiến độ", "kpi": Decimal("-5")},
-                {"performance": "(P) Trễ tiến độ nhưng có báo cáo, lý do hợp lý", "kpi": Decimal("-5")},
-                {"performance": "(P) Task trễ mà không báo cáo PM", "kpi": Decimal("-10")},
-                {"performance": "(P) Task phải làm lại do lỗi nội bộ", "kpi": Decimal("-5")},
-                {"performance": "(P) Khách phàn nàn mức nhẹ, ảnh hưởng vừa phải", "kpi": Decimal("-10")},
-                {"performance": "(P) Khách phàn nàn nặng, ảnh hưởng trực tiếp", "kpi": Decimal("-15")},
-                {"performance": "(P) Task thất bại, không hoàn thành, phải thay người", "kpi": Decimal("-20")},
-                {"performance": "(P) FAIL 1", "kpi": Decimal("0.7")},
-                {"performance": "(P) FAIL 2", "kpi": Decimal("0.5")},
-                {"performance": "(P) FAIL 3", "kpi": Decimal("0.0")},
-
-                # III. Tasks làm ngoài giờ
-                {"performance": "1 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("3")},
-                {"performance": "2 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("6")},
-                {"performance": "3 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("9")},
-                {"performance": "4 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("12")},
-                {"performance": "5 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("15")},
-                {"performance": "1 day - Xử lý sự cố cuối tuần", "kpi": Decimal("6")},
-                {"performance": "2 day - Xử lý sự cố cuối tuần", "kpi": Decimal("12")},
-                {"performance": "1 day - Xử lý sự cố ngày lễ", "kpi": Decimal("10")},
-                {"performance": "2 day - Xử lý sự cố ngày lễ", "kpi": Decimal("20")},
-                {"performance": "3 day - Xử lý sự cố ngày lễ", "kpi": Decimal("30")},
-                {"performance": "4 day - Xử lý sự cố ngày lễ", "kpi": Decimal("40")},
-                {"performance": "5 day - Xử lý sự cố ngày lễ", "kpi": Decimal("50")},
-
-                # IV. Tasks phát sinh
-                {"performance": "Rework - Làm lại do lỗi nội bộ", "kpi": Decimal("0")},
-                {"performance": "Change request - Do khách hàng yêu cầu", "kpi": Decimal("0")},
-                {"performance": "Issue - Sự cố không lường trước", "kpi": Decimal("0")},
-                {"performance": "Unplanned - Các công việc nhỏ phát sinh ngoài scope", "kpi": Decimal("0")}
-            ]
-            for idx, r in enumerate(initial_kpi_rules):
-                db.add(PerformanceSetting(
-                    performance=r["performance"],
-                    kpi=r["kpi"],
-                    sort_order=idx,
-                    is_active=True
-                ))
-            print("[*] Seeded initial Performance KPI rules")
-
         db.commit()
     except Exception as e:
         db.rollback()
@@ -373,8 +318,6 @@ app.include_router(skills.router,              prefix="/api/skills")
 app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
 app.include_router(meetings_router.router,    prefix="/api/meetings")
-app.include_router(performance_settings.router, prefix="/api/performance-settings")
-app.include_router(accounts.router,            prefix="/api/accounts")
 
 @app.get("/health")
 @app.get("/api/health")
