@@ -44,6 +44,7 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: /api
         NEXT_PUBLIC_PORTAL_BRAND: markee
+    env_file: ./app.env
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
     ports:
