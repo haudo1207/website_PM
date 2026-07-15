@@ -9,10 +9,19 @@ export default function NewProjectPage() {
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
 
+  // Danh sách giai đoạn dự án chuẩn
+  const PROJECT_PHASES = [
+    '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
+    '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
+    '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
+    '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
+    '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
+  ];
+
   const [name, setName] = useState('');
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [customerName, setCustomerName] = useState('');
-  const [currentPhase, setCurrentPhase] = useState('Master');
+  const [currentPhase, setCurrentPhase] = useState(PROJECT_PHASES[0]);
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
@@ -112,7 +121,7 @@ export default function NewProjectPage() {
         code: `${name}-${year}`,
         year,
         customer_name: customerName || undefined,
-        current_phase: 'Master',
+        current_phase: currentPhase,
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
         member_ids: selectedMembers,
@@ -211,7 +220,7 @@ export default function NewProjectPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Customer Dropdown */}
                 <div ref={customerRef} className="space-y-2 relative">
                   <label className="text-[11px] font-semibold text-[#565e74] block">Khách hàng</label>
@@ -276,6 +285,49 @@ export default function NewProjectPage() {
                             </button>
                           ))}
                       </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Phase Selection */}
+                <div ref={phaseRef} className="space-y-2 relative">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">
+                    Giai đoạn hiện tại <span className="text-rose-500 font-bold ml-0.5">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPhaseDropdownOpen(!phaseDropdownOpen);
+                      setCustomerDropdownOpen(false);
+                      setPmDropdownOpen(false);
+                      setLeaderDropdownOpen(false);
+                      setMemberDropdownOpen(false);
+                    }}
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-4 py-3 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left font-semibold"
+                  >
+                    <span className="text-[#0b1c30]">{currentPhase || 'Chọn giai đoạn...'}</span>
+                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                  </button>
+
+                  {phaseDropdownOpen && (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
+                    >
+                      {PROJECT_PHASES.map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => {
+                            setCurrentPhase(p);
+                            setPhaseDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 transition-colors ${currentPhase === p ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                        >
+                          {p}
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>

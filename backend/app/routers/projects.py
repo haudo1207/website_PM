@@ -132,7 +132,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         description=body.get("description"),
         status=body.get("status", "Planning"),
         data_scope=requested_scope,
-        current_phase="Master",
+        current_phase=body.get("current_phase") or "1. Tư vấn",
     )
     if not p.name:
         raise HTTPException(400, "Project name is required.")
