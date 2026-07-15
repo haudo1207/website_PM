@@ -868,7 +868,12 @@ function ProjectDetailContent() {
       if (nextAction) {
         activateNextCell(taskId, colName, nextAction);
       } else {
-        setEditingCell(null);
+        setEditingCell(prev => {
+          if (prev?.taskId === taskId && prev?.colName === colName) {
+            return null;
+          }
+          return prev;
+        });
       }
       return;
     }
@@ -951,11 +956,21 @@ function ProjectDetailContent() {
       if (nextAction) {
         activateNextCell(taskId, colName, nextAction);
       } else {
-        setEditingCell(null);
+        setEditingCell(prev => {
+          if (prev?.taskId === taskId && prev?.colName === colName) {
+            return null;
+          }
+          return prev;
+        });
       }
     } catch (err: any) {
       alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
-      setEditingCell(null);
+      setEditingCell(prev => {
+        if (prev?.taskId === taskId && prev?.colName === colName) {
+          return null;
+        }
+        return prev;
+      });
     } finally {
       isSavingRef.current = false;
     }
@@ -968,7 +983,12 @@ function ProjectDetailContent() {
       if (nextAction) {
         activateNextCell(-group.id, colName, nextAction);
       } else {
-        setEditingCell(null);
+        setEditingCell(prev => {
+          if (prev?.taskId === -group.id && prev?.colName === colName) {
+            return null;
+          }
+          return prev;
+        });
       }
       return;
     }
@@ -994,11 +1014,21 @@ function ProjectDetailContent() {
       if (nextAction) {
         activateNextCell(-group.id, colName, nextAction);
       } else {
-        setEditingCell(null);
+        setEditingCell(prev => {
+          if (prev?.taskId === -group.id && prev?.colName === colName) {
+            return null;
+          }
+          return prev;
+        });
       }
     } catch (err: any) {
       alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
-      setEditingCell(null);
+      setEditingCell(prev => {
+        if (prev?.taskId === -group.id && prev?.colName === colName) {
+          return null;
+        }
+        return prev;
+      });
     } finally {
       isSavingRef.current = false;
     }

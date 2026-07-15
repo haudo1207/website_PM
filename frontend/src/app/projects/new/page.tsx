@@ -22,6 +22,7 @@ export default function NewProjectPage() {
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [customerName, setCustomerName] = useState('');
   const [currentPhase, setCurrentPhase] = useState(PROJECT_PHASES[0]);
+  const [template, setTemplate] = useState('single');
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
@@ -122,6 +123,7 @@ export default function NewProjectPage() {
         year,
         customer_name: customerName || undefined,
         current_phase: currentPhase,
+        template,
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
         member_ids: selectedMembers,
@@ -330,6 +332,53 @@ export default function NewProjectPage() {
                       ))}
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* Template Selection */}
+              <div className="space-y-3">
+                <label className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider block">
+                  Mẫu giai đoạn khởi tạo (Template)
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setTemplate('single')}
+                    className={`p-4 rounded-xl border text-left transition-all hover:shadow-md cursor-pointer ${
+                      template === 'single'
+                        ? 'border-[#0058be] bg-[#eff4ff]/30 text-[#0058be] ring-1 ring-[#0058be]'
+                        : 'border-[#c2c6d6] bg-white text-[#565e74] hover:border-slate-400'
+                    }`}
+                  >
+                    <div className="font-bold text-xs mb-1">Chỉ giai đoạn hiện tại</div>
+                    <div className="text-[10px] text-slate-500 font-medium leading-relaxed">Chỉ khởi tạo duy nhất giai đoạn được chọn ở trên.</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTemplate('minimal')}
+                    className={`p-4 rounded-xl border text-left transition-all hover:shadow-md cursor-pointer ${
+                      template === 'minimal'
+                        ? 'border-[#0058be] bg-[#eff4ff]/30 text-[#0058be] ring-1 ring-[#0058be]'
+                        : 'border-[#c2c6d6] bg-white text-[#565e74] hover:border-slate-400'
+                    }`}
+                  >
+                    <div className="font-bold text-xs mb-1">Mẫu tối giản (8 giai đoạn)</div>
+                    <div className="text-[10px] text-slate-500 font-medium leading-relaxed">Tư vấn, Báo giá, Ký HĐ, Triển khai, Nghiệm thu, Thanh toán, Kết thúc, Huỷ.</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTemplate('full')}
+                    className={`p-4 rounded-xl border text-left transition-all hover:shadow-md cursor-pointer ${
+                      template === 'full'
+                        ? 'border-[#0058be] bg-[#eff4ff]/30 text-[#0058be] ring-1 ring-[#0058be]'
+                        : 'border-[#c2c6d6] bg-white text-[#565e74] hover:border-slate-400'
+                    }`}
+                  >
+                    <div className="font-bold text-xs mb-1">Mẫu đầy đủ (18 giai đoạn)</div>
+                    <div className="text-[10px] text-slate-500 font-medium leading-relaxed">Khởi tạo toàn bộ 18 giai đoạn theo quy trình chuẩn của hệ thống.</div>
+                  </button>
                 </div>
               </div>
             </div>
