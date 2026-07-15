@@ -29,10 +29,6 @@ import {
   createDepartment,
   updateDepartment,
   deleteDepartment,
-  getPriorities,
-  createPriority,
-  updatePriority,
-  deletePriority,
   getStatuses,
   createStatus,
   updateStatus,
@@ -62,7 +58,6 @@ export default function SettingsPage() {
   // System Categories Data
   const [dbPositions, setDbPositions] = useState<any[]>([]);
   const [dbDepartments, setDbDepartments] = useState<any[]>([]);
-  const [dbPriorities, setDbPriorities] = useState<any[]>([]);
   const [dbStatuses, setDbStatuses] = useState<any[]>([]);
   const [dbTeams, setDbTeams] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
@@ -107,7 +102,6 @@ export default function SettingsPage() {
   const reloadSystemCategories = () => {
     getPositions().then(setDbPositions).catch(() => {});
     getDepartments().then(setDbDepartments).catch(() => {});
-    getPriorities().then(setDbPriorities).catch(() => {});
     getStatuses().then(setDbStatuses).catch(() => {});
     getTeams().then(setDbTeams).catch(() => {});
     getCustomers().then(setDbCustomers).catch(() => {});
@@ -754,7 +748,6 @@ export default function SettingsPage() {
             <SystemCategoriesView
               positions={dbPositions}
               departments={dbDepartments}
-              priorities={dbPriorities}
               statuses={dbStatuses}
               teams={dbTeams}
               customers={dbCustomers}

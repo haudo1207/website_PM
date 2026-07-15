@@ -250,14 +250,22 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                 result = create_zoom_meeting(title, start_datetime, dur_mins)
                 meeting_url = result["join_url"]
             except Exception as e:
-                logger.warning(f"Auto-generate Zoom link failed: {e}")
+                logger.error(f"Auto-generate Zoom link failed: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Không thể tự động tạo link Zoom: {str(e)}. Hãy chắc chắn các khoá ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET được cấu hình đầy đủ trong file .env."
+                )
         elif platform.lower() == "google meet":
             try:
                 from ..services.meeting_sync import create_google_meet_link
-                result = create_google_meet_link(title, start_datetime, dur_mins)
+                result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
                 meeting_url = result["join_url"]
             except Exception as e:
-                logger.warning(f"Auto-generate Google Meet link failed: {e}")
+                logger.error(f"Auto-generate Google Meet link failed: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Không thể tự động tạo link Google Meet: {str(e)}. Hãy chắc chắn bạn đã kết nối tài khoản Google trong phần 'Cấu hình AI'."
+                )
 
     # Handle AI summary formatting
     ai_summary = body.get("ai_summary") or body.get("summary")
@@ -516,7 +524,7 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
 
 # ─── SYNC MEETING (Zoom / Google Meet) ───────────────────
 @router.post("/{id}/sync")
-def sync_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """Sync a meeting: fetch transcript and generate AI summary from Zoom/Google Meet."""
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
@@ -544,7 +552,7 @@ def sync_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_u
             result = sync_zoom_meeting(m.meeting_url, meeting_info)
         elif "google" in platform or "meet" in platform:
             from ..services.meeting_sync import sync_google_meet
-            result = sync_google_meet(m.meeting_url, meeting_info)
+            result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info)
         else:
             raise HTTPException(400, f"Nền tảng '{m.platform}' không hỗ trợ đồng bộ tự động.")
     except ValueError as e:
@@ -573,14 +581,14 @@ def sync_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_u
 
 # ─── GOOGLE OAUTH — Connect/Disconnect/Status ───────────
 @router.get("/google/status")
-def google_status():
+def google_status(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """Check if Google Calendar/Drive is connected."""
     from ..services.meeting_sync import is_google_connected
-    return {"connected": is_google_connected()}
+    return {"connected": is_google_connected(db, current_user.id)}
 
 
 @router.get("/google/auth")
-def google_auth_url():
+def google_auth_url(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """Generate Google OAuth2 authorization URL."""
     from ..config import settings
     client_id = settings.GOOGLE_CLIENT_ID
@@ -602,18 +610,19 @@ def google_auth_url():
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
         ],
-        redirect_uri=settings.GOOGLE_CLIENT_ID and f"{settings.AI_BASE_URL.replace('/v1','')}/api/meetings/google/callback" or "http://localhost:8000/api/meetings/google/callback",
+        redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
-    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", state=str(current_user.id))
     return {"auth_url": auth_url}
 
 
 @router.get("/google/callback")
-def google_callback(code: str):
+def google_callback(code: str, state: str = None, db: Session = Depends(get_db)):
     """Handle Google OAuth2 callback and save tokens."""
     from ..config import settings
     from google_auth_oauthlib.flow import Flow
     from ..services.meeting_sync import _save_google_tokens
+    from fastapi.responses import RedirectResponse
 
     flow = Flow.from_client_config(
         {
@@ -628,14 +637,16 @@ def google_callback(code: str):
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
         ],
-        redirect_uri=settings.GOOGLE_CLIENT_ID and f"{settings.AI_BASE_URL.replace('/v1','')}/api/meetings/google/callback" or "http://localhost:8000/api/meetings/google/callback",
+        redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
     flow.fetch_token(code=code)
     creds = flow.credentials
 
-    _save_google_tokens({
-        "access_token": creds.token,
-        "refresh_token": creds.refresh_token,
-    })
+    user_id = int(state) if state else None
+    if user_id:
+        _save_google_tokens(db, user_id, {
+            "access_token": creds.token,
+            "refresh_token": creds.refresh_token,
+        })
 
-    return {"success": True, "message": "Đã kết nối Google Calendar & Drive thành công!"}
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google=success")

@@ -4,7 +4,7 @@ from .routers import auth, users, settings_router, skills, system_categories, me
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .database import engine, Base
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
