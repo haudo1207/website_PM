@@ -3,7 +3,6 @@ import React, { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import SystemCategoriesView from '@/components/SystemCategoriesView';
 import MembersView from '@/components/MembersView';
-import KPIsView from '@/components/KPIsView';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
 import {
@@ -47,7 +46,7 @@ import {
 export default function SettingsPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [saved, setSaved] = useState('');
-  const [activeTab, setActiveTab] = useState<'members' | 'skills' | 'system_categories' | 'kpis'>('members');
+  const [activeTab, setActiveTab] = useState<'members' | 'skills' | 'system_categories'>('members');
 
   // Member Form
   const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'group_a', skills: [] as number[], position: '', department: '' });
@@ -350,15 +349,6 @@ export default function SettingsPage() {
               }`}
           >
             Danh mục hệ thống
-          </button>
-          <button
-            onClick={() => setActiveTab('kpis')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'kpis'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-          >
-            Cấu hình KPI
           </button>
         </div>
 
@@ -761,10 +751,6 @@ export default function SettingsPage() {
               onReload={reloadSystemCategories}
               onFlash={flash}
             />
-          )}
-
-          {activeTab === 'kpis' && (
-            <KPIsView onFlash={flash} />
           )}
         </div>
       </div>

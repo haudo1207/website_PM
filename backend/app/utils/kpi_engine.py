@@ -232,8 +232,6 @@ def recalculate_task(task, db):
     Called after any PATCH/PUT to a task.
     Updates all computed fields based on current values.
     """
-    from ..models.performance_setting import PerformanceSetting
-
     # 1. End Date EST
     task.end_date_est = calc_end_date_est(task.start_date, task.manday_est)
 
@@ -247,42 +245,17 @@ def recalculate_task(task, db):
     priority_kpi = get_priority_kpi_base(task.priority, db)
     task.kpi_base = calc_kpi_base(priority_kpi, task.manday_est)
 
-    # Parse remark using dynamic performance settings from the DB
-    remark_str = (task.remark or "").strip().lower()
-    remark_perform = Decimal("0")
-    remark_ot = Decimal("0")
-    multiplier = Decimal("1.0")
-
-    try:
-        rules = db.query(PerformanceSetting).filter(PerformanceSetting.is_active == True).all()
-        for rule in rules:
-            rule_perf = rule.performance.strip().lower()
-            if rule_perf in remark_str:
-                rule_kpi = Decimal(str(rule.kpi))
-                # If rule_kpi is between 0 and 1.0 (multiplier/coefficient like FAIL or Rework)
-                if (0.0 <= rule_kpi <= 1.0) and ("fail" in rule_perf or "rework" in rule_perf):
-                    multiplier *= rule_kpi
-                else:
-                    # Determine if it's an OT rule
-                    if any(kw in rule_perf for kw in ["xử lý sự cố", "ngày lễ", "cuối tuần", "tối trong tuần", "ot"]):
-                        remark_ot += rule_kpi
-                    else:
-                        remark_perform += rule_kpi
-    except Exception as e:
-        print(f"[!] Error parsing performance settings: {e}")
-
     # 5. KPI Perform
-    default_perform = calc_kpi_perform(
+    task.kpi_perform = calc_kpi_perform(
         task.days_late, task.kpi_base, task.manday_est,
         task.manday_actual, task.priority, task.remark
     )
-    task.kpi_perform = default_perform + remark_perform
 
     # 6. KPI OT
-    task.kpi_ot = remark_ot
+    task.kpi_ot = calc_kpi_ot(task.remark, task.priority)
 
     # 7. KPI Final
-    task.kpi_final = (task.kpi_base + task.kpi_perform + task.kpi_ot) * multiplier
+    task.kpi_final = calc_kpi_final(task.kpi_base, task.kpi_perform, task.kpi_ot)
 
     # If status is Cancel, do not calculate KPI (set all to 0)
     if task.status and task.status.strip().lower() == "cancel":
