@@ -1218,6 +1218,21 @@ function ProjectDetailContent() {
 
   const leaderboardStats = workloadStats.filter(r => r.name !== 'Chưa gắn').map(r => ({ name: r.name, count: r.done }));
 
+  // --- KPI FINAL Leaderboard ---
+  const kpiLeaderboardStats = (() => {
+    const kpiSums: Record<string, number> = {};
+    items.forEach(t => {
+      const name = (t.assigned_name || '').trim();
+      const val = parseFloat(t.kpi_final);
+      if (name !== '' && !isNaN(val) && val > 0) {
+        kpiSums[name] = (kpiSums[name] || 0) + val;
+      }
+    });
+    return Object.entries(kpiSums)
+      .map(([name, total]) => ({ name, total: Math.round(total * 10) / 10 }))
+      .sort((a, b) => b.total - a.total);
+  })();
+
   const getGroupIndex = (groupId: number) => {
     const group = taskGroups.find(g => g.id === groupId);
     if (!group) return 1;
@@ -3052,86 +3067,120 @@ function ProjectDetailContent() {
             </div>
           </div>
 
-          {/* WORKLOAD CHART */}
-          <div className="mt-6 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-1">
-              <div>
-                <h3 className="text-sm font-bold text-[#0b1c30]">Khối lượng theo người phụ trách</h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">Số task đã nhận theo trạng thái</p>
+          {/* CHARTS ROW: 2 columns */}
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+            {/* WORKLOAD CHART */}
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <div>
+                  <h3 className="text-sm font-bold text-[#0b1c30]">Khối lượng theo người phụ trách</h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Số task đã nhận theo trạng thái</p>
+                </div>
+                {workloadStats.length > 3 && (
+                  <button
+                    onClick={() => setShowAllLeaderboard(!showAllLeaderboard)}
+                    className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
+                  >
+                    {showAllLeaderboard ? 'Thu gọn' : 'Xem thêm'}
+                  </button>
+                )}
               </div>
-              {workloadStats.length > 3 && (
-                <button
-                  onClick={() => setShowAllLeaderboard(!showAllLeaderboard)}
-                  className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
-                >
-                  {showAllLeaderboard ? 'Thu gọn' : 'Xem thêm'}
-                </button>
+
+              {workloadStats.length === 0 ? (
+                <p className="text-xs text-slate-500 italic text-center py-4">Chưa có dữ liệu để hiển thị.</p>
+              ) : (() => {
+                const displayRows = showAllLeaderboard ? workloadStats : workloadStats.slice(0, 3);
+                const maxTotal = Math.max(...workloadStats.map(r => r.total), 1);
+                const xTicks = Array.from({ length: 6 }, (_, i) => Math.round((maxTotal / 5) * i));
+                return (
+                  <div className="mt-4">
+                    <div className="space-y-3">
+                      {displayRows.map((row) => {
+                        const isUnassigned = row.name === 'Chưa gắn';
+                        const barColor = isUnassigned ? '#c8c8c8' : '#22c55e';
+                        const doneBarColor = isUnassigned ? '#9ca3af' : '#16a34a';
+                        const totalWidth = (row.total / maxTotal) * 100;
+                        const doneWidth = (row.done / maxTotal) * 100;
+                        return (
+                          <div key={row.name} className="flex items-center gap-3">
+                            <span className="text-[11px] text-slate-600 w-24 shrink-0 text-right truncate" title={row.name}>{row.name}</span>
+                            <div className="flex-1 relative h-7 bg-slate-100 rounded overflow-hidden">
+                              <div className="absolute inset-y-0 left-0 rounded transition-all duration-500" style={{ width: `${totalWidth}%`, backgroundColor: barColor }} />
+                              {row.done > 0 && (
+                                <div className="absolute inset-y-0 left-0 rounded transition-all duration-500" style={{ width: `${doneWidth}%`, backgroundColor: doneBarColor }} />
+                              )}
+                              <span className="absolute right-2 inset-y-0 flex items-center text-[11px] font-bold text-white drop-shadow">
+                                {row.total}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex ml-[7.5rem] mt-2">
+                      {xTicks.map((tick) => (
+                        <div key={tick} className="flex-1 text-center text-[10px] text-slate-400">{tick}</div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-4 mt-3 ml-[7.5rem]">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#22c55e' }} />
+                        <span className="text-[11px] text-slate-500">Tổng task</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }} />
+                        <span className="text-[11px] text-slate-500">Đã hoàn thành</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 rounded-sm bg-slate-300" />
+                        <span className="text-[11px] text-slate-500">Chưa gắn</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* KPI FINAL LEADERBOARD */}
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <div>
+                  <h3 className="text-sm font-bold text-[#0b1c30]">Bảng xếp hạng KPI</h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
+                </div>
+              </div>
+
+              {kpiLeaderboardStats.length === 0 ? (
+                <p className="text-xs text-slate-500 italic text-center py-4">Chưa có dữ liệu KPI Final.</p>
+              ) : (
+                <div className="mt-4 space-y-2">
+                  {kpiLeaderboardStats.map((row, idx) => {
+                    const maxKpi = kpiLeaderboardStats[0].total;
+                    const barWidth = (row.total / maxKpi) * 100;
+                    const medals = ['🥇', '🥈', '🥉'];
+                    const barColors = ['#f59e0b', '#94a3b8', '#cd7c2f'];
+                    const barColor = idx < 3 ? barColors[idx] : '#0058be';
+                    return (
+                      <div key={row.name} className="flex items-center gap-3">
+                        <span className="text-[13px] w-5 shrink-0 text-center">{medals[idx] || `${idx + 1}.`}</span>
+                        <span className="text-[11px] text-slate-600 w-20 shrink-0 truncate" title={row.name}>{row.name}</span>
+                        <div className="flex-1 relative h-7 bg-slate-100 rounded overflow-hidden">
+                          <div
+                            className="absolute inset-y-0 left-0 rounded transition-all duration-500"
+                            style={{ width: `${barWidth}%`, backgroundColor: barColor }}
+                          />
+                          <span className="absolute right-2 inset-y-0 flex items-center text-[11px] font-bold text-white drop-shadow">
+                            {row.total}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
 
-            {workloadStats.length === 0 ? (
-              <p className="text-xs text-slate-500 italic text-center py-4">Chưa có dữ liệu để hiển thị.</p>
-            ) : (() => {
-              const displayRows = showAllLeaderboard ? workloadStats : workloadStats.slice(0, 3);
-              const maxTotal = Math.max(...workloadStats.map(r => r.total), 1);
-              const xTicks = Array.from({ length: 6 }, (_, i) => Math.round((maxTotal / 5) * i));
-              return (
-                <div className="mt-4">
-                  <div className="space-y-3">
-                    {displayRows.map((row) => {
-                      const isUnassigned = row.name === 'Chưa gắn';
-                      const barColor = isUnassigned ? '#c8c8c8' : '#22c55e';
-                      const doneBarColor = isUnassigned ? '#9ca3af' : '#16a34a';
-                      const totalWidth = (row.total / maxTotal) * 100;
-                      const doneWidth = (row.done / maxTotal) * 100;
-                      return (
-                        <div key={row.name} className="flex items-center gap-3">
-                          <span className="text-[11px] text-slate-600 w-24 shrink-0 text-right truncate" title={row.name}>{row.name}</span>
-                          <div className="flex-1 relative h-7 bg-slate-100 rounded overflow-hidden">
-                            {/* Total bar (background) */}
-                            <div
-                              className="absolute inset-y-0 left-0 rounded transition-all duration-500"
-                              style={{ width: `${totalWidth}%`, backgroundColor: barColor }}
-                            />
-                            {/* Done bar (foreground) */}
-                            {row.done > 0 && (
-                              <div
-                                className="absolute inset-y-0 left-0 rounded transition-all duration-500"
-                                style={{ width: `${doneWidth}%`, backgroundColor: doneBarColor }}
-                              />
-                            )}
-                            <span className="absolute right-2 inset-y-0 flex items-center text-[11px] font-bold text-white drop-shadow">
-                              {row.total}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {/* X-axis ticks */}
-                  <div className="flex ml-[7.5rem] mt-2">
-                    {xTicks.map((tick) => (
-                      <div key={tick} className="flex-1 text-center text-[10px] text-slate-400">{tick}</div>
-                    ))}
-                  </div>
-                  {/* Legend */}
-                  <div className="flex items-center gap-4 mt-3 ml-[7.5rem]">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#22c55e' }} />
-                      <span className="text-[11px] text-slate-500">Tổng task</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }} />
-                      <span className="text-[11px] text-slate-500">Đã hoàn thành</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3 h-3 rounded-sm bg-slate-300" />
-                      <span className="text-[11px] text-slate-500">Chưa gắn</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
           </div>
 
           {/* TAB NAVIGATION */}
