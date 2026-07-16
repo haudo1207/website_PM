@@ -3143,37 +3143,39 @@ function ProjectDetailContent() {
             </div>
 
             {/* KPI FINAL LEADERBOARD */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-1">
+            <div className="bg-gradient-to-br from-[#0b1c30] to-[#1e3a5f] border border-slate-700 rounded-xl p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-sm font-bold text-[#0b1c30]">Bảng xếp hạng KPI</h3>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span className="material-symbols-outlined text-amber-400 text-[18px]">emoji_events</span>
+                    Bảng xếp hạng KPI
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
                 </div>
               </div>
 
               {kpiLeaderboardStats.length === 0 ? (
-                <p className="text-xs text-slate-500 italic text-center py-4">Chưa có dữ liệu KPI Final.</p>
+                <p className="text-xs text-slate-400 italic text-center py-6">Chưa có dữ liệu KPI Final.</p>
               ) : (
-                <div className="mt-4 space-y-2">
+                <div className="space-y-2">
                   {kpiLeaderboardStats.map((row, idx) => {
-                    const maxKpi = kpiLeaderboardStats[0].total;
-                    const barWidth = (row.total / maxKpi) * 100;
-                    const medals = ['🥇', '🥈', '🥉'];
-                    const barColors = ['#f59e0b', '#94a3b8', '#cd7c2f'];
-                    const barColor = idx < 3 ? barColors[idx] : '#0058be';
+                    const initials = row.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                    const rankConfig = [
+                      { bg: 'bg-amber-400', text: 'text-amber-900', ring: 'ring-amber-300', badge: 'bg-amber-400 text-amber-900', label: '🥇' },
+                      { bg: 'bg-slate-300', text: 'text-slate-700', ring: 'ring-slate-200', badge: 'bg-slate-300 text-slate-700', label: '🥈' },
+                      { bg: 'bg-orange-300', text: 'text-orange-900', ring: 'ring-orange-200', badge: 'bg-orange-300 text-orange-900', label: '🥉' },
+                    ];
+                    const cfg = rankConfig[idx] || { bg: 'bg-[#0058be]/20', text: 'text-blue-200', ring: 'ring-blue-800', badge: 'bg-[#0058be]/40 text-blue-100', label: `${idx + 1}` };
                     return (
-                      <div key={row.name} className="flex items-center gap-3">
-                        <span className="text-[13px] w-5 shrink-0 text-center">{medals[idx] || `${idx + 1}.`}</span>
-                        <span className="text-[11px] text-slate-600 w-20 shrink-0 truncate" title={row.name}>{row.name}</span>
-                        <div className="flex-1 relative h-7 bg-slate-100 rounded overflow-hidden">
-                          <div
-                            className="absolute inset-y-0 left-0 rounded transition-all duration-500"
-                            style={{ width: `${barWidth}%`, backgroundColor: barColor }}
-                          />
-                          <span className="absolute right-2 inset-y-0 flex items-center text-[11px] font-bold text-white drop-shadow">
-                            {row.total}
-                          </span>
+                      <div key={row.name} className="flex items-center gap-3 bg-white/5 hover:bg-white/10 transition-colors rounded-lg px-3 py-2.5">
+                        <span className="text-base w-6 shrink-0 text-center">{cfg.label}</span>
+                        <div className={`w-8 h-8 rounded-full ${cfg.bg} ring-2 ${cfg.ring} flex items-center justify-center shrink-0`}>
+                          <span className={`text-[11px] font-black ${cfg.text}`}>{initials}</span>
                         </div>
+                        <span className="text-[12px] font-semibold text-white flex-1 truncate" title={row.name}>{row.name}</span>
+                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${cfg.badge} shrink-0`}>
+                          {row.total} đ
+                        </span>
                       </div>
                     );
                   })}
