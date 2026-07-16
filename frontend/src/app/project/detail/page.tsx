@@ -3069,10 +3069,10 @@ function ProjectDetailContent() {
           </div>
 
           {/* CHARTS ROW: 2 columns */}
-          <div className={`mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 ${showAllLeaderboard || showAllKpi ? 'items-start' : 'items-stretch'}`}>
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 
             {/* WORKLOAD CHART */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[310px] flex flex-col">
               <div className="flex items-center justify-between mb-1">
                 <div>
                   <h3 className="text-sm font-bold text-[#0b1c30]">Khối lượng theo người phụ trách</h3>
@@ -3089,13 +3089,13 @@ function ProjectDetailContent() {
               </div>
 
               {workloadStats.length === 0 ? (
-                <p className="text-xs text-slate-500 italic text-center py-4">Chưa có dữ liệu để hiển thị.</p>
+                <p className="text-xs text-slate-500 italic text-center py-4 flex-1 flex items-center justify-center">Chưa có dữ liệu để hiển thị.</p>
               ) : (() => {
                 const displayRows = showAllLeaderboard ? workloadStats : workloadStats.slice(0, 3);
                 const maxTotal = Math.max(...workloadStats.map(r => r.total), 1);
                 const xTicks = Array.from({ length: 6 }, (_, i) => Math.round((maxTotal / 5) * i));
                 return (
-                  <div className="mt-4">
+                  <div className="mt-4 flex-1 flex flex-col justify-end">
                     <div className="space-y-3">
                       {displayRows.map((row) => {
                         const isUnassigned = row.name === 'Chưa gắn';
@@ -3144,7 +3144,7 @@ function ProjectDetailContent() {
             </div>
 
             {/* KPI FINAL LEADERBOARD - PODIUM */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[310px] flex flex-col">
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
