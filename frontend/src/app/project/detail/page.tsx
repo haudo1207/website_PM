@@ -3142,45 +3142,79 @@ function ProjectDetailContent() {
               })()}
             </div>
 
-            {/* KPI FINAL LEADERBOARD */}
-            <div className="bg-gradient-to-br from-[#0b1c30] to-[#1e3a5f] border border-slate-700 rounded-xl p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <span className="material-symbols-outlined text-amber-400 text-[18px]">emoji_events</span>
-                    Bảng xếp hạng KPI
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
-                </div>
+            {/* KPI FINAL LEADERBOARD - PODIUM */}
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+              <div className="mb-3">
+                <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
+                  <span className="material-symbols-outlined text-amber-500 text-[18px]">emoji_events</span>
+                  Bảng xếp hạng KPI
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
               </div>
 
               {kpiLeaderboardStats.length === 0 ? (
-                <p className="text-xs text-slate-400 italic text-center py-6">Chưa có dữ liệu KPI Final.</p>
-              ) : (
-                <div className="space-y-2">
-                  {kpiLeaderboardStats.map((row, idx) => {
-                    const initials = row.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
-                    const rankConfig = [
-                      { bg: 'bg-amber-400', text: 'text-amber-900', ring: 'ring-amber-300', badge: 'bg-amber-400 text-amber-900', label: '🥇' },
-                      { bg: 'bg-slate-300', text: 'text-slate-700', ring: 'ring-slate-200', badge: 'bg-slate-300 text-slate-700', label: '🥈' },
-                      { bg: 'bg-orange-300', text: 'text-orange-900', ring: 'ring-orange-200', badge: 'bg-orange-300 text-orange-900', label: '🥉' },
-                    ];
-                    const cfg = rankConfig[idx] || { bg: 'bg-[#0058be]/20', text: 'text-blue-200', ring: 'ring-blue-800', badge: 'bg-[#0058be]/40 text-blue-100', label: `${idx + 1}` };
-                    return (
-                      <div key={row.name} className="flex items-center gap-3 bg-white/5 hover:bg-white/10 transition-colors rounded-lg px-3 py-2.5">
-                        <span className="text-base w-6 shrink-0 text-center">{cfg.label}</span>
-                        <div className={`w-8 h-8 rounded-full ${cfg.bg} ring-2 ${cfg.ring} flex items-center justify-center shrink-0`}>
-                          <span className={`text-[11px] font-black ${cfg.text}`}>{initials}</span>
-                        </div>
-                        <span className="text-[12px] font-semibold text-white flex-1 truncate" title={row.name}>{row.name}</span>
-                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${cfg.badge} shrink-0`}>
-                          {row.total} đ
-                        </span>
+                <p className="text-xs text-slate-500 italic text-center py-8">Chưa có dữ liệu KPI Final.</p>
+              ) : (() => {
+                const top3 = kpiLeaderboardStats.slice(0, 3);
+                const rest = kpiLeaderboardStats.slice(3);
+                // Podium order: 2nd left, 1st center, 3rd right
+                const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean);
+                const podiumHeights = { 0: 'h-20', 1: 'h-28', 2: 'h-14' };
+                const podiumColors: Record<number, string> = { 0: '#94a3b8', 1: '#f59e0b', 2: '#cd7c2f' };
+                const podiumRanks: Record<number, string> = { 0: '2', 1: '1', 2: '3' };
+                const podiumOrigIdx: Record<number, number> = {};
+                podiumOrder.forEach((p, i) => {
+                  if (p) podiumOrigIdx[i] = kpiLeaderboardStats.findIndex(r => r.name === p.name);
+                });
+                return (
+                  <div>
+                    {/* PODIUM */}
+                    <div className="flex items-end justify-center gap-2 mt-2 mb-4">
+                      {podiumOrder.map((row, i) => {
+                        if (!row) return null;
+                        const origIdx = podiumOrigIdx[i];
+                        const initials = row.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                        const isFirst = podiumRanks[i] === '1';
+                        return (
+                          <div key={row.name} className="flex flex-col items-center gap-1 flex-1">
+                            {/* Avatar */}
+                            <div
+                              className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-black ring-2 ring-white shadow-md"
+                              style={{ backgroundColor: podiumColors[i] }}
+                            >
+                              {initials}
+                            </div>
+                            {/* Name */}
+                            <span className="text-[10px] font-bold text-[#0b1c30] text-center truncate w-full px-1" title={row.name}>{row.name}</span>
+                            {/* Score */}
+                            <span className="text-[10px] font-semibold text-slate-500">{row.total} đ</span>
+                            {/* Podium block */}
+                            <div
+                              className={`w-full ${podiumHeights[i as keyof typeof podiumHeights]} rounded-t-md flex items-center justify-center text-white font-black text-lg shadow-inner`}
+                              style={{ backgroundColor: podiumColors[i] }}
+                            >
+                              {podiumRanks[i]}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* REST OF LIST */}
+                    {rest.length > 0 && (
+                      <div className="border-t border-slate-100 pt-3 space-y-1.5">
+                        {rest.map((row, i) => (
+                          <div key={row.name} className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-slate-50">
+                            <span className="text-[11px] text-slate-400 w-5 text-center font-bold">{i + 4}</span>
+                            <span className="text-[11px] text-slate-700 flex-1 truncate font-medium" title={row.name}>{row.name}</span>
+                            <span className="text-[11px] font-bold text-[#0058be]">{row.total} đ</span>
+                          </div>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
           </div>
