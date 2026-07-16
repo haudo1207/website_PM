@@ -3069,10 +3069,10 @@ function ProjectDetailContent() {
           </div>
 
           {/* CHARTS ROW: 2 columns */}
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={`mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 ${showAllLeaderboard || showAllKpi ? 'items-start' : 'items-stretch'}`}>
 
             {/* WORKLOAD CHART */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm h-full">
               <div className="flex items-center justify-between mb-1">
                 <div>
                   <h3 className="text-sm font-bold text-[#0b1c30]">Khối lượng theo người phụ trách</h3>
@@ -3144,7 +3144,7 @@ function ProjectDetailContent() {
             </div>
 
             {/* KPI FINAL LEADERBOARD - PODIUM */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm h-full">
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
