@@ -3069,7 +3069,7 @@ function ProjectDetailContent() {
           </div>
 
           {/* CHARTS ROW: 2 columns */}
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 
             {/* WORKLOAD CHART */}
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
