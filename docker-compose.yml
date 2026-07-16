@@ -1,62 +1,31 @@
-services:
-  postgres:
-    image: postgres:16
-    container_name: task_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: task_portal
-      POSTGRES_USER: task_user
-      POSTGRES_PASSWORD: MyPass2026
-    ports:
-      - "0.0.0.0:5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U task_user -d task_portal"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
+name: kpi_portal_developer
 
+services:
   backend:
-    image: task-portal-backend:latest
-    container_name: task_backend
-    restart: unless-stopped
     build:
       context: ./backend
-      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: ${APP_ENV_FILE:-./.env}
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    volumes:
-      - ./secrets:/app/secrets:ro
-      - ./backend/data:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   frontend:
-    image: task-portal-frontend:latest
-    container_name: task_frontend
-    restart: unless-stopped
     build:
       context: ./frontend
-      dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_BASE_URL=/api
-        - NEXT_PUBLIC_PORTAL_BRAND=${PORTAL_BRAND:-securityzone}
-    env_file:
-      - .env
+        NEXT_PUBLIC_API_BASE_URL: /api
+        NEXT_PUBLIC_PORTAL_BRAND: ${PORTAL_BRAND:-markee}
+    restart: unless-stopped
     environment:
-      - BACKEND_INTERNAL_URL=http://backend:8000
+      BACKEND_INTERNAL_URL: http://backend:8000
     ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend/data:/app/data
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     depends_on:
-      - backend
-
-volumes:
-  postgres_data:
+      backend:
+        condition: service_healthy

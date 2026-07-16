@@ -15,7 +15,7 @@ class User(Base):
     # all: access every project; otherwise must match projects.data_scope.
     data_scope = Column(String(50), nullable=False, default="infrastructure", server_default="infrastructure")
     created_at = Column(DateTime, server_default=func.now())
-    member_id = Column(Integer, ForeignKey("members.id"), nullable=True, unique=True)
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, unique=True)
 
     member = relationship("Member", foreign_keys=[member_id], lazy="joined")
     skills = relationship("Skill", secondary="user_skills", backref="users")

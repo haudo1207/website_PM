@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, accounts
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .database import engine, Base
@@ -21,15 +21,38 @@ def apply_schema_updates():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
             "NOT NULL DEFAULT 'infrastructure'"
         ))
+        # SQLAlchemy create_all() does not add columns to an existing table. The
+        # account/member link was introduced after the original installations,
+        # so keep this migration safe to run on every container start.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS member_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'users_member_id_fkey'
+                      AND conrelid = 'users'::regclass
+                ) THEN
+                    ALTER TABLE users
+                    ADD CONSTRAINT users_member_id_fkey
+                    FOREIGN KEY (member_id) REFERENCES members(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_member_id_unique "
+            "ON users (member_id) WHERE member_id IS NOT NULL"
+        ))
         conn.execute(text(
             "ALTER TABLE projects ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
             "NOT NULL DEFAULT 'infrastructure'"
         ))
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_projects_data_scope ON projects (data_scope)"
-        ))
-        conn.execute(text(
-            "UPDATE users SET data_scope = 'all' WHERE role = 'admin' AND data_scope = 'infrastructure'"
         ))
         # The legacy seed inserted users.id=1 explicitly and left the sequence at 1.
         conn.execute(text(
@@ -44,6 +67,7 @@ def init_db_defaults():
     from .models.user import User
     from .models.setting import Setting
     from .utils.auth import hash_password
+    from .config import settings as app_settings
     import json
     import os
 
@@ -107,11 +131,16 @@ def init_db_defaults():
 
         # 2. Initialize default admin user if no users exist
         if db.query(User).count() == 0:
+            default_admin_password = app_settings.DEFAULT_ADMIN_PASSWORD.strip()
+            if not default_admin_password:
+                raise RuntimeError(
+                    "Database has no users. Set DEFAULT_ADMIN_PASSWORD once to create the first admin."
+                )
             admin = User(
                 id=1,
-                email="admin@company.com",
+                email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
                 full_name="Admin Company",
-                hashed_pw=hash_password("admin123"),
+                hashed_pw=hash_password(default_admin_password),
                 role="admin",
                 is_active=True
             )
@@ -341,6 +370,9 @@ def init_db_defaults():
             print("[*] Seeded initial Performance KPI rules")
 
         db.commit()
+    except RuntimeError:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         print(f"[!] Error seeding database: {e}")

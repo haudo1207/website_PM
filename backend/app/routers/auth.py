@@ -9,7 +9,8 @@ router = APIRouter()
 
 @router.post("/login")
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form.username).first()
+    email = form.username.strip().lower()
+    user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(form.password, user.hashed_pw):
         raise HTTPException(401, "Invalid email or password")
     if not user.is_active:

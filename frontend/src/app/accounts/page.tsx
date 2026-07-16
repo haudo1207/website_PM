@@ -29,6 +29,7 @@ interface Account {
   email: string;
   full_name: string;
   role: string;
+  data_scope: string;
   is_active: boolean;
   member_id: number | null;
   member: MemberInfo | null;
@@ -47,6 +48,11 @@ const ROLE_COLORS: Record<string, string> = {
   group_b: 'bg-emerald-100 text-emerald-700',
 };
 
+const SCOPE_LABELS: Record<string, string> = {
+  all: 'Tất cả dự án',
+  infrastructure: 'Dự án Infrastructure',
+};
+
 export default function AccountsPage() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState(false);
@@ -57,11 +63,11 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', password: '', role: 'group_a', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', password: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '' });
+  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: 'infrastructure' });
 
   // Reset password modal
   const [resetAccount, setResetAccount] = useState<Account | null>(null);
@@ -102,12 +108,13 @@ export default function AccountsPage() {
         email: createForm.email,
         password: createForm.password,
         role: createForm.role,
+        data_scope: createForm.data_scope,
         full_name: createForm.full_name,
         member_id: createForm.member_id || undefined,
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', password: '', role: 'group_a', full_name: '', member_id: 0 });
+      setCreateForm({ email: '', password: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -133,7 +140,7 @@ export default function AccountsPage() {
   // Edit
   const openEdit = (acc: Account) => {
     setEditAccount(acc);
-    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role });
+    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || 'infrastructure' });
   };
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -248,6 +255,7 @@ export default function AccountsPage() {
                     <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
                     <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
                     <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
+                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Phạm vi dữ liệu</th>
                     <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
                     <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
                     <th className="text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
@@ -255,9 +263,9 @@ export default function AccountsPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {loading ? (
-                    <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
                   ) : accounts.length === 0 ? (
-                    <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400 italic">Chưa có tài khoản nào</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Chưa có tài khoản nào</td></tr>
                   ) : (
                     accounts.map(acc => (
                       <tr key={acc.id} className="hover:bg-slate-50/50 transition-colors">
@@ -268,6 +276,9 @@ export default function AccountsPage() {
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${ROLE_COLORS[acc.role] || 'bg-slate-100 text-slate-600'}`}>
                             {ROLE_LABELS[acc.role] || acc.role}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {SCOPE_LABELS[acc.data_scope] || acc.data_scope}
                         </td>
                         <td className="px-4 py-3">
                           {acc.member ? (
@@ -359,7 +370,7 @@ export default function AccountsPage() {
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mật khẩu <span className="text-red-500">*</span></label>
                   <input
-                    required type="password"
+                    required type="password" minLength={8}
                     value={createForm.password}
                     onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
@@ -373,11 +384,23 @@ export default function AccountsPage() {
                     onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                   >
-                    <option value="admin">Admin — Toàn quyền</option>
-                    <option value="group_b">Group B — Xem tất cả dự án</option>
-                    <option value="group_a">Group A — Chỉ xem dự án tham gia</option>
+                    <option value="admin">Admin — Quản trị toàn hệ thống</option>
+                    <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
+                    <option value="group_b">Group B — Chỉ xem dữ liệu</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Phạm vi dự án</label>
+                <select
+                  value={createForm.data_scope}
+                  onChange={e => setCreateForm(f => ({ ...f, data_scope: e.target.value }))}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                >
+                  <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
+                  <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
+                </select>
               </div>
 
               {/* Member preview */}
@@ -441,9 +464,20 @@ export default function AccountsPage() {
                   onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
-                  <option value="admin">Admin — Toàn quyền</option>
-                  <option value="group_b">Group B — Xem tất cả dự án</option>
-                  <option value="group_a">Group A — Chỉ xem dự án tham gia</option>
+                  <option value="admin">Admin — Quản trị toàn hệ thống</option>
+                  <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
+                  <option value="group_b">Group B — Chỉ xem dữ liệu</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Phạm vi dự án</label>
+                <select
+                  value={editForm.data_scope}
+                  onChange={e => setEditForm(f => ({ ...f, data_scope: e.target.value }))}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                >
+                  <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
+                  <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
                 </select>
               </div>
               {editAccount.member && (
@@ -481,7 +515,7 @@ export default function AccountsPage() {
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mật khẩu mới <span className="text-red-500">*</span></label>
                 <input
-                  required type="password"
+                  required type="password" minLength={8}
                   value={resetPw}
                   onChange={e => setResetPw(e.target.value)}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
