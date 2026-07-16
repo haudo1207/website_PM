@@ -1,33 +1,14 @@
-name: security_portal_dev
+name: kpi_portal_dev
 
 services:
-  postgres:
-    image: postgres:16
-    container_name: security_dev_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: security_portal_dev
-      POSTGRES_USER: security_dev_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - security_dev_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U security_dev_user -d security_portal_dev"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   backend:
     image: portal-dev-backend:${APP_COMMIT}
-    container_name: security_dev_backend
+    container_name: kpi_dev_backend
     restart: unless-stopped
     build: ${SOURCE_DIR}/backend
     env_file: ./app.env
     volumes:
       - ./secrets:/app/secrets:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 15s
@@ -37,7 +18,7 @@ services:
 
   frontend:
     image: portal-markee-dev-frontend:${APP_COMMIT}
-    container_name: security_dev_frontend
+    container_name: kpi_dev_frontend
     restart: unless-stopped
     build:
       context: ${SOURCE_DIR}/frontend
@@ -52,6 +33,3 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-
-volumes:
-  security_dev_postgres_data:
