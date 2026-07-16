@@ -11,11 +11,12 @@
 ## Chạy local bằng Docker với database development dùng chung
 
 Tất cả developer và site development cùng dùng project Supabase self-host `kpi-dev`.
-Compose chỉ dựng backend/frontend trên máy developer, không dựng PostgreSQL local.
+Compose dựng frontend/backend và một tunnel client HTTPS trên máy developer, không
+dựng PostgreSQL local và không yêu cầu VPN hoặc route tới mạng `10.x`.
 
 ```powershell
 Copy-Item .env.example .env
-# Điền DATABASE_URL và SECRET_KEY của môi trường kpi-dev qua kênh bảo mật
+# Nhận file .env development qua kênh bảo mật
 docker compose up -d --build
 docker compose ps
 ```
@@ -29,6 +30,10 @@ Dừng stack local (không xóa hay thay đổi database shared):
 docker compose down
 ```
 
+Tunnel client tự kết nối `wss://dev.kpi.markeeai.com` qua đường dẫn bí mật và mở PostgreSQL ở cổng
+`15432`. Backend trong Compose dùng host `db_tunnel:15432`; backend chạy trực tiếp
+trên Windows dùng `127.0.0.1:15432` (chạy `docker compose up -d db_tunnel` trước).
+
 Mọi thao tác tạo/sửa/xóa dữ liệu từ local sẽ tác động trực tiếp lên `kpi-dev` mà
 toàn team đang dùng. Không chạy migration thủ công, script xóa dữ liệu hoặc test
 destructive trên database này. Không copy `.env` production cho máy cá nhân và
@@ -38,7 +43,10 @@ không commit bất kỳ URL có mật khẩu nào.
 
 | Biến | Bắt buộc | Mục đích |
 |---|---:|---|
-| `DATABASE_URL` | Có | PostgreSQL local hoặc Supavisor connection string |
+| `DATABASE_URL` | Có | Connection string cho backend chạy trực tiếp qua tunnel localhost |
+| `DATABASE_URL_DOCKER` | Có khi dùng Compose | Connection string qua service `db_tunnel` |
+| `DB_TUNNEL_HOST` | Có | Endpoint WSS public của database development |
+| `DB_TUNNEL_PATH` | Có | Secret path xác thực tunnel; không commit |
 | `SECRET_KEY` | Có | Ký JWT; mỗi môi trường phải dùng secret riêng |
 | `DEFAULT_ADMIN_PASSWORD` | Chỉ DB trống | Tạo admin đầu tiên, sau đó để trống |
 | `FRONTEND_URL` | Có | URL callback về frontend |

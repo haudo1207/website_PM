@@ -1,13 +1,37 @@
 name: kpi_portal_developer
 
 services:
+  db_tunnel:
+    image: ghcr.io/erebe/wstunnel:v10.6.1
+    restart: unless-stopped
+    entrypoint: ["/home/app/wstunnel"]
+    command:
+      - client
+      - --log-lvl
+      - WARN
+      - --http-upgrade-path-prefix
+      - ${DB_TUNNEL_PATH:?Set DB_TUNNEL_PATH in .env}
+      - --local-to-remote
+      - tcp://0.0.0.0:15432:localhost:5432
+      - --connection-min-idle
+      - "1"
+      - wss://${DB_TUNNEL_HOST:-dev.kpi.markeeai.com}
+    ports:
+      - "127.0.0.1:${DB_TUNNEL_LOCAL_PORT:-15432}:15432"
+
   backend:
     build:
       context: ./backend
     restart: unless-stopped
     env_file: ${APP_ENV_FILE:-./.env}
+    environment:
+      # Inside Docker, PostgreSQL is reached through the authenticated WSS tunnel.
+      DATABASE_URL: ${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}
     ports:
       - "127.0.0.1:8000:8000"
+    depends_on:
+      db_tunnel:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 10s
