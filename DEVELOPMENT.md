@@ -34,6 +34,17 @@ Tunnel client tự kết nối `wss://dev.kpi.markeeai.com` qua đường dẫn 
 `15432`. Backend trong Compose dùng host `db_tunnel:15432`; backend chạy trực tiếp
 trên Windows dùng `127.0.0.1:15432` (chạy `docker compose up -d db_tunnel` trước).
 
+### Mở hoặc chặn truy cập database development
+
+Người có quyền chạy Actions trong GitHub vào **Actions → Control KPI dev database
+access → Run workflow** rồi chọn:
+
+- `open`: cho phép developer có đúng file `.env` kết nối qua WSS.
+- `closed`: dừng tunnel; site development vẫn chạy nhưng local không vào được DB.
+- `status`: chỉ xem trạng thái hiện tại.
+
+Thao tác này chỉ điều khiển tunnel của `kpi-dev`; database production không được mở.
+
 Mọi thao tác tạo/sửa/xóa dữ liệu từ local sẽ tác động trực tiếp lên `kpi-dev` mà
 toàn team đang dùng. Không chạy migration thủ công, script xóa dữ liệu hoặc test
 destructive trên database này. Không copy `.env` production cho máy cá nhân và
