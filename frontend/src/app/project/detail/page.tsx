@@ -105,6 +105,7 @@ function ProjectDetailContent() {
 
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
   const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
+  const [showAllKpi, setShowAllKpi] = useState(false);
 
   const toggleParentCollapse = (parentTaskId: string) => {
     setCollapsedParents(prev => {
@@ -3144,12 +3145,22 @@ function ProjectDetailContent() {
 
             {/* KPI FINAL LEADERBOARD - PODIUM */}
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-              <div className="mb-3">
-                <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
-                  <span className="material-symbols-outlined text-amber-500 text-[18px]">emoji_events</span>
-                  Bảng xếp hạng KPI
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-amber-500 text-[18px]">emoji_events</span>
+                    Bảng xếp hạng KPI
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
+                </div>
+                {kpiLeaderboardStats.length > 3 && (
+                  <button
+                    onClick={() => setShowAllKpi(!showAllKpi)}
+                    className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
+                  >
+                    {showAllKpi ? 'Thu gọn' : 'Xem thêm'}
+                  </button>
+                )}
               </div>
 
               {kpiLeaderboardStats.length === 0 ? (
@@ -3201,7 +3212,7 @@ function ProjectDetailContent() {
                     </div>
 
                     {/* REST OF LIST */}
-                    {rest.length > 0 && (
+                    {showAllKpi && rest.length > 0 && (
                       <div className="border-t border-slate-100 pt-3 space-y-1.5">
                         {rest.map((row, i) => (
                           <div key={row.name} className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-slate-50">
