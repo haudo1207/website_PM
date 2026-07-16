@@ -1,0 +1,70 @@
+name: Control KPI dev database access
+
+on:
+  workflow_dispatch:
+    inputs:
+      access:
+        description: Public WSS tunnel state for developers
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - open
+          - closed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kpi-dev-db-access
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: [self-hosted, kpi-dev]
+    steps:
+      - name: Set dev database access
+        shell: bash
+        env:
+          REQUESTED_ACCESS: ${{ inputs.access }}
+        run: |
+          set -euo pipefail
+
+          tunnel_dir=/home/webpm/kpi-db-tunnel
+          cd "$tunnel_dir"
+          test -s tunnel.env
+          test -s compose.yml
+
+          case "$REQUESTED_ACCESS" in
+            open)
+              docker compose --env-file tunnel.env -f compose.yml up -d
+              ;;
+            closed)
+              docker compose --env-file tunnel.env -f compose.yml stop server
+              ;;
+            status)
+              ;;
+            *)
+              echo "Unsupported access state: $REQUESTED_ACCESS" >&2
+              exit 2
+              ;;
+          esac
+
+          state=$(docker inspect --format '{{.State.Status}}' kpi_dev_db_tunnel 2>/dev/null || echo not-created)
+          {
+            echo "## KPI development database access"
+            echo
+            echo "- Requested: \`$REQUESTED_ACCESS\`"
+            echo "- Tunnel container: \`$state\`"
+            echo "- Production database access: unchanged/closed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$REQUESTED_ACCESS" == open && "$state" != running ]]; then
+            echo "Tunnel did not reach running state" >&2
+            exit 1
+          fi
+          if [[ "$REQUESTED_ACCESS" == closed && "$state" == running ]]; then
+            echo "Tunnel is still running" >&2
+            exit 1
+          fi
