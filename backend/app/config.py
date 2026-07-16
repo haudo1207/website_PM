@@ -20,11 +20,16 @@ class Settings(BaseSettings):
     # Google OAuth2 (for Google Meet & Google Drive)
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/meetings/google/callback"
+
+    # Frontend URL for OAuth redirects
+    FRONTEND_URL: str = "http://localhost:3000"
 
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()

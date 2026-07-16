@@ -97,11 +97,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           </button>
         </div>
 
-        {/* Body */}
-        <div className="p-6">
-          {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg font-semibold border border-red-200">{error}</div>}
-          
-          <form id="meetingForm" onSubmit={handleSubmit} className="space-y-5">
+        {/* Body & Form */}
+        <form onSubmit={handleSubmit}>
+          <div className="p-6 space-y-5">
+            {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg font-semibold border border-red-200">{error}</div>}
+            
             <div>
               <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Tên cuộc họp *</label>
               <input 
@@ -232,27 +232,26 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 </>
               )}
             </div>
-          </form>
-        </div>
+          </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 bg-[#f8f9fe] border-t border-[#c2c6d6]/40 flex items-center justify-end gap-3">
-          <button 
-            type="button" 
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-bold text-[#565e74] bg-white border border-[#c2c6d6] rounded-lg hover:bg-[#f0f2f5] transition-colors"
-          >
-            Hủy
-          </button>
-          <button 
-            type="submit" 
-            form="meetingForm"
-            disabled={isLoading}
-            className="px-4 py-2 flex items-center gap-2 text-xs font-bold text-white bg-[#0058be] rounded-lg hover:bg-[#0058be]/90 transition-colors disabled:opacity-70 shadow-sm"
-          >
-            {isLoading ? 'Đang xử lý...' : (initialData ? 'Cập nhật' : 'Tạo meeting')}
-          </button>
-        </div>
+          {/* Footer */}
+          <div className="px-6 py-4 bg-[#f8f9fe] border-t border-[#c2c6d6]/40 flex items-center justify-end gap-3">
+            <button 
+              type="button" 
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-bold text-[#565e74] bg-white border border-[#c2c6d6] rounded-lg hover:bg-[#f0f2f5] transition-colors"
+            >
+              Hủy
+            </button>
+            <button 
+              type="submit" 
+              disabled={isLoading}
+              className="px-4 py-2 flex items-center gap-2 text-xs font-bold text-white bg-[#0058be] rounded-lg hover:bg-[#0058be]/90 transition-colors disabled:opacity-70 shadow-sm"
+            >
+              {isLoading ? 'Đang xử lý...' : (initialData ? 'Cập nhật' : 'Tạo meeting')}
+            </button>
+          </div>
+        </form>
 
       </div>
     </div>

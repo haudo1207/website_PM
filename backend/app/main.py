@@ -4,14 +4,40 @@ from .routers import auth, users, settings_router, skills, system_categories, me
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .database import engine, Base
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
 from .models import task as task_model
+from sqlalchemy import text
 
 # Create all tables (new v5 schema)
 Base.metadata.create_all(bind=engine)
+
+def apply_schema_updates():
+    """Small idempotent migrations for existing installs without Alembic."""
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
+            "NOT NULL DEFAULT 'infrastructure'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
+            "NOT NULL DEFAULT 'infrastructure'"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_projects_data_scope ON projects (data_scope)"
+        ))
+        conn.execute(text(
+            "UPDATE users SET data_scope = 'all' WHERE role = 'admin' AND data_scope = 'infrastructure'"
+        ))
+        # The legacy seed inserted users.id=1 explicitly and left the sequence at 1.
+        conn.execute(text(
+            "SELECT setval(pg_get_serial_sequence('users', 'id'), "
+            "GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1), true)"
+        ))
+
+apply_schema_updates()
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -351,5 +377,6 @@ app.include_router(performance_settings.router, prefix="/api/performance-setting
 app.include_router(accounts.router,            prefix="/api/accounts")
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "ok", "version": "5.0.0"}

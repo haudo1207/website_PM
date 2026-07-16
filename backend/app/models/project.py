@@ -46,6 +46,8 @@ class Project(Base):
     description           = Column(Text, nullable=True)
     status                = Column(String(50), default="Planning")  # Planning / Developing / Completed / Archived
     current_phase         = Column(String(100), nullable=True, default="1. Tư vấn")
+    # Explicit business boundary used by backend authorization.
+    data_scope            = Column(String(50), nullable=False, default="infrastructure", server_default="infrastructure", index=True)
     created_at            = Column(DateTime, server_default=func.now())
     updated_at            = Column(DateTime, onupdate=func.now())
 

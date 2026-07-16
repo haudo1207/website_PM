@@ -169,6 +169,8 @@ export const addMeetingMember = (id: number, memberId: number, role?: string) =>
 export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);
 export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
 export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);
+export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
+
 
 // Performance Settings CRUD
 export const getPerformanceSettings = () => api.get('/performance-settings').then(r => r.data);

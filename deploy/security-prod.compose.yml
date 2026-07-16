@@ -1,0 +1,73 @@
+name: website_pm
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: task_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: portal-prod-backend:${APP_COMMIT}
+    container_name: task_backend
+    restart: unless-stopped
+    build: ${SOURCE_DIR}/backend
+    env_file: ./.env
+    volumes:
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend:
+    image: portal-security-prod-frontend:${APP_COMMIT}
+    container_name: task_frontend
+    restart: unless-stopped
+    build:
+      context: ${SOURCE_DIR}/frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: /api
+        NEXT_PUBLIC_PORTAL_BRAND: securityzone
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+    ports:
+      - "0.0.0.0:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  frontend_markee:
+    image: portal-markee-prod-frontend:${APP_COMMIT}
+    container_name: markee_prod_frontend
+    restart: unless-stopped
+    build:
+      context: ${SOURCE_DIR}/frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: /api
+        NEXT_PUBLIC_PORTAL_BRAND: markee
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+    ports:
+      - "0.0.0.0:${MARKEE_FRONTEND_PORT:-3300}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -1,0 +1,27 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-both-brands:
+    runs-on: [self-hosted, security]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync and deploy both brands
+        env:
+          APP_COMMIT: ${{ github.sha }}
+          SOURCE_DIR: /home/portalkpi/website_PM
+          FRONTEND_PORT: "3000"
+          MARKEE_FRONTEND_PORT: "3300"
+        run: |
+          set -euo pipefail
+          rsync -a --delete --exclude .git --exclude .env --exclude secrets --exclude backups --exclude frontend/data ./ "$SOURCE_DIR"/
+          cp deploy/security-prod.compose.yml "$SOURCE_DIR/docker-compose.yml"
+          cd "$SOURCE_DIR"
+          # Keep the existing Redis/Celery worker and scheduler running. Their
+          # source is not part of this branch yet, but production still uses
+          # them for scheduled Google Sheet synchronization.
+          docker compose --env-file .env -f docker-compose.yml up -d --build
+          timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done'
+          timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done'
