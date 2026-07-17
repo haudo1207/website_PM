@@ -51,6 +51,12 @@ class Project(Base):
     created_at            = Column(DateTime, server_default=func.now())
     updated_at            = Column(DateTime, onupdate=func.now())
 
+    # AI Check Fields
+    ai_status             = Column(String(50), default="NOT_CHECKED", nullable=False, server_default="NOT_CHECKED")
+    last_ai_check_at      = Column(DateTime, nullable=True)
+    last_ai_score         = Column(Integer, nullable=True)
+    last_review_id        = Column(Integer, nullable=True)
+
     # Relationships
     pm_member             = relationship("Member", foreign_keys=[pm_id], lazy="select")
     technical_leader      = relationship("Member", foreign_keys=[technical_leader_id], lazy="select")

@@ -12,7 +12,11 @@ pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 def verify_password(p, h):
-    return pwd_ctx.verify(p, h)
+    try:
+        return pwd_ctx.verify(p, h)
+    except (TypeError, ValueError):
+        # A damaged/legacy hash must behave like bad credentials, not crash login.
+        return False
 
 def hash_password(p):
     return pwd_ctx.hash(p)
@@ -28,7 +32,7 @@ def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)
         if not user or not user.is_active:
             raise HTTPException(401, "Invalid token")
         return user
-    except JWTError:
+    except (JWTError, KeyError, TypeError, ValueError):
         raise HTTPException(401, "Invalid token")
 
 def require_admin(user=Depends(get_current_user)):

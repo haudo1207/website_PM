@@ -6,9 +6,6 @@ import {
   createDepartment,
   updateDepartment,
   deleteDepartment,
-  createPriority,
-  updatePriority,
-  deletePriority,
   createStatus,
   updateStatus,
   deleteStatus,
@@ -23,7 +20,6 @@ import {
 interface SystemCategoriesViewProps {
   positions: any[];
   departments: any[];
-  priorities: any[];
   statuses: any[];
   teams: any[];
   customers: any[];
@@ -34,7 +30,6 @@ interface SystemCategoriesViewProps {
 export default function SystemCategoriesView({
   positions,
   departments,
-  priorities,
   statuses,
   teams,
   customers = [],
@@ -50,10 +45,6 @@ export default function SystemCategoriesView({
   const [newDeptName, setNewDeptName] = useState('');
   const [newDeptDesc, setNewDeptDesc] = useState('');
 
-  const [showAddPrio, setShowAddPrio] = useState(false);
-  const [newPrioName, setNewPrioName] = useState('');
-  const [newPrioKpi, setNewPrioKpi] = useState(6);
-  const [newPrioColor, setNewPrioColor] = useState('🟢 Xanh');
 
   const [showAddStatus, setShowAddStatus] = useState(false);
   const [newStatusName, setNewStatusName] = useState('');
@@ -81,10 +72,6 @@ export default function SystemCategoriesView({
   const [editingDeptName, setEditingDeptName] = useState('');
   const [editingDeptDesc, setEditingDeptDesc] = useState('');
 
-  const [editingPrioId, setEditingPrioId] = useState<number | null>(null);
-  const [editingPrioName, setEditingPrioName] = useState('');
-  const [editingPrioKpi, setEditingPrioKpi] = useState(6);
-  const [editingPrioColor, setEditingPrioColor] = useState('');
 
   const [editingStatusId, setEditingStatusId] = useState<number | null>(null);
   const [editingStatusName, setEditingStatusName] = useState('');
@@ -166,51 +153,6 @@ export default function SystemCategoriesView({
     }
   };
 
-  const handleAddPrio = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPrioName.trim()) return;
-    if (newPrioKpi <= 0) {
-      onFlash('KPI Base phải lớn hơn 0');
-      return;
-    }
-    try {
-      await createPriority({ name: newPrioName, kpi_base: newPrioKpi, color: newPrioColor });
-      setNewPrioName('');
-      setNewPrioKpi(6);
-      setShowAddPrio(false);
-      onReload();
-      onFlash('Đã thêm mức độ ưu tiên mới thành công');
-    } catch (err: any) {
-      onFlash(err.response?.data?.detail || 'Lỗi thêm mức độ ưu tiên');
-    }
-  };
-
-  const handleUpdatePrio = async (id: number) => {
-    if (!editingPrioName.trim()) return;
-    if (editingPrioKpi <= 0) {
-      onFlash('KPI Base phải lớn hơn 0');
-      return;
-    }
-    try {
-      await updatePriority(id, { name: editingPrioName, kpi_base: editingPrioKpi, color: editingPrioColor });
-      setEditingPrioId(null);
-      onReload();
-      onFlash('Đã cập nhật mức độ ưu tiên thành công');
-    } catch (err: any) {
-      onFlash(err.response?.data?.detail || 'Lỗi cập nhật mức độ ưu tiên');
-    }
-  };
-
-  const handleDeletePrio = async (id: number, name: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa mức độ ưu tiên "${name}"?`)) return;
-    try {
-      await deletePriority(id);
-      onReload();
-      onFlash('Đã xóa mức độ ưu tiên thành công');
-    } catch (err: any) {
-      onFlash(err.response?.data?.detail || 'Lỗi khi xóa mức độ ưu tiên');
-    }
-  };
 
   const handleAddStatus = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -558,167 +500,6 @@ export default function SystemCategoriesView({
         </div>
       </div>
 
-      {/* 3. MỨC ĐỘ ƯU TIÊN CARD */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
-          <div>
-            <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
-              ⚡ Mức độ ưu tiên
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5 font-medium uppercase tracking-wider">Cấu hình Priority, KPI Base và màu sắc hiển thị</p>
-          </div>
-          <button
-            onClick={() => setShowAddPrio(!showAddPrio)}
-            className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold transition-all shadow-sm"
-          >
-            {showAddPrio ? 'Đóng' : '+ Thêm'}
-          </button>
-        </div>
-
-        {showAddPrio && (
-          <form onSubmit={handleAddPrio} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col md:flex-row gap-4 items-end">
-            <div className="flex-1 flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên mức độ</label>
-              <input
-                required
-                type="text"
-                placeholder="Ví dụ: Normal, High, Critical..."
-                value={newPrioName}
-                onChange={e => setNewPrioName(e.target.value)}
-                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 outline-none focus:border-blue-500 transition-all"
-              />
-            </div>
-            <div className="w-[120px] flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">KPI Base</label>
-              <input
-                required
-                type="number"
-                min="1"
-                value={newPrioKpi}
-                onChange={e => setNewPrioKpi(Number(e.target.value))}
-                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 transition-all"
-              />
-            </div>
-            <div className="w-[160px] flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Màu / Icon</label>
-              <select
-                value={newPrioColor}
-                onChange={e => setNewPrioColor(e.target.value)}
-                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 transition-all"
-              >
-                <option value="🟢 Xanh">🟢 Xanh</option>
-                <option value="🟠 Cam">🟠 Cam</option>
-                <option value="🔴 Đỏ">🔴 Đỏ</option>
-                <option value="🟣 Tím">🟣 Tím</option>
-                <option value="🔵 Lam">🔵 Lam</option>
-                <option value="🟡 Vàng">🟡 Vàng</option>
-                <option value="⚫ Đen">⚫ Đen</option>
-              </select>
-            </div>
-            <button
-              type="submit"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0 h-[36px]"
-            >
-              Lưu lại
-            </button>
-          </form>
-        )}
-
-        <div className="divide-y divide-slate-100">
-          {priorities.length === 0 ? (
-            <p className="text-xs text-slate-400 italic p-6 text-center">Chưa có mức độ ưu tiên nào.</p>
-          ) : (
-            priorities.map(p => {
-              const isEditing = editingPrioId === p.id;
-              return (
-                <div key={p.id} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50/40 transition-colors">
-                  {isEditing ? (
-                    <div className="flex-1 flex gap-3 mr-4">
-                      <input
-                        required
-                        type="text"
-                        value={editingPrioName}
-                        onChange={e => setEditingPrioName(e.target.value)}
-                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none w-1/3"
-                      />
-                      <input
-                        required
-                        type="number"
-                        min="1"
-                        value={editingPrioKpi}
-                        onChange={e => setEditingPrioKpi(Number(e.target.value))}
-                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none w-[100px]"
-                      />
-                      <select
-                        value={editingPrioColor}
-                        onChange={e => setEditingPrioColor(e.target.value)}
-                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none w-[120px]"
-                      >
-                        <option value="🟢 Xanh">🟢 Xanh</option>
-                        <option value="🟠 Cam">🟠 Cam</option>
-                        <option value="🔴 Đỏ">🔴 Đỏ</option>
-                        <option value="🟣 Tím">🟣 Tím</option>
-                        <option value="🔵 Lam">🔵 Lam</option>
-                        <option value="🟡 Vàng">🟡 Vàng</option>
-                        <option value="⚫ Đen">⚫ Đen</option>
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-4 text-xs font-semibold text-[#0f172a]">
-                      <span className="px-2 py-0.5 rounded border border-slate-200 bg-slate-50 flex items-center gap-1.5">
-                        <span className="text-sm leading-none">{p.color?.split(' ')[0] || '🟢'}</span>
-                        <span>{p.name}</span>
-                      </span>
-                      <span className="text-slate-400 font-medium">
-                        KPI Base: <strong className="text-slate-700">{p.kpi_base}</strong>
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-3">
-                    {isEditing ? (
-                      <>
-                        <button
-                          onClick={() => handleUpdatePrio(p.id)}
-                          className="text-[11px] bg-blue-600 text-white px-2.5 py-1 rounded font-bold hover:bg-blue-700"
-                        >
-                          Lưu
-                        </button>
-                        <button
-                          onClick={() => setEditingPrioId(null)}
-                          className="text-[11px] bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-300"
-                        >
-                          Hủy
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => {
-                            setEditingPrioId(p.id);
-                            setEditingPrioName(p.name);
-                            setEditingPrioKpi(p.kpi_base);
-                            setEditingPrioColor(p.color || '🟢 Xanh');
-                          }}
-                          className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
-                        >
-                          Sửa
-                        </button>
-                        <button
-                          onClick={() => handleDeletePrio(p.id, p.name)}
-                          className="text-xs text-red-600 hover:text-red-700 font-semibold"
-                        >
-                          Xóa
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
 
       {/* 4. TRẠNG THÁI CARD */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">

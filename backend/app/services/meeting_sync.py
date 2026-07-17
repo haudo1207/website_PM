@@ -201,11 +201,11 @@ def sync_zoom_meeting(meeting_url: str, meeting_info: dict) -> dict:
 # GOOGLE MEET — OAuth + Calendar + Drive Transcript Sync
 # ═══════════════════════════════════════════════════════════
 
-def _get_google_credentials():
+def _get_google_credentials(db, user_id: int):
     """Build Google OAuth2 credentials from stored tokens."""
     from google.oauth2.credentials import Credentials
 
-    token_data = _load_google_tokens()
+    token_data = _load_google_tokens(db, user_id)
     if not token_data:
         raise ValueError(
             "Google Calendar chưa được kết nối. "
@@ -224,7 +224,7 @@ def _get_google_credentials():
     if creds.expired and creds.refresh_token:
         from google.auth.transport.requests import Request
         creds.refresh(Request())
-        _save_google_tokens({
+        _save_google_tokens(db, user_id, {
             "access_token": creds.token,
             "refresh_token": creds.refresh_token,
         })
@@ -232,9 +232,18 @@ def _get_google_credentials():
     return creds
 
 
-def _load_google_tokens() -> Optional[dict]:
-    """Load Google OAuth tokens from database Setting or local file."""
-    # Try loading from file first
+def _load_google_tokens(db, user_id: int) -> Optional[dict]:
+    """Load Google OAuth tokens from PostgreSQL database."""
+    if not user_id:
+        return None
+    from ..models.google_token import GoogleToken
+    gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
+    if gtoken:
+        return {
+            "access_token": gtoken.access_token,
+            "refresh_token": gtoken.refresh_token,
+        }
+    # Fallback to local file for compatibility / initial migration
     token_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "google-tokens.json")
     if os.path.exists(token_path):
         try:
@@ -245,29 +254,36 @@ def _load_google_tokens() -> Optional[dict]:
     return None
 
 
-def _save_google_tokens(tokens: dict):
-    """Save Google OAuth tokens to file."""
-    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
-    os.makedirs(data_dir, exist_ok=True)
-    token_path = os.path.join(data_dir, "google-tokens.json")
-    with open(token_path, "w", encoding="utf-8") as f:
-        json.dump(tokens, f, indent=2)
+def _save_google_tokens(db, user_id: int, tokens: dict):
+    """Save Google OAuth tokens to PostgreSQL database."""
+    if not user_id:
+        return
+    from ..models.google_token import GoogleToken
+    gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
+    if not gtoken:
+        gtoken = GoogleToken(user_id=user_id)
+        db.add(gtoken)
+    
+    gtoken.access_token = tokens.get("access_token")
+    if tokens.get("refresh_token"):
+        gtoken.refresh_token = tokens.get("refresh_token")
+    db.commit()
 
 
-def is_google_connected() -> bool:
-    """Check if Google OAuth tokens are available."""
-    tokens = _load_google_tokens()
+def is_google_connected(db, user_id: int) -> bool:
+    """Check if Google OAuth tokens are available for the user."""
+    tokens = _load_google_tokens(db, user_id)
     return bool(tokens and (tokens.get("refresh_token") or tokens.get("access_token")))
 
 
-def create_google_meet_link(topic: str, start_time: str, duration_minutes: int = 60) -> dict:
+def create_google_meet_link(db, user_id: int, topic: str, start_time: str, duration_minutes: int = 60) -> dict:
     """
     Create a Google Calendar event with Google Meet link.
     Returns { join_url, id }.
     """
     from googleapiclient.discovery import build
 
-    creds = _get_google_credentials()
+    creds = _get_google_credentials(db, user_id)
     calendar = build("calendar", "v3", credentials=creds)
 
     start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
@@ -299,12 +315,12 @@ def create_google_meet_link(topic: str, start_time: str, duration_minutes: int =
     return {"join_url": hangout_link, "id": response.get("id")}
 
 
-def sync_google_meet(meeting_url: str, meeting_info: dict) -> dict:
+def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> dict:
     """
     Sync a Google Meet meeting by searching for transcript on Google Drive.
     Returns { transcript, summary, status } or raises on error.
     """
-    if not is_google_connected():
+    if not is_google_connected(db, user_id):
         raise ValueError("Google Calendar/Drive chưa được kết nối.")
 
     match = re.search(r"meet\.google\.com/([a-z-]+)", meeting_url or "")
@@ -312,7 +328,7 @@ def sync_google_meet(meeting_url: str, meeting_info: dict) -> dict:
         raise ValueError("Link Google Meet không đúng định dạng.")
 
     meeting_code = match.group(1)
-    transcript_data = _fetch_google_meet_transcript(meeting_code)
+    transcript_data = _fetch_google_meet_transcript(db, user_id, meeting_code)
 
     if not transcript_data:
         raise ValueError(
@@ -328,11 +344,11 @@ def sync_google_meet(meeting_url: str, meeting_info: dict) -> dict:
     }
 
 
-def _fetch_google_meet_transcript(meeting_code: str) -> Optional[dict]:
+def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Optional[dict]:
     """Search Google Drive for a Google Doc transcript matching the meeting code."""
     from googleapiclient.discovery import build
 
-    creds = _get_google_credentials()
+    creds = _get_google_credentials(db, user_id)
     drive = build("drive", "v3", credentials=creds)
 
     matched_file = None

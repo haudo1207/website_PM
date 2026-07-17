@@ -46,6 +46,11 @@ def require_route_project_access(
     params = request.path_params
     project_id = params.get("pid")
 
+    # Role and data scope are deliberately independent: data_scope determines
+    # which projects are visible, while role determines whether data can change.
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role not in {"admin", "group_a"}:
+        raise HTTPException(403, "Write access requires Admin or Group A role.")
+
     if project_id is None and params.get("phid") is not None:
         project_id = db.query(Phase.project_id).filter(Phase.id == int(params["phid"])).scalar()
     if project_id is None and params.get("gid") is not None:

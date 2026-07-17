@@ -20,6 +20,11 @@ def run_migration():
             conn.execute(text("ALTER TABLE users ADD COLUMN department VARCHAR(255) NULL"))
             conn.commit()
             
+        if "member_id" not in existing_users_cols:
+            print("Adding column 'member_id' to 'users' table...")
+            conn.execute(text("ALTER TABLE users ADD COLUMN member_id INTEGER NULL UNIQUE REFERENCES members(id)"))
+            conn.commit()
+            
         # Check task_groups table columns
         result = conn.execute(text(
             "SELECT column_name FROM information_schema.columns "

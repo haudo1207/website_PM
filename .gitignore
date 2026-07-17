@@ -49,3 +49,6 @@ pm-new/
 # Local data databases/settings
 frontend/data/
 
+.claude/
+
+prompts/
