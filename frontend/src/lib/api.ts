@@ -187,3 +187,21 @@ export const resetAccountPassword = (id: number, password: string) => api.post(`
 export const lockAccount = (id: number) => api.post(`/accounts/${id}/lock`).then(r => r.data);
 export const unlockAccount = (id: number) => api.post(`/accounts/${id}/unlock`).then(r => r.data);
 export const deleteAccount = (id: number) => api.delete(`/accounts/${id}`).then(r => r.data);
+
+// ═══════════════════════════════════════════════════════════
+// AI REVIEW (v5)
+// ═══════════════════════════════════════════════════════════
+export const getAIPrompts = (projectId: number) =>
+  api.get('/settings/ai-prompts', { params: { project_id: projectId } }).then(r => r.data);
+
+export const saveAIPrompt = (data: { id?: number; project_id: number; type: string; name: string; prompt_content: string; active?: boolean }) =>
+  api.post('/settings/ai-prompts', data).then(r => r.data);
+
+export const triggerAIReview = (entityType: string, entityId: number) =>
+  api.post('/ai-review/check', { entity_type: entityType, entity_id: entityId }).then(r => r.data);
+
+export const getAIReviewHistory = (entityType: string, entityId: number) =>
+  api.get('/ai-review/history', { params: { entity_type: entityType, entity_id: entityId } }).then(r => r.data);
+
+export const getAIReviewLog = (logId: number) =>
+  api.get(`/ai-review/logs/${logId}`).then(r => r.data);

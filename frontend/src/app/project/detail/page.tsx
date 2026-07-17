@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
+import AIReviewDrawer from '@/components/AIReviewDrawer';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
@@ -86,6 +87,33 @@ function ProjectDetailContent() {
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
+
+  // AI Review Drawer states
+  const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
+  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK'>('PROJECT');
+  const [aiDrawerEntityId, setAiDrawerEntityId] = useState<number>(0);
+  const [aiDrawerEntityName, setAiDrawerEntityName] = useState<string>('');
+
+  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK', entityId: number, name = '') => {
+    setAiDrawerEntityType(entityType);
+    setAiDrawerEntityId(entityId);
+    
+    let resolvedName = name;
+    if (!resolvedName) {
+      if (entityType === 'PROJECT') {
+        resolvedName = project?.name || 'Project';
+      } else if (entityType === 'PHASE') {
+        const foundPhase = phases.find(p => p.id === entityId);
+        resolvedName = foundPhase ? foundPhase.name : 'Phase';
+      } else if (entityType === 'TASK') {
+        const foundTask = items.find(t => t.id === entityId);
+        resolvedName = foundTask ? foundTask.detail : 'Task';
+      }
+    }
+    
+    setAiDrawerEntityName(resolvedName);
+    setIsAIDrawerOpen(true);
+  };
 
   // Main Tabs State: 'tasks' | 'meetings' | 'chats' | 'members'
   const [activeMainTab, setActiveMainTab] = useState<'tasks' | 'meetings' | 'chats' | 'members'>('tasks');
@@ -1980,6 +2008,16 @@ function ProjectDetailContent() {
 
 
 
+            {/* 2. AI Check Task (Hover visible) */}
+            <button
+              type="button"
+              onClick={() => handleOpenAIReviewDrawer('TASK', task.id, task.detail)}
+              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
+              title="AI Check Task"
+            >
+              <span>🤖</span>
+            </button>
+
             {/* 3. Duplicate Task (Hover visible) */}
             <button
               type="button"
@@ -2351,6 +2389,24 @@ function ProjectDetailContent() {
                 <span className={`font-mono text-slate-700 ${!isSubTask ? 'font-bold' : 'text-slate-500 font-medium'}`}>
                   {val}
                 </span>
+                {task.ai_status && (
+                  <span 
+                    className={`w-2.5 h-2.5 rounded-full cursor-pointer shrink-0 border border-white shadow-sm transition-transform hover:scale-125 ${
+                      task.ai_status === 'NEED_RECHECK'
+                        ? 'bg-amber-400 animate-pulse'
+                        : task.ai_status === 'HAS_ISSUE'
+                        ? 'bg-rose-500'
+                        : task.ai_status === 'GOOD'
+                        ? 'bg-emerald-500'
+                        : 'bg-slate-300'
+                    }`}
+                    title={`AI Status: ${task.ai_status}${task.last_ai_score !== null ? ` (Score: ${task.last_ai_score}/100)` : ''} - Click to view detail`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenAIReviewDrawer('TASK', task.id, task.detail);
+                    }}
+                  />
+                )}
               </div>
             );
           } else if (colUpper === 'DETAIL TASK') {
@@ -3072,6 +3128,36 @@ function ProjectDetailContent() {
             <span className="text-xs font-bold text-[#0b1c30]">{project.name}</span>
           </div>
           <div className="flex items-center gap-3">
+            {project && (
+              <div className="flex items-center gap-2">
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${
+                  project.ai_status === 'NEED_RECHECK'
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : project.ai_status === 'CHECKING'
+                    ? 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse'
+                    : project.ai_status === 'HAS_ISSUE'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : project.ai_status === 'GOOD'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-slate-50 text-slate-600 border-slate-200'
+                }`}>
+                  AI: {project.ai_status || 'UNKNOWN'}
+                </span>
+                {project.last_ai_score !== null && (
+                  <span className="text-xs font-bold bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20 px-2 py-1 rounded-md">
+                    Score: {project.last_ai_score}/100
+                  </span>
+                )}
+              </div>
+            )}
+            
+            <button
+              onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
+              className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
+            >
+              🤖 AI Review
+            </button>
+
             <button onClick={() => reloadAll()} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
               ↻ Tải lại
             </button>
@@ -3423,6 +3509,16 @@ function ProjectDetailContent() {
                           <span>{p.label}</span>
                           {activePhase === p.key && !p.is_master && (
                             <span className="flex items-center gap-1 shrink-0">
+                              <span
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenAIReviewDrawer('PHASE', p.id!, p.label);
+                                }}
+                                className="text-indigo-600 hover:text-indigo-800 transition-colors p-0.5 rounded cursor-pointer text-[10px]"
+                                title="AI Check Giai Đoạn"
+                              >
+                                🤖
+                              </span>
                               <span
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -4347,6 +4443,18 @@ function ProjectDetailContent() {
           </div>
         </div>
       )}
+
+      <AIReviewDrawer
+        isOpen={isAIDrawerOpen}
+        onClose={() => setIsAIDrawerOpen(false)}
+        entityType={aiDrawerEntityType}
+        entityId={aiDrawerEntityId}
+        entityName={aiDrawerEntityName}
+        onSuccessCheck={() => {
+          reloadAll();
+          loadProject();
+        }}
+      />
 
       {/* Modal xác nhận xóa */}
       {showDeleteModal && (

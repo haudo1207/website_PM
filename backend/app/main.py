@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .database import engine, Base
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
@@ -59,6 +59,24 @@ def apply_schema_updates():
             "SELECT setval(pg_get_serial_sequence('users', 'id'), "
             "GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1), true)"
         ))
+
+        # Add AI Review columns to projects
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
+
+        # Add AI Review columns to phases
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
+
+        # Add AI Review columns to tasks_v2
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
 
 apply_schema_updates()
 
@@ -407,6 +425,7 @@ app.include_router(members.router,             prefix="/api/members")
 app.include_router(meetings_router.router,    prefix="/api/meetings")
 app.include_router(performance_settings.router, prefix="/api/performance-settings")
 app.include_router(accounts.router,            prefix="/api/accounts")
+app.include_router(ai_review.router,            prefix="/api")
 
 @app.get("/health")
 @app.get("/api/health")

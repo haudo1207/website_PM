@@ -106,6 +106,10 @@ def serialize_project(p, db):
         "completed_task_count": completed_task_count,
         "warning_task_count": warning_task_count,
         "members": members_list,
+        "ai_status": p.ai_status,
+        "last_ai_check_at": str(p.last_ai_check_at) if p.last_ai_check_at else None,
+        "last_ai_score": p.last_ai_score,
+        "last_review_id": p.last_review_id,
         "created_at": str(p.created_at) if p.created_at else None,
         "updated_at": str(p.updated_at) if p.updated_at else None,
     }
@@ -389,6 +393,10 @@ def serialize_phase(ph, db):
         "status": ph.status,
         "task_group_count": tg_count,
         "task_count": task_count,
+        "ai_status": ph.ai_status,
+        "last_ai_check_at": str(ph.last_ai_check_at) if ph.last_ai_check_at else None,
+        "last_ai_score": ph.last_ai_score,
+        "last_review_id": ph.last_review_id,
         "created_at": str(ph.created_at) if ph.created_at else None,
     }
 
