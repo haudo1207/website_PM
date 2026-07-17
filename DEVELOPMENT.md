@@ -11,12 +11,19 @@
 ## Chạy local bằng Docker với database development dùng chung
 
 Tất cả developer và site development cùng dùng project Supabase self-host `kpi-dev`.
-Compose dựng frontend/backend và một tunnel client HTTPS trên máy developer, không
-dựng PostgreSQL local và không yêu cầu VPN hoặc route tới mạng `10.x`.
+Compose chỉ dựng frontend/backend, không dựng PostgreSQL local. Trước khi chạy,
+developer kết nối **một trong hai** đường mạng tới DB private `10.30.195.67:6543`:
+
+- VPN công ty; hoặc
+- Cloudflare WARP đã đăng nhập đúng team và được cấp route tới DB development.
+
+Không cần và không nên bật cả hai cùng lúc vì route VPN có thể xung đột. Dùng cách
+nào thì ứng dụng và file `.env` vẫn giữ nguyên.
 
 ```powershell
 Copy-Item .env.example .env
 # Nhận file .env development qua kênh bảo mật
+docker compose config --quiet
 docker compose up -d --build
 docker compose ps
 ```
@@ -30,20 +37,10 @@ Dừng stack local (không xóa hay thay đổi database shared):
 docker compose down
 ```
 
-Tunnel client tự kết nối `wss://dev.kpi.markeeai.com` qua đường dẫn bí mật và mở PostgreSQL ở cổng
-`15432`. Backend trong Compose dùng host `db_tunnel:15432`; backend chạy trực tiếp
-trên Windows dùng `127.0.0.1:15432` (chạy `docker compose up -d db_tunnel` trước).
-
-### Mở hoặc chặn truy cập database development
-
-Người có quyền chạy Actions trong GitHub vào **Actions → Control KPI dev database
-access → Run workflow** rồi chọn:
-
-- `open`: cho phép developer có đúng file `.env` kết nối qua WSS.
-- `closed`: dừng tunnel; site development vẫn chạy nhưng local không vào được DB.
-- `status`: chỉ xem trạng thái hiện tại.
-
-Thao tác này chỉ điều khiển tunnel của `kpi-dev`; database production không được mở.
+Compose dùng bridge MTU `1420` để container đi được qua Cloudflare WARP trên Linux;
+giá trị này cũng dùng được với VPN công ty. Nếu host kết nối DB được nhưng container
+không kết nối được, kiểm tra VPN/WARP đang Connected rồi chạy lại `docker compose down`
+và `docker compose up -d --build` để Compose tạo lại network đúng MTU.
 
 Mọi thao tác tạo/sửa/xóa dữ liệu từ local sẽ tác động trực tiếp lên `kpi-dev` mà
 toàn team đang dùng. Không chạy migration thủ công, script xóa dữ liệu hoặc test
@@ -54,10 +51,8 @@ không commit bất kỳ URL có mật khẩu nào.
 
 | Biến | Bắt buộc | Mục đích |
 |---|---:|---|
-| `DATABASE_URL` | Có | Connection string cho backend chạy trực tiếp qua tunnel localhost |
-| `DATABASE_URL_DOCKER` | Có khi dùng Compose | Connection string qua service `db_tunnel` |
-| `DB_TUNNEL_HOST` | Có | Endpoint WSS public của database development |
-| `DB_TUNNEL_PATH` | Có | Secret path xác thực tunnel; không commit |
+| `DATABASE_URL` | Có | Connection string trực tiếp tới DB development private qua VPN hoặc WARP |
+| `DOCKER_NETWORK_MTU` | Không | Mặc định `1420`, hỗ trợ Docker qua WARP/VPN |
 | `SECRET_KEY` | Có | Ký JWT; mỗi môi trường phải dùng secret riêng |
 | `DEFAULT_ADMIN_PASSWORD` | Chỉ DB trống | Tạo admin đầu tiên, sau đó để trống |
 | `FRONTEND_URL` | Có | URL callback về frontend |
