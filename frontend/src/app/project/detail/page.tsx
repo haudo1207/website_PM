@@ -136,6 +136,8 @@ function ProjectDetailContent() {
   const [showAllKpi, setShowAllKpi] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [drawerForm, setDrawerForm] = useState<Record<string, any>>({});
+  const [drawerSaving, setDrawerSaving] = useState(false);
 
   const toggleParentCollapse = (parentTaskId: string) => {
     setCollapsedParents(prev => {
@@ -1680,6 +1682,64 @@ function ProjectDetailContent() {
     }
   };
 
+  // Sync drawer form when selectedTask changes
+  useEffect(() => {
+    if (selectedTask) {
+      setDrawerForm({
+        detail: selectedTask.detail || '',
+        status: selectedTask.status || 'Waiting',
+        priority: selectedTask.priority || 'Normal',
+        assigned_id: selectedTask.assigned_id ? String(selectedTask.assigned_id) : '',
+        support_id: selectedTask.support_id ? String(selectedTask.support_id) : '',
+        start_date: selectedTask.start_date || '',
+        end_date_est: selectedTask.end_date_est || '',
+        manday_est: selectedTask.manday_est != null ? String(selectedTask.manday_est) : '',
+        manday_actual: selectedTask.manday_actual != null ? String(selectedTask.manday_actual) : '',
+        notes: selectedTask.notes || '',
+        remark: selectedTask.remark || '',
+        ticket_id: selectedTask.ticket_id || '',
+      });
+    }
+  }, [selectedTask]);
+
+  // Keep selectedTask in sync with items after reload
+  useEffect(() => {
+    if (selectedTask && items.length > 0) {
+      const fresh = items.find((t: any) => t.id === selectedTask.id);
+      if (fresh && fresh !== selectedTask) {
+        setSelectedTask(fresh);
+      }
+    }
+  }, [items]);
+
+  const handleDrawerSave = async () => {
+    if (!selectedTask || drawerSaving) return;
+    setDrawerSaving(true);
+    try {
+      const payload: Record<string, any> = {
+        detail: drawerForm.detail,
+        status: drawerForm.status,
+        priority: drawerForm.priority,
+        assigned_id: drawerForm.assigned_id ? parseInt(drawerForm.assigned_id, 10) : null,
+        support_id: drawerForm.support_id ? parseInt(drawerForm.support_id, 10) : null,
+        start_date: drawerForm.start_date || null,
+        end_date_est: drawerForm.end_date_est || null,
+        manday_est: drawerForm.manday_est ? parseFloat(drawerForm.manday_est) : null,
+        manday_actual: drawerForm.manday_actual ? parseFloat(drawerForm.manday_actual) : null,
+        notes: drawerForm.notes || null,
+        remark: drawerForm.remark || null,
+        ticket_id: drawerForm.ticket_id || null,
+      };
+      await updateTask(selectedTask.task_group_id, selectedTask.id, payload);
+      flash('Đã cập nhật task thành công!');
+      await reloadAll(true);
+    } catch (err: any) {
+      alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setDrawerSaving(false);
+    }
+  };
+
   const handleMoveTask = async (groupId: number, taskId: number) => {
     const otherGroups = taskGroups.filter(g => g.id !== groupId);
     if (otherGroups.length === 0) {
@@ -1987,69 +2047,24 @@ function ProjectDetailContent() {
           }
         }}
       >
-        {/* ACTIONS */}
-        <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
-          <div className="flex items-center justify-center gap-1.5 text-slate-500">
-            {/* 1. Drag Handle / Move Task (Always visible, clickable) */}
-            <button
-              type="button"
-              onMouseDown={() => {
-                const el = document.getElementById(`task-row-${task.id}`);
-                if (el) el.setAttribute('draggable', 'true');
-              }}
-              onMouseUp={() => {
-                const el = document.getElementById(`task-row-${task.id}`);
-                if (el) el.setAttribute('draggable', 'false');
-              }}
-              onClick={() => handleMoveTask(task.task_group_id, task.id)}
-              className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400 font-bold"
-              title="Di chuyển task sang group khác"
-            >
-              <span>☰</span>
-            </button>
-
-
-
-            {/* 2. AI Check Task (Hover visible) */}
-            <button
-              type="button"
-              onClick={() => handleOpenAIReviewDrawer('TASK', task.id, task.detail)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
-              title="AI Check Task"
-            >
-              <span>🤖</span>
-            </button>
-
-            {/* 2.5. View Task Detail */}
-            <button
-              type="button"
-              onClick={() => setSelectedTask(task)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
-              title="Xem chi tiết Task"
-            >
-              <span className="material-symbols-outlined text-[14px]">visibility</span>
-            </button>
-
-            {/* 3. Duplicate Task (Hover visible) */}
-            <button
-              type="button"
-              onClick={() => handleDuplicateTask(task.task_group_id, task.id)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
-              title="Nhân bản Task"
-            >
-              <span>📄</span>
-            </button>
-
-            {/* 4. Delete Task (Hover visible) */}
-            <button
-              type="button"
-              onClick={() => setTaskToDelete(task.id)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
-              title="Xóa Task"
-            >
-              <span>🗑️</span>
-            </button>
-          </div>
+        {/* DRAG HANDLE */}
+        <td className="px-1 py-2 text-center" style={{ width: '36px', minWidth: '36px' }}>
+          <button
+            type="button"
+            onMouseDown={() => {
+              const el = document.getElementById(`task-row-${task.id}`);
+              if (el) el.setAttribute('draggable', 'true');
+            }}
+            onMouseUp={() => {
+              const el = document.getElementById(`task-row-${task.id}`);
+              if (el) el.setAttribute('draggable', 'false');
+            }}
+            onClick={() => handleMoveTask(task.task_group_id, task.id)}
+            className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400 font-bold"
+            title="Di chuyển task sang group khác"
+          >
+            <span>☰</span>
+          </button>
         </td>
 
         {/* DYNAMIC CELLS */}
@@ -4495,57 +4510,176 @@ function ProjectDetailContent() {
                   <span className="font-mono text-[13px] text-[#0058be] font-bold tracking-wide">{selectedTask.task_code || selectedTask.task_id || ''}</span>
                 </div>
               </div>
-              <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleOpenAIReviewDrawer('TASK', selectedTask.id, selectedTask.detail)}
+                  className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-[#0058be] transition-colors"
+                  title="AI Check Task"
+                >
+                  <span className="text-[16px]">🤖</span>
+                </button>
+                <button
+                  onClick={() => handleDuplicateTask(selectedTask.task_group_id, selectedTask.id)}
+                  className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-[#0058be] transition-colors"
+                  title="Nhân bản Task"
+                >
+                  <span className="text-[16px]">📄</span>
+                </button>
+                <button
+                  onClick={() => { setSelectedTask(null); setTaskToDelete(selectedTask.id); }}
+                  className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-slate-500 hover:text-red-600 transition-colors"
+                  title="Xóa Task"
+                >
+                  <span className="text-[16px]">🗑️</span>
+                </button>
+                <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
-              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Detail Task</label>
-                <p className="mt-2 text-[13px] text-[#0b1c30] leading-relaxed whitespace-pre-wrap">{selectedTask.detail || '—'}</p>
+              {/* Task Name / Detail */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Task Name</label>
+                <textarea
+                  value={drawerForm.detail || ''}
+                  onChange={e => setDrawerForm({ ...drawerForm, detail: e.target.value })}
+                  rows={3}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none"
+                />
               </div>
+
+              {/* Status & Priority */}
               <div className="grid grid-cols-2 gap-x-5 gap-y-4">
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</label>
-                  <p className="mt-1.5 text-[13px] font-semibold text-[#0b1c30]">{selectedTask.status || 'Waiting'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Status</label>
+                  <select
+                    value={drawerForm.status || ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, status: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  >
+                    {dbStatuses.length === 0 ? (
+                      <>
+                        <option value="Todo">Todo</option>
+                        <option value="Waiting">Waiting</option>
+                        <option value="Process">Process</option>
+                        <option value="Done">Done</option>
+                        <option value="Cancel">Cancel</option>
+                      </>
+                    ) : (
+                      dbStatuses.map((st: any) => (
+                        <option key={st.id} value={st.name}>{st.name}</option>
+                      ))
+                    )}
+                  </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Priority</label>
-                  <p className="mt-1.5 text-[13px] font-semibold text-[#0b1c30]">{selectedTask.priority || 'Normal'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Priority</label>
+                  <select
+                    value={drawerForm.priority || ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, priority: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  >
+                    {dbPriorities.length === 0 ? (
+                      <>
+                        <option value="Critical">Critical</option>
+                        <option value="High">High</option>
+                        <option value="Normal">Normal</option>
+                        <option value="Low">Low</option>
+                      </>
+                    ) : (
+                      dbPriorities.map((pr: any) => (
+                        <option key={pr.id} value={pr.name}>{pr.name}</option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                {/* Assigned & Support */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Assigned</label>
+                  <select
+                    value={drawerForm.assigned_id || ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, assigned_id: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  >
+                    <option value="">— Chưa gắn —</option>
+                    {projectMembers.map((m: any) => (
+                      <option key={m.id} value={String(m.id)}>{m.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Assigned</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.assigned_name || '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Support</label>
+                  <select
+                    value={drawerForm.support_id || ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, support_id: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  >
+                    <option value="">— Chưa gắn —</option>
+                    {projectMembers.map((m: any) => (
+                      <option key={m.id} value={String(m.id)}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Dates */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Start Date</label>
+                  <input
+                    type="date"
+                    value={drawerForm.start_date ? toPickerDate(drawerForm.start_date) : ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, start_date: fromPickerDate(e.target.value) })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Support</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.support_name || '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">End Date (Est)</label>
+                  <input
+                    type="date"
+                    value={drawerForm.end_date_est ? toPickerDate(drawerForm.end_date_est) : ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, end_date_est: fromPickerDate(e.target.value) })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  />
+                </div>
+
+                {/* Manday */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Manday Est</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    value={drawerForm.manday_est || ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, manday_est: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Start Date</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.start_date || '—'}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">End Date (Est)</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.end_date_est || '—'}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Manday Est</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.manday_est ?? '—'}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Manday Actual</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.manday_actual ?? '—'}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">End Actual</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.end_date_actual || '—'}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Days Late</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.days_late ?? '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Manday Actual</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    value={drawerForm.manday_actual || ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, manday_actual: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  />
                 </div>
               </div>
+
+              {/* Notes */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea
+                  value={drawerForm.notes || ''}
+                  onChange={e => setDrawerForm({ ...drawerForm, notes: e.target.value })}
+                  rows={2}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none"
+                />
+              </div>
+
+              {/* KPI Section (Read-only) */}
               <div className="border-t border-slate-100 pt-4">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI</label>
                 <div className="grid grid-cols-4 gap-3 mt-3">
@@ -4567,30 +4701,16 @@ function ProjectDetailContent() {
                   </div>
                 </div>
               </div>
-              {selectedTask.remark && (
-                <div className="border-t border-slate-100 pt-4">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Remark</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30] leading-relaxed">{selectedTask.remark}</p>
-                </div>
-              )}
-              {selectedTask.ticket_id && (
-                <div className="border-t border-slate-100 pt-4">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ticket ID</label>
-                  <p className="mt-1.5 text-[13px] text-[#0b1c30] font-mono">{selectedTask.ticket_id}</p>
-                </div>
-              )}
-              {(selectedTask.skill_solution_name || selectedTask.skill_vendor_name) && (
-                <div className="border-t border-slate-100 pt-4 grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Solution</label>
-                    <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.skill_solution_name || '—'}</p>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Vendor</label>
-                    <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.skill_vendor_name || '—'}</p>
-                  </div>
-                </div>
-              )}
+            </div>
+            {/* Save button footer */}
+            <div className="px-6 py-4 border-t border-slate-200 bg-white">
+              <button
+                onClick={handleDrawerSave}
+                disabled={drawerSaving}
+                className="w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#004a9e] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {drawerSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
             </div>
           </div>
         </div>
