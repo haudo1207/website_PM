@@ -134,6 +134,8 @@ function ProjectDetailContent() {
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
   const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
   const [showAllKpi, setShowAllKpi] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<any>(null);
 
   const toggleParentCollapse = (parentTaskId: string) => {
     setCollapsedParents(prev => {
@@ -1931,7 +1933,7 @@ function ProjectDetailContent() {
       ? "bg-[#fafbfc]/70 hover:bg-[#eff4ff]/60"
       : "bg-[#f8fafc] hover:bg-[#f1f5f9] font-bold border-l-4 border-l-slate-400";
 
-    const cellStyle = "px-4 py-2 border-r border-slate-100 last:border-r-0 text-left align-middle text-xs";
+    const cellStyle = "px-4 py-2.5 border-r border-slate-100 last:border-r-0 text-left align-middle text-xs";
 
     return (
       <tr
@@ -1986,7 +1988,7 @@ function ProjectDetailContent() {
         }}
       >
         {/* ACTIONS */}
-        <td className="px-1 py-1.5 text-center" style={{ width: '130px', minWidth: '130px' }}>
+        <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
           <div className="flex items-center justify-center gap-1.5 text-slate-500">
             {/* 1. Drag Handle / Move Task (Always visible, clickable) */}
             <button
@@ -2016,6 +2018,16 @@ function ProjectDetailContent() {
               title="AI Check Task"
             >
               <span>🤖</span>
+            </button>
+
+            {/* 2.5. View Task Detail */}
+            <button
+              type="button"
+              onClick={() => setSelectedTask(task)}
+              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 text-slate-400"
+              title="Xem chi tiết Task"
+            >
+              <span className="material-symbols-outlined text-[14px]">visibility</span>
             </button>
 
             {/* 3. Duplicate Task (Hover visible) */}
@@ -2332,7 +2344,7 @@ function ProjectDetailContent() {
           if (colUpper === 'STATUS') {
             const info = getStatusInfo(val);
             cellContent = (
-              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${info.bg} border-current/10 shrink-0 shadow-sm`}>
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold border ${info.bg} border-current/10 shrink-0 shadow-sm`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${info.dot}`} />
                 {info.label}
               </span>
@@ -2340,7 +2352,7 @@ function ProjectDetailContent() {
           } else if (colUpper === 'PRIORITY') {
             const style = getPriorityStyle(val);
             cellContent = (
-              <span className={`inline-block px-2.5 py-0.5 rounded-md border text-[10px] font-bold tracking-wide uppercase ${style}`}>
+              <span className={`inline-block px-2.5 py-0.5 rounded-md border text-[11px] font-bold tracking-wide uppercase ${style}`}>
                 {val || 'Normal'}
               </span>
             );
@@ -2350,19 +2362,19 @@ function ProjectDetailContent() {
             const cleanVal = (val || '').trim().toLowerCase();
             if (cleanVal === 'gửi') {
               cellContent = (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 shadow-sm">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 shadow-sm">
                   gửi
                 </span>
               );
             } else if (cleanVal === 'đã gửi') {
               cellContent = (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
                   đã gửi
                 </span>
               );
             } else {
               cellContent = val ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200 shadow-sm">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-50 text-slate-600 border border-slate-200 shadow-sm">
                   {val}
                 </span>
               ) : (
@@ -2371,7 +2383,7 @@ function ProjectDetailContent() {
             }
           } else if (colUpper === 'TASK ID') {
             cellContent = (
-              <div className="flex items-center gap-1.5" style={{ paddingLeft: `${level * 16}px` }}>
+              <div className="flex items-center gap-2" style={{ paddingLeft: `${level * 16}px` }}>
                 {hasChildren && (
                   <span
                     onClick={(e) => {
@@ -2386,11 +2398,11 @@ function ProjectDetailContent() {
                 {!hasChildren && level > 0 && (
                   <span className="w-4 h-4 inline-block shrink-0" />
                 )}
-                <span className={`font-mono text-slate-700 ${!isSubTask ? 'font-bold' : 'text-slate-500 font-medium'}`}>
+                <span className={`font-mono px-1.5 py-0.5 rounded bg-slate-100 ${!isSubTask ? 'font-bold text-slate-800' : 'text-slate-600 font-medium'}`}>
                   {val}
                 </span>
                 {task.ai_status && (
-                  <span 
+                  <span
                     className={`w-2.5 h-2.5 rounded-full cursor-pointer shrink-0 border border-white shadow-sm transition-transform hover:scale-125 ${
                       task.ai_status === 'NEED_RECHECK'
                         ? 'bg-amber-400 animate-pulse'
@@ -2754,7 +2766,7 @@ function ProjectDetailContent() {
             }}
           >
             {/* Actions column */}
-            <td className="px-1 py-1.5 text-center" style={{ width: '130px', minWidth: '130px' }}>
+            <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
               <div className="flex items-center justify-center gap-1.5 text-[12px] select-none">
                 {/* 1. Toggle Expand/Collapse (Always visible) */}
                 <button
@@ -3116,9 +3128,9 @@ function ProjectDetailContent() {
 
   return (
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden font-body-md" style={{ fontFamily: "'Work Sans', sans-serif" }}>
-      <Navbar />
+      {!isFullscreen && <Navbar />}
 
-      <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
+      <div className={`flex-1 ${isFullscreen ? 'pl-0' : 'pl-[230px]'} flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
 
         {/* TOP BAR / NAVIGATION HEADER */}
         <div className="h-[52px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
@@ -3160,6 +3172,10 @@ function ProjectDetailContent() {
 
             <button onClick={() => reloadAll()} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
               ↻ Tải lại
+            </button>
+
+            <button onClick={() => setIsFullscreen(f => !f)} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
+              {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </button>
           </div>
         </div>
@@ -3500,7 +3516,7 @@ function ProjectDetailContent() {
                     <div className="flex items-center gap-1 bg-[#eff4ff] border border-[#c2c6d6]/60 rounded-xl p-1 flex-wrap">
                       {dynamicTabs.map(p => (
                         <button key={p.key} onClick={() => setActivePhase(p.key)}
-                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${activePhase === p.key
+                          className={`px-5 py-2.5 rounded-lg text-[13px] font-bold transition-all flex items-center gap-1.5 ${activePhase === p.key
                               ? p.key === 'ALL'
                                 ? 'bg-[#0058be] text-white shadow-sm'
                                 : 'bg-white text-[#0058be] shadow-sm'
@@ -3550,7 +3566,7 @@ function ProjectDetailContent() {
                           setNewPhaseName('');
                           setShowPhaseModal(true);
                         }}
-                        className="px-3 py-2 rounded-lg text-xs font-bold text-[#0058be] hover:bg-white hover:shadow-sm transition-all flex items-center gap-1 active:scale-95 shrink-0"
+                        className="px-4 py-2.5 rounded-lg text-[13px] font-bold text-[#0058be] hover:bg-white hover:shadow-sm transition-all flex items-center gap-1 active:scale-95 shrink-0"
                         title="Tạo Phase mới"
                       >
                         <span className="material-symbols-outlined text-[15px] font-bold">add</span>
@@ -3560,7 +3576,7 @@ function ProjectDetailContent() {
                     <div className="flex gap-2 items-center">
                       <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)}
                         placeholder="Tìm kiếm nhiệm vụ..."
-                        className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] outline-none w-52 focus:border-[#0058be] placeholder-[#727785] transition-colors" />
+                        className="bg-white border border-[#c2c6d6] rounded-lg px-4 py-2.5 text-[13px] text-[#0b1c30] outline-none w-56 focus:border-[#0058be] placeholder-[#727785] transition-colors" />
                       {taskSearch && (
                         <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
                       )}
@@ -3584,7 +3600,7 @@ function ProjectDetailContent() {
                           setAddingTaskGroupPhaseId(defaultPhaseId);
                           setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
                         }}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3 py-2 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[13px] px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
                       >
                         <span className="material-symbols-outlined text-[16px]">add_box</span>
                         Thêm Group Task
@@ -3614,7 +3630,7 @@ function ProjectDetailContent() {
                           if (statusCol) initialForm[statusCol] = 'Waiting';
                           setNewForm(initialForm);
                         }}
-                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-3 py-2 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
+                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-[13px] px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
                       >
                         <span className="material-symbols-outlined text-[16px]">add</span>
                         Thêm task
@@ -3628,7 +3644,7 @@ function ProjectDetailContent() {
                       <table className="w-full text-xs min-w-max border-collapse">
                         <thead className="sticky top-0 z-20 bg-[#f8f9ff] border-b-2 border-[#c2c6d6]" style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }}>
                           <tr>
-                            <th className="text-center px-2 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '130px', width: '130px' }}>THAO TÁC</th>
+                            <th className="text-center px-2 py-3.5 text-[11px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '130px', width: '130px' }}>THAO TÁC</th>
                             {getDynamicColumns().map((col) => {
                               let widthStyle = {};
                               const colUpper = col.toUpperCase();
@@ -3642,7 +3658,7 @@ function ProjectDetailContent() {
                               return (
                                 <th
                                   key={col}
-                                  className="text-left px-4 py-3 text-[10px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]"
+                                  className="text-left px-4 py-3.5 text-[11px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]"
                                   style={widthStyle}
                                 >
                                   {col}
@@ -4455,6 +4471,117 @@ function ProjectDetailContent() {
           loadProject();
         }}
       />
+
+      {/* Task Detail Drawer */}
+      {selectedTask && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div onClick={() => setSelectedTask(null)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300" />
+          <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
+            <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <div>
+                <h3 className="text-base font-bold text-[#0b1c30]">Chi tiết Task</h3>
+                <span className="font-mono text-sm text-[#0058be] font-semibold">{selectedTask.task_code || selectedTask.task_id || ''}</span>
+              </div>
+              <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Detail Task</label>
+                <p className="mt-1 text-sm text-[#0b1c30] leading-relaxed whitespace-pre-wrap">{selectedTask.detail || '—'}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Status</label>
+                  <p className="mt-1 text-sm font-semibold">{selectedTask.status || 'Waiting'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Priority</label>
+                  <p className="mt-1 text-sm font-semibold">{selectedTask.priority || 'Normal'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Assigned</label>
+                  <p className="mt-1 text-sm">{selectedTask.assigned_name || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Support</label>
+                  <p className="mt-1 text-sm">{selectedTask.support_name || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Start Date</label>
+                  <p className="mt-1 text-sm">{selectedTask.start_date || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">End Date (Est)</label>
+                  <p className="mt-1 text-sm">{selectedTask.end_date_est || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Manday Est</label>
+                  <p className="mt-1 text-sm">{selectedTask.manday_est ?? '—'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Manday Actual</label>
+                  <p className="mt-1 text-sm">{selectedTask.manday_actual ?? '—'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">End Actual</label>
+                  <p className="mt-1 text-sm">{selectedTask.end_date_actual || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Days Late</label>
+                  <p className="mt-1 text-sm">{selectedTask.days_late ?? '—'}</p>
+                </div>
+              </div>
+              <div className="border-t border-slate-100 pt-4">
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">KPI</label>
+                <div className="grid grid-cols-4 gap-3 mt-2">
+                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
+                    <div className="text-[10px] text-slate-500 font-semibold">Base</div>
+                    <div className="text-sm font-bold text-[#0b1c30]">{selectedTask.kpi_base ?? '—'}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
+                    <div className="text-[10px] text-slate-500 font-semibold">Perform</div>
+                    <div className="text-sm font-bold text-[#0b1c30]">{selectedTask.kpi_perform ?? '—'}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
+                    <div className="text-[10px] text-slate-500 font-semibold">OT</div>
+                    <div className="text-sm font-bold text-[#0b1c30]">{selectedTask.kpi_ot ?? '—'}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
+                    <div className="text-[10px] text-slate-500 font-semibold">Final</div>
+                    <div className="text-sm font-bold text-[#0058be]">{selectedTask.kpi_final ?? '—'}</div>
+                  </div>
+                </div>
+              </div>
+              {selectedTask.remark && (
+                <div className="border-t border-slate-100 pt-4">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Remark</label>
+                  <p className="mt-1 text-sm text-[#0b1c30]">{selectedTask.remark}</p>
+                </div>
+              )}
+              {selectedTask.ticket_id && (
+                <div className="border-t border-slate-100 pt-4">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Ticket ID</label>
+                  <p className="mt-1 text-sm text-[#0b1c30]">{selectedTask.ticket_id}</p>
+                </div>
+              )}
+              {(selectedTask.skill_solution_name || selectedTask.skill_vendor_name) && (
+                <div className="border-t border-slate-100 pt-4 grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Skill Solution</label>
+                    <p className="mt-1 text-sm">{selectedTask.skill_solution_name || '—'}</p>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Skill Vendor</label>
+                    <p className="mt-1 text-sm">{selectedTask.skill_vendor_name || '—'}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal xác nhận xóa */}
       {showDeleteModal && (
