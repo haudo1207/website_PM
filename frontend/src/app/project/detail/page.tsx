@@ -1930,10 +1930,10 @@ function ProjectDetailContent() {
     };
 
     const rowBgClass = isSubTask
-      ? "bg-[#fafbfc]/70 hover:bg-[#eff4ff]/60"
-      : "bg-[#f8fafc] hover:bg-[#f1f5f9] font-bold border-l-4 border-l-slate-400";
+      ? "bg-white hover:bg-[#f0f5ff]/60"
+      : "bg-[#f8fafc] hover:bg-[#eef3fb] border-l-[3px] border-l-[#0058be]";
 
-    const cellStyle = "px-4 py-2.5 border-r border-slate-100 last:border-r-0 text-left align-middle text-xs";
+    const cellStyle = "px-4 py-3 border-r border-slate-100 last:border-r-0 text-left align-middle text-[12.5px]";
 
     return (
       <tr
@@ -2383,22 +2383,26 @@ function ProjectDetailContent() {
             }
           } else if (colUpper === 'TASK ID') {
             cellContent = (
-              <div className="flex items-center gap-2" style={{ paddingLeft: `${level * 16}px` }}>
+              <div className="flex items-center gap-2" style={{ paddingLeft: `${level * 18}px` }}>
                 {hasChildren && (
                   <span
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleParentCollapse(taskIdVal);
                     }}
-                    className="cursor-pointer select-none text-[12px] p-0.5 hover:bg-slate-200 rounded font-normal text-slate-500 inline-flex items-center justify-center w-4 h-4 transition-transform duration-200"
+                    className="cursor-pointer select-none text-[11px] p-0.5 hover:bg-slate-200 rounded font-normal text-slate-400 inline-flex items-center justify-center w-5 h-5 transition-all duration-200 hover:text-slate-600"
                   >
                     {isCollapsedParent ? '▶' : '▼'}
                   </span>
                 )}
                 {!hasChildren && level > 0 && (
-                  <span className="w-4 h-4 inline-block shrink-0" />
+                  <span className="w-5 h-5 inline-block shrink-0" />
                 )}
-                <span className={`font-mono px-1.5 py-0.5 rounded bg-slate-100 ${!isSubTask ? 'font-bold text-slate-800' : 'text-slate-600 font-medium'}`}>
+                <span
+                  className={`font-mono px-2 py-0.5 rounded cursor-pointer transition-colors ${!isSubTask ? 'font-bold text-[#0058be] bg-[#e8f0fe] text-[12.5px]' : 'text-slate-600 font-medium bg-slate-50 text-[12px] hover:bg-slate-100'}`}
+                  onClick={(e) => { e.stopPropagation(); setSelectedTask(task); }}
+                  title="Click to view details"
+                >
                   {val}
                 </span>
                 {task.ai_status && (
@@ -2423,13 +2427,17 @@ function ProjectDetailContent() {
             );
           } else if (colUpper === 'DETAIL TASK') {
             cellContent = (
-              <div className="flex items-center gap-1">
+              <div
+                className="flex items-center gap-1.5 cursor-pointer group/detail"
+                onClick={(e) => { e.stopPropagation(); setSelectedTask(task); }}
+                title="Click to view details"
+              >
                 {isSubTask && (
-                  <span className="text-slate-400 font-mono select-none mr-1.5 inline-block shrink-0">
-                    ├──
+                  <span className="text-slate-300 font-mono select-none mr-1 inline-block shrink-0 text-[11px]">
+                    └
                   </span>
                 )}
-                <span className={`whitespace-pre-wrap break-words block leading-relaxed pr-4 ${!isSubTask ? 'font-bold text-slate-900 text-[13px]' : 'text-slate-700 font-normal text-[12px]'}`}>
+                <span className={`whitespace-pre-wrap break-words block leading-relaxed pr-4 group-hover/detail:text-[#0058be] transition-colors ${!isSubTask ? 'font-semibold text-[#0b1c30] text-[13px]' : 'text-slate-700 font-normal text-[12.5px]'}`}>
                   {val}
                 </span>
               </div>
@@ -4477,104 +4485,109 @@ function ProjectDetailContent() {
         <div className="fixed inset-0 z-50 flex justify-end">
           <div onClick={() => setSelectedTask(null)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300" />
           <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
-            <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-              <div>
-                <h3 className="text-base font-bold text-[#0b1c30]">Chi tiết Task</h3>
-                <span className="font-mono text-sm text-[#0058be] font-semibold">{selectedTask.task_code || selectedTask.task_id || ''}</span>
+            <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-[#f8faff] to-white">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-[#e8f0fe] text-[#0058be]">
+                  <span className="material-symbols-outlined text-[18px]">task_alt</span>
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-[#0b1c30]">Chi tiết Task</h3>
+                  <span className="font-mono text-[13px] text-[#0058be] font-bold tracking-wide">{selectedTask.task_code || selectedTask.task_id || ''}</span>
+                </div>
               </div>
               <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
-              <div>
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Detail Task</label>
-                <p className="mt-1 text-sm text-[#0b1c30] leading-relaxed whitespace-pre-wrap">{selectedTask.detail || '—'}</p>
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Detail Task</label>
+                <p className="mt-2 text-[13px] text-[#0b1c30] leading-relaxed whitespace-pre-wrap">{selectedTask.detail || '—'}</p>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-x-5 gap-y-4">
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Status</label>
-                  <p className="mt-1 text-sm font-semibold">{selectedTask.status || 'Waiting'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</label>
+                  <p className="mt-1.5 text-[13px] font-semibold text-[#0b1c30]">{selectedTask.status || 'Waiting'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Priority</label>
-                  <p className="mt-1 text-sm font-semibold">{selectedTask.priority || 'Normal'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Priority</label>
+                  <p className="mt-1.5 text-[13px] font-semibold text-[#0b1c30]">{selectedTask.priority || 'Normal'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Assigned</label>
-                  <p className="mt-1 text-sm">{selectedTask.assigned_name || '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Assigned</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.assigned_name || '—'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Support</label>
-                  <p className="mt-1 text-sm">{selectedTask.support_name || '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Support</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.support_name || '—'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Start Date</label>
-                  <p className="mt-1 text-sm">{selectedTask.start_date || '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Start Date</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.start_date || '—'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">End Date (Est)</label>
-                  <p className="mt-1 text-sm">{selectedTask.end_date_est || '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">End Date (Est)</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.end_date_est || '—'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Manday Est</label>
-                  <p className="mt-1 text-sm">{selectedTask.manday_est ?? '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Manday Est</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.manday_est ?? '—'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Manday Actual</label>
-                  <p className="mt-1 text-sm">{selectedTask.manday_actual ?? '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Manday Actual</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.manday_actual ?? '—'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">End Actual</label>
-                  <p className="mt-1 text-sm">{selectedTask.end_date_actual || '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">End Actual</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.end_date_actual || '—'}</p>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Days Late</label>
-                  <p className="mt-1 text-sm">{selectedTask.days_late ?? '—'}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Days Late</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.days_late ?? '—'}</p>
                 </div>
               </div>
               <div className="border-t border-slate-100 pt-4">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">KPI</label>
-                <div className="grid grid-cols-4 gap-3 mt-2">
-                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
-                    <div className="text-[10px] text-slate-500 font-semibold">Base</div>
-                    <div className="text-sm font-bold text-[#0b1c30]">{selectedTask.kpi_base ?? '—'}</div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI</label>
+                <div className="grid grid-cols-4 gap-3 mt-3">
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Base</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_base ?? '—'}</div>
                   </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
-                    <div className="text-[10px] text-slate-500 font-semibold">Perform</div>
-                    <div className="text-sm font-bold text-[#0b1c30]">{selectedTask.kpi_perform ?? '—'}</div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Perform</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_perform ?? '—'}</div>
                   </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
-                    <div className="text-[10px] text-slate-500 font-semibold">OT</div>
-                    <div className="text-sm font-bold text-[#0b1c30]">{selectedTask.kpi_ot ?? '—'}</div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">OT</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_ot ?? '—'}</div>
                   </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
-                    <div className="text-[10px] text-slate-500 font-semibold">Final</div>
-                    <div className="text-sm font-bold text-[#0058be]">{selectedTask.kpi_final ?? '—'}</div>
+                  <div className="bg-[#e8f0fe] rounded-lg px-3 py-2.5 text-center border border-[#c2d6f0]">
+                    <div className="text-[9px] text-[#0058be] font-semibold uppercase">Final</div>
+                    <div className="text-[13px] font-bold text-[#0058be] mt-0.5">{selectedTask.kpi_final ?? '—'}</div>
                   </div>
                 </div>
               </div>
               {selectedTask.remark && (
                 <div className="border-t border-slate-100 pt-4">
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Remark</label>
-                  <p className="mt-1 text-sm text-[#0b1c30]">{selectedTask.remark}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Remark</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30] leading-relaxed">{selectedTask.remark}</p>
                 </div>
               )}
               {selectedTask.ticket_id && (
                 <div className="border-t border-slate-100 pt-4">
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Ticket ID</label>
-                  <p className="mt-1 text-sm text-[#0b1c30]">{selectedTask.ticket_id}</p>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ticket ID</label>
+                  <p className="mt-1.5 text-[13px] text-[#0b1c30] font-mono">{selectedTask.ticket_id}</p>
                 </div>
               )}
               {(selectedTask.skill_solution_name || selectedTask.skill_vendor_name) && (
                 <div className="border-t border-slate-100 pt-4 grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Skill Solution</label>
-                    <p className="mt-1 text-sm">{selectedTask.skill_solution_name || '—'}</p>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Solution</label>
+                    <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.skill_solution_name || '—'}</p>
                   </div>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Skill Vendor</label>
-                    <p className="mt-1 text-sm">{selectedTask.skill_vendor_name || '—'}</p>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Vendor</label>
+                    <p className="mt-1.5 text-[13px] text-[#0b1c30]">{selectedTask.skill_vendor_name || '—'}</p>
                   </div>
                 </div>
               )}
