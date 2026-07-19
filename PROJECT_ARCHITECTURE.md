@@ -1,32 +1,32 @@
 # 📋 Task Compliance Portal — Kiến trúc dự án
 
-> **Version:** 5.0.0 · **Team:** SecurityZone · **Stack:** FastAPI + Next.js + PostgreSQL + AI
+> **Version:** 6.0.0 · **Team:** SecurityZone · **Stack:** FastAPI + Next.js + PostgreSQL + AI
 
 ---
 
 ## 1. Tổng quan
 
-Hệ thống **Task Compliance Portal** quản lý và theo dõi tiến độ dự án, tính toán chỉ số hiệu suất KPI của thành viên, đồng thời hỗ trợ đồng bộ, tóm tắt biên bản các cuộc họp (Zoom & Google Meet) bằng AI.
+Hệ thống **Task Compliance Portal** (KPI Portal) quản lý và theo dõi tiến độ dự án theo cấu trúc 4 cấp (Project → Phase → TaskGroup → Task), tính toán chỉ số hiệu suất KPI, đánh giá sức khỏe dự án bằng AI, và hỗ trợ đồng bộ/tóm tắt biên bản họp (Zoom & Google Meet). Hệ thống hỗ trợ multi-brand deployment (Markee / SecurityZone).
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
 │  Frontend    │────▶│  Backend API │────▶│  AI API      │
-│  (Next.js)   │◀────│  (FastAPI)   │◀────│  (Shopaikey) │
-│  Port 3000   │     │  Port 8000   │     └──────────────┘
-└─────────────┘     │              │
+│  (Next.js)  │◀────│  (FastAPI)   │◀────│  (OpenAI-    │
+│  Port 3000  │     │  Port 8000   │     │   compatible)│
+└─────────────┘     │              │     └──────────────┘
+                    │              │
                     │   ┌──────┐   │     ┌──────────────┐
-                    └───│  DB  │───│────▶│  AssemblyAI  │
-                        └──────┘   │     │  (Speech-To) │
-                                   │     └──────────────┘
+                    └───│  DB  │───┘     │  AssemblyAI  │
+                        │(Supa)│         │  (Speech-To) │
+                        └──────┘         └──────────────┘
                                    │     ┌──────────────┐
                                    │────▶│  Google APIs │
-                                   │     │  (Calendar/  │
-                                   │     │   Drive Doc) │
+                                   │     │  (Calendar)  │
                                    │     └──────────────┘
                                    │     ┌──────────────┐
-                                   │────▶│  Zoom APIs   │
-                                   │     │  (S2S OAuth) │
-                                   │     └──────────────┘
+                                   └────▶│  Zoom APIs   │
+                                         │  (S2S OAuth) │
+                                         └──────────────┘
 ```
 
 ---
@@ -34,248 +34,379 @@ Hệ thống **Task Compliance Portal** quản lý và theo dõi tiến độ d�
 ## 2. Cấu trúc thư mục
 
 ```
-website_PM/
+pm-new/
 ├── .env                          # Biến môi trường (DB, AI keys, Zoom, Google credentials)
 ├── .env.example                  # Mẫu cấu hình môi trường
-├── docker-compose.yml            # Orchestration 3 services (Frontend, Backend, Postgres)
-├── init-db.sql                   # File dữ liệu khởi tạo database PostgreSQL
-├── Skill_Master_From_Sheet.xlsx  # Dữ liệu kỹ năng mẫu để tự động seed
+├── docker-compose.yml            # Orchestration local dev (Frontend + Backend)
+├── init-db.sql                   # File dữ liệu khởi tạo database PostgreSQL (~608KB)
+├── Skill_Master_From_Sheet.xlsx  # Dữ liệu kỹ năng mẫu để import
+├── deploy.sh                     # Script deploy thủ công
 │
-├── secrets/
-│   └── google-service-account.json # Service Account Google API (đọc/ghi Google Sheets)
+├── deploy/                       # ===== DEPLOYMENT =====
+│   ├── security-dev.compose.yml  # Dev: single brand + nginx gateway (port 3100)
+│   ├── security-prod.compose.yml # Prod: dual brand (Markee :3000, SecurityZone :3300)
+│   └── dev-gateway.conf          # Nginx reverse proxy config
+│
+├── .github/workflows/            # ===== CI/CD =====
+│   ├── deploy-dev.yml            # Auto deploy on push to dev branch
+│   └── deploy-production.yml     # Manual deploy with confirmation
 │
 ├── backend/                      # ===== BACKEND (FastAPI - Python) =====
 │   ├── Dockerfile
 │   ├── requirements.txt          # Dependencies Python
-│   ├── create_admin.py           # Script thủ công tạo/cập nhật admin (optional)
-│   ├── init_settings.py          # Script thủ công reset cấu hình (optional)
+│   ├── create_admin.py           # Script thủ công tạo/cập nhật admin
+│   ├── init_settings.py          # Script reset cấu hình
+│   ├── migrate_db.py             # Script migration schema
+│   ├── migrate_meetings_json.py  # Script migration meeting data
+│   ├── sync_members.py           # Script đồng bộ thành viên
+│   ├── parse_xlsx_to_db.py       # Import skill data từ Excel
 │   │
 │   └── app/
 │       ├── __init__.py
-│       ├── main.py               # FastAPI entry point, auto-seeding DB mặc định
-│       ├── config.py             # Cấu hình Pydantic Settings (đọc .env)
+│       ├── main.py               # FastAPI entry point, auto create_all + apply_schema_updates
+│       ├── config.py             # Pydantic Settings (đọc .env)
 │       ├── database.py           # SQLAlchemy engine & session maker (PostgreSQL)
 │       │
 │       ├── models/               # ORM Models (SQLAlchemy)
-│       │   ├── user.py           # Bảng users (Tài khoản truy cập hệ thống)
-│       │   ├── member.py         # Bảng members (Thành viên công ty/dự án) + member_skills
-│       │   ├── project.py        # Bảng projects, platforms, project_links, project_members
+│       │   ├── user.py           # Bảng users (Tài khoản + role + data_scope)
+│       │   ├── member.py         # Bảng members + member_skills (Thành viên công ty)
+│       │   ├── project.py        # Bảng projects, platforms, project_links, project_members_v2
 │       │   ├── phase.py          # Bảng phases (Giai đoạn của dự án)
-│       │   ├── task_group.py     # Bảng task_groups (Nhóm công việc cấp I, II, III...)
-│       │   ├── task.py           # Bảng tasks_v2 (Công việc chi tiết, tính toán KPI)
+│       │   ├── task_group.py     # Bảng task_groups (Nhóm công việc)
+│       │   ├── task.py           # Bảng tasks (Công việc chi tiết)
 │       │   ├── skill_master.py   # Bảng categories, groups, skills (Quản lý kỹ năng)
 │       │   ├── system_category.py # Bảng positions, departments, teams, priorities, statuses, customers
-│       │   ├── performance_setting.py # Bảng performance_settings (Cấu hình KPI thưởng/phạt)
+│       │   ├── performance_setting.py # Bảng performance_settings (Cấu hình KPI)
 │       │   ├── meeting.py        # Bảng meetings, meeting_members (Biên bản họp)
-│       │   └── setting.py        # Bảng settings (column_config, policy, ai_config) + audit_logs
+│       │   ├── ai_review.py      # Bảng ai_prompts, ai_review_logs (AI đánh giá dự án)
+│       │   ├── google_token.py   # Bảng google_tokens (OAuth tokens)
+│       │   └── setting.py        # Bảng settings + audit_logs
 │       │
 │       ├── routers/              # API Endpoints (FastAPI Routers)
-│       │   ├── auth.py           # POST /api/auth/login
-│       │   ├── users.py          # CRUD /api/users
-│       │   ├── projects.py       # CRUD /api/projects, members, phases, chat-groups
-│       │   ├── task_groups.py    # CRUD /api/phases/.../task-groups + /task-groups/.../tasks
-│       │   ├── settings_router.py # CRUD /api/settings/... (cột, policy, AI)
-│       │   ├── skills.py         # CRUD /api/skills/... (danh mục kỹ năng)
-│       │   ├── system_categories.py # CRUD /api/system-categories/... (danh mục hệ thống)
+│       │   ├── auth.py           # POST /api/auth/login (OAuth2 Password Bearer)
+│       │   ├── users.py          # CRUD /api/users (profile)
+│       │   ├── accounts.py       # CRUD /api/accounts (admin quản lý tài khoản)
+│       │   ├── projects.py       # CRUD /api/projects + phases + members + links
+│       │   ├── task_groups.py    # CRUD /api/task-groups + tasks
+│       │   ├── settings_router.py # CRUD /api/settings (platforms, priorities, statuses)
+│       │   ├── skills.py         # CRUD /api/skills (danh mục kỹ năng)
+│       │   ├── system_categories.py # CRUD /api/system-categories
 │       │   ├── members.py        # CRUD /api/members (thông tin thành viên)
-│       │   ├── meetings.py       # CRUD /api/meetings + sync Zoom/Google Meet
-│       │   └── performance_settings.py # CRUD /api/performance-settings
+│       │   ├── meetings.py       # CRUD /api/meetings + sync Zoom/Google
+│       │   ├── performance_settings.py # CRUD /api/performance-settings
+│       │   └── ai_review.py      # /api/ai-review (AI đánh giá dự án)
 │       │
 │       ├── services/
-│       │   └── meeting_sync.py   # Zoom S2S, Google Calendar/Drive, AssemblyAI, AI Summary
+│       │   └── meeting_sync.py   # Zoom S2S, Google Calendar, AssemblyAI, AI Summary
 │       │
 │       └── utils/
-│           ├── auth.py           # JWT token, bcrypt password, middleware
-│           └── kpi_engine.py     # Công thức & quy trình tính toán KPI cho Task/TaskGroup
+│           ├── auth.py           # JWT token (HS256), bcrypt password, middleware
+│           ├── access.py         # Data scope authorization (per-project access control)
+│           └── kpi_engine.py     # Công thức & quy trình tính toán KPI
 │
-└── frontend/                     # ===== FRONTEND (Next.js - TypeScript) =====
+└── frontend/                     # ===== FRONTEND (Next.js 14 - TypeScript) =====
     ├── Dockerfile
     ├── package.json              # Dependencies (next, react, axios, tailwindcss)
-    ├── tailwind.config.js        # Cấu hình TailwindCSS
+    ├── next.config.js            # Next.js config
+    ├── tailwind.config.js        # TailwindCSS config + custom theme
+    ├── tailwind.theme.json       # Theme tokens (colors, fonts)
     ├── tsconfig.json             # TypeScript config
     │
     └── src/
         ├── lib/
         │   ├── api.ts            # Axios instance + tất cả API functions gọi backend
-        │   └── auth.ts           # Token helpers (localStorage)
+        │   ├── auth.ts           # Token helpers (localStorage)
+        │   └── brand.ts          # Multi-brand config (Markee / SecurityZone)
         │
         ├── components/
-        │   ├── Navbar.tsx        # Sidebar navigation điều hướng chính
-        │   ├── KPIsView.tsx      # Quản lý cấu hình thưởng/phạt KPI
-        │   ├── MembersView.tsx   # Quản lý danh sách thành viên công ty
-        │   ├── SystemCategoriesView.tsx # Quản lý danh mục Position, Team, Customer...
-        │   └── meetings/         # Modal tạo/xem/tóm tắt cuộc họp
+        │   ├── Navbar.tsx        # Sidebar navigation
+        │   ├── KPIsView.tsx      # Quản lý cấu hình KPI thưởng/phạt
+        │   ├── MembersView.tsx   # Quản lý danh sách thành viên
+        │   ├── SystemCategoriesView.tsx # Quản lý danh mục hệ thống
+        │   ├── AIPromptsView.tsx # Cấu hình AI prompts
+        │   ├── AIReviewDrawer.tsx # Panel hiển thị kết quả AI review
+        │   └── meetings/         # Components cuộc họp (Create, Card, Summarize, PromptSettings)
         │
         └── app/
             ├── layout.tsx        # Root layout
-            ├── page.tsx          # Trang chủ (tự động chuyển hướng)
-            ├── globals.css       # CSS toàn cục
+            ├── page.tsx          # Trang chủ (redirect → login/dashboard)
+            ├── globals.css       # CSS toàn cục (Work Sans font)
             ├── login/            # Trang đăng nhập
-            ├── dashboard/        # Bảng điều khiển chính
+            ├── dashboard/        # Bảng điều khiển (thống kê dự án)
             ├── project/          # Danh sách dự án
-            │   ├── page.tsx      # Giao diện Project List
-            │   └── detail/       # Chi tiết dự án (Giao diện Spreadsheet 4 cấp)
-            │       └── page.tsx  # Spreadsheet tương tác, cập nhật trực tiếp
+            │   └── detail/       # Chi tiết dự án (phases, tasks, KPIs)
             ├── projects/new/     # Tạo dự án mới
-            └── settings/         # Cài đặt hệ thống (Quản lý User, Kỹ năng, KPI, Danh mục)
+            ├── meetings/         # Quản lý cuộc họp
+            ├── settings/         # Cài đặt hệ thống (categories, skills, platforms, KPIs, AI)
+            ├── accounts/         # Quản lý tài khoản (admin only)
+            └── api/              # Next.js API Routes (proxy to backend)
+                ├── ai/settings/  # AI configuration proxy
+                ├── ai/summarize/ # AI summarization proxy
+                └── meetings/[id]/ # Meeting detail proxy
 ```
 
 ---
 
-## 3. Backend — Chi tiết từng thành phần
+## 3. Backend API
 
-### 3.1 `main.py` — Khởi tạo và Tự động Seed Database
-Khi backend khởi chạy, hàm `init_db_defaults()` được kích hoạt để tự động điền (seed) các dữ liệu mặc định nếu cơ sở dữ liệu trống:
-1. **Settings**: Tạo sẵn cấu hình cột mặc định (`column_config`), quy tắc Policy kiểm tra cứng (`policy`), và cấu hình AI (`ai_config` dùng model mặc định `gpt-4o-mini`).
-2. **Admin**: Tạo tài khoản admin mặc định: `admin@company.com` / mật khẩu `admin123`.
-3. **Kỹ năng (Skills)**: Tự động phân tích file Excel `Skill_Master_From_Sheet.xlsx` (nếu có) để tạo cấu trúc 3 cấp Category → Group → Skill.
-4. **Danh mục hệ thống**: Điền sẵn dữ liệu mặc định cho Position, Department, Team, TaskPriority, TaskStatus, Customer.
-5. **Nền tảng (Platforms)**: Tạo các nền tảng chat mặc định như Telegram, Zalo, Slack, MS Teams, Discord, WhatsApp.
-6. **Thành viên (Members)**: Seed danh sách thành viên ban đầu với thông tin Telegram và nhóm làm việc.
-7. **KPI Thưởng/Phạt (Performance Settings)**: Seed các quy tắc tính điểm KPI thưởng phạt (ví dụ: hoàn thành sớm, trễ hạn, làm việc ngoài giờ OT, lỗi nội bộ...).
+### 3.1 Framework & Dependencies
 
-### 3.2 Cấu hình môi trường (`config.py` & `.env`)
-| Biến môi trường | Mô tả |
-|-----------------|-------|
-| `DATABASE_URL`  | Địa chỉ kết nối PostgreSQL chính (Ví dụ: `postgresql://task_user:MyPass2026@postgres:5432/task_portal`) |
-| `SECRET_KEY`    | Khóa bí mật dùng để ký và xác thực JWT token |
-| `AI_BASE_URL`   | API endpoint của AI (tương thích OpenAI, ví dụ: Shopaikey API) |
-| `AI_API_KEY`    | API key dùng để gọi AI |
-| `AI_MODEL`      | Tên model AI sử dụng (mặc định: `gpt-4o-mini`) |
-| `ASSEMBLYAI_API_KEY` | API key của AssemblyAI dùng cho chức năng speech-to-text cuộc họp Zoom |
-| `GOOGLE_CLIENT_ID` / `SECRET` | Google OAuth credentials dùng để kết nối Google Calendar & Drive |
-| `ZOOM_ACCOUNT_ID` / `CLIENT_ID` / `SECRET` | Zoom S2S OAuth credentials để tự động tạo và đồng bộ cuộc họp Zoom |
+- **FastAPI** 0.111.0 + **Uvicorn** 0.29.0
+- **SQLAlchemy** 2.0.30 + psycopg2-binary
+- **python-jose** (JWT HS256) + **passlib** (bcrypt)
+- **requests** (external API calls)
 
-### 3.3 Phân cấp dữ liệu 4 cấp (4-Level Hierarchy)
-Dự án được thiết kế theo phân cấp nghiêm ngặt nhằm quản lý dự án công nghệ chi tiết:
-1. **Project (`projects`)**: Quản lý cấp cao nhất của dự án (mã code, tên, năm, khách hàng, PM, Tech Leader, trạng thái).
-2. **Phase (`phases`)**: Giai đoạn dự án (1. Tư vấn, 2. Báo giá, 3. Làm specs... trích xuất động từ cấu hình cột).
-3. **TaskGroup (`task_groups`)**: Nhóm công việc trong một Phase, hiển thị dưới dạng tiêu đề la mã (I, II, III...). Chứa các thông tin ước lượng tổng quan (manday_est, start_date_est, progress).
-4. **Task (`tasks_v2`)**: Công việc chi tiết nhất thuộc một TaskGroup. **Đây là thực thể duy nhất thực hiện tính toán KPI**.
+### 3.2 API Routes
 
-### 3.4 Logic tính toán KPI (`kpi_engine.py`)
-Mọi cập nhật thông tin trên một Task sẽ kích hoạt quy trình tính toán lại KPI tự động trên Server:
-* **End Date EST (Ước tính ngày kết thúc)**: 
-  $$\text{End Date EST} = \text{Start Date} + \lceil\text{Manday EST}\rceil - 1$$
-* **Manday Actual (Thực tế hoàn thành)**: 
-  $$\text{Nếu Status = Done: } \text{Manday Actual} = \text{End Date Actual} - \text{Start Date} + 1$$
-* **Days Late (Số ngày trễ)**:
-  - Nếu trạng thái là `Cancel`: $-1$ ngày.
-  - Nếu trạng thái là `Done`: $\text{End Date Actual} - \text{End Date EST}$.
-  - Nếu trạng thái chưa hoàn thành (`Waiting`, `Process`, `Rework`):
-    * Nếu ngày hiện tại $\le$ `End Date EST`: $-1$ ngày (đúng tiến độ).
-    * Nếu ngày hiện tại $>$ `End Date EST`: $\text{Ngày hiện tại} - \text{End Date EST}$ (trễ hạn).
-* **KPI Base (KPI cơ sở)**:
-  $$\text{KPI Base} = \text{TaskPriority.kpi_base} \times \text{Manday EST}$$
-  *(Trong đó KPI Base mặc định theo mức độ ưu tiên: Normal: 6, High: 12, Critical: 20, Interrupt: 6).*
-* **KPI Perform & KPI OT (Hiệu suất & Làm ngoài giờ)**:
-  - Tự động cộng thưởng điểm hoàn thành sớm (nếu `Days Late < 0`, thưởng tối đa bằng KPI Base).
-  - Tự động trừ phạt điểm trễ hạn (nếu `Days Late > 0`, phạt $-1$ điểm/ngày trễ).
-  - Duyệt qua cột `Remark` của Task để so khớp các từ khóa thưởng/phạt động trong bảng `performance_settings` (Ví dụ: ghi nhận lỗi nội bộ để trừ điểm, ghi nhận OT ngoài giờ để cộng điểm thưởng).
-* **KPI Final (KPI tổng kết cuối cùng)**:
-  $$\text{KPI Final} = (\text{KPI Base} + \text{KPI Perform} + \text{KPI OT}) \times \text{Multiplier}$$
-  *(Trong đó Multiplier là hệ số nhân nếu remark khớp với quy tắc phạt hệ số như FAIL 1 (0.7), FAIL 2 (0.5), FAIL 3 (0.0). Nếu trạng thái Task là `Cancel`, toàn bộ KPI = 0).*
-* **KPI Split (Chia tách KPI)**:
-  - Tách KPI Final thành `KPI Assigned` (Người thực hiện chính) và `KPI Support` (Người hỗ trợ) dựa vào tỷ lệ phân chia `kpi_ratio_assign` và `kpi_ratio_support`. Mặc định tỷ lệ là 100% / 0% nếu không có người hỗ trợ.
+| Prefix | Router | Mô tả |
+|--------|--------|--------|
+| `POST /api/auth/login` | auth.py | Đăng nhập (OAuth2 Password form) |
+| `/api/users` | users.py | Profile người dùng hiện tại |
+| `/api/accounts` | accounts.py | Admin CRUD tài khoản (create, lock, unlock, reset password, delete) |
+| `/api/projects` | projects.py | CRUD dự án + phases + project members + links |
+| `/api/task-groups` | task_groups.py | CRUD task groups + tasks |
+| `/api/settings` | settings_router.py | Cấu hình platforms, priorities, statuses |
+| `/api/skills` | skills.py | CRUD categories → groups → skills |
+| `/api/system-categories` | system_categories.py | Positions, departments, teams, customers |
+| `/api/members` | members.py | CRUD thành viên + skills assignment |
+| `/api/meetings` | meetings.py | CRUD cuộc họp + sync Google/Zoom |
+| `/api/performance-settings` | performance_settings.py | Cấu hình KPI thresholds |
+| `/api/ai-review` | ai_review.py | AI đánh giá dự án + prompt management |
+| `GET /health` | main.py | Health check |
+
+### 3.3 Business Logic
+
+- **KPI Engine** (`utils/kpi_engine.py`): Tính toán hiệu suất task/taskgroup dựa trên thời gian, deadline, trạng thái hoàn thành. Cấu hình thưởng/phạt từ `performance_settings`.
+- **Access Control** (`utils/access.py`): Lọc dữ liệu theo `data_scope` của user. Scope `all` xem toàn bộ, scope khác chỉ xem projects có cùng `data_scope`.
+- **Meeting Sync** (`services/meeting_sync.py`): Đồng bộ lịch họp từ Google Calendar + Zoom (S2S OAuth), transcription qua AssemblyAI, tóm tắt bằng AI.
 
 ---
 
-## 4. Frontend — Chi tiết từng thành phần
+## 4. Frontend
 
-### 4.1 Tech Stack Frontend
-- **Next.js 14** (sử dụng cơ chế App Router hiện đại).
-- **React 18** + **TypeScript 5**.
-- **TailwindCSS 3** (Giao diện Dark Theme cao cấp).
-- **Axios** (Thư viện gọi HTTP API).
+### 4.1 Framework & Dependencies
 
-### 4.2 Giao diện Detail Project Spreadsheet (`frontend/src/app/project/detail/page.tsx`)
-Đây là trung tâm tương tác chính của người dùng, tái hiện một bảng tính Excel/Google Sheet chuyên nghiệp với đầy đủ tính năng:
-- **Tương tác trực tiếp**: Thêm, sửa, xóa, nhân bản (duplicate) Task/TaskGroup ngay trên giao diện bảng.
-- **Kéo thả sắp xếp**: Hỗ trợ thay đổi thứ tự (reorder) các TaskGroup trong Phase và các Task trong TaskGroup.
-- **Di chuyển vị trí**: Hỗ trợ chuyển Task sang TaskGroup khác hoặc chuyển TaskGroup sang Phase khác.
-- **Tính toán thời gian thực**: Khi chỉnh sửa thông tin (Manday EST, Ngày bắt đầu, Trạng thái...), kết quả KPI và ngày ước tính lập tức cập nhật lại trên bảng.
+- **Next.js** 14.2.35 (App Router) + **React** 18 + **TypeScript**
+- **Tailwind CSS** 3 + custom theme
+- **Axios** cho HTTP requests
+- Font: **Work Sans**
+
+### 4.2 Pages
+
+| Route | Mô tả |
+|-------|--------|
+| `/login` | Đăng nhập |
+| `/dashboard` | Bảng thống kê dự án |
+| `/project` | Danh sách dự án |
+| `/project/detail?id=X` | Chi tiết dự án (4-level spreadsheet) |
+| `/projects/new` | Tạo dự án mới |
+| `/meetings` | Quản lý cuộc họp |
+| `/settings` | Cài đặt (Categories, Skills, Platforms, KPIs, AI Prompts) |
+| `/accounts` | Quản lý tài khoản (admin only) |
+
+### 4.3 Multi-brand
+
+Biến `NEXT_PUBLIC_PORTAL_BRAND` quyết định thương hiệu:
+
+| Brand | Tên hiển thị | Port (prod) |
+|-------|-------------|-------------|
+| `markee` | Markee Work Portal | 3000 |
+| `securityzone` | SecurityZone KPI Portal | 3300 |
+
+Cấu hình brand (logo, tên, màu sắc) nằm trong `src/lib/brand.ts`.
 
 ---
 
-## 5. Docker Compose Stack
+## 5. Database
 
-Hệ thống rút gọn còn 3 dịch vụ tối giản, tin cậy, không cần message broker phức tạp:
+### 5.1 Engine
 
-| Tên Service | Docker Image | Cổng Port | Vai trò |
-|-------------|--------------|-----------|---------|
-| `postgres`  | `postgres:16` | `5432` | Cơ sở dữ liệu lưu trữ quan hệ chính |
-| `backend`   | `task-portal-backend` | `8000` | FastAPI Server chạy RESTful APIs |
-| `frontend`  | `task-portal-frontend`| `3000` | Next.js Server phục vụ giao diện Web |
+- **PostgreSQL** (Supabase self-hosted trên mạng nội bộ `10.30.195.67:6543`)
+- Truy cập yêu cầu VPN công ty hoặc Cloudflare WARP
 
----
+### 5.2 ORM & Migration
 
-## 6. Luồng Tóm tắt Cuộc họp bằng AI (Meeting Sync Pipeline)
+- SQLAlchemy 2.0 (declarative models)
+- Không dùng Alembic — migration inline bằng `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` trong `apply_schema_updates()` tại startup
+- Script `migrate_db.py` cho major schema changes
 
-Hệ thống tích hợp quy trình đồng bộ và tóm tắt biên bản cuộc họp thông minh:
+### 5.3 Bảng chính
+
+| Model | Bảng | Mô tả |
+|-------|------|--------|
+| User | `users` | Tài khoản đăng nhập (role, data_scope, member_id) |
+| Member | `members` | Thành viên công ty (tên, department, position, skills) |
+| Project | `projects` | Dự án (tên, khách hàng, PM, status, data_scope) |
+| Phase | `phases` | Giai đoạn dự án |
+| TaskGroup | `task_groups` | Nhóm công việc (cấp I, II, III) |
+| Task | `tasks` | Công việc chi tiết (assignee, deadline, status, KPI) |
+| Meeting | `meetings` | Cuộc họp (transcript, project link) |
+| Skill | `skills` | Kỹ năng (thuộc group → category) |
+| Platform | `platforms` | Nền tảng giao tiếp (Zalo, Telegram, Slack...) |
+| ProjectLink | `project_links` | Links liên kết dự án |
+| SystemCategory | (nhiều bảng) | positions, departments, teams, priorities, statuses, customers |
+| PerformanceSetting | `performance_settings` | Ngưỡng KPI thưởng/phạt |
+| GoogleToken | `google_tokens` | OAuth tokens Google |
+| AIPrompt | `ai_prompts` | Template prompt AI cho từng dự án |
+| AIReviewLog | `ai_review_logs` | Log kết quả AI review (score, issues, suggestions) |
+
+### 5.4 Junction Tables
+
+| Bảng | Quan hệ |
+|------|---------|
+| `project_members_v2` | Project ↔ Member (role: PM/Leader/Member) |
+| `member_skills` | Member ↔ Skill |
+| `user_skills` | User ↔ Skill |
+
+### 5.5 Hierarchy
 
 ```
-[Người dùng] ──▶ Tạo cuộc họp (Zoom/Google Meet) ──▶ Kết thúc cuộc họp
-                                                        │
-                                                        ▼
-[Người dùng] ────────────────────────────────▶ Bấm nút "Sync Meeting"
-                                                        │
-                                                        ▼
-[Backend] ───────────────────▶ Gọi API Zoom S2S OAuth hoặc Google Drive API
-                                                        │
-         ┌──────────────────────────────────────────────┴──────────────────────────────────────────────┐
-         ▼ (Zoom)                                                                                      ▼ (Google Meet)
-Tải phụ đề ghi âm (VTT) hoặc Summary.                                                          Tìm file tài liệu transcript Doc
-Nếu chỉ có Audio/Video -> Gửi AssemblyAI dịch giọng nói sang văn bản (vi).                        trên Google Drive bằng mã code.
-         │                                                                                             │
-         └──────────────────────────────────────────────┬──────────────────────────────────────────────┘
-                                                        ▼
-                                       [Gọi Shopaikey AI API]
-                                     Tóm tắt theo prompt mẫu:
-                                      - TỔNG QUAN cuộc họp
-                                      - TASK CHA ĐÃ CHỐT (Project, deadline, Owner, KPI...)
-                                      - VẤN ĐỀ & RỦI RO
-                                      - BƯỚC TIẾP THEO
-                                                        │
-                                                        ▼
-[Frontend] ◀───────────────────────── Lưu kết quả vào DB & Hiển thị ◀──────────────────────────────────┘
+Project → Phase → TaskGroup → Task (4 cấp)
 ```
 
 ---
 
-## 7. Phân quyền người dùng (RBAC)
+## 6. Authentication & Authorization
 
-Hệ thống phân chia quyền hạn chặt chẽ dựa trên 3 vai trò (`role`):
+### 6.1 Authentication
 
-| Role (Vai trò) | Xem dự án & KPI | Thêm/sửa dự án (Tasks, Phase...) | Cài đặt hệ thống (Settings) | Quản lý Users/Kỹ năng |
-|----------------|-----------------|----------------------------------|-----------------------------|-----------------------|
-| `admin`        | ✅ Tất cả | ✅ Tất cả | ✅ Có quyền | ✅ Có quyền |
-| `group_b`      | ✅ Tất cả | ❌ Không có quyền | ❌ Không có quyền | ❌ Không có quyền |
-| `group_a`      | 🔍 Chỉ xem dự án mình tham gia | ❌ Không có quyền | ❌ Không có quyền | ❌ Không có quyền |
+- JWT token (HS256) qua `python-jose`
+- Password hash bằng bcrypt (`passlib`)
+- OAuth2 Password Bearer flow (`/api/auth/login`)
+- Token expiry: 480 phút (8 giờ)
+- Frontend lưu token trong localStorage, gửi qua Bearer header
+
+### 6.2 Authorization — Role-based
+
+| Role | Quyền |
+|------|--------|
+| `admin` | Toàn quyền: quản lý accounts, members, settings, CRUD projects |
+| `group_a` | Đọc + ghi dự án (không quản lý accounts/settings) |
+| `group_b` | Chỉ đọc (read-only) |
+
+### 6.3 Authorization — Data Scope
+
+| Scope | Mô tả |
+|-------|--------|
+| `all` | Xem toàn bộ dự án |
+| `infrastructure` (default) | Chỉ xem dự án có cùng `data_scope` |
+
+### 6.4 Safeguards
+
+- Không thể xóa/demote admin cuối cùng
+- Admin không thể tự demote chính mình
+- Write operations chỉ cho phép admin + group_a
 
 ---
 
-## 8. Quy trình Phát triển và Đồng bộ
+## 7. Tính năng chính
 
-### 8.1 Chạy dưới Local (Development Mode)
-```bash
-# 1. Khởi chạy Database PostgreSQL dưới local máy tính
-docker-compose up -d postgres
+### 7.1 Quản lý dự án (Project Management)
 
-# 2. Khởi chạy FastAPI Backend (Dev mode auto-reload)
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+CRUD dự án với cấu trúc 4 cấp. Giao diện spreadsheet tương tác cho phép cập nhật trực tiếp. Hỗ trợ gán thành viên (PM/Leader/Member), liên kết platforms, theo dõi status.
 
-# 3. Khởi chạy Frontend Next.js (Dev mode)
-cd frontend
-npm install
-npm run dev
+### 7.2 KPI Engine
+
+Tính toán hiệu suất dựa trên:
+- Thời gian hoàn thành vs deadline
+- Trạng thái task (hoàn thành, đang thực hiện, quá hạn)
+- Ngưỡng thưởng/phạt cấu hình trong `performance_settings`
+
+### 7.3 AI Project Review
+
+- Gọi OpenAI-compatible API (cấu hình qua `AI_BASE_URL`, mặc định `https://api.shopaikey.com/v1`)
+- Model: `gpt-4o-mini` (cấu hình qua `AI_MODEL`)
+- 3 loại prompt: PROJECT, PHASE, TASK — tùy chỉnh cho từng dự án
+- Prompt mặc định bằng tiếng Việt (phân tích rủi ro, tài nguyên, overdue)
+- Kết quả: score + issues + suggestions (JSON)
+- Status flow: `NOT_CHECKED` → `CHECKING` → `CHECKED` / `HAS_ISSUE` / `NEED_RECHECK`
+- Audit trail: ai_review_logs lưu ai đánh giá, khi nào, prompt snapshot
+
+### 7.4 Quản lý cuộc họp (Meeting Management)
+
+- Tạo/chỉnh sửa cuộc họp, liên kết dự án
+- Đồng bộ từ Google Calendar + Zoom (Server-to-Server OAuth)
+- Transcription qua AssemblyAI
+- Tóm tắt biên bản bằng AI
+
+### 7.5 Quản lý thành viên (Members)
+
+Danh bạ nhân sự: tên, bộ phận, vị trí, kinh nghiệm, kỹ năng. Gán kỹ năng từ Skill Master.
+
+### 7.6 Skill Master
+
+Import từ Excel (`Skill_Master_From_Sheet.xlsx`). Cấu trúc 3 cấp: Category → Group → Skill. Gán many-to-many cho members.
+
+### 7.7 Quản lý tài khoản (Account Management)
+
+Admin panel: tạo/sửa/khóa/mở khóa/xóa tài khoản. Liên kết account với member. Reset password.
+
+### 7.8 System Categories
+
+Danh mục hệ thống cấu hình: positions, departments, teams, priorities, statuses, customers.
+
+### 7.9 Platform Links
+
+Liên kết kênh giao tiếp cho từng dự án (Zalo, Telegram, Slack, v.v.).
+
+---
+
+## 8. Tích hợp bên ngoài (External Integrations)
+
+| Service | Mục đích | Config |
+|---------|----------|--------|
+| OpenAI-compatible API | AI review dự án + tóm tắt meeting | `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` |
+| AssemblyAI | Transcription cuộc họp | `ASSEMBLYAI_API_KEY` |
+| Google Calendar | Đồng bộ lịch họp | OAuth2 tokens trong DB |
+| Zoom | Đồng bộ cuộc họp | `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET` |
+
+---
+
+## 9. Deployment
+
+### 9.1 Infrastructure
+
+- Self-hosted runner (label: `[self-hosted, security]`)
+- PostgreSQL trên Supabase nội bộ (VPN/WARP required)
+- Docker bridge MTU: 1420 (tương thích VPN encapsulation)
+- Backend chỉ expose trên 127.0.0.1 (không public trực tiếp)
+- Nginx gateway xử lý traffic bên ngoài
+
+### 9.2 Environments
+
+| Env | Trigger | Compose file | Brands | Port |
+|-----|---------|--------------|--------|------|
+| Dev | Push to `dev` branch | `security-dev.compose.yml` | markee | 3100 (nginx) |
+| Prod | Manual (keyword "DEPLOY") | `security-prod.compose.yml` | markee + securityzone | 3000, 3300 |
+
+### 9.3 CI/CD Flow (GitHub Actions)
+
+1. rsync code to target (excluding .git, .env, secrets)
+2. Copy compose file phù hợp
+3. `docker compose up -d --build`
+4. Health check (timeout 180s)
+
+### 9.4 Production target
+
+```
+/home/portalkpi/website_PM
 ```
 
-### 8.2 Triển khai Production bằng Docker Compose
-Để triển khai nhanh toàn bộ hệ thống lên môi trường staging hoặc production:
-```bash
-# Xây dựng và chạy nền tảng ở chế độ background
-docker-compose up -d --build
-```
-Hệ thống sẽ tự động liên kết các container, khởi tạo cấu trúc PostgreSQL thông qua file `init-db.sql` hoặc cơ chế tự sinh bảng của SQLAlchemy ORM.
+---
+
+## 10. Biến môi trường chính (.env)
+
+| Biến | Mô tả |
+|------|--------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `SECRET_KEY` | JWT signing key |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Token TTL (default: 480) |
+| `AI_BASE_URL` | OpenAI-compatible API base URL |
+| `AI_API_KEY` | API key cho AI service |
+| `AI_MODEL` | Model name (default: gpt-4o-mini) |
+| `ASSEMBLYAI_API_KEY` | AssemblyAI key |
+| `ZOOM_ACCOUNT_ID` | Zoom S2S account |
+| `ZOOM_CLIENT_ID` | Zoom S2S client ID |
+| `ZOOM_CLIENT_SECRET` | Zoom S2S client secret |
+| `NEXT_PUBLIC_PORTAL_BRAND` | Brand selector (markee / securityzone) |
+| `NEXT_PUBLIC_API_URL` | Backend API URL for frontend |
