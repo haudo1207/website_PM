@@ -36,8 +36,5 @@ class Settings(BaseSettings):
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
 
 settings = Settings()

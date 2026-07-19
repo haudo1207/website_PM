@@ -30,8 +30,8 @@ export default function CalendarTeamPage() {
     TEAM.forEach((m) => (map[m.id] = { off: false }));
 
     mockLeaveRequests.forEach((req) => {
-      const s = new Date(req.startDate);
-      const e = new Date(req.endDate);
+      const s = new Date(req.start_date);
+      const e = new Date(req.end_date);
       if (s <= target && target <= e) {
         // demo assignment: map request id to a team member index
         const member = TEAM[req.id % TEAM.length];
@@ -71,7 +71,7 @@ export default function CalendarTeamPage() {
                   <div key={m.id} className="flex items-center justify-between rounded-lg border bg-white p-3">
                     <div>
                       <div className="font-semibold">{m.name}</div>
-                      <div className="text-xs text-[#565e74]">{s.off ? `${s.leave.leaveType} (${formatDateLabel(s.leave.startDate)} - ${formatDateLabel(s.leave.endDate)})` : 'Working'}</div>
+                      <div className="text-xs text-[#565e74]">{s.off ? `${s.leave.leave_type} (${formatDateLabel(s.leave.start_date)} - ${formatDateLabel(s.leave.end_date)})` : 'Working'}</div>
                     </div>
                     <div>
                       {s.off ? <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-semibold text-rose-700">Off</span> : <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">Working</span>}
