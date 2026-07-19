@@ -115,8 +115,8 @@ function ProjectDetailContent() {
     setIsAIDrawerOpen(true);
   };
 
-  // Main Tabs State: 'tasks' | 'meetings' | 'chats' | 'members'
-  const [activeMainTab, setActiveMainTab] = useState<'tasks' | 'meetings' | 'chats' | 'members'>('tasks');
+  // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members'
+  const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members'>('overview');
   const [activePhase, setActivePhase] = useState<string>('ALL');
   const [phases, setPhases] = useState<any[]>([]);
   const [showPhaseModal, setShowPhaseModal] = useState(false);
@@ -3267,6 +3267,60 @@ function ProjectDetailContent() {
             </div>
           </div>
 
+          {/* TAB NAVIGATION */}
+          <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
+            <button
+              onClick={() => setActiveMainTab('overview')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">dashboard</span>
+              Overview
+            </button>
+            <button
+              onClick={() => setActiveMainTab('tasks')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">task</span>
+              Tasks
+            </button>
+            <button
+              onClick={() => setActiveMainTab('meetings')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">meeting_room</span>
+              Meetings
+            </button>
+            <button
+              onClick={() => setActiveMainTab('chats')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
+              Chats
+            </button>
+            <button
+              onClick={() => setActiveMainTab('members')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
+              Members
+            </button>
+          </div>
+
+          {/* MAIN TABS CONTENT AREA */}
+          <div className="w-full">
+
+            {/* LEFT COLUMN: ACTIVE TAB WORKSPACE */}
+            <div className="space-y-6">
+
+              {/* TAB: OVERVIEW */}
+              {activeMainTab === 'overview' && (
+                <div className="space-y-6">
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {/* Thẻ 1: Tổng số task hoàn thành / tổng task */}
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
@@ -3488,50 +3542,10 @@ function ProjectDetailContent() {
             </div>
 
           </div>
+                </div>
+              )}
 
-          {/* TAB NAVIGATION */}
-          <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
-            <button
-              onClick={() => setActiveMainTab('tasks')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-            >
-              <span className="material-symbols-outlined mr-2 text-[18px]">task</span>
-              Tasks
-            </button>
-            <button
-              onClick={() => setActiveMainTab('meetings')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-            >
-              <span className="material-symbols-outlined mr-2 text-[18px]">meeting_room</span>
-              Meetings
-            </button>
-            <button
-              onClick={() => setActiveMainTab('chats')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-            >
-              <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
-              Chats
-            </button>
-            <button
-              onClick={() => setActiveMainTab('members')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-            >
-              <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
-              Members
-            </button>
-          </div>
-
-          {/* MAIN TABS CONTENT AREA */}
-          <div className="w-full">
-
-            {/* LEFT COLUMN: ACTIVE TAB WORKSPACE */}
-            <div className="space-y-6">
-
-              {/* TAB 1: TASKS */}
+              {/* TAB: TASKS */}
               {activeMainTab === 'tasks' && (
                 <div className="space-y-6">
                   {/* Phase Tabs + Search */}
@@ -4605,7 +4619,7 @@ function ProjectDetailContent() {
                   >
                     <option value="">— Chưa gắn —</option>
                     {projectMembers.map((m: any) => (
-                      <option key={m.id} value={String(m.id)}>{m.name}</option>
+                      <option key={m.id} value={String(m.id)}>{m.display_name}</option>
                     ))}
                   </select>
                 </div>
@@ -4618,7 +4632,7 @@ function ProjectDetailContent() {
                   >
                     <option value="">— Chưa gắn —</option>
                     {projectMembers.map((m: any) => (
-                      <option key={m.id} value={String(m.id)}>{m.name}</option>
+                      <option key={m.id} value={String(m.id)}>{m.display_name}</option>
                     ))}
                   </select>
                 </div>
