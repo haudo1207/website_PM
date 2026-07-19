@@ -4619,7 +4619,7 @@ function ProjectDetailContent() {
                   >
                     <option value="">— Chưa gắn —</option>
                     {projectMembers.map((m: any) => (
-                      <option key={m.id} value={String(m.id)}>{m.name}</option>
+                      <option key={m.id} value={String(m.id)}>{m.display_name}</option>
                     ))}
                   </select>
                 </div>
@@ -4632,7 +4632,7 @@ function ProjectDetailContent() {
                   >
                     <option value="">— Chưa gắn —</option>
                     {projectMembers.map((m: any) => (
-                      <option key={m.id} value={String(m.id)}>{m.name}</option>
+                      <option key={m.id} value={String(m.id)}>{m.display_name}</option>
                     ))}
                   </select>
                 </div>
