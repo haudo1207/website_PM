@@ -1,6 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     DATABASE_URL: str
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
@@ -11,6 +14,7 @@ class Settings(BaseSettings):
     AI_MODEL: str = "gpt-4o-mini"
     AI_TIMEOUT_SECONDS: int = 60
     CHECK_INTERVAL_SECONDS: int = 3600
+    REDIS_URL: str = ""
 
     # Zoom Server-to-Server OAuth
     ZOOM_ACCOUNT_ID: str = ""
@@ -20,11 +24,11 @@ class Settings(BaseSettings):
     # Google OAuth2 (for Google Meet & Google Drive)
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_CLIENT_EMAIL: str = ""
+    GOOGLE_PRIVATE_KEY: str = ""
 
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
 
-    class Config:
-        env_file = ".env"
 
 settings = Settings()

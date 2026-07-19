@@ -157,6 +157,16 @@ export const createCustomer = (data: { name: string; description?: string }) => 
 export const updateCustomer = (id: number, data: { name: string; description?: string }) => api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
 export const deleteCustomer = (id: number) => api.delete(`/system-categories/customers/${id}`).then(r => r.data);
 
+// Leave Requests
+export const getLeaveRequests = (params?: { status?: string; user_id?: number; from_date?: string; to_date?: string }) =>
+  api.get('/leave-requests', { params }).then(r => r.data);
+export const getLeaveRequest = (id: number) => api.get(`/leave-requests/${id}`).then(r => r.data);
+export const createLeaveRequest = (data: object) => api.post('/leave-requests', data).then(r => r.data);
+export const updateLeaveRequest = (id: number, data: object) => api.put(`/leave-requests/${id}`, data).then(r => r.data);
+export const deleteLeaveRequest = (id: number) => api.delete(`/leave-requests/${id}`).then(r => r.data);
+export const approveLeaveRequest = (id: number, status: 'Approved' | 'Rejected') =>
+  api.patch(`/leave-requests/${id}/approve`, { status }).then(r => r.data);
+
 // Meetings
 export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string }) =>
   api.get('/meetings', { params }).then(r => r.data);

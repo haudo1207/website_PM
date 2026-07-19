@@ -3,12 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
+from .routers import leave_requests as leave_requests_router
 from .database import engine, Base
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
 from .models import task as task_model
+from .models import leave_request as leave_request_model
 from sqlalchemy import text
 
 # Create all tables (new v5 schema)
@@ -317,6 +319,7 @@ app.include_router(settings_router.router,     prefix="/api/settings")
 app.include_router(skills.router,              prefix="/api/skills")
 app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
+app.include_router(leave_requests_router.router, prefix="/api/leave-requests")
 app.include_router(meetings_router.router,    prefix="/api/meetings")
 
 @app.get("/health")
