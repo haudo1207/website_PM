@@ -1,16 +1,36 @@
 name: kpi_portal_developer
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    env_file: ${APP_ENV_FILE:-./.env}
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-task_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-MyPass2026}
+      POSTGRES_DB: ${DATABASE_NAME:-task_portal}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-task_user} -d ${DATABASE_NAME:-task_portal}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
   backend:
     build:
       context: ./backend
     restart: unless-stopped
     env_file: ${APP_ENV_FILE:-./.env}
     environment:
-      # Both the company VPN and Cloudflare WARP route this private DB address.
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      DATABASE_URL: postgresql://${DATABASE_USER:-task_user}:${DATABASE_PASSWORD:-MyPass2026}@postgres:5432/${DATABASE_NAME:-task_portal}
+      REDIS_URL: redis://:${DATABASE_PASSWORD:-MyPass2026}@redis:6379/0
     ports:
       - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 10s
@@ -35,6 +55,9 @@ services:
 
 # WARP on Linux reserves encapsulation overhead. The lower bridge MTU also works
 # on the company VPN and prevents Docker-only timeouts while the host can connect.
+volumes:
+  postgres_data:
+
 networks:
   default:
     driver: bridge
