@@ -106,6 +106,10 @@ def serialize_project(p, db):
         "completed_task_count": completed_task_count,
         "warning_task_count": warning_task_count,
         "members": members_list,
+        "ai_status": p.ai_status,
+        "last_ai_check_at": str(p.last_ai_check_at) if p.last_ai_check_at else None,
+        "last_ai_score": p.last_ai_score,
+        "last_review_id": p.last_review_id,
         "created_at": str(p.created_at) if p.created_at else None,
         "updated_at": str(p.updated_at) if p.updated_at else None,
     }
@@ -157,37 +161,14 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     db.add(p)
     db.flush()
 
-    # 1. Auto-create default phases
-    from ..models.setting import Setting
-    import json
-
-    default_phases = []
-    setting_row = db.query(Setting).filter(Setting.key == "column_config").first()
-    if setting_row:
-        try:
-            config_data = json.loads(setting_row.value)
-            default_phases = config_data.get("tab_names", [])
-        except Exception:
-            pass
-
-    # If setting is not configured, load from default list
-    if not default_phases:
-        default_phases = [
-            '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
-            '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
-            '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
-            '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
-            '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
-        ]
-
-    for idx, pname in enumerate(default_phases):
-        ph = Phase(
-            project_id=p.id,
-            name=pname,
-            sort_order=idx,
-            status="Waiting"
-        )
-        db.add(ph)
+    # 1. Create a single phase named "Master"
+    ph = Phase(
+        project_id=p.id,
+        name="Master",
+        sort_order=0,
+        status="Waiting"
+    )
+    db.add(ph)
 
     # 2. Add initial links/channels (Legacy cleanup - only if they exist)
     links_to_create = []
@@ -412,6 +393,10 @@ def serialize_phase(ph, db):
         "status": ph.status,
         "task_group_count": tg_count,
         "task_count": task_count,
+        "ai_status": ph.ai_status,
+        "last_ai_check_at": str(ph.last_ai_check_at) if ph.last_ai_check_at else None,
+        "last_ai_score": ph.last_ai_score,
+        "last_review_id": ph.last_review_id,
         "created_at": str(ph.created_at) if ph.created_at else None,
     }
 

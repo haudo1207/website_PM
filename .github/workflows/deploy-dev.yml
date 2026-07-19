@@ -1,4 +1,4 @@
-name: Deploy shared dev
+name: Deploy KPI dev
 
 on:
   push:
@@ -6,25 +6,25 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: portal-shared-dev
+  group: kpi-dev
   cancel-in-progress: true
 
 jobs:
   deploy:
-    runs-on: [self-hosted, security]
+    runs-on: [self-hosted, kpi-dev]
     steps:
       - uses: actions/checkout@v4
       - name: Sync source and compose
         run: |
           set -euo pipefail
-          mkdir -p /home/portalkpi/security-dev-src /home/portalkpi/security-dev
-          rsync -a --delete --exclude .git ./ /home/portalkpi/security-dev-src/
-          cp deploy/security-dev.compose.yml /home/portalkpi/security-dev/compose.yml
+          mkdir -p /home/webpm/kpi-dev-src /home/webpm/kpi-dev
+          rsync -a --delete --exclude .git ./ /home/webpm/kpi-dev-src/
+          cp deploy/security-dev.compose.yml /home/webpm/kpi-dev/compose.yml
       - name: Build and deploy
-        working-directory: /home/portalkpi/security-dev
+        working-directory: /home/webpm/kpi-dev
         env:
           APP_COMMIT: ${{ github.sha }}
-          SOURCE_DIR: /home/portalkpi/security-dev-src
+          SOURCE_DIR: /home/webpm/kpi-dev-src
           FRONTEND_PORT: "3100"
         run: |
           set -euo pipefail

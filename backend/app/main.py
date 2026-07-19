@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .database import engine, Base
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
@@ -23,6 +23,32 @@ def apply_schema_updates():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
             "NOT NULL DEFAULT 'infrastructure'"
         ))
+        # SQLAlchemy create_all() does not add columns to an existing table. The
+        # account/member link was introduced after the original installations,
+        # so keep this migration safe to run on every container start.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS member_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'users_member_id_fkey'
+                      AND conrelid = 'users'::regclass
+                ) THEN
+                    ALTER TABLE users
+                    ADD CONSTRAINT users_member_id_fkey
+                    FOREIGN KEY (member_id) REFERENCES members(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_member_id_unique "
+            "ON users (member_id) WHERE member_id IS NOT NULL"
+        ))
         conn.execute(text(
             "ALTER TABLE projects ADD COLUMN IF NOT EXISTS data_scope VARCHAR(50) "
             "NOT NULL DEFAULT 'infrastructure'"
@@ -30,14 +56,29 @@ def apply_schema_updates():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_projects_data_scope ON projects (data_scope)"
         ))
-        conn.execute(text(
-            "UPDATE users SET data_scope = 'all' WHERE role = 'admin' AND data_scope = 'infrastructure'"
-        ))
         # The legacy seed inserted users.id=1 explicitly and left the sequence at 1.
         conn.execute(text(
             "SELECT setval(pg_get_serial_sequence('users', 'id'), "
             "GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1), true)"
         ))
+
+        # Add AI Review columns to projects
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
+
+        # Add AI Review columns to phases
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
+
+        # Add AI Review columns to tasks_v2
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
 
 apply_schema_updates()
 
@@ -46,6 +87,7 @@ def init_db_defaults():
     from .models.user import User
     from .models.setting import Setting
     from .utils.auth import hash_password
+    from .config import settings as app_settings
     import json
     import os
 
@@ -109,11 +151,16 @@ def init_db_defaults():
 
         # 2. Initialize default admin user if no users exist
         if db.query(User).count() == 0:
+            default_admin_password = app_settings.DEFAULT_ADMIN_PASSWORD.strip()
+            if not default_admin_password:
+                raise RuntimeError(
+                    "Database has no users. Set DEFAULT_ADMIN_PASSWORD once to create the first admin."
+                )
             admin = User(
                 id=1,
-                email="admin@company.com",
+                email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
                 full_name="Admin Company",
-                hashed_pw=hash_password("admin123"),
+                hashed_pw=hash_password(default_admin_password),
                 role="admin",
                 is_active=True
             )
@@ -287,7 +334,65 @@ def init_db_defaults():
                     db.rollback()
             print("[*] Seeded initial members")
 
+        # 4. Seed initial Performance KPI rules
+        from .models.performance_setting import PerformanceSetting
+        from decimal import Decimal
+        if db.query(PerformanceSetting).count() == 0:
+            initial_kpi_rules = [
+                # I. Tasks khen thưởng
+                {"performance": "(T) Có tài liệu đào tạo upload lên securityzone.vn", "kpi": Decimal("5")},
+                {"performance": "(T) Có video đào tạo upload lên Youtube Securityzone", "kpi": Decimal("5")},
+                {"performance": "(T) Khách hàng phản ảnh tốt", "kpi": Decimal("5")},
+                {"performance": "(T) Hoàn thành sớm task NORMAL", "kpi": Decimal("5")},
+                {"performance": "(T) Hoàn thành sớm task HIGH", "kpi": Decimal("10")},
+
+                # II. Tasks bị phạt
+                {"performance": "(P) Điền sai thông tin form", "kpi": Decimal("-5")},
+                {"performance": "(P) Không trao đổi localteam", "kpi": Decimal("-5")},
+                {"performance": "(P) Không update email tiến độ", "kpi": Decimal("-5")},
+                {"performance": "(P) Trễ tiến độ nhưng có báo cáo, lý do hợp lý", "kpi": Decimal("-5")},
+                {"performance": "(P) Task trễ mà không báo cáo PM", "kpi": Decimal("-10")},
+                {"performance": "(P) Task phải làm lại do lỗi nội bộ", "kpi": Decimal("-5")},
+                {"performance": "(P) Khách phàn nàn mức nhẹ, ảnh hưởng vừa phải", "kpi": Decimal("-10")},
+                {"performance": "(P) Khách phàn nàn nặng, ảnh hưởng trực tiếp", "kpi": Decimal("-15")},
+                {"performance": "(P) Task thất bại, không hoàn thành, phải thay người", "kpi": Decimal("-20")},
+                {"performance": "(P) FAIL 1", "kpi": Decimal("0.7")},
+                {"performance": "(P) FAIL 2", "kpi": Decimal("0.5")},
+                {"performance": "(P) FAIL 3", "kpi": Decimal("0.0")},
+
+                # III. Tasks làm ngoài giờ
+                {"performance": "1 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("3")},
+                {"performance": "2 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("6")},
+                {"performance": "3 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("9")},
+                {"performance": "4 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("12")},
+                {"performance": "5 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("15")},
+                {"performance": "1 day - Xử lý sự cố cuối tuần", "kpi": Decimal("6")},
+                {"performance": "2 day - Xử lý sự cố cuối tuần", "kpi": Decimal("12")},
+                {"performance": "1 day - Xử lý sự cố ngày lễ", "kpi": Decimal("10")},
+                {"performance": "2 day - Xử lý sự cố ngày lễ", "kpi": Decimal("20")},
+                {"performance": "3 day - Xử lý sự cố ngày lễ", "kpi": Decimal("30")},
+                {"performance": "4 day - Xử lý sự cố ngày lễ", "kpi": Decimal("40")},
+                {"performance": "5 day - Xử lý sự cố ngày lễ", "kpi": Decimal("50")},
+
+                # IV. Tasks phát sinh
+                {"performance": "Rework - Làm lại do lỗi nội bộ", "kpi": Decimal("0")},
+                {"performance": "Change request - Do khách hàng yêu cầu", "kpi": Decimal("0")},
+                {"performance": "Issue - Sự cố không lường trước", "kpi": Decimal("0")},
+                {"performance": "Unplanned - Các công việc nhỏ phát sinh ngoài scope", "kpi": Decimal("0")}
+            ]
+            for idx, r in enumerate(initial_kpi_rules):
+                db.add(PerformanceSetting(
+                    performance=r["performance"],
+                    kpi=r["kpi"],
+                    sort_order=idx,
+                    is_active=True
+                ))
+            print("[*] Seeded initial Performance KPI rules")
+
         db.commit()
+    except RuntimeError:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         print(f"[!] Error seeding database: {e}")
@@ -321,6 +426,9 @@ app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
 app.include_router(leave_requests_router.router, prefix="/api/leave-requests")
 app.include_router(meetings_router.router,    prefix="/api/meetings")
+app.include_router(performance_settings.router, prefix="/api/performance-settings")
+app.include_router(accounts.router,            prefix="/api/accounts")
+app.include_router(ai_review.router,            prefix="/api")
 
 @app.get("/health")
 @app.get("/api/health")

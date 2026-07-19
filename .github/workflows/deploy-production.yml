@@ -1,10 +1,16 @@
-name: Deploy production
+name: Deploy KPI production
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type DEPLOY to deploy main to both production brands
+        required: true
+        type: string
 
 jobs:
   deploy-both-brands:
+    if: github.ref == 'refs/heads/main' && inputs.confirm == 'DEPLOY'
     runs-on: [self-hosted, security]
     steps:
       - uses: actions/checkout@v4
@@ -19,9 +25,8 @@ jobs:
           rsync -a --delete --exclude .git --exclude .env --exclude secrets --exclude backups --exclude frontend/data ./ "$SOURCE_DIR"/
           cp deploy/security-prod.compose.yml "$SOURCE_DIR/docker-compose.yml"
           cd "$SOURCE_DIR"
-          # Keep the existing Redis/Celery worker and scheduler running. Their
-          # source is not part of this branch yet, but production still uses
-          # them for scheduled Google Sheet synchronization.
+          # Redis and the legacy worker image remain local. Compose still recreates
+          # API, worker, and scheduler together so every writer uses the same DB URL.
           docker compose --env-file .env -f docker-compose.yml up -d --build
           timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done'
           timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done'

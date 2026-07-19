@@ -232,6 +232,8 @@ def recalculate_task(task, db):
     Called after any PATCH/PUT to a task.
     Updates all computed fields based on current values.
     """
+    from ..models.performance_setting import PerformanceSetting
+
     # 1. End Date EST
     task.end_date_est = calc_end_date_est(task.start_date, task.manday_est)
 
@@ -245,17 +247,69 @@ def recalculate_task(task, db):
     priority_kpi = get_priority_kpi_base(task.priority, db)
     task.kpi_base = calc_kpi_base(priority_kpi, task.manday_est)
 
-    # 5. KPI Perform
-    task.kpi_perform = calc_kpi_perform(
-        task.days_late, task.kpi_base, task.manday_est,
-        task.manday_actual, task.priority, task.remark
-    )
+    # Parse remark using dynamic performance settings from the DB
+    remark_str = (task.remark or "").strip().lower()
+    remark_perform = Decimal("0")
+    remark_ot = Decimal("0")
+    multiplier = Decimal("1.0")
 
-    # 6. KPI OT
-    task.kpi_ot = calc_kpi_ot(task.remark, task.priority)
+    # Split remark by common separators to match multiple rules
+    remark_parts = [p.strip() for p in remark_str.replace(';', ',').split(',') if p.strip()]
 
-    # 7. KPI Final
-    task.kpi_final = calc_kpi_final(task.kpi_base, task.kpi_perform, task.kpi_ot)
+    try:
+        rules = db.query(PerformanceSetting).filter(PerformanceSetting.is_active == True).all()
+        for rule in rules:
+            rule_perf = rule.performance.strip().lower()
+            clean_rule_perf = rule_perf
+            if rule_perf.startswith('(t)') or rule_perf.startswith('(p)'):
+                clean_rule_perf = rule_perf[3:].strip()
+
+            # Robust matching check
+            is_matched = False
+            for part in remark_parts:
+                # 1. Match by ID if the part is numeric
+                if part.isdigit() and int(part) == rule.id:
+                    is_matched = True
+                    break
+                # 2. Match by exact text or clean text
+                if rule_perf in part or clean_rule_perf in part:
+                    is_matched = True
+                    break
+                if part == rule_perf or part == clean_rule_perf:
+                    is_matched = True
+                    break
+                if '-' in rule_perf:
+                    parts = rule_perf.split('-', 1)
+                    prefix = parts[0].strip()
+                    if prefix == part:
+                        is_matched = True
+                        break
+                if len(part) >= 5 and part in clean_rule_perf:
+                    is_matched = True
+                    break
+
+            if is_matched:
+                rule_kpi = Decimal(str(rule.kpi))
+                # If rule_kpi is between 0 and 1.0 (multiplier/coefficient like FAIL or Rework)
+                if (0.0 <= rule_kpi <= 1.0) and ("fail" in rule_perf or "rework" in rule_perf):
+                    multiplier *= rule_kpi
+                else:
+                    # Determine if it's an OT rule
+                    if any(kw in rule_perf for kw in ["xử lý sự cố", "ngày lễ", "cuối tuần", "tối trong tuần", "ot"]):
+                        remark_ot += rule_kpi
+                    else:
+                        remark_perform += rule_kpi
+    except Exception as e:
+        print(f"[!] Error parsing performance settings: {e}")
+
+    # 5. KPI Perform - Rule 03: Sum of rewards/penalties from Remark settings
+    task.kpi_perform = remark_perform
+
+    # 6. KPI OT - Rule 04: Sum of overtime rules from Remark settings
+    task.kpi_ot = remark_ot
+
+    # 7. KPI Final - Rule 05: (Base + Perform + OT) * Fail Ratio multiplier
+    task.kpi_final = (task.kpi_base + task.kpi_perform + task.kpi_ot) * multiplier
 
     # If status is Cancel, do not calculate KPI (set all to 0)
     if task.status and task.status.strip().lower() == "cancel":

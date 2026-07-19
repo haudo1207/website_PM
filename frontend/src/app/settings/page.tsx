@@ -3,6 +3,8 @@ import React, { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import SystemCategoriesView from '@/components/SystemCategoriesView';
 import MembersView from '@/components/MembersView';
+import KPIsView from '@/components/KPIsView';
+import AIPromptsView from '@/components/AIPromptsView';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
 import {
@@ -28,10 +30,6 @@ import {
   createDepartment,
   updateDepartment,
   deleteDepartment,
-  getPriorities,
-  createPriority,
-  updatePriority,
-  deletePriority,
   getStatuses,
   createStatus,
   updateStatus,
@@ -46,7 +44,7 @@ import {
 export default function SettingsPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [saved, setSaved] = useState('');
-  const [activeTab, setActiveTab] = useState<'members' | 'skills' | 'system_categories'>('members');
+  const [activeTab, setActiveTab] = useState<'members' | 'skills' | 'system_categories' | 'kpis' | 'ai_prompts'>('members');
 
   // Member Form
   const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'group_a', skills: [] as number[], position: '', department: '' });
@@ -61,7 +59,6 @@ export default function SettingsPage() {
   // System Categories Data
   const [dbPositions, setDbPositions] = useState<any[]>([]);
   const [dbDepartments, setDbDepartments] = useState<any[]>([]);
-  const [dbPriorities, setDbPriorities] = useState<any[]>([]);
   const [dbStatuses, setDbStatuses] = useState<any[]>([]);
   const [dbTeams, setDbTeams] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
@@ -106,7 +103,6 @@ export default function SettingsPage() {
   const reloadSystemCategories = () => {
     getPositions().then(setDbPositions).catch(() => {});
     getDepartments().then(setDbDepartments).catch(() => {});
-    getPriorities().then(setDbPriorities).catch(() => {});
     getStatuses().then(setDbStatuses).catch(() => {});
     getTeams().then(setDbTeams).catch(() => {});
     getCustomers().then(setDbCustomers).catch(() => {});
@@ -349,6 +345,24 @@ export default function SettingsPage() {
               }`}
           >
             Danh mục hệ thống
+          </button>
+          <button
+            onClick={() => setActiveTab('kpis')}
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'kpis'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+          >
+            Cấu hình KPI
+          </button>
+          <button
+            onClick={() => setActiveTab('ai_prompts')}
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'ai_prompts'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+          >
+            Cấu hình AI Prompt
           </button>
         </div>
 
@@ -744,13 +758,20 @@ export default function SettingsPage() {
             <SystemCategoriesView
               positions={dbPositions}
               departments={dbDepartments}
-              priorities={dbPriorities}
               statuses={dbStatuses}
               teams={dbTeams}
               customers={dbCustomers}
               onReload={reloadSystemCategories}
               onFlash={flash}
             />
+          )}
+
+          {activeTab === 'kpis' && (
+            <KPIsView onFlash={flash} />
+          )}
+
+          {activeTab === 'ai_prompts' && (
+            <AIPromptsView onFlash={flash} />
           )}
         </div>
       </div>

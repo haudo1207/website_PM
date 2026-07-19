@@ -21,7 +21,7 @@ from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
-from ..models.project import project_members
+from ..models.project import Project, project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
 from ..utils.access import require_project, require_route_project_access
 from ..utils.auth import get_current_user
@@ -323,6 +323,10 @@ def serialize_task(t, db):
         "kpi_support": float(t.kpi_support) if t.kpi_support else 0,
         "notes": t.notes,
         "solution": t.solution,
+        "ai_status": t.ai_status,
+        "last_ai_check_at": str(t.last_ai_check_at) if t.last_ai_check_at else None,
+        "last_ai_score": t.last_ai_score,
+        "last_review_id": t.last_review_id,
         "created_at": str(t.created_at) if t.created_at else None,
     }
 
@@ -558,6 +562,16 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     if tg:
         tg.progress = Decimal(str(calc_group_progress(gid, db)))
+
+    # Trigger Recheck logic: check if any trigger fields are present in the update payload
+    trigger_fields = ["detail", "priority", "manday_est", "status", "start_date", "end_date_actual", "assigned_id", "support_id", "remark"]
+    if any(f in body for f in trigger_fields):
+        task.ai_status = "NEED_RECHECK"
+        if phase:
+            phase.ai_status = "NEED_RECHECK"
+            project = db.query(Project).filter(Project.id == phase.project_id).first()
+            if project:
+                project.ai_status = "NEED_RECHECK"
 
     db.commit()
     db.refresh(task)

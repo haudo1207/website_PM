@@ -102,6 +102,12 @@ class Task(Base):
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, onupdate=func.now())
 
+    # AI Check Fields
+    ai_status        = Column(String(50), default="NOT_CHECKED", nullable=False, server_default="NOT_CHECKED")
+    last_ai_check_at = Column(DateTime, nullable=True)
+    last_ai_score    = Column(Integer, nullable=True)
+    last_review_id   = Column(Integer, nullable=True)
+
     # Relationships
     task_group        = relationship("TaskGroup", back_populates="tasks")
     assigned_member   = relationship("Member", foreign_keys=[assigned_id], lazy="select")
