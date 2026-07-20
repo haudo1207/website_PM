@@ -202,7 +202,7 @@ export const deletePerformanceSetting = (id: number) => api.delete(`/performance
 export const getAccounts = () => api.get('/accounts').then(r => r.data);
 export const getAvailableMembers = () => api.get('/accounts/available-members').then(r => r.data);
 export const createAccount = (data: { email: string; password?: string; role: string; data_scope: string; full_name?: string; member_id?: number }) => api.post('/accounts', data).then(r => r.data);
-export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string }) => api.put(`/accounts/${id}`, data).then(r => r.data);
+export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string; member_id?: number | null }) => api.put(`/accounts/${id}`, data).then(r => r.data);
 export const resetAccountPassword = (id: number, password: string) => api.post(`/accounts/${id}/reset-password`, { password }).then(r => r.data);
 export const lockAccount = (id: number) => api.post(`/accounts/${id}/lock`).then(r => r.data);
 export const unlockAccount = (id: number) => api.post(`/accounts/${id}/unlock`).then(r => r.data);

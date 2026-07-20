@@ -28,8 +28,8 @@ export default function LoginPage() {
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const finishLogin = (data: { access_token: string; role: string; full_name: string }) => {
-    saveToken(data.access_token, data.role, data.full_name);
+  const finishLogin = (data: { access_token: string; role: string; full_name: string; avatar_url?: string | null }) => {
+    saveToken(data.access_token, data.role, data.full_name, data.avatar_url);
     router.push('/dashboard');
   };
 

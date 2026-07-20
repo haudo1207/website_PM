@@ -13,10 +13,10 @@ from ..models.member import Member
 from ..models.meeting import Meeting
 from ..models.ai_review import AIPrompt, AIReviewLog
 from ..models.user import User
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, require_admin_write
 from ..config import settings
 
-router = APIRouter(tags=["ai-review"])
+router = APIRouter(tags=["ai-review"], dependencies=[Depends(require_admin_write)])
 
 # Default prompts helper
 def get_or_create_default_prompts(db: Session, project_id: int):

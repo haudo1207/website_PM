@@ -3,6 +3,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
   'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
@@ -45,6 +46,7 @@ const getPhaseBadgeStyle = (phase: string) => {
 
 function ProjectListContent() {
   const router = useRouter();
+  const canManage = isAdmin();
   const [projects, setProjects] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [phaseFilter, setPhaseFilter] = useState('All');
@@ -139,12 +141,12 @@ function ProjectListContent() {
                 </select>
               </div>
 
-              <button onClick={() => router.push('/projects/new')} className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-5 py-2 rounded-lg text-sm font-bold shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 transition-all duration-200">
+              {canManage && <button onClick={() => router.push('/projects/new')} className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-5 py-2 rounded-lg text-sm font-bold shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 transition-all duration-200">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                 </svg>
                 Thêm dự án
-              </button>
+              </button>}
             </div>
           </div>
 
@@ -269,7 +271,7 @@ function ProjectListContent() {
               );
             })}
 
-            <div onClick={() => router.push('/projects/new')}
+            {canManage && <div onClick={() => router.push('/projects/new')}
               className="border-2 border-dashed border-slate-200 rounded-xl bg-white/60 flex flex-col items-center justify-center p-8 cursor-pointer hover:bg-slate-50 hover:border-indigo-500 transition-all duration-300 group min-h-[220px] shadow-sm text-center">
               <div className="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-indigo-50 group-hover:border-indigo-200 transition-all duration-300 shadow-sm">
                 <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -278,7 +280,7 @@ function ProjectListContent() {
               </div>
               <h4 className="text-[14px] font-bold text-slate-800">Thêm dự án mới</h4>
               <p className="text-xs text-slate-500 mt-2 px-4 max-w-[280px]">Bắt đầu khởi tạo quy trình tuân thủ mới cho khách hàng.</p>
-            </div>
+            </div>}
           </div>
 
           <div className="flex justify-between items-center border-t border-slate-200 pt-6">

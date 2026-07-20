@@ -38,7 +38,7 @@ def create_user(body: dict, db: Session = Depends(get_db), _=Depends(require_adm
     validate_password(password)
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email exists")
-    role = body.get("role", "group_a")
+    role = body.get("role", "member")
     if role not in VALID_ROLES:
         raise HTTPException(400, f"Invalid role. Must be one of: {VALID_ROLES}")
     data_scope = str(body.get("data_scope", "infrastructure")).strip().lower()
@@ -89,7 +89,10 @@ def update_user(uid: int, body: dict, db: Session = Depends(get_db), admin=Depen
             duplicate = db.query(User).filter(User.email == email, User.id != uid).first()
             if duplicate:
                 raise HTTPException(400, "Email exists")
-            u.email = email
+            if u.email != email:
+                u.email = email
+                u.google_sub = None
+                u.avatar_url = None
         elif k == "role":
             role = str(v).strip().lower()
             if role not in VALID_ROLES:

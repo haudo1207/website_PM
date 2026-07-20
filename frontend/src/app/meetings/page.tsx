@@ -7,8 +7,10 @@ import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 
 export default function MeetingsPage() {
+  const canManage = isAdmin();
   const [meetings, setMeetings] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -91,10 +93,10 @@ export default function MeetingsPage() {
       <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
         {/* Top bar */}
         <div className="h-[52px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
-          <div className="flex items-center gap-3">
+          {canManage && <div className="flex items-center gap-3">
             <span className="material-symbols-outlined text-[#0058be] text-[20px]">calendar_month</span>
             <span className="text-xs font-bold text-[#0b1c30]">Quản lý Meetings</span>
-          </div>
+          </div>}
           <div className="flex items-center gap-3">
             <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-1.5 bg-white hover:bg-[#f0f2f5] border border-[#c2c6d6] text-[#565e74] text-xs font-bold px-3 py-2 rounded-lg transition-colors">
               <Sparkles size={14} className="text-emerald-500" />Cấu hình AI
@@ -162,10 +164,10 @@ export default function MeetingsPage() {
             ) : (
               filteredMeetings.map(meeting => (
                 <MeetingCard key={meeting.id} meeting={meeting}
-                  onEdit={m => { setEditingMeeting(m); setIsModalOpen(true); }}
-                  onDelete={id => setDeleteConfirmId(id)}
-                  onSummarize={m => { setSummarizingMeeting(m); setIsSummarizeOpen(true); }}
-                  onSync={handleSync}
+                  onEdit={canManage ? (m => { setEditingMeeting(m); setIsModalOpen(true); }) : undefined}
+                  onDelete={canManage ? (id => setDeleteConfirmId(id)) : undefined}
+                  onSummarize={canManage ? (m => { setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
+                  onSync={canManage ? handleSync : undefined}
                 />
               ))
             )}
@@ -174,9 +176,9 @@ export default function MeetingsPage() {
       </div>
 
       {/* Modals */}
-      <CreateMeetingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveMeeting} initialData={editingMeeting} />
-      <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
-      <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => setMeetings(prev => prev.map(x => x.id === m.id ? m : x))} />
+      {canManage && <CreateMeetingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveMeeting} initialData={editingMeeting} />}
+      {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
+      {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => setMeetings(prev => prev.map(x => x.id === m.id ? m : x))} />}
 
       {/* Delete Confirm Modal */}
       {deleteConfirmId && (

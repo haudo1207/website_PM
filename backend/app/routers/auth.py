@@ -19,6 +19,7 @@ def token_response(user: User) -> dict:
         "token_type": "bearer",
         "role": user.role,
         "full_name": user.full_name,
+        "avatar_url": user.avatar_url,
     }
 
 
@@ -66,15 +67,37 @@ def google_login(body: dict, db: Session = Depends(get_db)):
         raise HTTPException(401, "Google email is not verified.")
 
     email = str(claims.get("email") or "").strip().lower()
-    user = db.query(User).filter(User.email == email).first()
+    google_sub = str(claims.get("sub") or "").strip()
+    if not google_sub:
+        raise HTTPException(401, "Google account identifier is missing.")
+
+    # Prefer Google's immutable subject after the first successful link. A
+    # pre-approved account is matched by email exactly once to establish it.
+    user = db.query(User).filter(User.google_sub == google_sub).first()
+    if not user:
+        user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(403, "This email has not been granted access.")
+    if user.google_sub and user.google_sub != google_sub:
+        raise HTTPException(403, "This email is linked to a different Google account.")
     if not user.is_active:
         raise HTTPException(403, "Account disabled.")
 
-    # Keep the display name current without allowing Google to change roles/scopes.
+    # Google is the identity source for profile fields. Roles, scopes and member
+    # linkage remain controlled by the application admin.
     google_name = str(claims.get("name") or "").strip()
-    if google_name and not user.full_name:
+    google_avatar = str(claims.get("picture") or "").strip()
+    changed = False
+    if not user.google_sub:
+        user.google_sub = google_sub
+        changed = True
+    if google_name and user.full_name != google_name:
         user.full_name = google_name
+        changed = True
+    if google_avatar and user.avatar_url != google_avatar:
+        user.avatar_url = google_avatar
+        changed = True
+    if changed:
         db.commit()
+        db.refresh(user)
     return token_response(user)

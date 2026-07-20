@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { getName, logout, getRole } from '@/lib/auth';
+import { getAvatar, getName, logout, getRole } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
 import { getProjects } from '@/lib/api';
 import { brand } from '@/lib/brand';
@@ -10,12 +10,14 @@ function NavbarContent() {
   const path = usePathname();
   const searchParams = useSearchParams();
   const [name, setName] = useState('');
+  const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
   const [sheets, setSheets] = useState<any[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setName(getName() ?? '');
+    setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
     getProjects().then(setSheets).catch(() => {});
   }, [path]);
@@ -125,11 +127,13 @@ function NavbarContent() {
         <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-3 mb-2 shrink-0">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Projects</span>
-            <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50" title="Thêm dự án mới">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            </Link>
+            {role === 'admin' && (
+              <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50" title="Thêm dự án mới">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+              </Link>
+            )}
           </div>
           <div className="space-y-0.5">
             {sheets.map(s => {
@@ -153,9 +157,13 @@ function NavbarContent() {
         {/* User */}
         <div className="p-3 border-t border-slate-800 space-y-2.5">
           <div className="flex items-center gap-2.5 px-1">
-            <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
-              {name ? name.substring(0, 2) : 'US'}
-            </div>
+            {avatar ? (
+              <img src={avatar} alt={`${name || 'User'} avatar`} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover border border-white/10" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
+                {name ? name.substring(0, 2) : 'US'}
+              </div>
+            )}
             <div className="truncate flex-grow">
               <div className="text-[11px] font-bold text-white truncate">{name || 'User'}</div>
               <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">{role || 'member'}</div>
@@ -207,11 +215,13 @@ function NavbarContent() {
         <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-3 mb-2 shrink-0">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Projects</span>
-            <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            </Link>
+            {role === 'admin' && (
+              <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+              </Link>
+            )}
           </div>
           <div className="space-y-0.5">
             {sheets.map(s => {
@@ -235,9 +245,13 @@ function NavbarContent() {
         {/* Mobile User */}
         <div className="p-3 border-t border-slate-800 space-y-2.5">
           <div className="flex items-center gap-2.5 px-1">
-            <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
-              {name ? name.substring(0, 2) : 'US'}
-            </div>
+            {avatar ? (
+              <img src={avatar} alt={`${name || 'User'} avatar`} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover border border-white/10" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
+                {name ? name.substring(0, 2) : 'US'}
+              </div>
+            )}
             <div className="truncate flex-grow">
               <div className="text-[11px] font-bold text-white truncate">{name || 'User'}</div>
               <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">{role || 'member'}</div>

@@ -1,6 +1,6 @@
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -38,4 +38,10 @@ def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)
 def require_admin(user=Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(403, "Admin required")
+    return user
+
+def require_admin_write(request: Request, user=Depends(get_current_user)):
+    """Allow every active account to read, but reserve mutations for admins."""
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin":
+        raise HTTPException(403, "Admin required for write access")
     return user

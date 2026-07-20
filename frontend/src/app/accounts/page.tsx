@@ -27,6 +27,7 @@ interface Account {
   id: number;
   email: string;
   full_name: string;
+  avatar_url?: string | null;
   role: string;
   data_scope: string;
   is_active: boolean;
@@ -37,14 +38,12 @@ interface Account {
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
-  group_a: 'Group A',
-  group_b: 'Group B',
+  member: 'Member',
 };
 
 const ROLE_COLORS: Record<string, string> = {
   admin: 'bg-red-100 text-red-700',
-  group_a: 'bg-blue-100 text-blue-700',
-  group_b: 'bg-emerald-100 text-emerald-700',
+  member: 'bg-blue-100 text-blue-700',
 };
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -62,11 +61,11 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: 'infrastructure' });
+  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: 'infrastructure', member_id: 0 });
 
   // Reset password modal
 
@@ -110,7 +109,7 @@ export default function AccountsPage() {
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+      setCreateForm({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -136,7 +135,7 @@ export default function AccountsPage() {
   // Edit
   const openEdit = (acc: Account) => {
     setEditAccount(acc);
-    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || 'infrastructure' });
+    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || 'infrastructure', member_id: acc.member_id || 0 });
   };
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -252,7 +251,18 @@ export default function AccountsPage() {
                     accounts.map(acc => (
                       <tr key={acc.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-3 font-mono text-slate-400">{acc.id}</td>
-                        <td className="px-4 py-3 font-semibold text-[#0f172a]">{acc.email}</td>
+                        <td className="px-4 py-3 font-semibold text-[#0f172a]">
+                          <div className="flex items-center gap-2">
+                            {acc.avatar_url ? (
+                              <img src={acc.avatar_url} alt={`${acc.full_name || acc.email} avatar`} referrerPolicy="no-referrer" className="w-7 h-7 rounded-full object-cover border border-slate-200" />
+                            ) : (
+                              <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[10px] font-bold uppercase">
+                                {(acc.full_name || acc.email).substring(0, 2)}
+                              </div>
+                            )}
+                            <span>{acc.email}</span>
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-slate-600">{acc.full_name || '—'}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${ROLE_COLORS[acc.role] || 'bg-slate-100 text-slate-600'}`}>
@@ -355,8 +365,7 @@ export default function AccountsPage() {
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                   >
                     <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                    <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
-                    <option value="group_b">Group B — Chỉ xem dữ liệu</option>
+                    <option value="member">Member — Chỉ xem dữ liệu</option>
                   </select>
                 </div>
               </div>
@@ -428,6 +437,26 @@ export default function AccountsPage() {
                 />
               </div>
               <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên</label>
+                <select
+                  value={editForm.member_id}
+                  onChange={e => setEditForm(f => ({ ...f, member_id: Number(e.target.value) }))}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                >
+                  <option value={0}>— Không liên kết thành viên —</option>
+                  {editAccount.member && (
+                    <option value={editAccount.member.id}>
+                      {editAccount.member.display_name} — {editAccount.member.full_name}{editAccount.member.team ? ` (${editAccount.member.team})` : ''}
+                    </option>
+                  )}
+                  {availableMembers
+                    .filter(m => m.id !== editAccount.member?.id)
+                    .map(m => (
+                      <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
+                    ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò</label>
                 <select
                   value={editForm.role}
@@ -435,8 +464,7 @@ export default function AccountsPage() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
                   <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                  <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
-                  <option value="group_b">Group B — Chỉ xem dữ liệu</option>
+                  <option value="member">Member — Chỉ xem dữ liệu</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -450,15 +478,6 @@ export default function AccountsPage() {
                   <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
                 </select>
               </div>
-              {editAccount.member && (
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Thành viên liên kết</div>
-                  <div className="text-xs text-slate-600">
-                    <span className="font-semibold">{editAccount.member.display_name}</span> — {editAccount.member.full_name}
-                    {editAccount.member.team && <span className="text-slate-400"> · {editAccount.member.team}</span>}
-                  </div>
-                </div>
-              )}
             </form>
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
               <button onClick={() => setEditAccount(null)} className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-4 py-2 rounded-lg text-xs font-bold transition-all">Hủy</button>
