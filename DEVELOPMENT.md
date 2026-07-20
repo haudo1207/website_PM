@@ -57,9 +57,8 @@ không commit bất kỳ URL có mật khẩu nào.
 
 Hai thuộc tính hoạt động độc lập:
 
-- `role=admin`: quản lý tài khoản, danh mục hệ thống và có quyền chỉnh sửa.
-- `role=group_a`: được xem và chỉnh sửa dữ liệu dự án trong phạm vi được cấp.
-- `role=group_b`: chỉ được xem dữ liệu dự án trong phạm vi được cấp.
+- `role=admin`: toàn quyền quản lý tài khoản, member, settings, project, task và meeting.
+- `role=member`: chỉ xem dữ liệu trong phạm vi được cấp; mọi API tạo/sửa/xóa đều bị backend từ chối.
 - `data_scope=all`: xem toàn bộ dự án.
 - `data_scope=infrastructure`: chỉ xem dự án có scope Infrastructure.
 
@@ -76,3 +75,5 @@ sau đó đăng nhập đúng email Google đã được cấp. Các email trong
 4. Production không tự deploy khi merge. Vào **Actions → Deploy KPI production → Run workflow**, chọn branch `main`, nhập `DEPLOY` để triển khai đồng thời cả hai frontend production.
 
 Không chạy workflow production từ branch khác `main`.
+
+Sau khi phát hành production, fast-forward `dev` tới `main` để hai nhánh có cùng điểm bắt đầu cho vòng phát triển kế tiếp.

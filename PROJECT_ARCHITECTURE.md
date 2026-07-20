@@ -221,7 +221,8 @@ Cấu hình brand (logo, tên, màu sắc) nằm trong `src/lib/brand.ts`.
 
 ### 5.1 Engine
 
-- **PostgreSQL** (Supabase self-hosted trên mạng nội bộ `10.30.195.67:6543`)
+- **PostgreSQL development** dùng chung Supabase Cloud qua session pooler TLS; local không cần VPN/WARP và không dựng PostgreSQL riêng.
+- **PostgreSQL production** tiếp tục dùng Supabase self-hosted, tách biệt hoàn toàn với development.
 - Truy cập yêu cầu VPN công ty hoặc Cloudflare WARP
 
 ### 5.2 ORM & Migration
@@ -270,9 +271,9 @@ Project → Phase → TaskGroup → Task (4 cấp)
 
 ### 6.1 Authentication
 
-- JWT token (HS256) qua `python-jose`
-- Password hash bằng bcrypt (`passlib`)
-- OAuth2 Password Bearer flow (`/api/auth/login`)
+- Google Identity Services xác thực email đã được Admin cấp trước; hệ thống không tự tạo Account.
+- Google `sub` được liên kết ở lần đăng nhập đầu, tên/avatar được đồng bộ từ Google.
+- Backend phát JWT nội bộ (HS256) qua `python-jose`; password login mặc định tắt.
 - Token expiry: 480 phút (8 giờ)
 - Frontend lưu token trong localStorage, gửi qua Bearer header
 
@@ -280,9 +281,8 @@ Project → Phase → TaskGroup → Task (4 cấp)
 
 | Role | Quyền |
 |------|--------|
-| `admin` | Toàn quyền: quản lý accounts, members, settings, CRUD projects |
-| `group_a` | Đọc + ghi dự án (không quản lý accounts/settings) |
-| `group_b` | Chỉ đọc (read-only) |
+| `admin` | Toàn quyền: accounts, members, settings, project, task và meeting |
+| `member` | Chỉ đọc dữ liệu trong phạm vi được cấp |
 
 ### 6.3 Authorization — Data Scope
 
@@ -295,7 +295,7 @@ Project → Phase → TaskGroup → Task (4 cấp)
 
 - Không thể xóa/demote admin cuối cùng
 - Admin không thể tự demote chính mình
-- Write operations chỉ cho phép admin + group_a
+- Mọi write operation thuộc project/task/meeting/settings chỉ cho phép admin; backend trả 403 cho member
 
 ---
 
