@@ -11,7 +11,7 @@ from ..utils.auth import hash_password, require_admin
 
 router = APIRouter()
 
-VALID_ROLES = {"admin", "group_a", "group_b"}
+VALID_ROLES = {"admin", "member"}
 MIN_PASSWORD_LENGTH = 8
 
 
@@ -109,7 +109,7 @@ def available_members(db: Session = Depends(get_db), _=Depends(require_admin)):
 def create_account(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
     email = normalize_email(body.get("email"))
     password = str(body.get("password") or "")
-    role = str(body.get("role") or "group_a").strip().lower()
+    role = str(body.get("role") or "member").strip().lower()
     data_scope = str(body.get("data_scope") or DEFAULT_SCOPE).strip().lower()
     member_id = body.get("member_id") or None
 
@@ -172,7 +172,11 @@ def update_account(
         duplicate = db.query(User).filter(func.lower(User.email) == new_email, User.id != account_id).first()
         if duplicate:
             raise HTTPException(400, "Email đã tồn tại.")
-        account.email = new_email
+        if account.email != new_email:
+            account.email = new_email
+            # Re-approve and bind the replacement Google identity on first login.
+            account.google_sub = None
+            account.avatar_url = None
 
     if "full_name" in body:
         account.full_name = str(body["full_name"] or "").strip()

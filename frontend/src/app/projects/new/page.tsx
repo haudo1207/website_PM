@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { createProject, getMembers, getCustomers } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -45,6 +46,10 @@ export default function NewProjectPage() {
   const leaderRef = useRef<HTMLDivElement>(null);
   const memberRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isAdmin()) router.replace('/project');
+  }, [router]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

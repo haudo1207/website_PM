@@ -5,9 +5,9 @@ from decimal import Decimal
 
 from ..database import get_db
 from ..models.performance_setting import PerformanceSetting
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, require_admin_write
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin_write)])
 
 
 @router.get("")

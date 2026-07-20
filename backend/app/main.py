@@ -32,6 +32,18 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR"
         ))
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub VARCHAR"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub_unique "
+            "ON users (google_sub) WHERE google_sub IS NOT NULL"
+        ))
+        # Consolidate the legacy three-role model into Admin/Member. Permissions
+        # remain independent from project data scope.
+        conn.execute(text(
+            "UPDATE users SET role = 'member' WHERE role IN ('group_a', 'group_b')"
+        ))
         conn.execute(text("""
             DO $$
             BEGIN

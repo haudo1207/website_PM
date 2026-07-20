@@ -12,7 +12,9 @@ export const getRole = () => typeof window !== 'undefined' ? localStorage.getIte
 export const getName = () => typeof window !== 'undefined' ? localStorage.getItem('name') : null;
 export const getAvatar = () => typeof window !== 'undefined' ? localStorage.getItem('avatar') : null;
 export const isAdmin = () => getRole() === 'admin';
-export const isGroupA = () => ['admin', 'group_a'].includes(getRole() ?? '');
+// Kept for compatibility with existing imports; the two-role model reserves
+// every write operation for Admin.
+export const isGroupA = () => getRole() === 'admin';
 export const logout = () => {
   if (typeof window === 'undefined') return;
   localStorage.clear();

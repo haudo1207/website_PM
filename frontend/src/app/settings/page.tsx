@@ -47,7 +47,7 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'members' | 'skills' | 'system_categories' | 'kpis' | 'ai_prompts'>('members');
 
   // Member Form
-  const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'group_a', skills: [] as number[], position: '', department: '' });
+  const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'member', skills: [] as number[], position: '', department: '' });
   const [skillsModalUser, setSkillsModalUser] = useState<any | null>(null);
   const [userSkillsForm, setUserSkillsForm] = useState<number[]>([]);
 
@@ -119,7 +119,7 @@ export default function SettingsPage() {
     try {
       await createUser(form);
       flash('Đã tạo tài khoản thành công');
-      setForm({ email: '', full_name: '', password: '', role: 'group_a', skills: [], position: '', department: '' });
+      setForm({ email: '', full_name: '', password: '', role: 'member', skills: [], position: '', department: '' });
       getUsers().then(setUsers);
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi - Email có thể đã tồn tại');

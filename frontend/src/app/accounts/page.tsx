@@ -38,14 +38,12 @@ interface Account {
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
-  group_a: 'Group A',
-  group_b: 'Group B',
+  member: 'Member',
 };
 
 const ROLE_COLORS: Record<string, string> = {
   admin: 'bg-red-100 text-red-700',
-  group_a: 'bg-blue-100 text-blue-700',
-  group_b: 'bg-emerald-100 text-emerald-700',
+  member: 'bg-blue-100 text-blue-700',
 };
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -63,7 +61,7 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
@@ -111,7 +109,7 @@ export default function AccountsPage() {
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+      setCreateForm({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -367,8 +365,7 @@ export default function AccountsPage() {
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                   >
                     <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                    <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
-                    <option value="group_b">Group B — Chỉ xem dữ liệu</option>
+                    <option value="member">Member — Chỉ xem dữ liệu</option>
                   </select>
                 </div>
               </div>
@@ -467,8 +464,7 @@ export default function AccountsPage() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
                   <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                  <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
-                  <option value="group_b">Group B — Chỉ xem dữ liệu</option>
+                  <option value="member">Member — Chỉ xem dữ liệu</option>
                 </select>
               </div>
               <div className="space-y-1.5">
