@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.meeting import Meeting
 from ..models.phase import Phase
-from ..models.project import Project
+from ..models.project import Project, project_members
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from .auth import get_current_user
@@ -38,6 +38,25 @@ def require_project(db: Session, user, project_id: int) -> Project:
     return project
 
 
+def _is_task_write(request: Request) -> bool:
+    """Check if the request is a Task-related write operation (Create/Update/Delete)."""
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return False
+    return re.search(r"/task-groups/\d+/tasks", request.url.path) is not None
+
+
+def _is_member_of_project(db: Session, user, project_id: int) -> bool:
+    """Check if the user's linked member is assigned to the project."""
+    if not user.member_id:
+        return False
+    return db.execute(
+        project_members.select().where(
+            project_members.c.project_id == project_id,
+            project_members.c.member_id == user.member_id,
+        )
+    ).first() is not None
+
+
 def require_route_project_access(
     request: Request,
     db: Session = Depends(get_db),
@@ -47,18 +66,7 @@ def require_route_project_access(
     params = request.path_params
     project_id = params.get("pid")
 
-    # Role and data scope are deliberately independent: data_scope determines
-    # which projects are visible, while role determines whether data can change.
-    #
-    # Exception: members are allowed to PATCH a task detail.
-    # Route pattern: PATCH /api/task-groups/{gid}/tasks/{tid}
-    _is_task_detail_patch = (
-        request.method == "PATCH"
-        and re.search(r"/task-groups/\d+/tasks/\d+$", request.url.path) is not None
-    )
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin" and not _is_task_detail_patch:
-        raise HTTPException(403, "Yêu cầu quyền admin, bạn không có quyền thực hiện thao tác này!")
-
+    # Resolve project_id from path parameters if not directly provided.
     if project_id is None and params.get("phid") is not None:
         project_id = db.query(Phase.project_id).filter(Phase.id == int(params["phid"])).scalar()
     if project_id is None and params.get("gid") is not None:
@@ -82,6 +90,15 @@ def require_route_project_access(
             raise HTTPException(404, "Meeting not found.")
         project_id = meeting.project_id if meeting else None
 
+    # Check data scope access if project_id is resolved.
     if project_id is not None:
         require_project(db, user, int(project_id))
+
+    # Role-based write authorization.
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin":
+        # Members may perform Task CRUD if assigned to the current project.
+        if _is_task_write(request) and project_id is not None and _is_member_of_project(db, user, int(project_id)):
+            return user
+        raise HTTPException(403, "Yêu cầu quyền admin, bạn không có quyền thực hiện thao tác này!")
+
     return user
