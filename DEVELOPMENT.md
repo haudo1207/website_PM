@@ -12,7 +12,7 @@
 
 Tất cả developer và site development cùng dùng project Supabase self-host `kpi-dev`.
 Compose chỉ dựng frontend/backend, không dựng PostgreSQL local. Trước khi chạy,
-developer kết nối **một trong hai** đường mạng tới DB private `10.30.195.67:6543`:
+developer kết nối **một trong hai** đường mạng tới DB private `10.30.195.67:5432`:
 
 - VPN công ty; hoặc
 - Cloudflare WARP đã đăng nhập đúng team và được cấp route tới DB development.
