@@ -1,3 +1,4 @@
+import re
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -48,8 +49,15 @@ def require_route_project_access(
 
     # Role and data scope are deliberately independent: data_scope determines
     # which projects are visible, while role determines whether data can change.
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin":
-        raise HTTPException(403, "Write access requires Admin role.")
+    #
+    # Exception: members are allowed to PATCH a task detail.
+    # Route pattern: PATCH /api/task-groups/{gid}/tasks/{tid}
+    _is_task_detail_patch = (
+        request.method == "PATCH"
+        and re.search(r"/task-groups/\d+/tasks/\d+$", request.url.path) is not None
+    )
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin" and not _is_task_detail_patch:
+        raise HTTPException(403, "Yêu cầu quyền admin, bạn không có quyền thực hiện thao tác này!")
 
     if project_id is None and params.get("phid") is not None:
         project_id = db.query(Phase.project_id).filter(Phase.id == int(params["phid"])).scalar()
