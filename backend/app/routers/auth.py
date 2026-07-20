@@ -11,6 +11,11 @@ from ..utils.auth import verify_password, create_access_token
 
 router = APIRouter()
 
+# Google-issued tokens can arrive a few seconds ahead of a developer machine's
+# clock. Keep the tolerance small while avoiding false 401s from normal clock
+# drift on local Windows/Docker environments.
+GOOGLE_TOKEN_CLOCK_SKEW_SECONDS = 10
+
 
 def token_response(user: User) -> dict:
     token = create_access_token({"sub": str(user.id), "role": user.role})
@@ -59,6 +64,7 @@ def google_login(body: dict, db: Session = Depends(get_db)):
             credential,
             google_requests.Request(),
             settings.GOOGLE_CLIENT_ID,
+            clock_skew_in_seconds=GOOGLE_TOKEN_CLOCK_SKEW_SECONDS,
         )
     except (ValueError, TypeError, GoogleAuthError):
         raise HTTPException(401, "Invalid Google credential.")
