@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     env_file: ${APP_ENV_FILE:-./.env}
     environment:
-      # Both the company VPN and Cloudflare WARP route this private DB address.
+      # The same private endpoint works through either company VPN or WARP.
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
     ports:
       - "127.0.0.1:8000:8000"
@@ -33,8 +33,6 @@ services:
       backend:
         condition: service_healthy
 
-# WARP on Linux reserves encapsulation overhead. The lower bridge MTU also works
-# on the company VPN and prevents Docker-only timeouts while the host can connect.
 networks:
   default:
     driver: bridge

@@ -3,12 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
+from .routers import leave_requests as leave_requests_router
 from .database import engine, Base
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
 from .models import task as task_model
+from .models import leave_request as leave_request_model
 from sqlalchemy import text
 
 # Create all tables (new v5 schema)
@@ -88,6 +90,7 @@ def init_db_defaults():
     from .config import settings as app_settings
     import json
     import os
+    import secrets
 
     db = SessionLocal()
     try:
@@ -147,23 +150,43 @@ def init_db_defaults():
             }
             db.add(Setting(key="ai_config", value=json.dumps(ai, ensure_ascii=False)))
 
-        # 2. Initialize default admin user if no users exist
+        # 2. Initialize a legacy password admin only when password login is enabled.
         if db.query(User).count() == 0:
             default_admin_password = app_settings.DEFAULT_ADMIN_PASSWORD.strip()
-            if not default_admin_password:
+            if not default_admin_password and not app_settings.superadmin_emails:
                 raise RuntimeError(
-                    "Database has no users. Set DEFAULT_ADMIN_PASSWORD once to create the first admin."
+                    "Database has no users. Set AUTH_SUPERADMIN_EMAILS or DEFAULT_ADMIN_PASSWORD."
                 )
-            admin = User(
-                id=1,
-                email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
-                full_name="Admin Company",
-                hashed_pw=hash_password(default_admin_password),
-                role="admin",
-                is_active=True
-            )
-            db.add(admin)
-            print("[*] Created default admin: admin@company.com")
+            if default_admin_password:
+                admin = User(
+                    id=1,
+                    email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
+                    full_name="Admin Company",
+                    hashed_pw=hash_password(default_admin_password),
+                    role="admin",
+                    is_active=True
+                )
+                db.add(admin)
+                db.flush()
+
+        # Google-only login still uses the users table as an explicit allow-list.
+        # These bootstrap addresses are idempotently guaranteed highest access.
+        for email in app_settings.superadmin_emails:
+            admin = db.query(User).filter(User.email == email).first()
+            if not admin:
+                admin = User(
+                    email=email,
+                    full_name=email.split("@", 1)[0],
+                    hashed_pw=hash_password(secrets.token_urlsafe(48)),
+                    role="admin",
+                    data_scope="all",
+                    is_active=True,
+                )
+                db.add(admin)
+            else:
+                admin.role = "admin"
+                admin.data_scope = "all"
+                admin.is_active = True
 
         # 3. Seed Skills from Excel if empty
         from .models.skill_master import Category, Group, Skill
@@ -422,6 +445,7 @@ app.include_router(settings_router.router,     prefix="/api/settings")
 app.include_router(skills.router,              prefix="/api/skills")
 app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
+app.include_router(leave_requests_router.router, prefix="/api/leave-requests")
 app.include_router(meetings_router.router,    prefix="/api/meetings")
 app.include_router(performance_settings.router, prefix="/api/performance-settings")
 app.include_router(accounts.router,            prefix="/api/accounts")

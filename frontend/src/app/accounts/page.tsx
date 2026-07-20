@@ -8,7 +8,6 @@ import {
   getAvailableMembers,
   createAccount,
   updateAccount,
-  resetAccountPassword,
   lockAccount,
   unlockAccount,
   deleteAccount,
@@ -63,15 +62,13 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', password: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
   const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: 'infrastructure' });
 
   // Reset password modal
-  const [resetAccount, setResetAccount] = useState<Account | null>(null);
-  const [resetPw, setResetPw] = useState('');
 
   useEffect(() => {
     if (!isAdmin()) {
@@ -106,7 +103,6 @@ export default function AccountsPage() {
     try {
       await createAccount({
         email: createForm.email,
-        password: createForm.password,
         role: createForm.role,
         data_scope: createForm.data_scope,
         full_name: createForm.full_name,
@@ -114,7 +110,7 @@ export default function AccountsPage() {
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', password: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+      setCreateForm({ email: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -153,20 +149,6 @@ export default function AccountsPage() {
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi cập nhật tài khoản');
-    }
-  };
-
-  // Reset password
-  const handleResetPw = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!resetAccount) return;
-    try {
-      await resetAccountPassword(resetAccount.id, resetPw);
-      flash('Đã đặt lại mật khẩu thành công');
-      setResetAccount(null);
-      setResetPw('');
-    } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi đặt lại mật khẩu');
     }
   };
 
@@ -299,8 +281,6 @@ export default function AccountsPage() {
                           <div className="flex items-center justify-end gap-1.5">
                             <button onClick={() => openEdit(acc)} className="text-blue-600 hover:underline font-medium" title="Sửa">Sửa</button>
                             <span className="text-slate-200">|</span>
-                            <button onClick={() => { setResetAccount(acc); setResetPw(''); }} className="text-amber-600 hover:underline font-medium" title="Đặt lại mật khẩu">Mật khẩu</button>
-                            <span className="text-slate-200">|</span>
                             <button onClick={() => handleToggleLock(acc)} className={`hover:underline font-medium ${acc.is_active ? 'text-orange-600' : 'text-emerald-600'}`}>
                               {acc.is_active ? 'Khóa' : 'Mở khóa'}
                             </button>
@@ -367,16 +347,6 @@ export default function AccountsPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mật khẩu <span className="text-red-500">*</span></label>
-                  <input
-                    required type="password" minLength={8}
-                    value={createForm.password}
-                    onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                    placeholder="••••••••"
-                  />
-                </div>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò <span className="text-red-500">*</span></label>
                   <select
@@ -498,38 +468,6 @@ export default function AccountsPage() {
         </div>
       )}
 
-      {/* ═══ RESET PASSWORD MODAL ═══ */}
-      {resetAccount && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 w-full max-w-md rounded-xl shadow-xl overflow-hidden">
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-              <div>
-                <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider">Đặt lại mật khẩu</h3>
-                <p className="text-xs text-slate-400 mt-0.5">{resetAccount.email}</p>
-              </div>
-              <button onClick={() => setResetAccount(null)} className="text-slate-400 hover:text-slate-600">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <form onSubmit={handleResetPw} className="p-6 space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mật khẩu mới <span className="text-red-500">*</span></label>
-                <input
-                  required type="password" minLength={8}
-                  value={resetPw}
-                  onChange={e => setResetPw(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                  placeholder="Nhập mật khẩu mới"
-                />
-              </div>
-            </form>
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
-              <button onClick={() => setResetAccount(null)} className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-4 py-2 rounded-lg text-xs font-bold transition-all">Hủy</button>
-              <button onClick={handleResetPw} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm">Đặt lại mật khẩu</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
