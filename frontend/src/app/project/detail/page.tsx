@@ -305,7 +305,7 @@ function ProjectDetailContent() {
       case 'MANDAY': return task.manday_est !== null && task.manday_est !== undefined ? String(task.manday_est) : '';
       case 'STATUS': return task.status || 'Waiting';
       case 'START DATE':
-      case 'START DATE (EST)': return task.start_date || '';
+      case 'START DATE (EST)': return formatDateToShow(task.start_date || '');
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
@@ -316,11 +316,11 @@ function ProjectDetailContent() {
       case 'SEND': return task.send || '';
       case 'END DATE EST':
       case 'END DAY (EST)':
-      case 'END DATE (EST)': return task.end_date_est || '';
+      case 'END DATE (EST)': return formatDateToShow(task.end_date_est || '');
       case 'MD ACTUAL':
       case 'MANDAY ACTUAL': return task.manday_actual !== null && task.manday_actual !== undefined ? String(task.manday_actual) : '';
       case 'END ACTUAL':
-      case 'END DATE ACTUAL': return task.end_date_actual || '';
+      case 'END DATE ACTUAL': return formatDateToShow(task.end_date_actual || '');
       case 'DAYS LATE': return task.days_late !== null && task.days_late !== undefined ? String(task.days_late) : '';
       case 'KPI BASE': return task.kpi_base !== null && task.kpi_base !== undefined ? String(task.kpi_base) : '';
       case 'KPI PERFORM': return task.kpi_perform !== null && task.kpi_perform !== undefined ? String(task.kpi_perform) : '';
@@ -770,14 +770,14 @@ function ProjectDetailContent() {
       case 'MANDAY': return group.manday_est != null ? String(group.manday_est) : '';
       case 'STATUS': return group.status || 'Waiting';
       case 'START DATE':
-      case 'START DATE (EST)': return group.start_date_est || '';
+      case 'START DATE (EST)': return formatDateToShow(group.start_date_est || '');
       case 'END DATE EST':
       case 'END DAY (EST)':
-      case 'END DATE (EST)': return group.end_date_est || '';
+      case 'END DATE (EST)': return formatDateToShow(group.end_date_est || '');
       case 'MD ACTUAL':
       case 'MANDAY ACTUAL': return group.manday_actual != null ? String(group.manday_actual) : '';
       case 'END ACTUAL':
-      case 'END DATE ACTUAL': return group.end_date_actual || '';
+      case 'END DATE ACTUAL': return formatDateToShow(group.end_date_actual || '');
       default: return '';
     }
   };
@@ -932,7 +932,7 @@ function ProjectDetailContent() {
         break;
       case 'START DATE':
       case 'START DATE (EST)':
-        payload.start_date = value || null;
+        payload.start_date = convertToDbDate(value);
         break;
       case 'ASSIGNED':
         payload.assigned_id = value ? parseInt(value, 10) : null;
@@ -968,7 +968,7 @@ function ProjectDetailContent() {
         break;
       case 'END DATE ACTUAL':
       case 'END ACTUAL':
-        payload.end_date_actual = value || null;
+        payload.end_date_actual = convertToDbDate(value);
         break;
       case 'NOTES':
         payload.notes = value;
@@ -1036,7 +1036,7 @@ function ProjectDetailContent() {
       case 'MANDAY': payload.manday_est = value ? parseFloat(value) : null; break;
       case 'STATUS': payload.status = value; break;
       case 'START DATE':
-      case 'START DATE (EST)': payload.start_date_est = value || null; break;
+      case 'START DATE (EST)': payload.start_date_est = convertToDbDate(value); break;
       default: return;
     }
 
@@ -1201,7 +1201,10 @@ function ProjectDetailContent() {
     if (parts.length === 3) {
       const d = parts[0].padStart(2, '0');
       const m = parts[1].padStart(2, '0');
-      const y = parts[2];
+      let y = parts[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
       return `${y}-${m}-${d}`;
     }
     const d = new Date(val);
@@ -1218,6 +1221,62 @@ function ProjectDetailContent() {
       return `${parts[2]}/${parts[1]}/${parts[0]}`;
     }
     return val;
+  };
+
+  const formatDateToShow = (val: string): string => {
+    if (!val) return '';
+    val = val.trim();
+    // If it's YYYY-MM-DD (e.g. '2026-07-09')
+    const parts = val.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    // If it's DD/MM/YYYY or DD/MM/YY
+    const slashParts = val.split('/');
+    if (slashParts.length === 3) {
+      let y = slashParts[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
+      return `${slashParts[0]}/${slashParts[1]}/${y}`;
+    }
+    return val;
+  };
+
+  const convertToDbDate = (val: string): string | null => {
+    if (!val) return null;
+    val = val.trim();
+    // Case 1: YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      return val;
+    }
+    // Case 2: DD/MM/YYYY or DD/MM/YY
+    const parts = val.split('/');
+    if (parts.length === 3) {
+      const d = parts[0].padStart(2, '0');
+      const m = parts[1].padStart(2, '0');
+      let y = parts[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
+      return `${y}-${m}-${d}`;
+    }
+    // Case 3: DD-MM-YYYY or DD-MM-YY
+    const partsHyphen = val.split('-');
+    if (partsHyphen.length === 3 && partsHyphen[0].length <= 2) {
+      const d = partsHyphen[0].padStart(2, '0');
+      const m = partsHyphen[1].padStart(2, '0');
+      let y = partsHyphen[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
+      return `${y}-${m}-${d}`;
+    }
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+    }
+    return null;
   };
 
   // --- Dynamic Stats calculation ---
@@ -1640,7 +1699,7 @@ function ProjectDetailContent() {
         detail: detailVal,
         priority: priorityVal,
         status: statusVal,
-        start_date: startDateVal,
+        start_date: convertToDbDate(startDateVal),
         manday_est: mandayEstVal,
         ticket_id: newForm['TICKET ID'] || '',
         remark: newForm['REMARK'] || '',
@@ -1722,8 +1781,8 @@ function ProjectDetailContent() {
         priority: drawerForm.priority,
         assigned_id: drawerForm.assigned_id ? parseInt(drawerForm.assigned_id, 10) : null,
         support_id: drawerForm.support_id ? parseInt(drawerForm.support_id, 10) : null,
-        start_date: drawerForm.start_date || null,
-        end_date_est: drawerForm.end_date_est || null,
+        start_date: convertToDbDate(drawerForm.start_date),
+        end_date_est: convertToDbDate(drawerForm.end_date_est),
         manday_est: drawerForm.manday_est ? parseFloat(drawerForm.manday_est) : null,
         manday_actual: drawerForm.manday_actual ? parseFloat(drawerForm.manday_actual) : null,
         notes: drawerForm.notes || null,
@@ -2323,6 +2382,33 @@ function ProjectDetailContent() {
                       }
                     }}
                     className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none resize-none overflow-hidden min-h-[40px] h-auto whitespace-pre-wrap break-words leading-relaxed"
+                  />
+                </td>
+              );
+            }
+
+            if (colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'))) {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[130px]">
+                  <input
+                    type="date"
+                    value={editValue ? toPickerDate(editValue) : ''}
+                    autoFocus
+                    onChange={e => setEditValue(fromPickerDate(e.target.value))}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, editValue);
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, editValue, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
+                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs font-mono focus:outline-none font-semibold text-[#0b1c30]"
                   />
                 </td>
               );
