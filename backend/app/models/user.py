@@ -7,6 +7,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, nullable=False)
     full_name = Column(String)
+    avatar_url = Column(String, nullable=True)
     hashed_pw = Column(String, nullable=False)
     role = Column(String, default="group_a")
     is_active = Column(Boolean, default=True)

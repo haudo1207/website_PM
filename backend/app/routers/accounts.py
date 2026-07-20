@@ -66,6 +66,7 @@ def account_to_dict(u: User) -> dict:
         "id": u.id,
         "email": u.email,
         "full_name": u.full_name,
+        "avatar_url": u.avatar_url,
         "role": u.role,
         "data_scope": u.data_scope,
         "is_active": u.is_active,
@@ -175,6 +176,20 @@ def update_account(
 
     if "full_name" in body:
         account.full_name = str(body["full_name"] or "").strip()
+
+    if "member_id" in body:
+        member_id = body.get("member_id") or None
+        if member_id is not None:
+            member = db.query(Member).filter(Member.id == member_id).first()
+            if not member:
+                raise HTTPException(404, "Không tìm thấy thành viên.")
+            duplicate = db.query(User).filter(
+                User.member_id == member_id,
+                User.id != account_id,
+            ).first()
+            if duplicate:
+                raise HTTPException(400, "Thành viên này đã được liên kết với tài khoản khác.")
+        account.member_id = member_id
 
     if "role" in body:
         new_role = str(body["role"]).strip().lower()

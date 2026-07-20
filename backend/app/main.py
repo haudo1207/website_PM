@@ -29,6 +29,9 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS member_id INTEGER"
         ))
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR"
+        ))
         conn.execute(text("""
             DO $$
             BEGIN

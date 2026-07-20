@@ -19,6 +19,7 @@ def token_response(user: User) -> dict:
         "token_type": "bearer",
         "role": user.role,
         "full_name": user.full_name,
+        "avatar_url": user.avatar_url,
     }
 
 
@@ -72,9 +73,18 @@ def google_login(body: dict, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(403, "Account disabled.")
 
-    # Keep the display name current without allowing Google to change roles/scopes.
+    # Google is the identity source for profile fields. Roles, scopes and member
+    # linkage remain controlled by the application admin.
     google_name = str(claims.get("name") or "").strip()
-    if google_name and not user.full_name:
+    google_avatar = str(claims.get("picture") or "").strip()
+    changed = False
+    if google_name and user.full_name != google_name:
         user.full_name = google_name
+        changed = True
+    if google_avatar and user.avatar_url != google_avatar:
+        user.avatar_url = google_avatar
+        changed = True
+    if changed:
         db.commit()
+        db.refresh(user)
     return token_response(user)

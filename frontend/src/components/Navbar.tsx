@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { getName, logout, getRole } from '@/lib/auth';
+import { getAvatar, getName, logout, getRole } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
 import { getProjects } from '@/lib/api';
 import { brand } from '@/lib/brand';
@@ -10,12 +10,14 @@ function NavbarContent() {
   const path = usePathname();
   const searchParams = useSearchParams();
   const [name, setName] = useState('');
+  const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
   const [sheets, setSheets] = useState<any[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setName(getName() ?? '');
+    setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
     getProjects().then(setSheets).catch(() => {});
   }, [path]);
@@ -153,9 +155,13 @@ function NavbarContent() {
         {/* User */}
         <div className="p-3 border-t border-slate-800 space-y-2.5">
           <div className="flex items-center gap-2.5 px-1">
-            <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
-              {name ? name.substring(0, 2) : 'US'}
-            </div>
+            {avatar ? (
+              <img src={avatar} alt={`${name || 'User'} avatar`} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover border border-white/10" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
+                {name ? name.substring(0, 2) : 'US'}
+              </div>
+            )}
             <div className="truncate flex-grow">
               <div className="text-[11px] font-bold text-white truncate">{name || 'User'}</div>
               <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">{role || 'member'}</div>
@@ -235,9 +241,13 @@ function NavbarContent() {
         {/* Mobile User */}
         <div className="p-3 border-t border-slate-800 space-y-2.5">
           <div className="flex items-center gap-2.5 px-1">
-            <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
-              {name ? name.substring(0, 2) : 'US'}
-            </div>
+            {avatar ? (
+              <img src={avatar} alt={`${name || 'User'} avatar`} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover border border-white/10" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
+                {name ? name.substring(0, 2) : 'US'}
+              </div>
+            )}
             <div className="truncate flex-grow">
               <div className="text-[11px] font-bold text-white truncate">{name || 'User'}</div>
               <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">{role || 'member'}</div>
