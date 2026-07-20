@@ -90,7 +90,6 @@ def init_db_defaults():
     from .config import settings as app_settings
     import json
     import os
-    import secrets
 
     db = SessionLocal()
     try:
@@ -177,7 +176,9 @@ def init_db_defaults():
                 admin = User(
                     email=email,
                     full_name=email.split("@", 1)[0],
-                    hashed_pw=hash_password(secrets.token_urlsafe(48)),
+                    # NOT NULL legacy column; this marker is intentionally not a
+                    # valid password hash because Google is the only login path.
+                    hashed_pw="!google-only!",
                     role="admin",
                     data_scope="all",
                     is_active=True,

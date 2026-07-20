@@ -2,8 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-import secrets
-
 from ..database import get_db
 from ..config import settings
 from ..models.member import Member
@@ -135,7 +133,11 @@ def create_account(body: dict, db: Session = Depends(get_db), _=Depends(require_
     account = User(
         email=email,
         full_name=str(body.get("full_name") or "").strip(),
-        hashed_pw=hash_password(password or secrets.token_urlsafe(48)),
+        hashed_pw=(
+            hash_password(password)
+            if settings.PASSWORD_LOGIN_ENABLED
+            else "!google-only!"
+        ),
         role=role,
         data_scope=data_scope,
         is_active=True,
