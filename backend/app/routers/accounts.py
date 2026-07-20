@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+import secrets
 
 from ..database import get_db
+from ..config import settings
 from ..models.member import Member
 from ..models.user import User
 from ..utils.access import DEFAULT_SCOPE, VALID_DATA_SCOPES
@@ -17,6 +19,10 @@ MIN_PASSWORD_LENGTH = 8
 
 def normalize_email(value) -> str:
     return str(value or "").strip().lower()
+
+
+def is_bootstrap_superadmin(account: User) -> bool:
+    return normalize_email(account.email) in settings.superadmin_emails
 
 
 def require_account(db: Session, account_id: int) -> User:
@@ -110,7 +116,8 @@ def create_account(body: dict, db: Session = Depends(get_db), _=Depends(require_
 
     if not email:
         raise HTTPException(400, "Email không được để trống.")
-    validate_password(password)
+    if settings.PASSWORD_LOGIN_ENABLED:
+        validate_password(password)
     if role not in VALID_ROLES:
         raise HTTPException(400, f"Role không hợp lệ. Chọn một trong: {sorted(VALID_ROLES)}")
     if data_scope not in VALID_DATA_SCOPES:
@@ -128,7 +135,7 @@ def create_account(body: dict, db: Session = Depends(get_db), _=Depends(require_
     account = User(
         email=email,
         full_name=str(body.get("full_name") or "").strip(),
-        hashed_pw=hash_password(password),
+        hashed_pw=hash_password(password or secrets.token_urlsafe(48)),
         role=role,
         data_scope=data_scope,
         is_active=True,
@@ -154,6 +161,8 @@ def update_account(
     account = require_account(db, account_id)
 
     if "email" in body:
+        if is_bootstrap_superadmin(account):
+            raise HTTPException(400, "The bootstrap super-admin email cannot be changed.")
         new_email = normalize_email(body["email"])
         if not new_email:
             raise HTTPException(400, "Email không được để trống.")
@@ -172,12 +181,16 @@ def update_account(
         if admin.id == account.id and new_role != "admin":
             raise HTTPException(400, "Bạn không thể tự hạ quyền admin của chính mình.")
         ensure_admin_remains(db, account, role=new_role)
+        if is_bootstrap_superadmin(account) and new_role != "admin":
+            raise HTTPException(400, "The bootstrap super-admin cannot be demoted.")
         account.role = new_role
 
     if "data_scope" in body:
         data_scope = str(body["data_scope"]).strip().lower()
         if data_scope not in VALID_DATA_SCOPES:
             raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(VALID_DATA_SCOPES)}")
+        if is_bootstrap_superadmin(account) and data_scope != "all":
+            raise HTTPException(400, "The bootstrap super-admin must retain access to all data.")
         account.data_scope = data_scope
 
     try:
@@ -191,6 +204,8 @@ def update_account(
 
 @router.post("/{account_id}/reset-password")
 def reset_password(account_id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    if not settings.PASSWORD_LOGIN_ENABLED:
+        raise HTTPException(403, "Password login is disabled.")
     account = require_account(db, account_id)
     new_password = str(body.get("password") or "")
     validate_password(new_password)
@@ -206,6 +221,8 @@ def lock_account(
     admin=Depends(require_admin),
 ):
     account = require_account(db, account_id)
+    if is_bootstrap_superadmin(account):
+        raise HTTPException(400, "The bootstrap super-admin cannot be locked.")
     if admin.id == account.id:
         raise HTTPException(400, "Bạn không thể tự khóa tài khoản đang đăng nhập.")
     ensure_admin_remains(db, account, active=False)
@@ -229,6 +246,8 @@ def delete_account(
     admin=Depends(require_admin),
 ):
     account = require_account(db, account_id)
+    if is_bootstrap_superadmin(account):
+        raise HTTPException(400, "The bootstrap super-admin cannot be deleted.")
     if admin.id == account.id:
         raise HTTPException(400, "Bạn không thể tự xóa tài khoản đang đăng nhập.")
     ensure_admin_remains(db, account, deleting=True)

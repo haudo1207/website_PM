@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     DEFAULT_ADMIN_EMAIL: str = "admin@company.com"
     DEFAULT_ADMIN_PASSWORD: str = ""
+    GOOGLE_LOGIN_ENABLED: bool = True
+    PASSWORD_LOGIN_ENABLED: bool = False
+    AUTH_SUPERADMIN_EMAILS: str = ""
     AI_BASE_URL: str = "https://api.shopaikey.com/v1"
     AI_API_KEY: str = ""
     AI_MODEL: str = "gpt-4o-mini"
@@ -35,6 +38,14 @@ class Settings(BaseSettings):
 
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
+
+    @property
+    def superadmin_emails(self) -> set[str]:
+        return {
+            email.strip().lower()
+            for email in self.AUTH_SUPERADMIN_EMAILS.split(",")
+            if email.strip()
+        }
 
 
 settings = Settings()

@@ -90,6 +90,7 @@ def init_db_defaults():
     from .config import settings as app_settings
     import json
     import os
+    import secrets
 
     db = SessionLocal()
     try:
@@ -149,23 +150,43 @@ def init_db_defaults():
             }
             db.add(Setting(key="ai_config", value=json.dumps(ai, ensure_ascii=False)))
 
-        # 2. Initialize default admin user if no users exist
+        # 2. Initialize a legacy password admin only when password login is enabled.
         if db.query(User).count() == 0:
             default_admin_password = app_settings.DEFAULT_ADMIN_PASSWORD.strip()
-            if not default_admin_password:
+            if not default_admin_password and not app_settings.superadmin_emails:
                 raise RuntimeError(
-                    "Database has no users. Set DEFAULT_ADMIN_PASSWORD once to create the first admin."
+                    "Database has no users. Set AUTH_SUPERADMIN_EMAILS or DEFAULT_ADMIN_PASSWORD."
                 )
-            admin = User(
-                id=1,
-                email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
-                full_name="Admin Company",
-                hashed_pw=hash_password(default_admin_password),
-                role="admin",
-                is_active=True
-            )
-            db.add(admin)
-            print("[*] Created default admin: admin@company.com")
+            if default_admin_password:
+                admin = User(
+                    id=1,
+                    email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
+                    full_name="Admin Company",
+                    hashed_pw=hash_password(default_admin_password),
+                    role="admin",
+                    is_active=True
+                )
+                db.add(admin)
+                db.flush()
+
+        # Google-only login still uses the users table as an explicit allow-list.
+        # These bootstrap addresses are idempotently guaranteed highest access.
+        for email in app_settings.superadmin_emails:
+            admin = db.query(User).filter(User.email == email).first()
+            if not admin:
+                admin = User(
+                    email=email,
+                    full_name=email.split("@", 1)[0],
+                    hashed_pw=hash_password(secrets.token_urlsafe(48)),
+                    role="admin",
+                    data_scope="all",
+                    is_active=True,
+                )
+                db.add(admin)
+            else:
+                admin.role = "admin"
+                admin.data_scope = "all"
+                admin.is_active = True
 
         # 3. Seed Skills from Excel if empty
         from .models.skill_master import Category, Group, Skill
