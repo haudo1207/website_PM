@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import text
 from ..database import get_db
 from ..models.skill_master import Category, Group, Skill, user_skills
@@ -52,33 +52,57 @@ def is_category_used_by_member(db: Session, category_id: int) -> bool:
 
 @router.get("/categories")
 def list_categories(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    categories = db.query(Category).order_by(Category.id).all()
+    categories = (
+        db.query(Category)
+        .options(selectinload(Category.groups).selectinload(Group.skills))
+        .order_by(Category.id)
+        .all()
+    )
+    task_skill_ids = {
+        skill_id
+        for skill_id, in db.query(Task.skill_vendor_id)
+        .filter(Task.skill_vendor_id.isnot(None))
+        .distinct()
+        .all()
+    }
+    task_group_ids = {
+        group_id
+        for group_id, in db.query(Task.skill_solution_id)
+        .filter(Task.skill_solution_id.isnot(None))
+        .distinct()
+        .all()
+    }
+    member_skill_ids = {
+        skill_id for skill_id, in db.query(user_skills.c.skill_id).distinct().all()
+    }
+
     result = []
     for c in categories:
         groups_list = []
-        for g in c.groups:
+        for g in sorted(c.groups, key=lambda item: item.id):
             skills_list = []
-            for s in g.skills:
+            for s in sorted(g.skills, key=lambda item: item.id):
                 skills_list.append({
                     "id": s.id,
                     "name": s.name,
                     "group_id": s.group_id,
                     "is_active": s.is_active,
-                    "is_used": is_skill_used_by_task(db, s.name) or is_skill_used_by_member(db, s.id)
+                    "is_used": s.id in task_skill_ids or s.id in member_skill_ids,
                 })
+            group_is_used = g.id in task_group_ids or any(s["is_used"] for s in skills_list)
             groups_list.append({
                 "id": g.id,
                 "name": g.name,
                 "category_id": g.category_id,
                 "skills": skills_list,
-                "is_used": is_group_used_by_task(db, g.name) or is_group_used_by_member(db, g.id)
+                "is_used": group_is_used,
             })
         result.append({
             "id": c.id,
             "name": c.name,
             "is_active": c.is_active,
             "groups": groups_list,
-            "is_used": any(g["is_used"] for g in groups_list) or is_category_used_by_member(db, c.id)
+            "is_used": any(g["is_used"] for g in groups_list),
         })
     return result
 
