@@ -309,9 +309,10 @@ function ProjectDetailContent() {
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
+      case 'TICKET ID': return task.ticket_id || '';
       case 'SKILL SOLUTION': return task.skill_solution_name || '';
       case 'SKILL VENDOR': return task.skill_vendor_name || '';
-      case 'TICKET ID': return task.ticket_id || '';
+
       case 'REMARK': return task.remark || '';
       case 'SEND': return task.send || '';
       case 'END DATE EST':
@@ -939,15 +940,23 @@ function ProjectDetailContent() {
         break;
       case 'SUPPORT':
         payload.support_id = value ? parseInt(value, 10) : null;
+        // Auto-set KPI ratio: 100/0 when no support, 90/10 when support assigned
+        if (!value) {
+          payload.kpi_ratio_assign = 100;
+          payload.kpi_ratio_support = 0;
+        } else if (task && (!task.support_id) && task.kpi_ratio_assign === 100 && task.kpi_ratio_support === 0) {
+          payload.kpi_ratio_assign = 90;
+          payload.kpi_ratio_support = 10;
+        }
         break;
       case 'KPI RATIO':
         if (value && value.includes('/')) {
           const parts = value.split('/');
-          payload.kpi_ratio_assign = parseInt(parts[0], 10) || 100;
-          payload.kpi_ratio_support = parseInt(parts[1], 10) || 0;
+          payload.kpi_ratio_assign = parseInt(parts[0], 10) || 90;
+          payload.kpi_ratio_support = parseInt(parts[1], 10) || 10;
         } else {
-          payload.kpi_ratio_assign = 100;
-          payload.kpi_ratio_support = 0;
+          payload.kpi_ratio_assign = 90;
+          payload.kpi_ratio_support = 10;
         }
         break;
       case 'SKILL SOLUTION':
@@ -1633,10 +1642,10 @@ function ProjectDetailContent() {
         inputField = (
           <input
             type="text"
-            value={newForm[col] || '100/0'}
+            value={newForm[col] || '90/10'}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
-            placeholder="100/0"
+            placeholder="90/10"
             className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
               }`}
           />
@@ -1712,10 +1721,17 @@ function ProjectDetailContent() {
       };
 
       // KPI ratio
-      const kpiRatio = newForm['KPI RATIO'] || '100/0';
+      // KPI Ratio: default 90/10, auto 100/0 if no support
+      const hasSupport = !!payload.support_id;
+      const kpiRatio = newForm['KPI RATIO'] || (hasSupport ? '90/10' : '100/0');
       const parts = kpiRatio.split('/');
-      payload.kpi_ratio_assign = parseInt(parts[0], 10) || 100;
-      payload.kpi_ratio_support = parseInt(parts[1], 10) || 0;
+      if (!hasSupport) {
+        payload.kpi_ratio_assign = 100;
+        payload.kpi_ratio_support = 0;
+      } else {
+        payload.kpi_ratio_assign = parseInt(parts[0], 10) || 90;
+        payload.kpi_ratio_support = parseInt(parts[1], 10) || 10;
+      }
 
       await createTask(addingTaskGroupId, payload);
       setAddingTaskGroupId(null);
@@ -2557,6 +2573,41 @@ function ProjectDetailContent() {
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200 shadow-sm" title="KPI Final Pending (Chờ task hoàn thành)">
                   ⏳ {val}
                 </span>
+              );
+            }
+          } else if (colUpper === 'TICKET ID') {
+            const isUrl = /^https?:\/\//i.test(val);
+            if (isUrl) {
+              // Extract a readable label from URL
+              let label = val;
+              try {
+                const u = new URL(val);
+                const host = u.hostname.replace('www.', '');
+                if (host.includes('docs.google.com')) label = 'Google Docs';
+                else if (host.includes('figma.com')) label = 'Figma Design';
+                else if (host.includes('drive.google.com')) label = 'Google Drive';
+                else if (host.includes('github.com')) label = 'GitHub';
+                else if (host.includes('jira')) label = 'Jira Ticket';
+                else if (host.includes('notion')) label = 'Notion Page';
+                else if (host.includes('confluence')) label = 'Confluence';
+                else label = host + (u.pathname.length > 20 ? u.pathname.substring(0, 20) + '...' : u.pathname);
+              } catch {}
+              cellContent = (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors max-w-[180px] truncate shadow-sm"
+                  title={val}
+                  onClick={(e) => { e.stopPropagation(); window.open(val, '_blank', 'noopener,noreferrer'); }}
+                >
+                  🔗 {label}
+                </span>
+              );
+            } else if (val) {
+              cellContent = (
+                <span className="text-[12px] font-mono text-[#0b1c30]">{val}</span>
+              );
+            } else {
+              cellContent = (
+                <span className="text-slate-400 italic font-normal text-[11px] select-none">Trống</span>
               );
             }
           }
