@@ -43,8 +43,8 @@ class Task(Base):
     support_id      = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
 
     # KPI Ratio
-    kpi_ratio_assign  = Column(Integer, default=100)
-    kpi_ratio_support = Column(Integer, default=0)
+    kpi_ratio_assign  = Column(Integer, default=90)
+    kpi_ratio_support = Column(Integer, default=10)
 
     # Skill Solution (Group level)
     skill_solution_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)

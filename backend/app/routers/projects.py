@@ -1,7 +1,11 @@
 """
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import case
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
@@ -87,7 +91,8 @@ def serialize_project(p, db):
         "name": p.name,
         "code": p.code,
         "project_code": str(p.year) if p.year else p.code,
-        "customer_name": p.customer_name,
+        "customer_name": p.customer.name if p.customer else p.customer_name,
+        "customer_id": p.customer_id,
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": pm_names if pm_names else None,
@@ -115,10 +120,108 @@ def serialize_project(p, db):
     }
 
 
+def serialize_project_summary(p, phase_count, task_stats, role_members, all_members):
+    """Serialize a project using list-level data loaded in a few batch queries."""
+    pms = role_members.get("PM", [])
+    leaders = role_members.get("Leader", [])
+    members = role_members.get("Member", [])
+    task_count, completed_task_count, warning_task_count = task_stats
+
+    return {
+        "id": p.id,
+        "name": p.name,
+        "code": p.code,
+        "project_code": str(p.year) if p.year else p.code,
+        "customer_name": p.customer_name,
+        "year": p.year,
+        "pm_id": p.pm_id,
+        "pm_name": ", ".join(m[1] for m in pms) or None,
+        "pm_ids": [m[0] for m in pms],
+        "technical_leader_id": p.technical_leader_id,
+        "technical_leader_name": ", ".join(m[1] for m in leaders) or None,
+        "technical_leader_ids": [m[0] for m in leaders],
+        "member_ids": [m[0] for m in members],
+        "member_names": ", ".join(m[1] for m in members),
+        "description": p.description,
+        "status": p.status,
+        "current_phase": p.current_phase,
+        "data_scope": p.data_scope,
+        "phase_count": phase_count,
+        "task_count": task_count,
+        "completed_task_count": completed_task_count,
+        "warning_task_count": warning_task_count,
+        "members": [{"name": name, "email": email} for _, name, email in all_members],
+        "ai_status": p.ai_status,
+        "last_ai_check_at": str(p.last_ai_check_at) if p.last_ai_check_at else None,
+        "last_ai_score": p.last_ai_score,
+        "last_review_id": p.last_review_id,
+        "created_at": str(p.created_at) if p.created_at else None,
+        "updated_at": str(p.updated_at) if p.updated_at else None,
+    }
+
+
 @router.get("/projects")
 def list_projects(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     projects = project_query_for_user(db, current_user).order_by(Project.id.desc()).all()
-    return [serialize_project(p, db) for p in projects]
+    project_ids = [p.id for p in projects]
+    if not project_ids:
+        return []
+
+    phase_counts = dict(
+        db.query(Phase.project_id, sql_func.count(Phase.id))
+        .filter(Phase.project_id.in_(project_ids))
+        .group_by(Phase.project_id)
+        .all()
+    )
+
+    task_stats = {
+        project_id: (task_count, completed_count, warning_count)
+        for project_id, task_count, completed_count, warning_count in (
+            db.query(
+                Phase.project_id,
+                sql_func.count(Task.id),
+                sql_func.sum(case((Task.status == "Done", 1), else_=0)),
+                sql_func.sum(case((Task.days_late > 0, 1), else_=0)),
+            )
+            .select_from(Task)
+            .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+            .join(Phase, TaskGroup.phase_id == Phase.id)
+            .filter(Phase.project_id.in_(project_ids))
+            .group_by(Phase.project_id)
+            .all()
+        )
+    }
+
+    role_members = defaultdict(lambda: defaultdict(list))
+    all_members = defaultdict(list)
+    member_rows = (
+        db.query(
+            project_members.c.project_id,
+            project_members.c.role,
+            Member.id,
+            Member.display_name,
+            Member.email,
+        )
+        .join(Member, Member.id == project_members.c.member_id)
+        .filter(project_members.c.project_id.in_(project_ids))
+        .order_by(project_members.c.id)
+        .all()
+    )
+    for project_id, role, member_id, display_name, email in member_rows:
+        member = (member_id, display_name, email)
+        role_members[project_id][role].append(member)
+        all_members[project_id].append(member)
+
+    return [
+        serialize_project_summary(
+            p,
+            phase_counts.get(p.id, 0),
+            task_stats.get(p.id, (0, 0, 0)),
+            role_members[p.id],
+            all_members[p.id],
+        )
+        for p in projects
+    ]
 
 
 @router.post("/projects")
@@ -128,10 +231,23 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         raise HTTPException(400, "Invalid data scope.")
     if user_scope(current_user) != ALL_SCOPE:
         requested_scope = user_scope(current_user)
+    project_code = body.get("project_code") or body.get("code")
+    if project_code and db.query(Project.id).filter(Project.code == project_code).first():
+        raise HTTPException(409, f"Project code '{project_code}' already exists.")
+
+    cust_id = body.get("customer_id")
+    cust_name = body.get("customer_name")
+    if cust_id:
+        from ..models.system_category import Customer as DB_Customer
+        c_obj = db.query(DB_Customer).filter(DB_Customer.id == cust_id).first()
+        if c_obj:
+            cust_name = c_obj.name
+
     p = Project(
         name=body.get("name", "").strip(),
-        code=body.get("project_code") or body.get("code"),
-        customer_name=body.get("customer_name"),
+        code=project_code,
+        customer_name=cust_name,
+        customer_id=cust_id,
         year=body.get("year"),
         description=body.get("description"),
         status=body.get("status", "Planning"),
@@ -159,7 +275,11 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         p.technical_leader_id = technical_leader_ids[0]
 
     db.add(p)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, f"Project code '{project_code}' already exists.") from exc
 
     # 1. Create a single phase named "Master"
     ph = Phase(
@@ -225,9 +345,14 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     if not p:
         raise HTTPException(404, "Project not found.")
 
-    for field in ["name", "code", "customer_name", "year", "description", "status", "current_phase"]:
+    for field in ["name", "code", "customer_name", "customer_id", "year", "description", "status", "current_phase"]:
         if field in body:
             setattr(p, field, body[field])
+    if "customer_id" in body and body["customer_id"]:
+        from ..models.system_category import Customer as DB_Customer
+        c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()
+        if c_obj:
+            p.customer_name = c_obj.name
     if "data_scope" in body:
         requested_scope = str(body["data_scope"]).strip().lower()
         if requested_scope not in VALID_DATA_SCOPES:
