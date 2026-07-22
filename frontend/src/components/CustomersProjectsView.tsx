@@ -1146,21 +1146,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                 )}
               </div>
 
-              {/* Project Status */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Trạng thái</label>
-                <select
-                  value={projectForm.status}
-                  onChange={e => setProjectForm({ ...projectForm, status: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
-                >
-                  <option value="Planning">Planning (Chuẩn bị)</option>
-                  <option value="Process">Process (Đang thực hiện)</option>
-                  <option value="Developing">Developing (Đang phát triển)</option>
-                  <option value="Completed">Completed (Hoàn thành)</option>
-                  <option value="Archived">Archived (Lưu trữ)</option>
-                </select>
-              </div>
+
 
               {/* Description */}
               <div className="space-y-1">
