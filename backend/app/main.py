@@ -95,6 +95,30 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
         conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
 
+        # Add customer_id to projects and sync existing customer_names
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_id INTEGER"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'projects_customer_id_fkey'
+                      AND conrelid = 'projects'::regclass
+                ) THEN
+                    ALTER TABLE projects
+                    ADD CONSTRAINT projects_customer_id_fkey
+                    FOREIGN KEY (customer_id) REFERENCES customers(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text("""
+            UPDATE projects 
+            SET customer_id = (SELECT id FROM customers WHERE customers.name = projects.customer_name)
+            WHERE customer_id IS NULL AND customer_name IS NOT NULL
+        """))
+
 apply_schema_updates()
 
 def init_db_defaults():
