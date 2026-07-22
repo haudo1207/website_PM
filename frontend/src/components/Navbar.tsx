@@ -3,13 +3,19 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { getAvatar, getName, logout, getRole } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
-import { getProjects, getCustomers } from '@/lib/api';
+import { getSidebarTree, getProjects, getCustomers } from '@/lib/api';
 import { brand } from '@/lib/brand';
 
-interface CustomerNavItem {
+interface CustomerNode {
   id: number | null;
   name: string;
-  count: number;
+  project_count: number;
+}
+
+interface YearNode {
+  year: number;
+  project_count: number;
+  customers: CustomerNode[];
 }
 
 function NavbarContent() {
@@ -18,7 +24,9 @@ function NavbarContent() {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
-  const [customerList, setCustomerList] = useState<CustomerNavItem[]>([]);
+  const [treeData, setTreeData] = useState<YearNode[]>([]);
+  const [expandedYears, setExpandedYears] = useState<Record<number, boolean>>({});
+  const [customerSearch, setCustomerSearch] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -26,31 +34,53 @@ function NavbarContent() {
     setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
 
-    Promise.all([getCustomers(), getProjects()])
-      .then(([custs, projs]) => {
-        const map = new Map<string, CustomerNavItem>();
-        (custs || []).forEach((c: any) => {
-          map.set(c.name.toLowerCase(), { id: c.id, name: c.name, count: 0 });
-        });
-        (projs || []).forEach((p: any) => {
-          const cName = p.customer_name ? p.customer_name.trim() : null;
-          if (cName) {
+    getSidebarTree()
+      .then((data: YearNode[]) => {
+        setTreeData(data || []);
+        // Expand the first/latest year by default
+        if (data && data.length > 0) {
+          setExpandedYears(prev => ({ ...prev, [data[0].year]: true }));
+        }
+      })
+      .catch(() => {
+        // Fallback calculation if API fails
+        Promise.all([getCustomers(), getProjects()]).then(([custs, projs]) => {
+          const yearMap = new Map<number, Map<string, CustomerNode>>();
+          (projs || []).forEach((p: any) => {
+            const yr = p.year || new Date().getFullYear();
+            const cName = p.customer_name ? p.customer_name.trim() : 'Khác';
+            const cId = p.customer_id || null;
+            if (!yearMap.has(yr)) yearMap.set(yr, new Map());
+            const cMap = yearMap.get(yr)!;
             const key = cName.toLowerCase();
-            if (map.has(key)) {
-              map.get(key)!.count += 1;
+            if (cMap.has(key)) {
+              cMap.get(key)!.project_count += 1;
             } else {
-              map.set(key, { id: p.customer_id || null, name: cName, count: 1 });
+              cMap.set(key, { id: cId, name: cName, project_count: 1 });
             }
+          });
+          const fallbackData: YearNode[] = Array.from(yearMap.entries())
+            .sort((a, b) => b[0] - a[0])
+            .map(([yr, cMap]) => {
+              const custs = Array.from(cMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+              const total = custs.reduce((sum, c) => sum + c.project_count, 0);
+              return { year: yr, project_count: total, customers: custs };
+            });
+          setTreeData(fallbackData);
+          if (fallbackData.length > 0) {
+            setExpandedYears({ [fallbackData[0].year]: true });
           }
         });
-        const list = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-        setCustomerList(list);
-      })
-      .catch(() => {});
+      });
   }, [path]);
 
+  const currentParamYear = searchParams.get('year');
   const currentCustId = searchParams.get('customer_id');
   const currentCustName = searchParams.get('customer');
+
+  const toggleYear = (year: number) => {
+    setExpandedYears(prev => ({ ...prev, [year]: !prev[year] }));
+  };
 
   const nav = [
     { href: '/dashboard', label: 'Dashboard', icon: (
@@ -91,6 +121,76 @@ function NavbarContent() {
       </svg>
     ), show: role === 'admin' },
   ].filter(n => n.show !== false);
+
+  const renderTreeContent = () => {
+    const searchLow = customerSearch.trim().toLowerCase();
+
+    return treeData.map(yNode => {
+      const matchingCusts = yNode.customers.filter(c =>
+        !searchLow || c.name.toLowerCase().includes(searchLow)
+      );
+
+      if (searchLow && matchingCusts.length === 0) return null;
+
+      const isExpanded = searchLow ? true : !!expandedYears[yNode.year];
+
+      return (
+        <div key={yNode.year} className="space-y-1 mb-2">
+          {/* Year Header */}
+          <button
+            onClick={() => toggleYear(yNode.year)}
+            className="flex items-center justify-between w-full px-2 py-1 rounded hover:bg-slate-800/80 transition-colors text-left group"
+          >
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[9px] text-slate-400 font-bold w-3">
+                {isExpanded ? '▼' : '▶'}
+              </span>
+              <span className="text-xs font-bold text-slate-300 group-hover:text-white transition-colors">
+                {yNode.year}
+              </span>
+            </div>
+            <span className="text-[10px] font-bold text-slate-500 bg-slate-800 px-1.5 py-0.2 rounded-full">
+              {yNode.project_count}
+            </span>
+          </button>
+
+          {/* Nested Customer List */}
+          {isExpanded && (
+            <div className="pl-3.5 space-y-0.5 border-l border-slate-800/80 ml-2.5">
+              {matchingCusts.map(c => {
+                const href = c.id
+                  ? `/projects?year=${yNode.year}&customer_id=${c.id}`
+                  : `/projects?year=${yNode.year}&customer=${encodeURIComponent(c.name)}`;
+
+                const isItemActive = (path === '/projects' || path === '/project') &&
+                  currentParamYear === String(yNode.year) &&
+                  ((currentCustId && currentCustId === String(c.id)) || (currentCustName && currentCustName.toLowerCase() === c.name.toLowerCase()));
+
+                return (
+                  <Link
+                    key={c.id || c.name}
+                    href={href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`flex items-center justify-between px-2.5 py-1 rounded-md text-xs font-medium transition-all truncate ${
+                      isItemActive
+                        ? 'bg-indigo-600/20 text-indigo-300 border-l-2 border-indigo-500 rounded-l-none pl-2'
+                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isItemActive ? 'bg-indigo-400' : 'bg-slate-600'}`} />
+                      <span className="truncate">{c.name}</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-bold ml-1 shrink-0">({c.project_count})</span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    });
+  };
 
   return (
     <>
@@ -156,9 +256,9 @@ function NavbarContent() {
           })}
         </nav>
 
-        {/* Projects / Customers Section */}
-        <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
-          <div className="flex items-center justify-between px-3 mb-2 shrink-0">
+        {/* Projects Tree Section */}
+        <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
+          <div className="flex items-center justify-between px-2 mb-1 shrink-0">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PROJECTS</span>
             {role === 'admin' && (
               <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50" title="Thêm dự án mới">
@@ -168,26 +268,21 @@ function NavbarContent() {
               </Link>
             )}
           </div>
-          <div className="space-y-0.5">
-            {customerList.map(c => {
-              const href = c.id ? `/projects?customer_id=${c.id}` : `/projects?customer=${encodeURIComponent(c.name)}`;
-              const isCustActive = (path === '/projects' || path === '/project') &&
-                ((currentCustId && currentCustId === String(c.id)) || (currentCustName && currentCustName.toLowerCase() === c.name.toLowerCase()));
-              return (
-                <Link key={c.id || c.name} href={href}
-                  className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-semibold transition-all truncate ${
-                    isCustActive
-                      ? 'bg-white/10 text-white border-l-2 border-indigo-500 rounded-l-none pl-2.5'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                  }`}>
-                  <div className="flex items-center gap-2 truncate">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCustActive ? 'bg-indigo-500' : 'bg-slate-600'}`} />
-                    <span className="truncate">{c.name}</span>
-                  </div>
-                  <span className="text-[10px] text-slate-500 font-bold ml-1.5 shrink-0">({c.count})</span>
-                </Link>
-              );
-            })}
+
+          {/* Quick Search Input */}
+          <div className="relative px-1 mb-2">
+            <input
+              type="text"
+              placeholder="🔍 Search Customer..."
+              value={customerSearch}
+              onChange={e => setCustomerSearch(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+
+          {/* Tree View */}
+          <div className="space-y-1">
+            {renderTreeContent()}
           </div>
         </div>
 
@@ -248,9 +343,9 @@ function NavbarContent() {
           })}
         </nav>
 
-        {/* Mobile Projects Section */}
-        <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
-          <div className="flex items-center justify-between px-3 mb-2 shrink-0">
+        {/* Mobile Projects Tree Section */}
+        <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
+          <div className="flex items-center justify-between px-2 mb-1 shrink-0">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PROJECTS</span>
             {role === 'admin' && (
               <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50">
@@ -260,26 +355,17 @@ function NavbarContent() {
               </Link>
             )}
           </div>
-          <div className="space-y-0.5">
-            {customerList.map(c => {
-              const href = c.id ? `/projects?customer_id=${c.id}` : `/projects?customer=${encodeURIComponent(c.name)}`;
-              const isCustActive = (path === '/projects' || path === '/project') &&
-                ((currentCustId && currentCustId === String(c.id)) || (currentCustName && currentCustName.toLowerCase() === c.name.toLowerCase()));
-              return (
-                <Link key={c.id || c.name} href={href} onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-semibold transition-all truncate ${
-                    isCustActive
-                      ? 'bg-white/10 text-white border-l-2 border-indigo-500 rounded-l-none pl-2.5'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                  }`}>
-                  <div className="flex items-center gap-2 truncate">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCustActive ? 'bg-indigo-500' : 'bg-slate-600'}`} />
-                    <span className="truncate">{c.name}</span>
-                  </div>
-                  <span className="text-[10px] text-slate-500 font-bold ml-1.5 shrink-0">({c.count})</span>
-                </Link>
-              );
-            })}
+          <div className="relative px-1 mb-2">
+            <input
+              type="text"
+              placeholder="🔍 Search Customer..."
+              value={customerSearch}
+              onChange={e => setCustomerSearch(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+          <div className="space-y-1">
+            {renderTreeContent()}
           </div>
         </div>
 

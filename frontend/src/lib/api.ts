@@ -38,6 +38,7 @@ export const googleLogin = (credential: string) =>
 // PROJECTS (v5)
 // ═══════════════════════════════════════════════════════════
 export const getProjects = () => api.get('/projects').then(r => r.data);
+export const getSidebarTree = () => api.get('/projects/sidebar-tree').then(r => r.data);
 export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r.data);
 export const createProject = (data: object) => api.post('/projects', data).then(r => r.data);
 export const updateProject = (id: number, data: object) => api.patch(`/projects/${id}`, data).then(r => r.data);
