@@ -44,6 +44,39 @@ const getPhaseBadgeStyle = (phase: string) => {
   return 'bg-sky-50 text-sky-700 border border-sky-200/30';
 };
 
+const getPaginationRange = (current: number, total: number) => {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+
+  const range: (number | string)[] = [];
+  const siblingCount = 1;
+
+  for (let i = 1; i <= total; i++) {
+    if (
+      i === 1 ||
+      i === total ||
+      (i >= current - siblingCount && i <= current + siblingCount)
+    ) {
+      range.push(i);
+    } else if (
+      (i === 2 && current - siblingCount > 2) ||
+      (i === total - 1 && current + siblingCount < total - 1)
+    ) {
+      range.push("...");
+    }
+  }
+
+  const result: (number | string)[] = [];
+  let prev: number | string | null = null;
+  for (const val of range) {
+    if (val === "..." && prev === "...") continue;
+    result.push(val);
+    prev = val;
+  }
+  return result;
+};
+
 function ProjectListContent() {
   const router = useRouter();
   const canManage = isAdmin();
@@ -58,7 +91,7 @@ function ProjectListContent() {
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 9;
+  const [pageSize, setPageSize] = useState(9);
 
   const reload = () => getProjects().then(setProjects).catch(() => {});
   useEffect(() => { reload(); }, []);
@@ -110,8 +143,8 @@ function ProjectListContent() {
     return 0;
   });
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const paged = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div className="min-h-screen flex bg-[#f8fafc]" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -283,22 +316,82 @@ function ProjectListContent() {
             </div>}
           </div>
 
-          <div className="flex justify-between items-center border-t border-slate-200 pt-6">
-            <p className="text-sm text-slate-500">Hiển thị <span className="font-bold text-slate-700">{paged.length}</span> / <span className="font-bold text-slate-700">{filtered.length}</span> dự án</p>
-            <div className="flex items-center gap-2">
-              <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="w-9 h-9 border border-slate-200 rounded-lg flex items-center justify-center bg-white hover:bg-slate-50 disabled:opacity-40 transition-colors">
-                <svg className="w-4 h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                <button key={p} onClick={() => setPage(p)} className={`w-9 h-9 border rounded-lg flex items-center justify-center text-sm font-bold transition-all ${p === page ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm shadow-indigo-600/10' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>{p}</button>
-              ))}
-              <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="w-9 h-9 border border-slate-200 rounded-lg flex items-center justify-center bg-white hover:bg-slate-50 disabled:opacity-40 transition-colors">
-                <svg className="w-4 h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 border-t border-slate-200 pt-6">
+            {/* Left: Project Count */}
+            <div>
+              <p className="text-sm text-slate-500 font-medium">
+                <span className="font-bold text-slate-700">{filtered.length}</span> dự án
+              </p>
+            </div>
+
+            {/* Center: Range Display */}
+            <div>
+              <p className="text-xs text-slate-400 font-medium select-none">
+                Hiển thị <span className="font-semibold text-slate-600">{Math.min((page - 1) * pageSize + 1, filtered.length)}</span> - <span className="font-semibold text-slate-600">{Math.min(page * pageSize, filtered.length)}</span> / <span className="font-semibold text-slate-600">{filtered.length}</span>
+              </p>
+            </div>
+
+            {/* Right: Page size selector and page pagination */}
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 border border-slate-200 rounded-lg shadow-2xs">
+                <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Hiện:</span>
+                <select
+                  value={pageSize}
+                  onChange={e => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer"
+                >
+                  <option value={9}>9 / trang</option>
+                  <option value={20}>20 / trang</option>
+                  <option value={50}>50 / trang</option>
+                  <option value={100}>100 / trang</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  disabled={page === 1}
+                  onClick={() => setPage(p => p - 1)}
+                  className="w-8 h-8 border border-slate-200 rounded-lg flex items-center justify-center bg-white hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                {getPaginationRange(page, totalPages).map((p, idx) => {
+                  if (p === "...") {
+                    return (
+                      <span key={`ellipsis-${idx}`} className="w-8 h-8 flex items-center justify-center text-slate-400 text-xs select-none">
+                        ...
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setPage(Number(p))}
+                      className={`w-8 h-8 border rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
+                        p === page
+                          ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm shadow-indigo-600/10'
+                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+                <button
+                  disabled={page === totalPages}
+                  onClick={() => setPage(p => p + 1)}
+                  className="w-8 h-8 border border-slate-200 rounded-lg flex items-center justify-center bg-white hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
