@@ -372,7 +372,7 @@ export default function SettingsPage() {
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
           >
-            Khách hàng & Dự án
+            Quản lý Khách hàng & Dự án
           </button>
         </div>
 
