@@ -6,7 +6,9 @@ import datetime
 from ..database import get_db
 from ..models.member import Member, member_skills
 from ..models.skill_master import Skill
+from ..models.task import Task
 from ..utils.auth import require_admin, get_current_user
+from sqlalchemy import func, extract
 
 router = APIRouter()
 
@@ -42,10 +44,68 @@ def list_members(
     position: Optional[str] = None,
     department: Optional[str] = None,
     skill_id: Optional[int] = None,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
     db: Session = Depends(get_db),
     _=Depends(get_current_user)
 ):
-    q = db.query(Member).options(joinedload(Member.skills))
+    # Subquery to calculate KPI from Tasks for each member (assigned_id)
+    task_query = db.query(
+        Task.assigned_id,
+        func.sum(Task.kpi_final).label('kpi_total'),
+        func.count(Task.id).label('task_count')
+    )
+
+    # Custom Fiscal Calendar Template (Hỗ trợ mọi năm)
+    # Cấu trúc: (start_month_day, end_month_day, start_year_offset, end_year_offset, weeks)
+    CYCLE_TEMPLATE = {
+        1:  ("-12-22", "-01-18", -1, 0, 4),
+        2:  ("-01-19", "-02-22", 0, 0, 5),
+        3:  ("-02-23", "-03-22", 0, 0, 4),
+        4:  ("-03-23", "-04-19", 0, 0, 4),
+        5:  ("-04-20", "-05-24", 0, 0, 5),
+        6:  ("-05-25", "-06-21", 0, 0, 4),
+        7:  ("-06-22", "-07-19", 0, 0, 4),
+        8:  ("-07-20", "-08-23", 0, 0, 5),
+        9:  ("-08-24", "-09-20", 0, 0, 4),
+        10: ("-09-21", "-10-25", 0, 0, 5),
+        11: ("-10-26", "-11-22", 0, 0, 4),
+        12: ("-11-23", "-12-20", 0, 0, 4),
+    }
+
+    weeks_divisor = 52 # Mặc định nếu chọn Tất cả các tháng (của 1 năm) là 52 tuần
+
+    if year:
+        if month and month in CYCLE_TEMPLATE:
+            s_md, e_md, s_yo, e_yo, weeks = CYCLE_TEMPLATE[month]
+            weeks_divisor = weeks
+            start_dt = f"{year + s_yo}{s_md}"
+            end_dt = f"{year + e_yo}{e_md}"
+            task_query = task_query.filter(
+                Task.end_date_actual >= start_dt,
+                Task.end_date_actual <= end_dt
+            )
+        else:
+            # Lấy toàn bộ chu kỳ của năm đó (từ 22/12 năm trước đến 20/12 năm nay)
+            task_query = task_query.filter(
+                Task.end_date_actual >= f"{year - 1}-12-22",
+                Task.end_date_actual <= f"{year}-12-20"
+            )
+    else:
+        # Nếu chỉ có tháng mà không có năm (mặc dù UI bắt buộc chọn năm)
+        if month:
+            task_query = task_query.filter(extract('month', Task.end_date_actual) == month)
+
+    kpi_subq = task_query.group_by(Task.assigned_id).subquery()
+
+    # Query Member with KPI
+    q = db.query(
+        Member,
+        func.coalesce(kpi_subq.c.kpi_total, 0).label('kpi_total'),
+        func.coalesce(kpi_subq.c.task_count, 0).label('task_count')
+    ).outerjoin(
+        kpi_subq, Member.id == kpi_subq.c.assigned_id
+    ).options(joinedload(Member.skills))
 
     if search:
         like = f"%{search}%"
@@ -61,8 +121,37 @@ def list_members(
     if skill_id:
         q = q.filter(Member.skills.any(Skill.id == skill_id))
 
-    members = q.order_by(Member.display_name.asc()).all()
-    return [member_to_dict(m) for m in members]
+    results = q.order_by(Member.display_name.asc()).all()
+    
+    out = []
+    for m, kpi_total, task_count in results:
+        d = member_to_dict(m)
+        
+        total = float(kpi_total) if kpi_total else 0.0
+        count = int(task_count) if task_count else 0
+        
+        avg = 0.0
+        bonus = 0.0
+        
+        # Chỉ tính Trung bình và Bonus nếu người dùng đang lọc theo một Tháng cụ thể
+        if month:
+            # 1. Trung bình KPI (Tổng điểm KPI / Số tuần của chu kỳ đó)
+            avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
+            
+            # 2. KPI Bonus (dựa trên ảnh bảng Achievement)
+            if total >= 150:
+                bonus = 1.50
+            elif total >= 100:
+                step = (int(total) - 100) // 5
+                bonus = 1.00 + (step * 0.05)
+            
+        d['kpi_total'] = total
+        d['kpi_avg'] = avg
+        d['kpi_bonus'] = round(bonus, 2)
+        
+        out.append(d)
+        
+    return out
 
 
 # ─── GET ONE ─────────────────────────────────────────────
