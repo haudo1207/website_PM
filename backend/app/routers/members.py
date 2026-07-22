@@ -7,6 +7,7 @@ from ..database import get_db
 from ..models.member import Member, member_skills
 from ..models.skill_master import Skill
 from ..models.task import Task
+from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
 from sqlalchemy import func, extract
 
@@ -50,10 +51,14 @@ def list_members(
     _=Depends(get_current_user)
 ):
     # Subquery to calculate KPI from Tasks for each member (assigned_id)
+    # Chỉ lấy các task đã hoàn thành (Done) VÀ bắt buộc phải có ngày hoàn thành thực tế (end_date_actual)
     task_query = db.query(
         Task.assigned_id,
         func.sum(Task.kpi_final).label('kpi_total'),
         func.count(Task.id).label('task_count')
+    ).filter(
+        Task.status == 'Done',
+        Task.end_date_actual.isnot(None)
     )
 
     # Custom Fiscal Calendar Template (Hỗ trợ mọi năm)

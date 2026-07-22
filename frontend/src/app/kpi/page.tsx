@@ -116,9 +116,9 @@ export default function KPIPage() {
                                                     <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[11px] border border-blue-100 group-hover:bg-blue-100 transition-colors">{m.display_name}</span>
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 text-center font-semibold text-slate-600 tabular-nums">{m.kpi_avg || 0}</td>
-                                            <td className="px-4 py-3 text-center font-semibold text-slate-600 tabular-nums">{m.kpi_bonus || 0}</td>
-                                            <td className="px-4 py-3 text-center font-extrabold text-blue-600 tabular-nums">{m.kpi_total || 0}</td>
+                                            <td className={`px-4 py-3 text-center font-semibold tabular-nums ${(m.kpi_avg || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}>{m.kpi_avg || 0}</td>
+                                            <td className={`px-4 py-3 text-center font-semibold tabular-nums ${(m.kpi_bonus || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}>{m.kpi_bonus || 0}</td>
+                                            <td className={`px-4 py-3 text-center font-extrabold tabular-nums ${(m.kpi_total || 0) === 0 ? 'text-red-500' : 'text-blue-600'}`}>{m.kpi_total || 0}</td>
                                         </tr>
                                     ))}
                                     {members.length === 0 && (
