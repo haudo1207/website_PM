@@ -6,7 +6,7 @@
 
 ## 1. Tổng quan
 
-Hệ thống **Task Compliance Portal** (KPI Portal) quản lý và theo dõi tiến độ dự án theo cấu trúc 4 cấp (Project → Phase → TaskGroup → Task), tính toán chỉ số hiệu suất KPI, đánh giá sức khỏe dự án bằng AI, và hỗ trợ đồng bộ/tóm tắt biên bản họp (Zoom & Google Meet). Hệ thống hỗ trợ multi-brand deployment (Markee / SecurityZone).
+Hệ thống **Task Compliance Portal** (KPI Portal) quản lý và theo dõi tiến độ dự án theo cấu trúc 4 cấp (Project → Phase → TaskGroup → Task), tính toán chỉ số hiệu suất KPI, đánh giá sức khỏe dự án bằng AI, hỗ trợ đồng bộ/tóm tắt biên bản họp (Zoom & Google Meet), và quản lý yêu cầu vắng mặt (Leave Request). Hệ thống hỗ trợ multi-brand deployment (Markee / SecurityZone).
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
@@ -41,6 +41,9 @@ pm-new/
 ├── init-db.sql                   # File dữ liệu khởi tạo database PostgreSQL (~608KB)
 ├── Skill_Master_From_Sheet.xlsx  # Dữ liệu kỹ năng mẫu để import
 ├── deploy.sh                     # Script deploy thủ công
+├── DESIGN.md                     # Tài liệu thiết kế
+├── DEVELOPMENT.md                # Hướng dẫn phát triển
+├── GIT_WORKFLOW.md               # Quy trình làm việc với Git
 │
 ├── deploy/                       # ===== DEPLOYMENT =====
 │   ├── security-dev.compose.yml  # Dev: single brand + nginx gateway (port 3100)
@@ -80,6 +83,7 @@ pm-new/
 │       │   ├── meeting.py        # Bảng meetings, meeting_members (Biên bản họp)
 │       │   ├── ai_review.py      # Bảng ai_prompts, ai_review_logs (AI đánh giá dự án)
 │       │   ├── google_token.py   # Bảng google_tokens (OAuth tokens)
+│       │   ├── leave_request.py  # Bảng leave_requests (Đơn xin nghỉ phép/công tác)
 │       │   └── setting.py        # Bảng settings + audit_logs
 │       │
 │       ├── routers/              # API Endpoints (FastAPI Routers)
@@ -94,7 +98,8 @@ pm-new/
 │       │   ├── members.py        # CRUD /api/members (thông tin thành viên)
 │       │   ├── meetings.py       # CRUD /api/meetings + sync Zoom/Google
 │       │   ├── performance_settings.py # CRUD /api/performance-settings
-│       │   └── ai_review.py      # /api/ai-review (AI đánh giá dự án)
+│       │   ├── ai_review.py      # /api/ai-review (AI đánh giá dự án)
+│       │   └── leave_requests.py # CRUD /api/leave-requests (quản lý yêu cầu vắng mặt)
 │       │
 │       ├── services/
 │       │   └── meeting_sync.py   # Zoom S2S, Google Calendar, AssemblyAI, AI Summary
@@ -116,16 +121,20 @@ pm-new/
         ├── lib/
         │   ├── api.ts            # Axios instance + tất cả API functions gọi backend
         │   ├── auth.ts           # Token helpers (localStorage)
-        │   └── brand.ts          # Multi-brand config (Markee / SecurityZone)
+        │   ├── brand.ts          # Multi-brand config (Markee / SecurityZone)
+        │   ├── leave-request.ts  # Types và utils cho leave request
+        │   └── vn-locations.ts   # Dữ liệu tỉnh thành Việt Nam
         │
         ├── components/
         │   ├── Navbar.tsx        # Sidebar navigation
+        │   ├── Portal.tsx        # Portal container
         │   ├── KPIsView.tsx      # Quản lý cấu hình KPI thưởng/phạt
         │   ├── MembersView.tsx   # Quản lý danh sách thành viên
         │   ├── SystemCategoriesView.tsx # Quản lý danh mục hệ thống
         │   ├── AIPromptsView.tsx # Cấu hình AI prompts
         │   ├── AIReviewDrawer.tsx # Panel hiển thị kết quả AI review
-        │   └── meetings/         # Components cuộc họp (Create, Card, Summarize, PromptSettings)
+        │   ├── meetings/         # Components cuộc họp (Create, Card, Summarize, PromptSettings)
+        │   └── leave-request/    # Components vắng mặt (LeaveRequestForm, StatusBadge, SummaryCard)
         │
         └── app/
             ├── layout.tsx        # Root layout
@@ -137,6 +146,9 @@ pm-new/
             │   └── detail/       # Chi tiết dự án (phases, tasks, KPIs)
             ├── projects/new/     # Tạo dự án mới
             ├── meetings/         # Quản lý cuộc họp
+            ├── leave-request/    # Quản lý đơn vắng mặt
+            │   ├── new/          # Tạo đơn mới
+            │   └── calendar-team/ # Lịch vắng mặt team
             ├── settings/         # Cài đặt hệ thống (categories, skills, platforms, KPIs, AI)
             ├── accounts/         # Quản lý tài khoản (admin only)
             └── api/              # Next.js API Routes (proxy to backend)
@@ -172,6 +184,7 @@ pm-new/
 | `/api/meetings` | meetings.py | CRUD cuộc họp + sync Google/Zoom |
 | `/api/performance-settings` | performance_settings.py | Cấu hình KPI thresholds |
 | `/api/ai-review` | ai_review.py | AI đánh giá dự án + prompt management |
+| `/api/leave-requests` | leave_requests.py | Quản lý yêu cầu vắng mặt (Leave Request) |
 | `GET /health` | main.py | Health check |
 
 ### 3.3 Business Logic
@@ -201,6 +214,9 @@ pm-new/
 | `/project/detail?id=X` | Chi tiết dự án (4-level spreadsheet) |
 | `/projects/new` | Tạo dự án mới |
 | `/meetings` | Quản lý cuộc họp |
+| `/leave-request` | Quản lý yêu cầu vắng mặt / công tác |
+| `/leave-request/new` | Tạo yêu cầu vắng mặt / công tác |
+| `/leave-request/calendar-team` | Lịch vắng mặt của team |
 | `/settings` | Cài đặt (Categories, Skills, Platforms, KPIs, AI Prompts) |
 | `/accounts` | Quản lý tài khoản (admin only) |
 
@@ -250,6 +266,7 @@ Cấu hình brand (logo, tên, màu sắc) nằm trong `src/lib/brand.ts`.
 | GoogleToken | `google_tokens` | OAuth tokens Google |
 | AIPrompt | `ai_prompts` | Template prompt AI cho từng dự án |
 | AIReviewLog | `ai_review_logs` | Log kết quả AI review (score, issues, suggestions) |
+| LeaveRequest | `leave_requests` | Yêu cầu vắng mặt (Work Remotely, Offline, Go on Business...) |
 
 ### 5.4 Junction Tables
 
@@ -281,8 +298,8 @@ Project → Phase → TaskGroup → Task (4 cấp)
 
 | Role | Quyền |
 |------|--------|
-| `admin` | Toàn quyền: accounts, members, settings, project, task và meeting |
-| `member` | Chỉ đọc dữ liệu trong phạm vi được cấp |
+| `admin` | Toàn quyền: accounts, members, settings, project, task, meeting và leave requests |
+| `member` | Chỉ đọc/thao tác dữ liệu trong phạm vi được cấp (và quản lý leave requests của bản thân) |
 
 ### 6.3 Authorization — Data Scope
 
@@ -329,25 +346,27 @@ Tính toán hiệu suất dựa trên:
 - Transcription qua AssemblyAI
 - Tóm tắt biên bản bằng AI
 
-### 7.5 Quản lý thành viên (Members)
+### 7.5 Quản lý yêu cầu vắng mặt (Leave Request)
+
+- Nhân viên có thể tạo yêu cầu: làm việc từ xa, nghỉ phép, đi công tác, đi workshop, làm cuối tuần.
+- Xem lịch trình team trong lịch hiển thị vắng mặt.
+- Quản lý trạng thái: Pending, Approved, Rejected. Admin có quyền duyệt đơn.
+
+### 7.6 Quản lý thành viên (Members)
 
 Danh bạ nhân sự: tên, bộ phận, vị trí, kinh nghiệm, kỹ năng. Gán kỹ năng từ Skill Master.
 
-### 7.6 Skill Master
+### 7.7 Skill Master
 
 Import từ Excel (`Skill_Master_From_Sheet.xlsx`). Cấu trúc 3 cấp: Category → Group → Skill. Gán many-to-many cho members.
 
-### 7.7 Quản lý tài khoản (Account Management)
+### 7.8 Quản lý tài khoản (Account Management)
 
 Admin panel: tạo/sửa/khóa/mở khóa/xóa tài khoản. Liên kết account với member. Reset password.
 
-### 7.8 System Categories
+### 7.9 System Categories & Platforms
 
-Danh mục hệ thống cấu hình: positions, departments, teams, priorities, statuses, customers.
-
-### 7.9 Platform Links
-
-Liên kết kênh giao tiếp cho từng dự án (Zalo, Telegram, Slack, v.v.).
+Danh mục hệ thống cấu hình: positions, departments, teams, priorities, statuses, customers. Liên kết kênh giao tiếp cho từng dự án (Zalo, Telegram, Slack, v.v.).
 
 ---
 

@@ -325,7 +325,7 @@ def recalculate_task(task, db):
 
     # 9. KPI Split
     task.kpi_assigned, task.kpi_support = calc_kpi_split(
-        task.kpi_final, task.kpi_ratio_assign or 100, task.kpi_ratio_support or 0
+        task.kpi_final, task.kpi_ratio_assign or 90, task.kpi_ratio_support or 10
     )
 
     # 10. Solution lookup
