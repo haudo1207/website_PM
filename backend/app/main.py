@@ -124,6 +124,10 @@ def apply_schema_updates():
             WHERE customer_id IS NULL AND customer_name IS NOT NULL
         """))
 
+        # Add business_unit column to customers and drop obsolete unique name constraint
+        conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50) NOT NULL DEFAULT 'securityzone'"))
+        conn.execute(text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_name_key"))
+
 apply_schema_updates()
 
 def init_db_defaults():
