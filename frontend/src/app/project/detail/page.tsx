@@ -928,9 +928,22 @@ function ProjectDetailContent() {
       case 'MANDAY':
         payload.manday_est = value ? parseFloat(value) : null;
         break;
-      case 'STATUS':
+      case 'STATUS': {
         payload.status = value;
+        const s = (value || '').trim().toLowerCase();
+        if (s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish')) {
+          if (!task.end_date_actual) {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            payload.end_date_actual = `${year}-${month}-${day}`;
+          }
+        } else {
+          payload.end_date_actual = null;
+        }
         break;
+      }
       case 'START DATE':
       case 'START DATE (EST)':
         payload.start_date = convertToDbDate(value);
@@ -1720,6 +1733,15 @@ function ProjectDetailContent() {
         skill_vendor_id: newForm['SKILL VENDOR'] ? parseInt(newForm['SKILL VENDOR'], 10) : null,
       };
 
+      const s = (statusVal || '').trim().toLowerCase();
+      if (s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish')) {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        payload.end_date_actual = `${year}-${month}-${day}`;
+      }
+
       // KPI ratio
       // KPI Ratio: default 90/10, auto 100/0 if no support
       const hasSupport = !!payload.support_id;
@@ -1805,6 +1827,31 @@ function ProjectDetailContent() {
         remark: drawerForm.remark || null,
         ticket_id: drawerForm.ticket_id || null,
       };
+
+      const wasDone = selectedTask.status && (
+        selectedTask.status.toLowerCase() === 'done' ||
+        selectedTask.status.toLowerCase() === 'completed' ||
+        selectedTask.status.toLowerCase().includes('hoàn') ||
+        selectedTask.status.toLowerCase().includes('finish')
+      );
+      const isNowDone = drawerForm.status && (
+        drawerForm.status.toLowerCase() === 'done' ||
+        drawerForm.status.toLowerCase() === 'completed' ||
+        drawerForm.status.toLowerCase().includes('hoàn') ||
+        drawerForm.status.toLowerCase().includes('finish')
+      );
+
+      if (isNowDone && !wasDone) {
+        if (!selectedTask.end_date_actual) {
+          const d = new Date();
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          payload.end_date_actual = `${year}-${month}-${day}`;
+        }
+      } else if (!isNowDone && wasDone) {
+        payload.end_date_actual = null;
+      }
       await updateTask(selectedTask.task_group_id, selectedTask.id, payload);
       flash('Đã cập nhật task thành công!');
       await reloadAll(true);

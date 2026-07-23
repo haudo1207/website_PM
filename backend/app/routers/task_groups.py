@@ -25,6 +25,10 @@ from ..models.project import Project, project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
 from ..utils.access import require_project, require_route_project_access
 from ..utils.auth import get_current_user
+# Đảm bảo có import date/datetime để tính ngày
+from datetime import date, datetime
+from decimal import Decimal
+from ..utils.kpi_engine import recalculate_task
 
 router = APIRouter(tags=["task-groups-and-tasks"], dependencies=[Depends(require_route_project_access)])
 
@@ -202,8 +206,8 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
                 t.kpi_final = Decimal("0")
                 t.kpi_assigned = Decimal("0")
                 t.kpi_support = Decimal("0")
-        elif new_status and new_status.strip().lower() == "done":
-            # Commit KPI: recalculate to ensure values are final
+        else:
+            # Recalculate child tasks (handles done, process, waiting, etc.)
             for t in tasks:
                 recalculate_task(t, db)
 
@@ -315,12 +319,12 @@ def serialize_task(t, db):
         "manday_actual": float(t.manday_actual) if t.manday_actual else None,
         "end_date_actual": str(t.end_date_actual) if t.end_date_actual else None,
         "days_late": t.days_late,
-        "kpi_base": float(t.kpi_base) if t.kpi_base else 0,
-        "kpi_perform": float(t.kpi_perform) if t.kpi_perform else 0,
-        "kpi_ot": float(t.kpi_ot) if t.kpi_ot else 0,
-        "kpi_final": float(t.kpi_final) if t.kpi_final else 0,
-        "kpi_assigned": float(t.kpi_assigned) if t.kpi_assigned else 0,
-        "kpi_support": float(t.kpi_support) if t.kpi_support else 0,
+        "kpi_base": float(t.kpi_base) if t.kpi_base is not None else None,
+        "kpi_perform": float(t.kpi_perform) if t.kpi_perform is not None else None,
+        "kpi_ot": float(t.kpi_ot) if t.kpi_ot is not None else None,
+        "kpi_final": float(t.kpi_final) if t.kpi_final is not None else None,
+        "kpi_assigned": float(t.kpi_assigned) if t.kpi_assigned is not None else None,
+        "kpi_support": float(t.kpi_support) if t.kpi_support is not None else None,
         "notes": t.notes,
         "solution": t.solution,
         "ai_status": t.ai_status,
@@ -557,6 +561,17 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
 
     # Recalculate KPI
     task = recalculate_task(task, db)
+
+    # Cascading recalculation for child tasks of this task
+    if task.task_code:
+        child_tasks = db.query(Task).filter(
+            Task.task_group_id == gid,
+            Task.task_code.like(f"{task.task_code}.%")
+        ).all()
+        # Sort hierarchically to calculate correct values for nested subtasks
+        child_tasks = sorted(child_tasks, key=lambda t: t.task_code)
+        for child in child_tasks:
+            recalculate_task(child, db)
 
     # Update group progress
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
