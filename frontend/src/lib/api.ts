@@ -37,7 +37,8 @@ export const googleLogin = (credential: string) =>
 // ═══════════════════════════════════════════════════════════
 // PROJECTS (v5)
 // ═══════════════════════════════════════════════════════════
-export const getProjects = () => api.get('/projects').then(r => r.data);
+export const getProjects = (businessUnit?: string) =>
+  api.get('/projects', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
 export const getSidebarTree = (businessUnit?: string) =>
   api.get('/projects/sidebar-tree', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
 export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r.data);

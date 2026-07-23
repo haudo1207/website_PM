@@ -133,7 +133,9 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "name": p.name,
         "code": p.code,
         "project_code": str(p.year) if p.year else p.code,
-        "customer_name": p.customer_name,
+        "customer_name": p.customer.name if p.customer else p.customer_name,
+        "customer_id": p.customer_id,
+        "business_unit": p.customer.business_unit if p.customer else "securityzone",
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": ", ".join(m[1] for m in pms) or None,
@@ -162,8 +164,11 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
 
 
 @router.get("/projects")
-def list_projects(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    projects = project_query_for_user(db, current_user).order_by(Project.id.desc()).all()
+def list_projects(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    q = project_query_for_user(db, current_user)
+    if business_unit:
+        q = q.join(Customer, Project.customer_id == Customer.id).filter(Customer.business_unit == business_unit.lower())
+    projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
         return []

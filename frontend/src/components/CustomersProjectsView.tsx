@@ -117,7 +117,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     try {
       const [custs, projs, mems] = await Promise.all([
         getCustomers(activeBU),
-        getProjects(),
+        getProjects(activeBU),
         getMembers()
       ]);
       setCustomers(custs || []);
@@ -141,7 +141,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   // Safe reload for project updates without full loading state
   const reloadProjects = async () => {
     try {
-      const projs = await getProjects();
+      const projs = await getProjects(activeBU);
       setProjects(projs || []);
     } catch (err) {
       console.error(err);
@@ -163,12 +163,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   // All projects belonging to the selected customer
   const customerProjects = useMemo(() => {
     if (!selectedCustomerId || !selectedCustomer) return [];
-    
-    // Support matching by customer_id OR customer_name for robustness
-    return projects.filter(p => 
-      p.customer_id === selectedCustomerId || 
-      (p.customer_name && p.customer_name.toLowerCase() === selectedCustomer.name.toLowerCase())
-    );
+    return projects.filter(p => p.customer_id === selectedCustomerId);
   }, [projects, selectedCustomerId, selectedCustomer]);
 
   // Computed distinct years for selected customer
@@ -510,10 +505,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               const isEditing = editingCustomerId === cat.id;
               
               // Count projects for this customer
-              const pCount = projects.filter(p => 
-                p.customer_id === cat.id || 
-                (p.customer_name && p.customer_name.toLowerCase() === cat.name.toLowerCase())
-              ).length;
+              const pCount = projects.filter(p => p.customer_id === cat.id).length;
 
               return (
                 <div
