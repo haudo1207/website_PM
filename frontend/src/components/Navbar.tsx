@@ -3,8 +3,14 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { getAvatar, getName, logout, getRole } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
-import { getProjects } from '@/lib/api';
+import { getProjects, getCustomers } from '@/lib/api';
 import { brand } from '@/lib/brand';
+
+interface CustomerNavItem {
+  id: number | null;
+  name: string;
+  count: number;
+}
 
 function NavbarContent() {
   const path = usePathname();
@@ -12,17 +18,39 @@ function NavbarContent() {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
-  const [sheets, setSheets] = useState<any[]>([]);
+  const [customerList, setCustomerList] = useState<CustomerNavItem[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setName(getName() ?? '');
     setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
-    getProjects().then(setSheets).catch(() => {});
+
+    Promise.all([getCustomers(), getProjects()])
+      .then(([custs, projs]) => {
+        const map = new Map<string, CustomerNavItem>();
+        (custs || []).forEach((c: any) => {
+          map.set(c.name.toLowerCase(), { id: c.id, name: c.name, count: 0 });
+        });
+        (projs || []).forEach((p: any) => {
+          const cName = p.customer_name ? p.customer_name.trim() : null;
+          if (cName) {
+            const key = cName.toLowerCase();
+            if (map.has(key)) {
+              map.get(key)!.count += 1;
+            } else {
+              map.set(key, { id: p.customer_id || null, name: cName, count: 1 });
+            }
+          }
+        });
+        const list = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+        setCustomerList(list);
+      })
+      .catch(() => {});
   }, [path]);
 
-  const currentProjId = searchParams.get('project') || searchParams.get('id');
+  const currentCustId = searchParams.get('customer_id');
+  const currentCustName = searchParams.get('customer');
 
   const nav = [
     { href: '/dashboard', label: 'Dashboard', icon: (
@@ -30,11 +58,16 @@ function NavbarContent() {
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
       </svg>
     )},
-    { href: '/project', label: 'Projects', icon: (
+    { href: '/projects', label: 'Projects', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
       </svg>
     )},
+    { href: '/kpi', label: 'KPI', icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+      </svg>
+    ), show: role === 'admin' },
     { href: '/meetings', label: 'Meetings', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -108,7 +141,7 @@ function NavbarContent() {
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
           {nav.map(n => {
-            const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
+            const active = path === n.href || (n.href === '/projects' && (path === '/projects' || path === '/project')) || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (
               <Link key={n.href} href={n.href}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
@@ -123,10 +156,10 @@ function NavbarContent() {
           })}
         </nav>
 
-        {/* Projects Section */}
+        {/* Projects / Customers Section */}
         <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-3 mb-2 shrink-0">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Projects</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PROJECTS</span>
             {role === 'admin' && (
               <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50" title="Thêm dự án mới">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -136,18 +169,22 @@ function NavbarContent() {
             )}
           </div>
           <div className="space-y-0.5">
-            {sheets.map(s => {
-              const href = `/project/detail?id=${s.id}`;
-              const active = currentProjId === String(s.id);
+            {customerList.map(c => {
+              const href = c.id ? `/projects?customer_id=${c.id}` : `/projects?customer=${encodeURIComponent(c.name)}`;
+              const isCustActive = (path === '/projects' || path === '/project') &&
+                ((currentCustId && currentCustId === String(c.id)) || (currentCustName && currentCustName.toLowerCase() === c.name.toLowerCase()));
               return (
-                <Link key={s.id} href={href}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all truncate ${
-                    active
+                <Link key={c.id || c.name} href={href}
+                  className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-semibold transition-all truncate ${
+                    isCustActive
                       ? 'bg-white/10 text-white border-l-2 border-indigo-500 rounded-l-none pl-2.5'
                       : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                   }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-indigo-500' : 'bg-slate-600'}`} />
-                  <span className="truncate">{s.name || 'Unnamed'}</span>
+                  <div className="flex items-center gap-2 truncate">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCustActive ? 'bg-indigo-500' : 'bg-slate-600'}`} />
+                    <span className="truncate">{c.name}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-bold ml-1.5 shrink-0">({c.count})</span>
                 </Link>
               );
             })}
@@ -196,7 +233,7 @@ function NavbarContent() {
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
           {nav.map(n => {
-            const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
+            const active = path === n.href || (n.href === '/projects' && (path === '/projects' || path === '/project')) || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (
               <Link key={n.href} href={n.href} onClick={() => setMobileMenuOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
@@ -214,7 +251,7 @@ function NavbarContent() {
         {/* Mobile Projects Section */}
         <div className="flex-grow px-3 py-2 space-y-1 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-3 mb-2 shrink-0">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Projects</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PROJECTS</span>
             {role === 'admin' && (
               <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -224,18 +261,22 @@ function NavbarContent() {
             )}
           </div>
           <div className="space-y-0.5">
-            {sheets.map(s => {
-              const href = `/project/detail?id=${s.id}`;
-              const active = currentProjId === String(s.id);
+            {customerList.map(c => {
+              const href = c.id ? `/projects?customer_id=${c.id}` : `/projects?customer=${encodeURIComponent(c.name)}`;
+              const isCustActive = (path === '/projects' || path === '/project') &&
+                ((currentCustId && currentCustId === String(c.id)) || (currentCustName && currentCustName.toLowerCase() === c.name.toLowerCase()));
               return (
-                <Link key={s.id} href={href} onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all truncate ${
-                    active
+                <Link key={c.id || c.name} href={href} onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-semibold transition-all truncate ${
+                    isCustActive
                       ? 'bg-white/10 text-white border-l-2 border-indigo-500 rounded-l-none pl-2.5'
                       : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                   }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-indigo-500' : 'bg-slate-600'}`} />
-                  <span className="truncate">{s.name || 'Unnamed'}</span>
+                  <div className="flex items-center gap-2 truncate">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCustActive ? 'bg-indigo-500' : 'bg-slate-600'}`} />
+                    <span className="truncate">{c.name}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-bold ml-1.5 shrink-0">({c.count})</span>
                 </Link>
               );
             })}

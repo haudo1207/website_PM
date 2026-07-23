@@ -91,7 +91,8 @@ def serialize_project(p, db):
         "name": p.name,
         "code": p.code,
         "project_code": str(p.year) if p.year else p.code,
-        "customer_name": p.customer_name,
+        "customer_name": p.customer.name if p.customer else p.customer_name,
+        "customer_id": p.customer_id,
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": pm_names if pm_names else None,
@@ -234,10 +235,19 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     if project_code and db.query(Project.id).filter(Project.code == project_code).first():
         raise HTTPException(409, f"Project code '{project_code}' already exists.")
 
+    cust_id = body.get("customer_id")
+    cust_name = body.get("customer_name")
+    if cust_id:
+        from ..models.system_category import Customer as DB_Customer
+        c_obj = db.query(DB_Customer).filter(DB_Customer.id == cust_id).first()
+        if c_obj:
+            cust_name = c_obj.name
+
     p = Project(
         name=body.get("name", "").strip(),
         code=project_code,
-        customer_name=body.get("customer_name"),
+        customer_name=cust_name,
+        customer_id=cust_id,
         year=body.get("year"),
         description=body.get("description"),
         status=body.get("status", "Planning"),
@@ -335,9 +345,14 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     if not p:
         raise HTTPException(404, "Project not found.")
 
-    for field in ["name", "code", "customer_name", "year", "description", "status", "current_phase"]:
+    for field in ["name", "code", "customer_name", "customer_id", "year", "description", "status", "current_phase"]:
         if field in body:
             setattr(p, field, body[field])
+    if "customer_id" in body and body["customer_id"]:
+        from ..models.system_category import Customer as DB_Customer
+        c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()
+        if c_obj:
+            p.customer_name = c_obj.name
     if "data_scope" in body:
         requested_scope = str(body["data_scope"]).strip().lower()
         if requested_scope not in VALID_DATA_SCOPES:
