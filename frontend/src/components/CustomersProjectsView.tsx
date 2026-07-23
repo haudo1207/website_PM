@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { isSuperAdmin, isAdmin } from '@/lib/auth';
 import {
   getCustomers,
   createCustomer,
@@ -259,6 +260,10 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   };
 
   const handleDeleteCustomerClick = async (id: number, name: string) => {
+    if (!isSuperAdmin()) {
+      alert('Chỉ Super Admin mới có quyền xóa khách hàng!');
+      return;
+    }
     // Check if customer has projects
     const hasProjects = projects.some(p => 
       p.customer_id === id || 
@@ -396,6 +401,10 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   };
 
   const handleDeleteProjectClick = async (proj: any) => {
+    if (!isSuperAdmin()) {
+      alert('Chỉ Super Admin mới có quyền xóa dự án!');
+      return;
+    }
     if (proj.phase_count > 0 || proj.task_count > 0) {
       alert(`Không thể xóa dự án "${proj.name}" vì vẫn còn các phase hoặc task bên trong. Hãy dọn dẹp dự án trước.`);
       return;
@@ -525,12 +534,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                         >
                           Sửa
                         </button>
-                        <button
-                          onClick={() => handleDeleteCustomerClick(cat.id, cat.name)}
-                          className="text-[10px] text-red-600 hover:underline font-medium"
-                        >
-                          Xóa
-                        </button>
+                        {isSuperAdmin() && (
+                          <button
+                            onClick={() => handleDeleteCustomerClick(cat.id, cat.name)}
+                            className="text-[10px] text-red-600 hover:underline font-medium"
+                          >
+                            Xóa
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -739,12 +750,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                         >
                           {isArchived ? 'Mở lại' : 'Archive'}
                         </button>
-                        <button
-                          onClick={() => handleDeleteProjectClick(proj)}
-                          className="text-[10px] text-red-600 hover:underline font-semibold"
-                        >
-                          Xóa
-                        </button>
+                        {isSuperAdmin() && (
+                          <button
+                            onClick={() => handleDeleteProjectClick(proj)}
+                            className="text-[10px] text-red-600 hover:underline font-semibold"
+                          >
+                            Xóa
+                          </button>
+                        )}
                       </div>
 
                       <button
