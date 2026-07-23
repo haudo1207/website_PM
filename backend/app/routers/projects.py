@@ -21,7 +21,7 @@ from ..utils.access import (
     require_route_project_access,
     user_scope,
 )
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, require_super_admin
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
@@ -459,7 +459,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
 
 
 @router.delete("/projects/{pid}")
-def delete_project(pid: int, db: Session = Depends(get_db)):
+def delete_project(pid: int, db: Session = Depends(get_db), _=Depends(require_super_admin)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
         raise HTTPException(404, "Project not found.")

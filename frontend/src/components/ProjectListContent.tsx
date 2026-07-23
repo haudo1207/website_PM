@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, getCustomers } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, isSuperAdmin } from '@/lib/auth';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
   'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
@@ -440,7 +440,14 @@ export default function ProjectListContent() {
             <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa dự án này?</p>
             <div className="flex justify-end gap-3">
               <button onClick={() => setDeleteId(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
-              <button onClick={async () => { try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null); }}
+              <button onClick={async () => {
+                if (!isSuperAdmin()) {
+                  flash('Chỉ Super Admin mới có quyền xóa dự án!', true);
+                  setDeleteId(null);
+                  return;
+                }
+                try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null);
+              }}
                 className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm">Xóa</button>
             </div>
           </div>
