@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
+from ..models.system_category import Customer
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
