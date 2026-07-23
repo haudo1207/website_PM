@@ -12,7 +12,18 @@ from .auth import get_current_user
 
 ALL_SCOPE = "all"
 DEFAULT_SCOPE = "infrastructure"
-VALID_DATA_SCOPES = {ALL_SCOPE, DEFAULT_SCOPE}
+VALID_DATA_SCOPES = {ALL_SCOPE, DEFAULT_SCOPE, "markee"}
+
+# ── Role constants ──────────────────────────────────────────
+ROLE_SUPER_ADMIN = "super_admin"
+ROLE_LEADER = "leader"
+ROLE_MEMBER = "member"
+ROLE_VIEWER = "viewer"
+VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}
+# Roles that may perform write operations on projects / tasks / phases.
+WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER}
+# Teams a Leader may be assigned to (Leader cannot use "all").
+LEADER_ALLOWED_SCOPES = {DEFAULT_SCOPE, "markee"}
 
 
 def user_scope(user) -> str:
@@ -20,20 +31,59 @@ def user_scope(user) -> str:
 
 
 def project_query_for_user(db: Session, user):
+    """Return a Project query filtered by the caller's role and scope.
+
+    - super_admin (scope=all): every project.
+    - leader: projects whose data_scope matches the leader's team.
+    - member / viewer: only projects the user is explicitly assigned to
+      via the project_members_v2 junction table.
+    """
     query = db.query(Project)
     scope = user_scope(user)
-    return query if scope == ALL_SCOPE else query.filter(Project.data_scope == scope)
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    if role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE:
+        return query
+
+    if role == ROLE_LEADER:
+        return query.filter(Project.data_scope == scope)
+
+    # member / viewer — restrict to assigned projects only.
+    member_id = getattr(user, "member_id", None)
+    if not member_id:
+        # User has no linked member → they can see nothing.
+        return query.filter(Project.id == -1)
+
+    assigned_project_ids = (
+        db.query(project_members.c.project_id)
+        .filter(project_members.c.member_id == member_id)
+        .subquery()
+    )
+    return query.filter(Project.id.in_(assigned_project_ids))
 
 
-def can_access_project(user, project: Project) -> bool:
+def can_access_project(db: Session, user, project: Project) -> bool:
+    """Check whether *user* is allowed to view *project*."""
     scope = user_scope(user)
-    return scope == ALL_SCOPE or project.data_scope == scope
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    if role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE:
+        return True
+
+    if role == ROLE_LEADER:
+        return project.data_scope == scope
+
+    # member / viewer — must be an explicit project member.
+    member_id = getattr(user, "member_id", None)
+    if not member_id:
+        return False
+    return _is_member_of_project(db, user, project.id)
 
 
 def require_project(db: Session, user, project_id: int) -> Project:
     project = db.query(Project).filter(Project.id == project_id).first()
     # Return 404 for both missing and out-of-scope records to avoid leaking IDs.
-    if not project or not can_access_project(user, project):
+    if not project or not can_access_project(db, user, project):
         raise HTTPException(404, "Project not found.")
     return project
 
@@ -94,11 +144,25 @@ def require_route_project_access(
     if project_id is not None:
         require_project(db, user, int(project_id))
 
-    # Role-based write authorization.
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin":
-        # Members may perform Task CRUD if assigned to the current project.
-        if _is_task_write(request) and project_id is not None and _is_member_of_project(db, user, int(project_id)):
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    # ── Viewer: read-only — block every non-GET request unconditionally. ──
+    if role == ROLE_VIEWER and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        raise HTTPException(403, "Viewer không có quyền thực hiện thao tác này!")
+
+    # ── Role-based write authorization. ──
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        if role in WRITE_ROLES:
+            # super_admin and leader may write freely within their scope.
             return user
-        raise HTTPException(403, "Yêu cầu quyền admin, bạn không có quyền thực hiện thao tác này!")
+
+        # member: may perform Task CRUD if assigned to the current project.
+        if role == ROLE_MEMBER:
+            if _is_task_write(request) and project_id is not None and _is_member_of_project(db, user, int(project_id)):
+                return user
+            raise HTTPException(403, "Yêu cầu quyền quản lý, bạn không có quyền thực hiện thao tác này!")
+
+        # Catch-all for any unexpected role.
+        raise HTTPException(403, "Yêu cầu quyền quản lý, bạn không có quyền thực hiện thao tác này!")
 
     return user

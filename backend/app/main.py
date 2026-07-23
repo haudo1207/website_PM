@@ -39,10 +39,15 @@ def apply_schema_updates():
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub_unique "
             "ON users (google_sub) WHERE google_sub IS NOT NULL"
         ))
-        # Consolidate the legacy three-role model into Admin/Member. Permissions
-        # remain independent from project data scope.
+        # Consolidate the legacy three-role model into the new 4-role model.
+        # Permissions remain independent from project data scope.
         conn.execute(text(
             "UPDATE users SET role = 'member' WHERE role IN ('group_a', 'group_b')"
+        ))
+        # Migrate the 2-role model (admin/member) to the 4-role model.
+        # admin → super_admin. member stays as member.
+        conn.execute(text(
+            "UPDATE users SET role = 'super_admin' WHERE role = 'admin'"
         ))
         conn.execute(text("""
             DO $$
@@ -201,7 +206,7 @@ def init_db_defaults():
                     email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
                     full_name="Admin Company",
                     hashed_pw=hash_password(default_admin_password),
-                    role="admin",
+                    role="super_admin",
                     is_active=True
                 )
                 db.add(admin)
@@ -218,13 +223,13 @@ def init_db_defaults():
                     # NOT NULL legacy column; this marker is intentionally not a
                     # valid password hash because Google is the only login path.
                     hashed_pw="!google-only!",
-                    role="admin",
+                    role="super_admin",
                     data_scope="all",
                     is_active=True,
                 )
                 db.add(admin)
             else:
-                admin.role = "admin"
+                admin.role = "super_admin"
                 admin.data_scope = "all"
                 admin.is_active = True
 

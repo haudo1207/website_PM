@@ -116,10 +116,14 @@ export default function ProjectListContent() {
       }
     } else if (paramCustName) {
       setCustomerFilter(paramCustName);
+    } else {
+      setCustomerFilter('All');
     }
 
     if (paramYear) {
       setYearFilter(paramYear);
+    } else {
+      setYearFilter('All');
     }
   }, [paramCustId, paramCustName, paramYear, customers]);
 

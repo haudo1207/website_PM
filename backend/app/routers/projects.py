@@ -331,6 +331,41 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     return serialize_project(p, db)
 
 
+@router.get("/projects/sidebar-tree")
+def get_sidebar_tree(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Returns projects grouped by year then customer for the sidebar tree hierarchy."""
+    projects = project_query_for_user(db, current_user).all()
+
+    years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
+
+    for p in projects:
+        yr = p.year or 2026
+        c_id = p.customer_id
+        c_name = p.customer.name if p.customer else (p.customer_name or "Khác")
+
+        years_map[yr]["total"] += 1
+        c_key = (c_id, c_name.lower().strip())
+        years_map[yr]["customers"][c_key]["id"] = c_id
+        years_map[yr]["customers"][c_key]["name"] = c_name.strip()
+        years_map[yr]["customers"][c_key]["count"] += 1
+
+    result = []
+    for yr in sorted(years_map.keys(), reverse=True):
+        cust_list = []
+        for _, c_info in sorted(years_map[yr]["customers"].items(), key=lambda item: item[1]["name"]):
+            cust_list.append({
+                "id": c_info["id"],
+                "name": c_info["name"],
+                "project_count": c_info["count"]
+            })
+        result.append({
+            "year": yr,
+            "project_count": years_map[yr]["total"],
+            "customers": cust_list
+        })
+    return result
+
+
 @router.get("/projects/{pid}")
 def get_project(pid: int, db: Session = Depends(get_db)):
     p = db.query(Project).filter(Project.id == pid).first()
