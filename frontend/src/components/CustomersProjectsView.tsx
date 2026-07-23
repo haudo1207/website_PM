@@ -433,8 +433,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Cấu hình Khách hàng & Dự án</h1>
-        <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án để làm dữ liệu danh mục master phục vụ báo cáo và dropdown</p>
+        <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
+        <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án</p>
       </div>
 
       {/* 3-Column Portfolio UI Grid */}
