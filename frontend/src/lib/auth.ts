@@ -11,10 +11,22 @@ export const getToken = () => typeof window !== 'undefined' ? localStorage.getIt
 export const getRole = () => typeof window !== 'undefined' ? localStorage.getItem('role') : null;
 export const getName = () => typeof window !== 'undefined' ? localStorage.getItem('name') : null;
 export const getAvatar = () => typeof window !== 'undefined' ? localStorage.getItem('avatar') : null;
-export const isAdmin = () => getRole() === 'admin';
-// Kept for compatibility with existing imports; the two-role model reserves
-// every write operation for Admin.
-export const isGroupA = () => getRole() === 'admin';
+
+// ── 4-role model helpers ──
+export const isSuperAdmin = () => getRole() === 'super_admin';
+export const isLeader = () => getRole() === 'leader';
+export const isMember = () => getRole() === 'member';
+export const isViewer = () => getRole() === 'viewer';
+
+// Manager: super_admin or leader — may perform most write operations.
+export const isAdmin = () => {
+  const r = getRole();
+  return r === 'super_admin' || r === 'leader';
+};
+
+// Kept for backward compatibility — maps to isAdmin().
+export const isGroupA = isAdmin;
+
 export const logout = () => {
   if (typeof window === 'undefined') return;
   localStorage.clear();

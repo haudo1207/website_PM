@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, isSuperAdmin, isLeader } from '@/lib/auth';
 import {
   getAccounts,
   getAvailableMembers,
@@ -37,18 +37,23 @@ interface Account {
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: 'Admin',
+  super_admin: 'Super Admin',
+  leader: 'Team Leader',
   member: 'Member',
+  viewer: 'Viewer',
 };
 
 const ROLE_COLORS: Record<string, string> = {
-  admin: 'bg-red-100 text-red-700',
+  super_admin: 'bg-red-100 text-red-700',
+  leader: 'bg-amber-100 text-amber-700',
   member: 'bg-blue-100 text-blue-700',
+  viewer: 'bg-slate-100 text-slate-600',
 };
 
 const SCOPE_LABELS: Record<string, string> = {
   all: 'Tất cả dự án',
   infrastructure: 'Dự án Infrastructure',
+  markee: 'Dự án Markee',
 };
 
 export default function AccountsPage() {
@@ -289,13 +294,13 @@ export default function AccountsPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1.5">
-                            <button onClick={() => openEdit(acc)} className="text-blue-600 hover:underline font-medium" title="Sửa">Sửa</button>
+                            <button onClick={() => openEdit(acc)} disabled={isLeader() && acc.role === 'super_admin'} className={`font-medium ${isLeader() && acc.role === 'super_admin' ? 'text-slate-300 cursor-not-allowed' : 'text-blue-600 hover:underline'}`} title="Sửa">Sửa</button>
                             <span className="text-slate-200">|</span>
-                            <button onClick={() => handleToggleLock(acc)} className={`hover:underline font-medium ${acc.is_active ? 'text-orange-600' : 'text-emerald-600'}`}>
+                            <button onClick={() => handleToggleLock(acc)} disabled={isLeader() && acc.role === 'super_admin'} className={`font-medium ${isLeader() && acc.role === 'super_admin' ? 'text-slate-300 cursor-not-allowed' : acc.is_active ? 'text-orange-600 hover:underline' : 'text-emerald-600 hover:underline'}`}>
                               {acc.is_active ? 'Khóa' : 'Mở khóa'}
                             </button>
                             <span className="text-slate-200">|</span>
-                            <button onClick={() => handleDelete(acc)} className="text-red-600 hover:underline font-medium" title="Xóa">Xóa</button>
+                            <button onClick={() => handleDelete(acc)} disabled={isLeader() && acc.role === 'super_admin'} className={`font-medium ${isLeader() && acc.role === 'super_admin' ? 'text-slate-300 cursor-not-allowed' : 'text-red-600 hover:underline'}`} title="Xóa">Xóa</button>
                           </div>
                         </td>
                       </tr>
@@ -364,8 +369,10 @@ export default function AccountsPage() {
                     onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                   >
-                    <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                    <option value="member">Member — Chỉ xem dữ liệu</option>
+                    <option value="super_admin">Super Admin — Quản trị toàn hệ thống</option>
+                    <option value="leader">Team Leader — Quản lý dự án trong team</option>
+                    <option value="member">Member — Thành viên, quản lý task</option>
+                    <option value="viewer">Viewer — Chỉ xem, không thao tác</option>
                   </select>
                 </div>
               </div>
@@ -378,6 +385,7 @@ export default function AccountsPage() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
                   <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
+                  <option value="markee">Markee — Chỉ dự án của team Markee</option>
                   <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
                 </select>
               </div>
@@ -463,8 +471,10 @@ export default function AccountsPage() {
                   onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
-                  <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                  <option value="member">Member — Chỉ xem dữ liệu</option>
+                  <option value="super_admin">Super Admin — Quản trị toàn hệ thống</option>
+                  <option value="leader">Team Leader — Quản lý dự án trong team</option>
+                  <option value="member">Member — Thành viên, quản lý task</option>
+                  <option value="viewer">Viewer — Chỉ xem, không thao tác</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -475,6 +485,7 @@ export default function AccountsPage() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
                   <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
+                  <option value="markee">Markee — Chỉ dự án của team Markee</option>
                   <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
                 </select>
               </div>
