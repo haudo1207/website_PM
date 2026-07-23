@@ -61,13 +61,18 @@ export default function KPIPage() {
                         </div>
                     </div>
 
-                    {/* Bộ lọc */}
-                    <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-2">Lọc thời gian:</span>
+                    {/* Bộ lọc nổi bật */}
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl px-5 py-4 shadow-sm flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                            </svg>
+                            <span className="text-sm font-bold text-blue-800 uppercase tracking-wider">Bộ lọc thời gian:</span>
+                        </div>
                         <select 
                             value={month} 
                             onChange={e => setMonth(e.target.value)}
-                            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white min-w-[140px]"
+                            className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[160px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
                         >
                             <option value="">Tất cả các tháng</option>
                             {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
@@ -78,7 +83,7 @@ export default function KPIPage() {
                         <select 
                             value={year} 
                             onChange={e => setYear(e.target.value)}
-                            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white min-w-[140px]"
+                            className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[160px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
                         >
                             <option value="">Tất cả các năm</option>
                             {[2023, 2024, 2025, 2026, 2027].map(y => (
@@ -88,23 +93,26 @@ export default function KPIPage() {
 
                         {(month || year) && (
                             <button onClick={() => { setMonth(''); setYear(''); }}
-                                className="text-xs text-slate-500 hover:text-red-600 font-medium transition-colors ml-2">
+                                className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all ml-auto bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
                                 Xóa bộ lọc
                             </button>
                         )}
                     </div>
 
                     {/* Table */}
-                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-xs text-[#0f172a]">
-                                <thead>
-                                    <tr className="bg-slate-50 border-b border-slate-200">
-                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12">STT</th>
-                                        <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
-                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trung bình KPI</th>
-                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI Bonus</th>
-                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-blue-600">Tổng KPI</th>
+                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+                        <div className="overflow-x-auto overflow-y-auto max-h-[60vh] relative">
+                            <table className="w-full text-xs text-[#0f172a] whitespace-nowrap">
+                                <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_#e2e8f0]">
+                                    <tr>
+                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12 bg-slate-50">STT</th>
+                                        <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 min-w-[200px]">Display Name</th>
+                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Trung bình KPI</th>
+                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">KPI Bonus</th>
+                                        <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-blue-600 bg-slate-50">Tổng KPI</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
