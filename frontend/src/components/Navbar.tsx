@@ -86,11 +86,6 @@ function NavbarContent() {
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
       </svg>
     )},
-    { href: '/customers', label: 'Customers', icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5m0 0h4m-4 0V11m0 0h4m-4 0H9m4 0V7m0 0h4m-4 0H9m-4 4h4" />
-      </svg>
-    )},
     { href: '/kpi', label: 'KPI', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -257,14 +252,9 @@ function NavbarContent() {
         {/* Projects Tree Section */}
         <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CUSTOMERS</span>
-            {isAdmin() && (
-              <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50" title="Thêm dự án mới">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </Link>
-            )}
+            <Link href="/customers" className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors" title="Mở trang Quản lý Khách hàng">
+              CUSTOMERS
+            </Link>
           </div>
 
           {/* Quick Search Input */}
@@ -349,14 +339,9 @@ function NavbarContent() {
         {/* Mobile Projects Tree Section */}
         <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CUSTOMERS</span>
-            {isAdmin() && (
-              <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </Link>
-            )}
+            <Link href="/customers" onClick={() => setMobileMenuOpen(false)} className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors" title="Mở trang Quản lý Khách hàng">
+              CUSTOMERS
+            </Link>
           </div>
           <div className="relative px-1 mb-2">
             <input
