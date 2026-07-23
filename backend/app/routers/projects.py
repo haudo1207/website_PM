@@ -2,6 +2,7 @@
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
 from collections import defaultdict
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case
@@ -332,13 +333,18 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
 
 
 @router.get("/projects/sidebar-tree")
-def get_sidebar_tree(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_sidebar_tree(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Returns projects grouped by year then customer for the sidebar tree hierarchy."""
     projects = project_query_for_user(db, current_user).all()
 
     years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
+    target_bu = business_unit.lower().strip() if business_unit else None
 
     for p in projects:
+        c_bu = (getattr(p.customer, 'business_unit', 'securityzone') or 'securityzone').lower() if p.customer else 'securityzone'
+        if target_bu and c_bu != target_bu:
+            continue
+
         yr = p.year or 2026
         c_id = p.customer_id
         c_name = p.customer.name if p.customer else (p.customer_name or "Khác")

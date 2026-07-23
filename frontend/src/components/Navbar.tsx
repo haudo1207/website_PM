@@ -24,23 +24,36 @@ function NavbarContent() {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
-  const [treeData, setTreeData] = useState<YearNode[]>([]);
-  const [expandedYear, setExpandedYear] = useState<number | null>(null);
-  const [customerSearch, setCustomerSearch] = useState('');
+
+  const [activeBU, setActiveBU] = useState<'securityzone' | 'markee'>('securityzone');
+  const [expandedYearBU, setExpandedYearBU] = useState<Record<string, number | null>>({
+    securityzone: null,
+    markee: null
+  });
+  const [customerSearchBU, setCustomerSearchBU] = useState<Record<string, string>>({
+    securityzone: '',
+    markee: ''
+  });
+  const [treeDataBU, setTreeDataBU] = useState<Record<string, YearNode[]>>({
+    securityzone: [],
+    markee: []
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setName(getName() ?? '');
     setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
+  }, []);
 
-    getSidebarTree()
+  useEffect(() => {
+    getSidebarTree(activeBU)
       .then((data: YearNode[]) => {
-        setTreeData(data || []);
+        setTreeDataBU(prev => ({ ...prev, [activeBU]: data || [] }));
       })
       .catch(() => {
         // Fallback calculation if API fails
-        Promise.all([getCustomers(), getProjects()]).then(([custs, projs]) => {
+        Promise.all([getCustomers(activeBU), getProjects()]).then(([custs, projs]) => {
           const yearMap = new Map<number, Map<string, CustomerNode>>();
           (projs || []).forEach((p: any) => {
             const yr = p.year || new Date().getFullYear();
@@ -58,21 +71,24 @@ function NavbarContent() {
           const fallbackData: YearNode[] = Array.from(yearMap.entries())
             .sort((a, b) => b[0] - a[0])
             .map(([yr, cMap]) => {
-              const custs = Array.from(cMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-              const total = custs.reduce((sum, c) => sum + c.project_count, 0);
-              return { year: yr, project_count: total, customers: custs };
+              const custsList = Array.from(cMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+              const total = custsList.reduce((sum, c) => sum + c.project_count, 0);
+              return { year: yr, project_count: total, customers: custsList };
             });
-          setTreeData(fallbackData);
+          setTreeDataBU(prev => ({ ...prev, [activeBU]: fallbackData }));
         });
       });
-  }, [path]);
+  }, [activeBU, path]);
 
   const currentParamYear = searchParams.get('year');
   const currentCustId = searchParams.get('customer_id');
   const currentCustName = searchParams.get('customer');
 
   const toggleYear = (year: number) => {
-    setExpandedYear(prev => (prev === year ? null : year));
+    setExpandedYearBU(prev => ({
+      ...prev,
+      [activeBU]: prev[activeBU] === year ? null : year
+    }));
   };
 
   const nav = [
@@ -116,16 +132,19 @@ function NavbarContent() {
   ].filter(n => n.show !== false);
 
   const renderTreeContent = () => {
-    const searchLow = customerSearch.trim().toLowerCase();
+    const currentTreeData = treeDataBU[activeBU] || [];
+    const currentExpandedYear = expandedYearBU[activeBU];
+    const currentSearch = customerSearchBU[activeBU] || '';
+    const searchLow = currentSearch.trim().toLowerCase();
 
-    return treeData.map(yNode => {
+    return currentTreeData.map(yNode => {
       const matchingCusts = yNode.customers.filter(c =>
         !searchLow || c.name.toLowerCase().includes(searchLow)
       );
 
       if (searchLow && matchingCusts.length === 0) return null;
 
-      const isExpanded = searchLow ? true : (expandedYear === yNode.year);
+      const isExpanded = searchLow ? true : (currentExpandedYear === yNode.year);
 
       return (
         <div key={yNode.year} className="space-y-1 mb-2">
@@ -152,8 +171,8 @@ function NavbarContent() {
             <div className="pl-3.5 space-y-0.5 border-l border-slate-800/80 ml-2.5">
               {matchingCusts.map(c => {
                 const href = c.id
-                  ? `/projects?year=${yNode.year}&customer_id=${c.id}`
-                  : `/projects?year=${yNode.year}&customer=${encodeURIComponent(c.name)}`;
+                  ? `/projects?year=${yNode.year}&customer_id=${c.id}&business_unit=${activeBU}`
+                  : `/projects?year=${yNode.year}&customer=${encodeURIComponent(c.name)}&business_unit=${activeBU}`;
 
                 const isItemActive = (path === '/projects' || path === '/project') &&
                   currentParamYear === String(yNode.year) &&
@@ -257,13 +276,40 @@ function NavbarContent() {
             </Link>
           </div>
 
+          {/* Business Unit Tabs Switcher */}
+          <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
+            <button
+              onClick={() => setActiveBU('securityzone')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'securityzone'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              SecurityZone
+            </button>
+            <button
+              onClick={() => setActiveBU('markee')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'markee'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Markee
+            </button>
+          </div>
+
           {/* Quick Search Input */}
           <div className="relative px-1 mb-2">
             <input
               type="text"
               placeholder="🔍 Search Customer..."
-              value={customerSearch}
-              onChange={e => setCustomerSearch(e.target.value)}
+              value={customerSearchBU[activeBU] || ''}
+              onChange={e => {
+                const val = e.target.value;
+                setCustomerSearchBU(prev => ({ ...prev, [activeBU]: val }));
+              }}
               className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
@@ -343,12 +389,40 @@ function NavbarContent() {
               CUSTOMERS
             </Link>
           </div>
+
+          {/* Mobile Business Unit Tabs Switcher */}
+          <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
+            <button
+              onClick={() => setActiveBU('securityzone')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'securityzone'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              SecurityZone
+            </button>
+            <button
+              onClick={() => setActiveBU('markee')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'markee'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Markee
+            </button>
+          </div>
+
           <div className="relative px-1 mb-2">
             <input
               type="text"
               placeholder="🔍 Search Customer..."
-              value={customerSearch}
-              onChange={e => setCustomerSearch(e.target.value)}
+              value={customerSearchBU[activeBU] || ''}
+              onChange={e => {
+                const val = e.target.value;
+                setCustomerSearchBU(prev => ({ ...prev, [activeBU]: val }));
+              }}
               className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
             />
           </div>

@@ -39,6 +39,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const [actionLoading, setActionLoading] = useState(false);
 
   // Selection states
+  const [activeBU, setActiveBU] = useState<'securityzone' | 'markee'>('securityzone');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
@@ -109,13 +110,13 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   // Fetch initial data
   useEffect(() => {
     loadData();
-  }, []);
+  }, [activeBU]);
 
   const loadData = async () => {
     setLoading(true);
     try {
       const [custs, projs, mems] = await Promise.all([
-        getCustomers(),
+        getCustomers(activeBU),
         getProjects(),
         getMembers()
       ]);
@@ -123,9 +124,11 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       setProjects(projs || []);
       setMembers(mems || []);
 
-      // Auto-select first customer if available and none selected
-      if (custs && custs.length > 0 && !selectedCustomerId) {
+      // Auto-select first customer if available
+      if (custs && custs.length > 0) {
         setSelectedCustomerId(custs[0].id);
+      } else {
+        setSelectedCustomerId(null);
       }
     } catch (err) {
       console.error(err);
@@ -218,12 +221,12 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     if (!newCustomerName.trim()) return;
     setActionLoading(true);
     try {
-      const created = await createCustomer({ name: newCustomerName.trim() });
+      const created = await createCustomer({ name: newCustomerName.trim(), business_unit: activeBU });
       setNewCustomerName('');
-      onFlash('Đã thêm khách hàng thành công');
+      onFlash(`Đã thêm khách hàng thành công`);
       
       // Update local state and select the new customer
-      const updatedCusts = await getCustomers();
+      const updatedCusts = await getCustomers(activeBU);
       setCustomers(updatedCusts || []);
       if (created && created.id) {
         setSelectedCustomerId(created.id);
@@ -441,9 +444,35 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     <div className="space-y-6" style={{ contentVisibility: 'auto' }}>
       
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
-        <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
+          <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Business Unit</p>
+        </div>
+
+        {/* Business Unit Selector Tabs */}
+        <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
+          <button
+            onClick={() => setActiveBU('securityzone')}
+            className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeBU === 'securityzone'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <span>🛡️</span> SecurityZone
+          </button>
+          <button
+            onClick={() => setActiveBU('markee')}
+            className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeBU === 'markee'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <span>🚀</span> Markee
+          </button>
+        </div>
       </div>
 
       {/* 3-Column Portfolio UI Grid */}

@@ -342,17 +342,21 @@ def delete_team(id: int, db: Session = Depends(get_db), _=Depends(require_admin)
 
 # ----------------- CUSTOMERS -----------------
 @router.get("/customers")
-def list_customers(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return db.query(Customer).order_by(Customer.name.asc()).all()
+def list_customers(business_unit: Optional[str] = None, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    q = db.query(Customer)
+    if business_unit:
+        q = q.filter(Customer.business_unit == business_unit.lower())
+    return q.order_by(Customer.name.asc()).all()
 
 @router.post("/customers")
 def create_customer(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
     name = str(body.get("name", "")).strip()
+    bu = str(body.get("business_unit", "securityzone")).strip().lower()
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
-    if db.query(Customer).filter(Customer.name.ilike(name)).first():
+    if db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu).first():
         raise HTTPException(400, f"Khách hàng '{name}' đã tồn tại")
-    c = Customer(name=name, description=body.get("description") or None)
+    c = Customer(name=name, description=body.get("description") or None, business_unit=bu)
     db.add(c)
     db.commit()
     db.refresh(c)
@@ -364,12 +368,14 @@ def update_customer(id: int, body: dict, db: Session = Depends(get_db), _=Depend
     if not c:
         raise HTTPException(404, "Không tìm thấy khách hàng")
     name = str(body.get("name", "")).strip()
+    bu = str(body.get("business_unit", c.business_unit or "securityzone")).strip().lower()
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
-    dup = db.query(Customer).filter(Customer.name.ilike(name), Customer.id != id).first()
+    dup = db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu, Customer.id != id).first()
     if dup:
         raise HTTPException(400, f"Khách hàng '{name}' đã tồn tại")
     c.name = name
+    c.business_unit = bu
     c.description = body.get("description") or None
     db.commit()
     db.refresh(c)
