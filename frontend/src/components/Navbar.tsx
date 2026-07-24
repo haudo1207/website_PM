@@ -25,17 +25,17 @@ function NavbarContent() {
   const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
 
-  const [activeBU, setActiveBU] = useState<'securityzone' | 'markee'>('securityzone');
+  const [activeBU, setActiveBU] = useState<'infrastructure' | 'markee'>('infrastructure');
   const [expandedYearBU, setExpandedYearBU] = useState<Record<string, number | null>>({
-    securityzone: null,
+    infrastructure: null,
     markee: null
   });
   const [customerSearchBU, setCustomerSearchBU] = useState<Record<string, string>>({
-    securityzone: '',
+    infrastructure: '',
     markee: ''
   });
   const [treeDataBU, setTreeDataBU] = useState<Record<string, YearNode[]>>({
-    securityzone: [],
+    infrastructure: [],
     markee: []
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -279,14 +279,14 @@ function NavbarContent() {
           {/* Business Unit Tabs Switcher */}
           <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
             <button
-              onClick={() => setActiveBU('securityzone')}
+              onClick={() => setActiveBU('infrastructure')}
               className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                activeBU === 'securityzone'
+                activeBU === 'infrastructure'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              SecurityZone
+              Infrastructure
             </button>
             <button
               onClick={() => setActiveBU('markee')}
@@ -393,14 +393,14 @@ function NavbarContent() {
           {/* Mobile Business Unit Tabs Switcher */}
           <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
             <button
-              onClick={() => setActiveBU('securityzone')}
+              onClick={() => setActiveBU('infrastructure')}
               className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                activeBU === 'securityzone'
+                activeBU === 'infrastructure'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              SecurityZone
+              Infrastructure
             </button>
             <button
               onClick={() => setActiveBU('markee')}

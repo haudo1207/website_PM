@@ -95,6 +95,8 @@ def serialize_project(p, db):
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
+        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
+        "business_unit": p.customer.business_unit if p.customer else "securityzone",
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": pm_names if pm_names else None,
@@ -136,6 +138,7 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
+        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
         "business_unit": p.customer.business_unit if p.customer else "securityzone",
         "year": p.year,
         "pm_id": p.pm_id,
@@ -165,10 +168,12 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
 
 
 @router.get("/projects")
-def list_projects(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def list_projects(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     q = project_query_for_user(db, current_user)
-    if business_unit:
-        q = q.join(Customer, Project.customer_id == Customer.id).filter(Customer.business_unit == business_unit.lower())
+    target_b = (business or business_unit or "").strip().lower()
+    if target_b:
+        b_val = "Markee" if target_b == "markee" else "Infrastructure"
+        q = q.filter(Project.business == b_val)
     projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
@@ -250,6 +255,8 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         if c_obj:
             cust_name = c_obj.name
 
+    biz_val = "Markee" if str(body.get("business") or body.get("business_unit") or "").strip().lower() == "markee" else "Infrastructure"
+
     p = Project(
         name=body.get("name", "").strip(),
         code=project_code,
@@ -258,6 +265,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         year=body.get("year"),
         description=body.get("description"),
         status=body.get("status", "Planning"),
+        business=biz_val,
         data_scope=requested_scope,
         current_phase=body.get("current_phase") or "1. Tư vấn",
     )
@@ -339,16 +347,17 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
 
 
 @router.get("/projects/sidebar-tree")
-def get_sidebar_tree(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Returns projects grouped by year then customer for the sidebar tree hierarchy."""
     projects = project_query_for_user(db, current_user).all()
 
     years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
-    target_bu = business_unit.lower().strip() if business_unit else None
+    b_input = (business or business_unit or "").strip().lower()
+    target_biz = "Markee" if b_input == "markee" else ("Infrastructure" if b_input else None)
 
     for p in projects:
-        c_bu = (getattr(p.customer, 'business_unit', 'securityzone') or 'securityzone').lower() if p.customer else 'securityzone'
-        if target_bu and c_bu != target_bu:
+        p_biz = p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure")
+        if target_biz and p_biz != target_biz:
             continue
 
         yr = p.year or 2026
@@ -395,6 +404,9 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     for field in ["name", "code", "customer_name", "customer_id", "year", "description", "status", "current_phase"]:
         if field in body:
             setattr(p, field, body[field])
+    if "business" in body or "business_unit" in body:
+        b_in = str(body.get("business") or body.get("business_unit") or "").strip().lower()
+        p.business = "Markee" if b_in == "markee" else "Infrastructure"
     if "customer_id" in body and body["customer_id"]:
         from ..models.system_category import Customer as DB_Customer
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()

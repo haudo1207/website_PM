@@ -128,6 +128,15 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50) NOT NULL DEFAULT 'securityzone'"))
         conn.execute(text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_name_key"))
 
+        # Add business column to projects
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS business VARCHAR(30) NOT NULL DEFAULT 'Infrastructure'"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_business ON projects (business)"))
+        conn.execute(text("""
+            UPDATE projects 
+            SET business = 'Markee' 
+            WHERE customer_id IN (SELECT id FROM customers WHERE LOWER(business_unit) = 'markee')
+        """))
+
 apply_schema_updates()
 
 def init_db_defaults():

@@ -39,7 +39,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const [actionLoading, setActionLoading] = useState(false);
 
   // Selection states
-  const [activeBU, setActiveBU] = useState<'securityzone' | 'markee'>('securityzone');
+  const [activeBU, setActiveBU] = useState<'infrastructure' | 'markee'>('infrastructure');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
@@ -59,6 +59,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     name: '',
     year: new Date().getFullYear(),
     customerId: '' as string | number,
+    business: 'Infrastructure',
     pmIds: [] as number[],
     leaderIds: [] as number[],
     memberIds: [] as number[],
@@ -298,6 +299,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       name: '',
       year: selectedYear || new Date().getFullYear(),
       customerId: selectedCustomerId || '',
+      business: activeBU === 'markee' ? 'Markee' : 'Infrastructure',
       pmIds: [],
       leaderIds: [],
       memberIds: [],
@@ -321,6 +323,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       name: proj.name || '',
       year: proj.year || new Date().getFullYear(),
       customerId: proj.customer_id || selectedCustomerId || '',
+      business: proj.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure'),
       pmIds: pmIds.map(Number),
       leaderIds: leaderIds.map(Number),
       memberIds: memberIds.map(Number),
@@ -350,6 +353,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         code: `${projectForm.name.trim().replace(/\s+/g, '-')}-${projectForm.year}`,
         customer_id: Number(projectForm.customerId),
         customer_name: selectedCust ? selectedCust.name : '',
+        business: projectForm.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure'),
         year: Number(projectForm.year),
         status: projectForm.status,
         description: projectForm.description,
@@ -448,14 +452,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* Business Unit Selector Tabs */}
         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
           <button
-            onClick={() => setActiveBU('securityzone')}
+            onClick={() => setActiveBU('infrastructure')}
             className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-              activeBU === 'securityzone'
+              activeBU === 'infrastructure'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <span>🛡️</span> SecurityZone
+            <span>🛡️</span> Infrastructure
           </button>
           <button
             onClick={() => setActiveBU('markee')}
@@ -859,7 +863,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                 </div>
               </div>
 
-              {/* Row 2: Customer & Current Phase */}
+              {/* Row 2: Customer & Business */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -878,48 +882,63 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                   </select>
                 </div>
 
-                {/* Phase Selection Dropdown */}
-                <div ref={modalPhaseRef} className="space-y-1 relative">
+                <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Giai đoạn hiện tại <span className="text-red-500">*</span>
+                    Business <span className="text-red-500">*</span>
                   </label>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setModalPhaseDropdownOpen(!modalPhaseDropdownOpen);
-                      setModalPmDropdownOpen(false);
-                      setModalLeaderDropdownOpen(false);
-                      setModalMemberDropdownOpen(false);
-                    }}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] flex items-center justify-between outline-none focus:border-blue-500 transition-all cursor-pointer text-left"
+                  <select
+                    required
+                    value={projectForm.business}
+                    onChange={e => setProjectForm({ ...projectForm, business: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
                   >
-                    <span className="truncate">{projectForm.currentPhase}</span>
-                    <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-
-                  {modalPhaseDropdownOpen && (
-                    <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-[160px] overflow-y-auto">
-                      {PROJECT_PHASES.map((p) => (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => {
-                            setProjectForm({ ...projectForm, currentPhase: p });
-                            setModalPhaseDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 transition-colors ${
-                            projectForm.currentPhase === p ? 'bg-blue-50 text-blue-600 font-semibold' : 'text-[#0f172a]'
-                          }`}
-                        >
-                          {p}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                    <option value="Infrastructure">Infrastructure</option>
+                    <option value="Markee">Markee</option>
+                  </select>
                 </div>
+              </div>
+
+              {/* Phase Selection Dropdown */}
+              <div ref={modalPhaseRef} className="space-y-1 relative">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  Giai đoạn hiện tại <span className="text-red-500">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setModalPhaseDropdownOpen(!modalPhaseDropdownOpen);
+                    setModalPmDropdownOpen(false);
+                    setModalLeaderDropdownOpen(false);
+                    setModalMemberDropdownOpen(false);
+                  }}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] flex items-center justify-between outline-none focus:border-blue-500 transition-all cursor-pointer text-left"
+                >
+                  <span className="truncate">{projectForm.currentPhase}</span>
+                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {modalPhaseDropdownOpen && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-[160px] overflow-y-auto">
+                    {PROJECT_PHASES.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => {
+                          setProjectForm({ ...projectForm, currentPhase: p });
+                          setModalPhaseDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 transition-colors ${
+                          projectForm.currentPhase === p ? 'bg-blue-50 text-blue-600 font-semibold' : 'text-[#0f172a]'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* PM Multi-select */}
