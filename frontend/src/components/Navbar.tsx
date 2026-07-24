@@ -113,10 +113,9 @@ function NavbarContent() {
       </svg>
     )},
     { href: '/leave-request', label: 'Leave Request', icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6" />
-      </svg>
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 2h6a1 1 0 011 1v1h2a2 2 0 012 2v13a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2V3a1 1 0 011-1zm0 2v1h6V4H9zm1.5 9l2 2 4-4"/>
+    </svg>
     )},
     { href: '/accounts', label: 'Accounts', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

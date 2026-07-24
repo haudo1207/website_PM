@@ -173,6 +173,16 @@ export const updateCustomer = (id: number, data: { name: string; description?: s
   api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
 export const deleteCustomer = (id: number) => api.delete(`/system-categories/customers/${id}`).then(r => r.data);
 
+// Lunch Records
+export const getLunchRecords = (params?: { date?: string; member_id?: number }) =>
+  api.get('/lunch', { params }).then(r => r.data);
+export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean; status?: string }) =>
+  api.post('/lunch', data).then(r => r.data);
+export const deleteLunchRecord = (id: number) =>
+  api.delete(`/lunch/${id}`).then(r => r.data);
+export const getLunchMonthlySummary = (year: number, month: number) =>
+  api.get('/lunch/monthly-summary', { params: { year, month } }).then(r => r.data);
+
 // Leave Requests
 export const getLeaveRequests = (params?: { status?: string; user_id?: number; from_date?: string; to_date?: string }) =>
   api.get('/leave-requests', { params }).then(r => r.data);
