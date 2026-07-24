@@ -27,7 +27,7 @@ interface TeamMember {
 // LUNCH CHECK-IN COMPONENT (with backend API)
 // ═══════════════════════════════════════════════════════════════
 function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { members: TeamMember[]; leaveRequests: LeaveRequest[]; calendarDate: string; isAdmin: boolean }) {
-  const [lunchRecords, setLunchRecords] = useState<{ id: number; member_id: number; date: string; has_lunch: boolean }[]>([]);
+  const [lunchRecords, setLunchRecords] = useState<{ id: number; member_id: number; date: string; has_lunch: boolean; status?: string }[]>([]);
   const [selectedTeam, setSelectedTeam] = useState('All');
   const [saving, setSaving] = useState(false);
   const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
@@ -42,7 +42,7 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
     if (storedMemberId) setCurrentMemberId(Number(storedMemberId));
   }, []);
 
-  // Fetch lunch records from API when date changes
+  // Fetch lunch records from API when date changes or view switches
   useEffect(() => {
     const fetchLunch = async () => {
       try {
@@ -81,10 +81,14 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
   const target = new Date(calendarDate);
   const offMap: Record<number, boolean> = {};
   leaveRequests.forEach((req) => {
+    // Only count approved leave requests as off
+    if (req.status !== 'Approved') return;
     const s = new Date(req.start_date);
     const e = new Date(req.end_date);
     if (s <= target && target <= e) {
-      offMap[req.user_id] = true;
+      // Try member_id first, then user.member_id, then user_id (same as Calendar Team)
+      const mid = req.member_id || req.user?.member_id || req.user_id;
+      if (mid) offMap[mid] = true;
     }
   });
 
@@ -106,7 +110,23 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
     }
     setSaving(true);
     try {
-      await upsertLunchRecord({ member_id: memberId, date: calendarDate, has_lunch: hasLunchVal });
+      const status = hasLunchVal ? 'lunch' : 'no_lunch';
+      await upsertLunchRecord({ member_id: memberId, date: calendarDate, has_lunch: hasLunchVal, status: status });
+      const records = await getLunchRecords({ date: calendarDate });
+      setLunchRecords(records);
+    } catch (err) {
+      console.error('Error saving lunch record:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStatusChange = async (memberId: number, status: string) => {
+    if (!isAdmin) return;
+    setSaving(true);
+    try {
+      const hasLunch = status === 'lunch' || status === 'bonus';
+      await upsertLunchRecord({ member_id: memberId, date: calendarDate, has_lunch: hasLunch, status: status });
       const records = await getLunchRecords({ date: calendarDate });
       setLunchRecords(records);
     } catch (err) {
@@ -123,10 +143,13 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
     const offCount = membersToShow.filter((m) => offMap[m.id]).length;
     const working = membersToShow.filter((m) => !offMap[m.id]);
     const registeredLunch = working.filter((m) =>
-      lunchRecords.some((r) => r.member_id === m.id && r.has_lunch)
+      lunchRecords.some((r) => r.member_id === m.id && (r.status === 'lunch' || r.status === 'bonus' || (!r.status && r.has_lunch)))
+    ).length;
+    const bonusCount = working.filter((m) =>
+      lunchRecords.some((r) => r.member_id === m.id && r.status === 'bonus')
     ).length;
     const notRegistered = working.length - registeredLunch;
-    return { total, offCount, working: working.length, registeredLunch, notRegistered };
+    return { total, offCount, working: working.length, registeredLunch, notRegistered, bonusCount };
   }, [isAdmin, membersToShow, offMap, lunchRecords]);
 
   return (
@@ -284,7 +307,7 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
 
       {/* Admin summary cards */}
       {isAdmin && summary && (
-        <div className="mb-4 grid grid-cols-2 md:grid-cols-6 gap-3">
+        <div className="mb-4 grid grid-cols-2 md:grid-cols-7 gap-3">
           <div className="rounded-lg border bg-white p-3 text-center">
             <div className="text-lg font-bold text-[#0b1c30]">{summary.total}</div>
             <div className="text-xs text-[#565e74]">Total</div>
@@ -304,6 +327,10 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
           <div className="rounded-lg border bg-amber-50 p-3 text-center">
             <div className="text-lg font-bold text-amber-600">{summary.notRegistered}</div>
             <div className="text-xs text-[#565e74]">Chưa đăng ký</div>
+          </div>
+          <div className="rounded-lg border bg-amber-50 p-3 text-center">
+            <div className="text-lg font-bold text-amber-600">{summary.bonusCount || 0}</div>
+            <div className="text-xs text-[#565e74]">Bonus</div>
           </div>
           <div className="rounded-lg border bg-amber-50 p-3 text-center">
             <div className="text-lg font-bold text-amber-600">{(summary.registeredLunch * 40000).toLocaleString('vi-VN')}đ</div>
@@ -331,7 +358,7 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
               const isOff = !!offMap[m.id];
               const lunch = lunchRecords.find(r => r.member_id === m.id);
               const hasRegistered = lunch !== undefined;
-              const cost = (!isOff && lunch?.has_lunch) ? 40000 : 0;
+              const cost = (!isOff && (lunch?.status === 'lunch' || lunch?.status === 'bonus' || (!lunch?.status && lunch?.has_lunch))) ? 40000 : 0;
 
               return (
                 <tr key={m.id} className="hover:bg-[#f8f9ff]">
@@ -344,11 +371,29 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
                     </span>
                   </td>
                   <td className="px-3 py-3 text-center">
-                    {isOff ? (
+                    {isAdmin ? (
+                      <select
+                        value={isOff ? 'no_lunch' : (lunch?.status || (lunch?.has_lunch ? 'lunch' : 'no_lunch'))}
+                        onChange={(e) => handleStatusChange(m.id, e.target.value)}
+                        disabled={saving || isOff}
+                        className="rounded-lg border border-[#c2c6d6] bg-white px-2 py-1 text-xs font-semibold outline-none"
+                      >
+                        <option value="off">Off</option>
+                        <option value="lunch">Có ăn</option>
+                        <option value="no_lunch">Không ăn</option>
+                        <option value="bonus">Bonus</option>
+                      </select>
+                    ) : isOff ? (
                       <span className="text-[#565e74]">-</span>
                     ) : hasRegistered ? (
-                      <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${lunch.has_lunch ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                        {lunch.has_lunch ? 'Có ăn' : 'Không ăn'}
+                      <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                        lunch.status === 'bonus' ? 'bg-amber-100 text-amber-700' :
+                        lunch.status === 'off' ? 'bg-rose-100 text-rose-700' :
+                        lunch.has_lunch ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                      }`}>
+                        {lunch.status === 'bonus' ? 'Bonus' :
+                         lunch.status === 'off' ? 'Off' :
+                         lunch.has_lunch ? 'Có ăn' : 'Không ăn'}
                       </span>
                     ) : (
                       <span className="text-xs text-amber-600">Chưa đăng ký</span>

@@ -28,10 +28,12 @@ def leave_to_dict(lr: LeaveRequest) -> dict:
         "status": lr.status,
         "created_at": lr.created_at.isoformat() if lr.created_at else None,
         "updated_at": lr.updated_at.isoformat() if lr.updated_at else None,
+        "member_id": lr.user.member_id if lr.user else None,
         "user": {
             "id": lr.user.id,
             "full_name": lr.user.full_name,
             "email": lr.user.email,
+            "member_id": lr.user.member_id,
         } if lr.user else None,
     }
 

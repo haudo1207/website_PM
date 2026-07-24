@@ -160,7 +160,7 @@ export const deleteCustomer = (id: number) => api.delete(`/system-categories/cus
 // Lunch Records
 export const getLunchRecords = (params?: { date?: string; member_id?: number }) =>
   api.get('/lunch', { params }).then(r => r.data);
-export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean }) =>
+export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean; status?: string }) =>
   api.post('/lunch', data).then(r => r.data);
 export const deleteLunchRecord = (id: number) =>
   api.delete(`/lunch/${id}`).then(r => r.data);

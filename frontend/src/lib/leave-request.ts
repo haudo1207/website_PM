@@ -4,6 +4,7 @@ export type LeaveStatus = 'Approved' | 'Pending' | 'Rejected';
 export interface LeaveRequest {
   id: number;
   user_id: number;
+  member_id?: number;
   leave_type: LeaveType;
   start_date: string;
   end_date: string;
@@ -21,6 +22,7 @@ export interface LeaveRequest {
     id: number;
     full_name: string;
     email: string;
+    member_id?: number;
   };
 }
 
