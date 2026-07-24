@@ -11,7 +11,8 @@ import {
   createProject,
   updateProject,
   deleteProject,
-  getMembers
+  getMembers,
+  getMasterPhases
 } from '@/lib/api';
 
 interface CustomersProjectsViewProps {
@@ -108,6 +109,9 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [modalPmDropdownOpen, modalLeaderDropdownOpen, modalMemberDropdownOpen, modalPhaseDropdownOpen]);
 
+  // Master phases state from settings
+  const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
+
   // Fetch initial data
   useEffect(() => {
     loadData();
@@ -116,14 +120,16 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const loadData = async () => {
     setLoading(true);
     try {
-      const [custs, projs, mems] = await Promise.all([
+      const [custs, projs, mems, mPhases] = await Promise.all([
         getCustomers(activeBU),
         getProjects(activeBU),
-        getMembers()
+        getMembers(),
+        getMasterPhases().catch(() => [])
       ]);
       setCustomers(custs || []);
       setProjects(projs || []);
       setMembers(mems || []);
+      setDbMasterPhases(mPhases || []);
 
       // Auto-select first customer if available
       if (custs && custs.length > 0) {
@@ -922,7 +928,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
                 {modalPhaseDropdownOpen && (
                   <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-[160px] overflow-y-auto">
-                    {PROJECT_PHASES.map((p) => (
+                    {(dbMasterPhases.length > 0 ? dbMasterPhases.map((m: any) => m.name) : PROJECT_PHASES).map((p) => (
                       <button
                         key={p}
                         type="button"

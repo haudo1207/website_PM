@@ -581,7 +581,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
               <div className="p-6 text-center text-xs text-slate-400">Chưa có Remark nào được tạo.</div>
             ) : (
               remarks.map(rm => {
-                const isBonus = rm.remark_type === 'Bonus' || rm.kpi >= 0;
+                const isBonus = rm.remark_type ? rm.remark_type === 'Bonus' : (rm.kpi > 0 && !rm.performance.startsWith('(P)'));
                 return (
                   <div key={rm.id} className="p-4 px-6 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
                     {editingRemarkId === rm.id ? (

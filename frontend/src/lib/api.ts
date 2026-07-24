@@ -205,11 +205,11 @@ export const updatePerformanceSetting = (id: number, data: { performance?: strin
 export const deletePerformanceSetting = (id: number) => api.delete(`/performance-settings/${id}`).then(r => r.data);
 
 // Master Phases CRUD
-export const getMasterPhases = () => api.get('/master-phases').then(r => r.data);
-export const createMasterPhase = (data: { name: string; description?: string }) => api.post('/master-phases', data).then(r => r.data);
-export const updateMasterPhase = (id: number, data: { name?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.put(`/master-phases/${id}`, data).then(r => r.data);
-export const reorderMasterPhases = (ids: number[]) => api.put('/master-phases/reorder', { ids }).then(r => r.data);
-export const deleteMasterPhase = (id: number) => api.delete(`/master-phases/${id}`).then(r => r.data);
+export const getMasterPhases = () => api.get('/system-categories/master-phases').then(r => r.data);
+export const createMasterPhase = (data: { name: string; description?: string }) => api.post('/system-categories/master-phases', data).then(r => r.data);
+export const updateMasterPhase = (id: number, data: { name?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.put(`/system-categories/master-phases/${id}`, data).then(r => r.data);
+export const reorderMasterPhases = (ids: number[]) => api.put('/system-categories/master-phases/reorder', { ids }).then(r => r.data);
+export const deleteMasterPhase = (id: number) => api.delete(`/system-categories/master-phases/${id}`).then(r => r.data);
 
 // Accounts Management
 export const getAccounts = () => api.get('/accounts').then(r => r.data);

@@ -296,14 +296,24 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         db.rollback()
         raise HTTPException(409, f"Project code '{project_code}' already exists.") from exc
 
-    # 1. Create a single phase named "Master"
-    ph = Phase(
-        project_id=p.id,
-        name="Master",
-        sort_order=0,
-        status="Waiting"
-    )
-    db.add(ph)
+    # 1. Populate initial project phases from MasterPhase settings
+    from app.models.master_phase import MasterPhase
+    master_phases = db.query(MasterPhase).filter(MasterPhase.is_active == True).order_by(MasterPhase.sort_order.asc()).all()
+    if master_phases:
+        for idx, mp in enumerate(master_phases):
+            db.add(Phase(
+                project_id=p.id,
+                name=mp.name,
+                sort_order=mp.sort_order or (idx + 1),
+                status="Waiting"
+            ))
+    else:
+        db.add(Phase(
+            project_id=p.id,
+            name="Master",
+            sort_order=0,
+            status="Waiting"
+        ))
 
     # 2. Add initial links/channels (Legacy cleanup - only if they exist)
     links_to_create = []
