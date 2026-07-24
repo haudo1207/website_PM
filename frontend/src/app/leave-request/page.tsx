@@ -514,7 +514,7 @@ export default function LeaveRequestPage() {
 
         // Check if user is admin
         const role = localStorage.getItem('role');
-        setIsAdmin(role === 'admin');
+        setIsAdmin(role === 'super_admin' || role === 'leader');
       } catch (error) {
         console.error('Error fetching data:', error);
         // Fallback to mock data

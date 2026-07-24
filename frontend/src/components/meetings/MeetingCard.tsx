@@ -96,7 +96,7 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
                      Tham gia
                    </a>
                 )}
-                {canSync && (
+                {onSync && canSync && (
                   <button
                     onClick={handleSync}
                     disabled={isSyncing}
@@ -107,16 +107,16 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
                     {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ'}
                   </button>
                 )}
-                <button onClick={() => onEdit?.(meeting)} className="text-[11px] text-[#565e74] hover:text-[#0058be] font-medium transition-colors">Sửa</button>
-                <button onClick={() => onDelete?.(meeting.id)} className="text-[11px] text-[#565e74] hover:text-red-600 font-medium transition-colors">Xóa</button>
-                <button
+                {onEdit && <button onClick={() => onEdit(meeting)} className="text-[11px] text-[#565e74] hover:text-[#0058be] font-medium transition-colors">Sửa</button>}
+                {onDelete && <button onClick={() => onDelete(meeting.id)} className="text-[11px] text-[#565e74] hover:text-red-600 font-medium transition-colors">Xóa</button>}
+                {onSummarize && <button
                   onClick={() => onSummarize?.(meeting)}
                   className="text-[11px] font-semibold flex items-center gap-0.5 text-emerald-600 hover:text-emerald-700 transition-colors"
                   title="Tạo hoặc cập nhật tóm tắt AI cho cuộc họp này"
                 >
                   <Sparkles size={11} />
                   Tóm tắt AI
-                </button>
+                </button>}
               </div>
             </div>
           </div>

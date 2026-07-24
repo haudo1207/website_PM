@@ -8,9 +8,12 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    INTERNAL_SYNC_TOKEN: str = ""
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     DEFAULT_ADMIN_EMAIL: str = "admin@company.com"
     DEFAULT_ADMIN_PASSWORD: str = ""
+    GOOGLE_LOGIN_ENABLED: bool = True
+    PASSWORD_LOGIN_ENABLED: bool = False
     AUTH_SUPERADMIN_EMAILS: str = ""
     AI_BASE_URL: str = "https://api.shopaikey.com/v1"
     AI_API_KEY: str = ""

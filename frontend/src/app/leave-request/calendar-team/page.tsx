@@ -154,7 +154,6 @@ export default function CalendarTeamPage() {
               <div className="text-xs text-[#565e74]">Off</div>
             </div>
           </div>
-
           {/* Member list */}
           <div className="grid gap-2">
             {filteredMembers.map((m) => {

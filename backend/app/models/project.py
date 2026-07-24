@@ -40,12 +40,14 @@ class Project(Base):
     name                  = Column(String(200), nullable=False)
     code                  = Column(String(50), nullable=True, unique=True, index=True)
     customer_name         = Column(String(200), nullable=True)
+    customer_id           = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
     year                  = Column(Integer, nullable=True)
     pm_id                 = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
     technical_leader_id   = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
     description           = Column(Text, nullable=True)
     status                = Column(String(50), default="Planning")  # Planning / Developing / Completed / Archived
     current_phase         = Column(String(100), nullable=True, default="1. Tư vấn")
+    business              = Column(String(30), nullable=False, default="Infrastructure", server_default="Infrastructure", index=True)
     # Explicit business boundary used by backend authorization.
     data_scope            = Column(String(50), nullable=False, default="infrastructure", server_default="infrastructure", index=True)
     created_at            = Column(DateTime, server_default=func.now())
@@ -60,6 +62,7 @@ class Project(Base):
     # Relationships
     pm_member             = relationship("Member", foreign_keys=[pm_id], lazy="select")
     technical_leader      = relationship("Member", foreign_keys=[technical_leader_id], lazy="select")
+    customer              = relationship("Customer", foreign_keys=[customer_id], lazy="select")
     phases                = relationship("Phase", back_populates="project", lazy="select", order_by="Phase.sort_order")
     links                 = relationship("ProjectLink", back_populates="project", lazy="select", order_by="ProjectLink.sort_order")
 

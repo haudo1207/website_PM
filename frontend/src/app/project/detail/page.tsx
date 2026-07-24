@@ -13,7 +13,7 @@ import {
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
-  getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings,
+  getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getMasterPhases,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting
 } from '@/lib/api';
@@ -305,22 +305,23 @@ function ProjectDetailContent() {
       case 'MANDAY': return task.manday_est !== null && task.manday_est !== undefined ? String(task.manday_est) : '';
       case 'STATUS': return task.status || 'Waiting';
       case 'START DATE':
-      case 'START DATE (EST)': return task.start_date || '';
+      case 'START DATE (EST)': return formatDateToShow(task.start_date || '');
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
+      case 'TICKET ID': return task.ticket_id || '';
       case 'SKILL SOLUTION': return task.skill_solution_name || '';
       case 'SKILL VENDOR': return task.skill_vendor_name || '';
-      case 'TICKET ID': return task.ticket_id || '';
+
       case 'REMARK': return task.remark || '';
       case 'SEND': return task.send || '';
       case 'END DATE EST':
       case 'END DAY (EST)':
-      case 'END DATE (EST)': return task.end_date_est || '';
+      case 'END DATE (EST)': return formatDateToShow(task.end_date_est || '');
       case 'MD ACTUAL':
       case 'MANDAY ACTUAL': return task.manday_actual !== null && task.manday_actual !== undefined ? String(task.manday_actual) : '';
       case 'END ACTUAL':
-      case 'END DATE ACTUAL': return task.end_date_actual || '';
+      case 'END DATE ACTUAL': return formatDateToShow(task.end_date_actual || '');
       case 'DAYS LATE': return task.days_late !== null && task.days_late !== undefined ? String(task.days_late) : '';
       case 'KPI BASE': return task.kpi_base !== null && task.kpi_base !== undefined ? String(task.kpi_base) : '';
       case 'KPI PERFORM': return task.kpi_perform !== null && task.kpi_perform !== undefined ? String(task.kpi_perform) : '';
@@ -386,7 +387,9 @@ function ProjectDetailContent() {
   const [editProjectName, setEditProjectName] = useState('');
   const [editProjectYear, setEditProjectYear] = useState<number>(new Date().getFullYear());
   const [editCustomerName, setEditCustomerName] = useState('');
+  const [editBusiness, setEditBusiness] = useState<'Infrastructure' | 'Markee'>('Infrastructure');
   const [editCurrentPhase, setEditCurrentPhase] = useState('');
+  const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
 
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
@@ -588,6 +591,14 @@ function ProjectDetailContent() {
       .catch((err) => {
         console.error('Error fetching performance settings:', err);
       });
+
+    getMasterPhases()
+      .then((data) => {
+        setDbMasterPhases(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching master phases:', err);
+      });
   }, []);
 
   useEffect(() => {
@@ -629,6 +640,7 @@ function ProjectDetailContent() {
         code: `${editProjectName.trim()}-${editProjectYear}`,
         year: editProjectYear,
         customer_name: editCustomerName.trim(),
+        business: editBusiness,
         current_phase: editCurrentPhase.trim(),
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
@@ -770,14 +782,14 @@ function ProjectDetailContent() {
       case 'MANDAY': return group.manday_est != null ? String(group.manday_est) : '';
       case 'STATUS': return group.status || 'Waiting';
       case 'START DATE':
-      case 'START DATE (EST)': return group.start_date_est || '';
+      case 'START DATE (EST)': return formatDateToShow(group.start_date_est || '');
       case 'END DATE EST':
       case 'END DAY (EST)':
-      case 'END DATE (EST)': return group.end_date_est || '';
+      case 'END DATE (EST)': return formatDateToShow(group.end_date_est || '');
       case 'MD ACTUAL':
       case 'MANDAY ACTUAL': return group.manday_actual != null ? String(group.manday_actual) : '';
       case 'END ACTUAL':
-      case 'END DATE ACTUAL': return group.end_date_actual || '';
+      case 'END DATE ACTUAL': return formatDateToShow(group.end_date_actual || '');
       default: return '';
     }
   };
@@ -927,27 +939,48 @@ function ProjectDetailContent() {
       case 'MANDAY':
         payload.manday_est = value ? parseFloat(value) : null;
         break;
-      case 'STATUS':
+      case 'STATUS': {
         payload.status = value;
+        const s = (value || '').trim().toLowerCase();
+        if (s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish')) {
+          if (!task.end_date_actual) {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            payload.end_date_actual = `${year}-${month}-${day}`;
+          }
+        } else {
+          payload.end_date_actual = null;
+        }
         break;
+      }
       case 'START DATE':
       case 'START DATE (EST)':
-        payload.start_date = value || null;
+        payload.start_date = convertToDbDate(value);
         break;
       case 'ASSIGNED':
         payload.assigned_id = value ? parseInt(value, 10) : null;
         break;
       case 'SUPPORT':
         payload.support_id = value ? parseInt(value, 10) : null;
+        // Auto-set KPI ratio: 100/0 when no support, 90/10 when support assigned
+        if (!value) {
+          payload.kpi_ratio_assign = 100;
+          payload.kpi_ratio_support = 0;
+        } else if (task && (!task.support_id) && task.kpi_ratio_assign === 100 && task.kpi_ratio_support === 0) {
+          payload.kpi_ratio_assign = 90;
+          payload.kpi_ratio_support = 10;
+        }
         break;
       case 'KPI RATIO':
         if (value && value.includes('/')) {
           const parts = value.split('/');
-          payload.kpi_ratio_assign = parseInt(parts[0], 10) || 100;
-          payload.kpi_ratio_support = parseInt(parts[1], 10) || 0;
+          payload.kpi_ratio_assign = parseInt(parts[0], 10) || 90;
+          payload.kpi_ratio_support = parseInt(parts[1], 10) || 10;
         } else {
-          payload.kpi_ratio_assign = 100;
-          payload.kpi_ratio_support = 0;
+          payload.kpi_ratio_assign = 90;
+          payload.kpi_ratio_support = 10;
         }
         break;
       case 'SKILL SOLUTION':
@@ -968,7 +1001,7 @@ function ProjectDetailContent() {
         break;
       case 'END DATE ACTUAL':
       case 'END ACTUAL':
-        payload.end_date_actual = value || null;
+        payload.end_date_actual = convertToDbDate(value);
         break;
       case 'NOTES':
         payload.notes = value;
@@ -1036,7 +1069,7 @@ function ProjectDetailContent() {
       case 'MANDAY': payload.manday_est = value ? parseFloat(value) : null; break;
       case 'STATUS': payload.status = value; break;
       case 'START DATE':
-      case 'START DATE (EST)': payload.start_date_est = value || null; break;
+      case 'START DATE (EST)': payload.start_date_est = convertToDbDate(value); break;
       default: return;
     }
 
@@ -1201,7 +1234,10 @@ function ProjectDetailContent() {
     if (parts.length === 3) {
       const d = parts[0].padStart(2, '0');
       const m = parts[1].padStart(2, '0');
-      const y = parts[2];
+      let y = parts[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
       return `${y}-${m}-${d}`;
     }
     const d = new Date(val);
@@ -1218,6 +1254,62 @@ function ProjectDetailContent() {
       return `${parts[2]}/${parts[1]}/${parts[0]}`;
     }
     return val;
+  };
+
+  const formatDateToShow = (val: string): string => {
+    if (!val) return '';
+    val = val.trim();
+    // If it's YYYY-MM-DD (e.g. '2026-07-09')
+    const parts = val.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    // If it's DD/MM/YYYY or DD/MM/YY
+    const slashParts = val.split('/');
+    if (slashParts.length === 3) {
+      let y = slashParts[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
+      return `${slashParts[0]}/${slashParts[1]}/${y}`;
+    }
+    return val;
+  };
+
+  const convertToDbDate = (val: string): string | null => {
+    if (!val) return null;
+    val = val.trim();
+    // Case 1: YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      return val;
+    }
+    // Case 2: DD/MM/YYYY or DD/MM/YY
+    const parts = val.split('/');
+    if (parts.length === 3) {
+      const d = parts[0].padStart(2, '0');
+      const m = parts[1].padStart(2, '0');
+      let y = parts[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
+      return `${y}-${m}-${d}`;
+    }
+    // Case 3: DD-MM-YYYY or DD-MM-YY
+    const partsHyphen = val.split('-');
+    if (partsHyphen.length === 3 && partsHyphen[0].length <= 2) {
+      const d = partsHyphen[0].padStart(2, '0');
+      const m = partsHyphen[1].padStart(2, '0');
+      let y = partsHyphen[2];
+      if (y.length === 2) {
+        y = '20' + y;
+      }
+      return `${y}-${m}-${d}`;
+    }
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+    }
+    return null;
   };
 
   // --- Dynamic Stats calculation ---
@@ -1574,10 +1666,10 @@ function ProjectDetailContent() {
         inputField = (
           <input
             type="text"
-            value={newForm[col] || '100/0'}
+            value={newForm[col] || '90/10'}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
-            placeholder="100/0"
+            placeholder="90/10"
             className={`w-full bg-white border rounded px-1.5 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-mono ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
               }`}
           />
@@ -1640,7 +1732,7 @@ function ProjectDetailContent() {
         detail: detailVal,
         priority: priorityVal,
         status: statusVal,
-        start_date: startDateVal,
+        start_date: convertToDbDate(startDateVal),
         manday_est: mandayEstVal,
         ticket_id: newForm['TICKET ID'] || '',
         remark: newForm['REMARK'] || '',
@@ -1652,11 +1744,27 @@ function ProjectDetailContent() {
         skill_vendor_id: newForm['SKILL VENDOR'] ? parseInt(newForm['SKILL VENDOR'], 10) : null,
       };
 
+      const s = (statusVal || '').trim().toLowerCase();
+      if (s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish')) {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        payload.end_date_actual = `${year}-${month}-${day}`;
+      }
+
       // KPI ratio
-      const kpiRatio = newForm['KPI RATIO'] || '100/0';
+      // KPI Ratio: default 90/10, auto 100/0 if no support
+      const hasSupport = !!payload.support_id;
+      const kpiRatio = newForm['KPI RATIO'] || (hasSupport ? '90/10' : '100/0');
       const parts = kpiRatio.split('/');
-      payload.kpi_ratio_assign = parseInt(parts[0], 10) || 100;
-      payload.kpi_ratio_support = parseInt(parts[1], 10) || 0;
+      if (!hasSupport) {
+        payload.kpi_ratio_assign = 100;
+        payload.kpi_ratio_support = 0;
+      } else {
+        payload.kpi_ratio_assign = parseInt(parts[0], 10) || 90;
+        payload.kpi_ratio_support = parseInt(parts[1], 10) || 10;
+      }
 
       await createTask(addingTaskGroupId, payload);
       setAddingTaskGroupId(null);
@@ -1722,14 +1830,39 @@ function ProjectDetailContent() {
         priority: drawerForm.priority,
         assigned_id: drawerForm.assigned_id ? parseInt(drawerForm.assigned_id, 10) : null,
         support_id: drawerForm.support_id ? parseInt(drawerForm.support_id, 10) : null,
-        start_date: drawerForm.start_date || null,
-        end_date_est: drawerForm.end_date_est || null,
+        start_date: convertToDbDate(drawerForm.start_date),
+        end_date_est: convertToDbDate(drawerForm.end_date_est),
         manday_est: drawerForm.manday_est ? parseFloat(drawerForm.manday_est) : null,
         manday_actual: drawerForm.manday_actual ? parseFloat(drawerForm.manday_actual) : null,
         notes: drawerForm.notes || null,
         remark: drawerForm.remark || null,
         ticket_id: drawerForm.ticket_id || null,
       };
+
+      const wasDone = selectedTask.status && (
+        selectedTask.status.toLowerCase() === 'done' ||
+        selectedTask.status.toLowerCase() === 'completed' ||
+        selectedTask.status.toLowerCase().includes('hoàn') ||
+        selectedTask.status.toLowerCase().includes('finish')
+      );
+      const isNowDone = drawerForm.status && (
+        drawerForm.status.toLowerCase() === 'done' ||
+        drawerForm.status.toLowerCase() === 'completed' ||
+        drawerForm.status.toLowerCase().includes('hoàn') ||
+        drawerForm.status.toLowerCase().includes('finish')
+      );
+
+      if (isNowDone && !wasDone) {
+        if (!selectedTask.end_date_actual) {
+          const d = new Date();
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          payload.end_date_actual = `${year}-${month}-${day}`;
+        }
+      } else if (!isNowDone && wasDone) {
+        payload.end_date_actual = null;
+      }
       await updateTask(selectedTask.task_group_id, selectedTask.id, payload);
       flash('Đã cập nhật task thành công!');
       await reloadAll(true);
@@ -2328,6 +2461,33 @@ function ProjectDetailContent() {
               );
             }
 
+            if (colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'))) {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[130px]">
+                  <input
+                    type="date"
+                    value={editValue ? toPickerDate(editValue) : ''}
+                    autoFocus
+                    onChange={e => setEditValue(fromPickerDate(e.target.value))}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, editValue);
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, editValue, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
+                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs font-mono focus:outline-none font-semibold text-[#0b1c30]"
+                  />
+                </td>
+              );
+            }
+
             return (
               <td key={col} className="px-2 py-1">
                 <input
@@ -2471,6 +2631,41 @@ function ProjectDetailContent() {
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200 shadow-sm" title="KPI Final Pending (Chờ task hoàn thành)">
                   ⏳ {val}
                 </span>
+              );
+            }
+          } else if (colUpper === 'TICKET ID') {
+            const isUrl = /^https?:\/\//i.test(val);
+            if (isUrl) {
+              // Extract a readable label from URL
+              let label = val;
+              try {
+                const u = new URL(val);
+                const host = u.hostname.replace('www.', '');
+                if (host.includes('docs.google.com')) label = 'Google Docs';
+                else if (host.includes('figma.com')) label = 'Figma Design';
+                else if (host.includes('drive.google.com')) label = 'Google Drive';
+                else if (host.includes('github.com')) label = 'GitHub';
+                else if (host.includes('jira')) label = 'Jira Ticket';
+                else if (host.includes('notion')) label = 'Notion Page';
+                else if (host.includes('confluence')) label = 'Confluence';
+                else label = host + (u.pathname.length > 20 ? u.pathname.substring(0, 20) + '...' : u.pathname);
+              } catch {}
+              cellContent = (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors max-w-[180px] truncate shadow-sm"
+                  title={val}
+                  onClick={(e) => { e.stopPropagation(); window.open(val, '_blank', 'noopener,noreferrer'); }}
+                >
+                  🔗 {label}
+                </span>
+              );
+            } else if (val) {
+              cellContent = (
+                <span className="text-[12px] font-mono text-[#0b1c30]">{val}</span>
+              );
+            } else {
+              cellContent = (
+                <span className="text-slate-400 italic font-normal text-[11px] select-none">Trống</span>
               );
             }
           }
@@ -3234,6 +3429,7 @@ function ProjectDetailContent() {
                         setEditProjectName(project.name || '');
                         setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
                         setEditCustomerName(project.customer_name || '');
+                        setEditBusiness(project.business || 'Infrastructure');
                         setEditCurrentPhase(project.current_phase || '');
 
                         setSelectedPms(project.pm_ids || (project.pm_id ? [project.pm_id] : []));
@@ -4068,8 +4264,8 @@ function ProjectDetailContent() {
 
             {/* Modal Form Content */}
             <div className="p-6 max-h-[70vh] overflow-y-auto space-y-4">
-              {/* Row 1: Tên dự án & Năm */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Row 1: Tên dự án, Business & Năm */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Project Name */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
@@ -4085,6 +4281,22 @@ function ProjectDetailContent() {
                   />
                 </div>
 
+                {/* Business */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">
+                    Business <span className="text-rose-500 font-bold">*</span>
+                  </label>
+                  <select
+                    required
+                    value={editBusiness}
+                    onChange={(e) => setEditBusiness(e.target.value as 'Infrastructure' | 'Markee')}
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
+                  >
+                    <option value="Infrastructure">Infrastructure</option>
+                    <option value="Markee">Markee</option>
+                  </select>
+                </div>
+
                 {/* Project Year */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
@@ -4094,7 +4306,7 @@ function ProjectDetailContent() {
                     required
                     value={editProjectYear}
                     onChange={(e) => setEditProjectYear(parseInt(e.target.value, 10))}
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold"
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
                   >
                     {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 5 + i).map((y) => (
                       <option key={y} value={y}>{y}</option>
@@ -4199,13 +4411,13 @@ function ProjectDetailContent() {
                       onClick={(e) => e.stopPropagation()}
                       className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
                     >
-                      {[
+                      {(dbMasterPhases.length > 0 ? dbMasterPhases.map((m: any) => m.name) : [
                         '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
                         '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
                         '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
                         '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
                         '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
-                      ].map((p) => (
+                      ]).map((p) => (
                         <button
                           key={p}
                           type="button"

@@ -1,14 +1,14 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Navbar from '@/components/Navbar';
+import MembersView from '@/components/MembersView';
 import { useRouter } from 'next/navigation';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, isSuperAdmin, isLeader } from '@/lib/auth';
 import {
   getAccounts,
   getAvailableMembers,
   createAccount,
   updateAccount,
-  resetAccountPassword,
   lockAccount,
   unlockAccount,
   deleteAccount,
@@ -28,6 +28,7 @@ interface Account {
   id: number;
   email: string;
   full_name: string;
+  avatar_url?: string | null;
   role: string;
   data_scope: string;
   is_active: boolean;
@@ -37,20 +38,23 @@ interface Account {
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: 'Admin',
-  group_a: 'Group A',
-  group_b: 'Group B',
+  super_admin: 'Super Admin',
+  leader: 'Team Leader',
+  member: 'Member',
+  viewer: 'Viewer',
 };
 
 const ROLE_COLORS: Record<string, string> = {
-  admin: 'bg-red-100 text-red-700',
-  group_a: 'bg-blue-100 text-blue-700',
-  group_b: 'bg-emerald-100 text-emerald-700',
+  super_admin: 'bg-red-100 text-red-700',
+  leader: 'bg-amber-100 text-amber-700',
+  member: 'bg-blue-100 text-blue-700',
+  viewer: 'bg-slate-100 text-slate-600',
 };
 
 const SCOPE_LABELS: Record<string, string> = {
   all: 'Tất cả dự án',
   infrastructure: 'Dự án Infrastructure',
+  markee: 'Dự án Markee',
 };
 
 export default function AccountsPage() {
@@ -60,18 +64,23 @@ export default function AccountsPage() {
   const [availableMembers, setAvailableMembers] = useState<MemberInfo[]>([]);
   const [saved, setSaved] = useState('');
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'accounts' | 'members'>('accounts');
+
+  // filters
+  const [searchName, setSearchName] = useState('');
+  const [filterRole, setFilterRole] = useState('');
+  const [filterScope, setFilterScope] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', password: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: 'infrastructure' });
+  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: 'infrastructure', member_id: 0 });
 
   // Reset password modal
-  const [resetAccount, setResetAccount] = useState<Account | null>(null);
-  const [resetPw, setResetPw] = useState('');
 
   useEffect(() => {
     if (!isAdmin()) {
@@ -100,13 +109,30 @@ export default function AccountsPage() {
     setTimeout(() => setSaved(''), 5000);
   };
 
+  const filteredAccounts = useMemo(() => {
+    const nameQuery = searchName.trim().toLowerCase();
+
+    return accounts.filter(acc => {
+      const nameMatch = !nameQuery || [
+        acc.full_name,
+        acc.member?.display_name,
+        acc.member?.full_name,
+      ].some(value => (value || '').toLowerCase().includes(nameQuery));
+
+      const roleMatch = !filterRole || acc.role === filterRole;
+      const scopeMatch = !filterScope || acc.data_scope === filterScope;
+      const statusMatch = !filterStatus || (filterStatus === 'active' ? acc.is_active : !acc.is_active);
+
+      return nameMatch && roleMatch && scopeMatch && statusMatch;
+    });
+  }, [accounts, searchName, filterRole, filterScope, filterStatus]);
+
   // Create
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await createAccount({
         email: createForm.email,
-        password: createForm.password,
         role: createForm.role,
         data_scope: createForm.data_scope,
         full_name: createForm.full_name,
@@ -114,7 +140,7 @@ export default function AccountsPage() {
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', password: '', role: 'group_a', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+      setCreateForm({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -140,7 +166,7 @@ export default function AccountsPage() {
   // Edit
   const openEdit = (acc: Account) => {
     setEditAccount(acc);
-    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || 'infrastructure' });
+    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || 'infrastructure', member_id: acc.member_id || 0 });
   };
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -153,20 +179,6 @@ export default function AccountsPage() {
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi cập nhật tài khoản');
-    }
-  };
-
-  // Reset password
-  const handleResetPw = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!resetAccount) return;
-    try {
-      await resetAccountPassword(resetAccount.id, resetPw);
-      flash('Đã đặt lại mật khẩu thành công');
-      setResetAccount(null);
-      setResetPw('');
-    } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi đặt lại mật khẩu');
     }
   };
 
@@ -207,14 +219,38 @@ export default function AccountsPage() {
         {/* Header */}
         <div className="h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-40 shadow-sm">
           <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Quản lý tài khoản</h2>
+          {activeTab === 'accounts' && (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Tạo tài khoản
+            </button>
+          )}
+        </div>
+
+        {/* Tabbar Navigation */}
+        <div className="bg-white border-b border-slate-200 px-8 flex gap-6 z-30">
           <button
-            onClick={() => setShowCreate(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2"
+            onClick={() => setActiveTab('accounts')}
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'accounts'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Tạo tài khoản
+            Quản lý tài khoản
+          </button>
+          <button
+            onClick={() => setActiveTab('members')}
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'members'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+          >
+            Quản lý thành viên
           </button>
         </div>
 
@@ -229,8 +265,10 @@ export default function AccountsPage() {
             </div>
           )}
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {activeTab === 'accounts' && (
+            <>
+              {/* Stats */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tổng tài khoản</div>
               <div className="text-2xl font-bold text-[#0f172a] mt-1">{accounts.length}</div>
@@ -245,7 +283,57 @@ export default function AccountsPage() {
             </div>
           </div>
 
-          {/* Table */}
+
+              {/* Search & Filters */}
+              <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-[200px]">
+                  <svg className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder="Tìm kiếm theo tên..."
+                    value={searchName}
+                    onChange={e => setSearchName(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-[#0f172a] outline-none focus:border-blue-500 placeholder-slate-400"
+                  />
+                </div>
+
+                <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
+                  className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
+                  <option value="">Tất cả Role</option>
+                  <option value="super_admin">Super Admin</option>
+                  <option value="leader">Team Leader</option>
+                  <option value="member">Member</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+
+                <select value={filterScope} onChange={e => setFilterScope(e.target.value)}
+                  className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
+                  <option value="">Tất cả Data Scope</option>
+                  <option value="all">Tất cả dự án</option>
+                  <option value="infrastructure">Dự án Infrastructure</option>
+                  <option value="markee">Dự án Markee</option>
+                </select>
+
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                  className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
+                  <option value="">Tất cả Status</option>
+                  <option value="active">Active</option>
+                  <option value="locked">Locked</option>
+                </select>
+
+                {(searchName || filterRole || filterScope || filterStatus) && (
+                  <button onClick={() => { setSearchName(''); setFilterRole(''); setFilterScope(''); setFilterStatus(''); }}
+                    className="text-xs text-slate-500 hover:text-red-600 font-medium transition-colors">
+                    Xóa lọc
+                  </button>
+                )}
+
+                <span className="ml-auto text-[11px] text-slate-400 font-medium">{filteredAccounts.length} tài khoản</span>
+              </div>
+
+              {/* Table */}
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
@@ -264,13 +352,24 @@ export default function AccountsPage() {
                 <tbody className="divide-y divide-slate-100">
                   {loading ? (
                     <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
-                  ) : accounts.length === 0 ? (
+                  ) : filteredAccounts.length === 0 ? (
                     <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Chưa có tài khoản nào</td></tr>
                   ) : (
-                    accounts.map(acc => (
+                    filteredAccounts.map(acc => (
                       <tr key={acc.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-3 font-mono text-slate-400">{acc.id}</td>
-                        <td className="px-4 py-3 font-semibold text-[#0f172a]">{acc.email}</td>
+                        <td className="px-4 py-3 font-semibold text-[#0f172a]">
+                          <div className="flex items-center gap-2">
+                            {acc.avatar_url ? (
+                              <img src={acc.avatar_url} alt={`${acc.full_name || acc.email} avatar`} referrerPolicy="no-referrer" className="w-7 h-7 rounded-full object-cover border border-slate-200" />
+                            ) : (
+                              <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[10px] font-bold uppercase">
+                                {(acc.full_name || acc.email).substring(0, 2)}
+                              </div>
+                            )}
+                            <span>{acc.email}</span>
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-slate-600">{acc.full_name || '—'}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${ROLE_COLORS[acc.role] || 'bg-slate-100 text-slate-600'}`}>
@@ -297,15 +396,13 @@ export default function AccountsPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1.5">
-                            <button onClick={() => openEdit(acc)} className="text-blue-600 hover:underline font-medium" title="Sửa">Sửa</button>
+                            <button onClick={() => openEdit(acc)} disabled={isLeader() && acc.role === 'super_admin'} className={`font-medium ${isLeader() && acc.role === 'super_admin' ? 'text-slate-300 cursor-not-allowed' : 'text-blue-600 hover:underline'}`} title="Sửa">Sửa</button>
                             <span className="text-slate-200">|</span>
-                            <button onClick={() => { setResetAccount(acc); setResetPw(''); }} className="text-amber-600 hover:underline font-medium" title="Đặt lại mật khẩu">Mật khẩu</button>
-                            <span className="text-slate-200">|</span>
-                            <button onClick={() => handleToggleLock(acc)} className={`hover:underline font-medium ${acc.is_active ? 'text-orange-600' : 'text-emerald-600'}`}>
+                            <button onClick={() => handleToggleLock(acc)} disabled={isLeader() && acc.role === 'super_admin'} className={`font-medium ${isLeader() && acc.role === 'super_admin' ? 'text-slate-300 cursor-not-allowed' : acc.is_active ? 'text-orange-600 hover:underline' : 'text-emerald-600 hover:underline'}`}>
                               {acc.is_active ? 'Khóa' : 'Mở khóa'}
                             </button>
                             <span className="text-slate-200">|</span>
-                            <button onClick={() => handleDelete(acc)} className="text-red-600 hover:underline font-medium" title="Xóa">Xóa</button>
+                            <button onClick={() => handleDelete(acc)} disabled={isLeader() && acc.role === 'super_admin'} className={`font-medium ${isLeader() && acc.role === 'super_admin' ? 'text-slate-300 cursor-not-allowed' : 'text-red-600 hover:underline'}`} title="Xóa">Xóa</button>
                           </div>
                         </td>
                       </tr>
@@ -315,6 +412,12 @@ export default function AccountsPage() {
               </table>
             </div>
           </div>
+            </>
+          )}
+
+          {activeTab === 'members' && (
+            <MembersView onFlash={flash} />
+          )}
         </div>
       </div>
 
@@ -368,25 +471,16 @@ export default function AccountsPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mật khẩu <span className="text-red-500">*</span></label>
-                  <input
-                    required type="password" minLength={8}
-                    value={createForm.password}
-                    onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                    placeholder="••••••••"
-                  />
-                </div>
-                <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò <span className="text-red-500">*</span></label>
                   <select
                     value={createForm.role}
                     onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                   >
-                    <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                    <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
-                    <option value="group_b">Group B — Chỉ xem dữ liệu</option>
+                    <option value="super_admin">Super Admin — Quản trị toàn hệ thống</option>
+                    <option value="leader">Team Leader — Quản lý dự án trong team</option>
+                    <option value="member">Member — Thành viên, quản lý task</option>
+                    <option value="viewer">Viewer — Chỉ xem, không thao tác</option>
                   </select>
                 </div>
               </div>
@@ -399,6 +493,7 @@ export default function AccountsPage() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
                   <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
+                  <option value="markee">Markee — Chỉ dự án của team Markee</option>
                   <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
                 </select>
               </div>
@@ -458,15 +553,36 @@ export default function AccountsPage() {
                 />
               </div>
               <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên</label>
+                <select
+                  value={editForm.member_id}
+                  onChange={e => setEditForm(f => ({ ...f, member_id: Number(e.target.value) }))}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                >
+                  <option value={0}>— Không liên kết thành viên —</option>
+                  {editAccount.member && (
+                    <option value={editAccount.member.id}>
+                      {editAccount.member.display_name} — {editAccount.member.full_name}{editAccount.member.team ? ` (${editAccount.member.team})` : ''}
+                    </option>
+                  )}
+                  {availableMembers
+                    .filter(m => m.id !== editAccount.member?.id)
+                    .map(m => (
+                      <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
+                    ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò</label>
                 <select
                   value={editForm.role}
                   onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
-                  <option value="admin">Admin — Quản trị toàn hệ thống</option>
-                  <option value="group_a">Group A — Được chỉnh sửa dữ liệu</option>
-                  <option value="group_b">Group B — Chỉ xem dữ liệu</option>
+                  <option value="super_admin">Super Admin — Quản trị toàn hệ thống</option>
+                  <option value="leader">Team Leader — Quản lý dự án trong team</option>
+                  <option value="member">Member — Thành viên, quản lý task</option>
+                  <option value="viewer">Viewer — Chỉ xem, không thao tác</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -477,18 +593,10 @@ export default function AccountsPage() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
                   <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
+                  <option value="markee">Markee — Chỉ dự án của team Markee</option>
                   <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
                 </select>
               </div>
-              {editAccount.member && (
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Thành viên liên kết</div>
-                  <div className="text-xs text-slate-600">
-                    <span className="font-semibold">{editAccount.member.display_name}</span> — {editAccount.member.full_name}
-                    {editAccount.member.team && <span className="text-slate-400"> · {editAccount.member.team}</span>}
-                  </div>
-                </div>
-              )}
             </form>
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
               <button onClick={() => setEditAccount(null)} className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-4 py-2 rounded-lg text-xs font-bold transition-all">Hủy</button>
@@ -498,38 +606,6 @@ export default function AccountsPage() {
         </div>
       )}
 
-      {/* ═══ RESET PASSWORD MODAL ═══ */}
-      {resetAccount && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 w-full max-w-md rounded-xl shadow-xl overflow-hidden">
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-              <div>
-                <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider">Đặt lại mật khẩu</h3>
-                <p className="text-xs text-slate-400 mt-0.5">{resetAccount.email}</p>
-              </div>
-              <button onClick={() => setResetAccount(null)} className="text-slate-400 hover:text-slate-600">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <form onSubmit={handleResetPw} className="p-6 space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mật khẩu mới <span className="text-red-500">*</span></label>
-                <input
-                  required type="password" minLength={8}
-                  value={resetPw}
-                  onChange={e => setResetPw(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                  placeholder="Nhập mật khẩu mới"
-                />
-              </div>
-            </form>
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
-              <button onClick={() => setResetAccount(null)} className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-4 py-2 rounded-lg text-xs font-bold transition-all">Hủy</button>
-              <button onClick={handleResetPw} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm">Đặt lại mật khẩu</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

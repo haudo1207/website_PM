@@ -1,6 +1,6 @@
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -35,7 +35,30 @@ def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)
     except (JWTError, KeyError, TypeError, ValueError):
         raise HTTPException(401, "Invalid token")
 
-def require_admin(user=Depends(get_current_user)):
-    if user.role != "admin":
-        raise HTTPException(403, "Admin required")
+def require_super_admin(user=Depends(get_current_user)):
+    """Only super_admin / admin may proceed."""
+    if user.role not in {"super_admin", "admin"}:
+        raise HTTPException(403, "Yêu cầu quyền Super Admin")
     return user
+
+def require_manager(user=Depends(get_current_user)):
+    """super_admin, admin or leader may proceed."""
+    if user.role not in {"super_admin", "admin", "leader"}:
+        raise HTTPException(403, "Yêu cầu quyền quản lý (Super Admin hoặc Leader)")
+    return user
+
+def require_manager_write(request: Request, user=Depends(get_current_user)):
+    """Allow every active account to read, but reserve mutations for super_admin, admin and leader."""
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role not in {"super_admin", "admin", "leader"}:
+        raise HTTPException(403, "Yêu cầu quyền quản lý để thực hiện thao tác ghi")
+    return user
+
+# ── Legacy aliases kept for backward compatibility during transition ──
+
+def require_admin(user=Depends(get_current_user)):
+    """Legacy alias — maps to require_super_admin."""
+    return require_super_admin(user)
+
+def require_admin_write(request: Request, user=Depends(get_current_user)):
+    """Legacy alias — maps to require_manager_write."""
+    return require_manager_write(request, user)

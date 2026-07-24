@@ -5,9 +5,9 @@ from decimal import Decimal
 
 from ..database import get_db
 from ..models.performance_setting import PerformanceSetting
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, require_admin_write
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin_write)])
 
 
 @router.get("")
@@ -18,6 +18,8 @@ def get_performance_settings(db: Session = Depends(get_db), current_user = Depen
         "id": s.id,
         "performance": s.performance,
         "kpi": float(s.kpi),
+        "remark_type": getattr(s, 'remark_type', 'Bonus') or 'Bonus',
+        "description": getattr(s, 'description', None),
         "sort_order": s.sort_order,
         "is_active": s.is_active
     } for s in settings]
@@ -42,6 +44,8 @@ def create_performance_setting(body: dict, db: Session = Depends(get_db), curren
     rule = PerformanceSetting(
         performance=performance,
         kpi=kpi_val,
+        remark_type=body.get("remark_type", "Bonus"),
+        description=body.get("description"),
         sort_order=body.get("sort_order", next_sort),
         is_active=body.get("is_active", True)
     )
@@ -55,6 +59,8 @@ def create_performance_setting(body: dict, db: Session = Depends(get_db), curren
             "id": rule.id,
             "performance": rule.performance,
             "kpi": float(rule.kpi),
+            "remark_type": rule.remark_type,
+            "description": rule.description,
             "sort_order": rule.sort_order,
             "is_active": rule.is_active
         }
@@ -80,6 +86,12 @@ def update_performance_setting(id: int, body: dict, db: Session = Depends(get_db
         except Exception:
             raise HTTPException(400, "Giá trị KPI không hợp lệ")
 
+    if "remark_type" in body:
+        rule.remark_type = str(body["remark_type"]).strip()
+
+    if "description" in body:
+        rule.description = body["description"]
+
     if "sort_order" in body:
         rule.sort_order = int(body["sort_order"])
 
@@ -95,6 +107,8 @@ def update_performance_setting(id: int, body: dict, db: Session = Depends(get_db
             "id": rule.id,
             "performance": rule.performance,
             "kpi": float(rule.kpi),
+            "remark_type": rule.remark_type,
+            "description": rule.description,
             "sort_order": rule.sort_order,
             "is_active": rule.is_active
         }

@@ -6,7 +6,7 @@ from ..utils.auth import require_admin, hash_password, get_current_user
 from ..utils.access import VALID_DATA_SCOPES
 from .accounts import (
     VALID_ROLES,
-    ensure_admin_remains,
+    ensure_superadmin_remains,
     normalize_email,
     validate_password,
 )
@@ -38,7 +38,7 @@ def create_user(body: dict, db: Session = Depends(get_db), _=Depends(require_adm
     validate_password(password)
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email exists")
-    role = body.get("role", "group_a")
+    role = body.get("role", "member")
     if role not in VALID_ROLES:
         raise HTTPException(400, f"Invalid role. Must be one of: {VALID_ROLES}")
     data_scope = str(body.get("data_scope", "infrastructure")).strip().lower()
@@ -89,20 +89,23 @@ def update_user(uid: int, body: dict, db: Session = Depends(get_db), admin=Depen
             duplicate = db.query(User).filter(User.email == email, User.id != uid).first()
             if duplicate:
                 raise HTTPException(400, "Email exists")
-            u.email = email
+            if u.email != email:
+                u.email = email
+                u.google_sub = None
+                u.avatar_url = None
         elif k == "role":
             role = str(v).strip().lower()
             if role not in VALID_ROLES:
                 raise HTTPException(400, f"Invalid role. Must be one of: {VALID_ROLES}")
-            if admin.id == u.id and role != "admin":
+            if admin.id == u.id and role not in {"super_admin", "admin"}:
                 raise HTTPException(400, "You cannot demote your own admin account")
-            ensure_admin_remains(db, u, role=role)
+            ensure_superadmin_remains(db, u, role=role)
             u.role = role
         elif k == "is_active":
             is_active = bool(v)
             if admin.id == u.id and not is_active:
                 raise HTTPException(400, "You cannot lock your own account")
-            ensure_admin_remains(db, u, active=is_active)
+            ensure_superadmin_remains(db, u, active=is_active)
             u.is_active = is_active
         elif hasattr(u, k) and k not in ["id", "hashed_pw", "member_id", "created_at"]:
             setattr(u, k, v)
@@ -116,7 +119,7 @@ def delete_user(uid: int, db: Session = Depends(get_db), admin=Depends(require_a
         raise HTTPException(404)
     if admin.id == u.id:
         raise HTTPException(400, "You cannot delete your own account")
-    ensure_admin_remains(db, u, deleting=True)
+    ensure_superadmin_remains(db, u, deleting=True)
     db.delete(u)
     db.commit()
     return {"message": "Deleted"}

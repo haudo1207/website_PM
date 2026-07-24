@@ -2,11 +2,10 @@
 import React, { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import SystemCategoriesView from '@/components/SystemCategoriesView';
-import MembersView from '@/components/MembersView';
 import KPIsView from '@/components/KPIsView';
 import AIPromptsView from '@/components/AIPromptsView';
 import { useRouter } from 'next/navigation';
-import { isAdmin } from '@/lib/auth';
+import { isSuperAdmin } from '@/lib/auth';
 import {
   getUsers,
   createUser,
@@ -44,10 +43,10 @@ import {
 export default function SettingsPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [saved, setSaved] = useState('');
-  const [activeTab, setActiveTab] = useState<'members' | 'skills' | 'system_categories' | 'kpis' | 'ai_prompts'>('members');
+  const [activeTab, setActiveTab] = useState<'skills' | 'system_categories' | 'kpis' | 'ai_prompts'>('skills');
 
   // Member Form
-  const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'group_a', skills: [] as number[], position: '', department: '' });
+  const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'member', skills: [] as number[], position: '', department: '' });
   const [skillsModalUser, setSkillsModalUser] = useState<any | null>(null);
   const [userSkillsForm, setUserSkillsForm] = useState<number[]>([]);
 
@@ -82,7 +81,7 @@ export default function SettingsPage() {
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin()) {
+    if (!isSuperAdmin()) {
       router.push('/dashboard');
     } else {
       setAuthorized(true);
@@ -119,7 +118,7 @@ export default function SettingsPage() {
     try {
       await createUser(form);
       flash('Đã tạo tài khoản thành công');
-      setForm({ email: '', full_name: '', password: '', role: 'group_a', skills: [], position: '', department: '' });
+      setForm({ email: '', full_name: '', password: '', role: 'member', skills: [], position: '', department: '' });
       getUsers().then(setUsers);
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi - Email có thể đã tồn tại');
@@ -320,15 +319,6 @@ export default function SettingsPage() {
         {/* Tabbar Navigation */}
         <div className="bg-white border-b border-slate-200 px-8 flex gap-6 z-30">
           <button
-            onClick={() => setActiveTab('members')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'members'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-          >
-            Quản lý thành viên
-          </button>
-          <button
             onClick={() => setActiveTab('skills')}
             className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'skills'
                 ? 'border-blue-600 text-blue-600'
@@ -376,11 +366,6 @@ export default function SettingsPage() {
               {saved}
             </div>
           )}
-
-          {activeTab === 'members' && (
-            <MembersView onFlash={flash} />
-          )}
-
 
           {activeTab === 'skills' && (
             <>
@@ -756,18 +741,19 @@ export default function SettingsPage() {
 
           {activeTab === 'system_categories' && (
             <SystemCategoriesView
-              positions={dbPositions}
               departments={dbDepartments}
-              statuses={dbStatuses}
               teams={dbTeams}
-              customers={dbCustomers}
               onReload={reloadSystemCategories}
               onFlash={flash}
             />
           )}
 
           {activeTab === 'kpis' && (
-            <KPIsView onFlash={flash} />
+            <KPIsView
+              statuses={dbStatuses}
+              onReload={reloadSystemCategories}
+              onFlash={flash}
+            />
           )}
 
           {activeTab === 'ai_prompts' && (
