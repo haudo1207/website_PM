@@ -40,8 +40,7 @@ function NavbarContent() {
     )},
     { href: '/leave-request', label: 'Leave Request', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 01-8 0M12 7v10m0 0l-3-3m3 3l3-3M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
       </svg>
     )},
     { href: '/accounts', label: 'Accounts', icon: (

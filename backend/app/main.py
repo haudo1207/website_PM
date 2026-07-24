@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .database import engine, Base
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
+from .models import lunch_record as lunch_record_model
 from .models import phase as phase_model
 from .models import task_group as task_group_model
 from .models import task as task_model
@@ -289,36 +290,140 @@ def init_db_defaults():
         from .models.member import Member
         if db.query(Member).count() == 0:
             initial_members = [
-                {"display_name": "1.Minhpn",  "full_name": "Minh",   "telegram_username": "@minhuit911",   "team": "Sales"},
-                {"display_name": "6.Phil",     "full_name": "Phil",   "telegram_username": "@phile0920",    "team": "Sales"},
-                {"display_name": "8.Nhớlnha",  "full_name": "Nhớ",   "telegram_username": "@AnhNho66",     "team": "Sales"},
-                {"display_name": "9.Phátnt",   "full_name": "Phát",  "telegram_username": "@phatnguyeen",  "team": "Sales"},
-                {"display_name": "2.Phướcpv",  "full_name": "Phước", "telegram_username": "@nessivu",      "team": "Presales"},
-                {"display_name": "3.Hând",     "full_name": "Hân",   "telegram_username": "@handiep",      "team": "Presales"},
-                {"display_name": "4.Yêmh",     "full_name": "Yên",   "telegram_username": "@yemhoang96",   "team": "Presales"},
-                {"display_name": "5.Khôipm",   "full_name": "Khôi",  "telegram_username": "@BlackDrag0n98","team": "Presales"},
-                {"display_name": "7.Vypt",     "full_name": "Vy",    "telegram_username": "@vyvyzz13",     "team": "Technical"},
-                {"display_name": "10.Huyht",   "full_name": "Huy",   "telegram_username": "@ht_hyu",       "team": "Technical"},
-                {"display_name": "11.Hânlnl",  "full_name": "Hân",   "telegram_username": "@Linhhan0399",  "team": "Technical"},
-                {"display_name": "12.Vũnl",    "full_name": "Vũ",    "telegram_username": "@vu_nguyen27",  "team": "Technical"},
-                {"display_name": "14.Túbda",   "full_name": "Tú",    "telegram_username": "@numm0204",     "team": "Technical"},
-                {"display_name": "15.Huấnnv",  "full_name": "Huấn",  "telegram_username": "@huannv21",     "team": "Technical"},
-                {"display_name": "17.Sơnpn",   "full_name": "Sơn",   "telegram_username": "@Sonngocpham",  "team": "Technical"},
-                {"display_name": "18.Thuậnlh", "full_name": "Thuận", "telegram_username": "@thuanle0608",  "team": "Technical"},
-                {"display_name": "25.Chínhvđ", "full_name": "Chính", "telegram_username": "@duci59",       "team": "Technical"},
-                {"display_name": "28.Phátntu", "full_name": "Phát",  "telegram_username": "@phatnguyentuan","team": "Technical"},
-                {"display_name": "13.Tâylt",   "full_name": "Tây",   "telegram_username": "@lethitay",     "team": "Intern L2"},
-                {"display_name": "16.Dũngnh",  "full_name": "Dũng",  "telegram_username": "@ru4ff",        "team": "Intern L2"},
-                {"display_name": "26.Phúlt",   "full_name": "Phú",   "telegram_username": "@letrieuphu",   "team": "Intern L2"},
-                {"display_name": "27.Duynđ",   "full_name": "Duy",   "telegram_username": "@duyisme_rynn", "team": "Intern L2"},
-                {"display_name": "29.Anhpxt",  "full_name": "Anh",   "telegram_username": "@tunanhdapoet",  "team": "Intern L2"},
-                {"display_name": "30.Tàipv",   "full_name": "Tài",   "telegram_username": "@taipvan",      "team": "Intern L2"},
-                {"display_name": "31.Hiệplh",  "full_name": "Hiệp",  "telegram_username": "@hhieple03",    "team": "Intern L2"},
-                {"display_name": "32.Thànhndn","full_name": "Thành", "telegram_username": "@thanh25324",   "team": "Intern L2"},
-                {"display_name": "33.Phươngvt","full_name": "Phương","telegram_username": "@tpunn00",      "team": "Intern L2"},
-                {"display_name": "Sếp Thương", "full_name": "Thương","telegram_username": None,  "team": "Developer"},
-                {"display_name": "Sếp Nhi",    "full_name": "Nhi",   "telegram_username": None,  "team": "Developer"},
-                {"display_name": "Chị Trang",  "full_name": "Trang", "telegram_username": "@Trang07",       "team": "Developer"},
+                # Sales
+                {"display_name": "1.Minhpn",  "full_name": "Phan Nhat Minh",  "telegram_username": "@minhuit911",   "team": "Sales"},
+                {"display_name": "6.Phil",     "full_name": "Le Phi",  "telegram_username": "@phile0920",    "team": "Sales"},
+                {"display_name": "8.NhoLna",  "full_name": "Le Anh Nho",  "telegram_username": "@AnhNho66",     "team": "Sales"},
+                {"display_name": "9.Phatnt",   "full_name": "Nguyen Thanh Phat", "telegram_username": "@phatnguyeen",  "team": "Sales"},
+                # Presales
+                {"display_name": "2.Phuocpv",  "full_name": "Phan Van Phuoc","telegram_username": "@nessivu",      "team": "Presales"},
+                {"display_name": "3.Hand",     "full_name": "Diep Han",  "telegram_username": "@handiep",      "team": "Presales"},
+                {"display_name": "4.Yemh",     "full_name": "Ma Hong Yen",  "telegram_username": "@yemhoang96",   "team": "Presales"},
+                {"display_name": "5.Khoipm",   "full_name": "Phan Minh Khoi", "telegram_username": "@BlackDrag0n98","team": "Presales"},
+                # Technical
+                {"display_name": "7.Vypt",     "full_name": "Phan Thao Vy",   "telegram_username": "@vyvyzz13",     "team": "Technical"},
+                {"display_name": "10.Huyht",   "full_name": "Ho Thanh Huy",  "telegram_username": "@ht_hyu",       "team": "Technical"},
+                {"display_name": "11.Hanlnl",  "full_name": "Le Nguyen Linh Han",  "telegram_username": "@Linhhan0399",  "team": "Technical"},
+                {"display_name": "12.Vunl",    "full_name": "Nguyen Le Vu",   "telegram_username": "@vu_nguyen27",  "team": "Technical"},
+                {"display_name": "14.Tubda",   "full_name": "Bui Duong Anh Tu",   "telegram_username": "@numm0204",     "team": "Technical"},
+                {"display_name": "15.Huannv",  "full_name": "Nguyen Van Huan", "telegram_username": "@huannv21",     "team": "Technical"},
+                {"display_name": "17.Sonpn",   "full_name": "Pham Ngoc Son",  "telegram_username": "@Sonngocpham",  "team": "Technical"},
+                {"display_name": "18.Thuanlh", "full_name": "Le Huu Thuan","telegram_username": "@thuanle0608",  "team": "Technical"},
+                {"display_name": "25.Chinhvd", "full_name": "Vo Dai Chinh","telegram_username": "@duci59",       "team": "Technical"},
+                {"display_name": "28.Phatntu", "full_name": "Nguyen Tran Ung Phat", "telegram_username": "@phatnguyentuan","team": "Technical"},
+                # Intern L2
+                {"display_name": "13.Taylt",   "full_name": "Le Thai Tay",  "telegram_username": "@lethitay",     "team": "Intern L2"},
+                {"display_name": "16.Dungnh",  "full_name": "Nguyen Hoang Dung", "telegram_username": "@ru4ff",        "team": "Intern L2"},
+                {"display_name": "26.Phult",   "full_name": "Le Tan Phu",  "telegram_username": "@letrieuphu",   "team": "Intern L2"},
+                {"display_name": "27.Duynd",   "full_name": "Nguyen Dinh Duy",  "telegram_username": "@duyisme_rynn", "team": "Intern L2"},
+                {"display_name": "29.Anhpxt",  "full_name": "Pham Xuan Thai Anh",  "telegram_username": "@tunanhdapoet",  "team": "Intern L2"},
+                {"display_name": "30.Taipv",   "full_name": "Phan Van Tai",  "telegram_username": "@taipvan",      "team": "Intern L2"},
+                {"display_name": "31.Hieplh",  "full_name": "Le Hung Hiep", "telegram_username": "@hhieple03",    "team": "Intern L2"},
+                {"display_name": "32.Thanhndn","full_name": "Nguyen Duc Nam Thanh","telegram_username": "@thanh25324",   "team": "Intern L2"},
+                {"display_name": "33.Phuongvt","full_name": "Van Thi Phuong","telegram_username": "@tpunn00",      "team": "Intern L2"},
+                # Developer
+                {"display_name": "Sep Thuong", "full_name": "Nguyen Van Thuong","telegram_username": None,           "team": "Developer"},
+                {"display_name": "Sep Nhi",    "full_name": "Bui Thi Thao Nhi",   "telegram_username": None,           "team": "Developer"},
+                {"display_name": "Chi Trang",  "full_name": "Do Thi Thuy Trang", "telegram_username": "@Trang07",       "team": "Developer"},
+                {"display_name": "Thuy Ha",    "full_name": "Thuy Ha", "telegram_username": "@thuyha06",    "team": "Developer"},
+                {"display_name": "Yen Nhi",    "full_name": "Yen Nhi", "telegram_username": "@ynhi03",      "team": "Developer"},
+                {"display_name": "Chi Hieu",   "full_name": "Vo Thi Hieu",  "telegram_username": "@HieuNgo027",   "team": "Developer"},
+                {"display_name": "Chi Giang",  "full_name": "Phan Thi Giang", "telegram_username": "@GiangHoangThuy","team": "Developer"},
+                {"display_name": "Anh Do",     "full_name": "Tay Van Do",    "telegram_username": "@dotran000",    "team": "Developer"},
+                {"display_name": "Anh Thanh",  "full_name": "Nguyen Trung Thanh", "telegram_username": "@Thanh_dco",    "team": "Developer"},
+                {"display_name": "Anh Hong",   "full_name": "Pham Xuan Hong",  "telegram_username": "@lz30o0",       "team": "Developer"},
+                {"display_name": "Anh Nam",    "full_name": "Le Viet Nam",   "telegram_username": "@Buinam_POP",   "team": "Developer"},
+                {"display_name": "Anh Son",    "full_name": "Pham Thai Son",   "telegram_username": "@snguyencptit", "team": "Developer"},
+                {"display_name": "Anh Thanh2",  "full_name": "Do Thanh", "telegram_username": "@Edgar_Ng",     "team": "Developer"},
+                # Marketing
+                {"display_name": "16.Thienn",  "full_name": "Nguyen Thien","telegram_username": "@thienng268",  "team": "Marketing"},
+                {"display_name": "17.Thuongnv","full_name": "Nguyen Thuong","telegram_username": "@thuongw89",   "team": "Marketing"},
+                {"display_name": "18.Maidt",    "full_name": "Dinh Mai",  "telegram_username": "@mmaidt",      "team": "Marketing"},
+                {"display_name": "19.Huandg",  "full_name": "Dinh Huan", "telegram_username": "@huandinh2409","team": "Marketing"},
+                {"display_name": "20.Thuatn",  "full_name": "Nguyen Thuat","telegram_username": "@thuaatj1204", "team": "Marketing"},
+                {"display_name": "21.Dungdt",  "full_name": "Dinh Dung", "telegram_username": None,           "team": "Marketing"},
+                {"display_name": "22.Phucb",   "full_name": "Bui Phuc", "telegram_username": "@phuccao123",  "team": "Marketing"},
+                {"display_name": "23.Hoangt",  "full_name": "Nguyen Hoang","telegram_username": "@thoangg999",  "team": "Marketing"},
+                {"display_name": "24.Quanm",   "full_name": "Mai Quan", "telegram_username": "@mavrickNG",   "team": "Marketing"},
+                # Intern L1
+                {"display_name": "26.HuyNT",   "full_name": "Nguyen Thanh Huy",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "27.Ybinhn",  "full_name": "Ybinh","telegram_username": "@ybinhquach", "team": "Intern L1"},
+                {"display_name": "29.TienHT",  "full_name": "Hoang Tien", "telegram_username": "@tien_tth",    "team": "Intern L1"},
+                {"display_name": "30.Thunnm",  "full_name": "Nguyen Minh Thu",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "31.Duyentt", "full_name": "Trinh Duyen","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "32.Uyenpdp","full_name": "Pham Duy Uyen", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "33.Thanhnd","full_name": "Nguyen Thanh","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "35.KhoaNN",  "full_name": "Nguyen Khoa", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "36.LongTD",  "full_name": "Tran Duy Long", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "37.Longntk", "full_name": "Nguyen Long", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "38.Quanlnm","full_name": "Nguyen Quan", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "39.Thuanpb","full_name": "Bui Thuan","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "40.Phongnv","full_name": "Nguyen Phong","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "41.Phatngt","full_name": "Nguyen Phat", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "42.Tannd",  "full_name": "Nguyen Tan",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "43.Vinhttq","full_name": "Tran Vinh", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "44.Vyttt",   "full_name": "Trinh Vy",   "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "45.Thucch", "full_name": "Chu Thuc", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "46.Tienta",  "full_name": "Tien", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "47.VuDQ",    "full_name": "Dang Quang Vu",   "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "48.ThanhNC","full_name": "Chu Thanh","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "49.ThoTD",   "full_name": "Tho",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "50.SangPT",  "full_name": "Pham Sang", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "51.NguyenNV","full_name": "Nguyen Nguyen","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "52.VietPQ",  "full_name": "Pham Quang Viet", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "53.HoangNM", "full_name": "Nguyen Minh Hoang","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "54.KhaiLM",  "full_name": "Le Minh Khai", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "55.ThaoVTN","full_name": "Nguyen Thao", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "56.TinHA",   "full_name": "Anh Tin",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "57.AnhNTH",  "full_name": "Nguyen Anh",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "58.HuyenLTT","full_name": "Le Thi Huyen","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "59.HuyenNTN","full_name": "Nguyen Huyen","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "60.VietND",  "full_name": "Nguyen Duy Viet", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "61.ThangVT", "full_name": "Van Thang","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "62.NamNP",   "full_name": "Pham Nam",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "63.QuanLKM", "full_name": "Le Quan", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "64.QuyNT",   "full_name": "Nguyen Quy",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "65.HungNP",  "full_name": "Pham Hung", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "66.NhiBTT",  "full_name": "Bui Nhi",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "67.QuanVLH", "full_name": "Le Quan", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "68.HoangHNN","full_name": "Nguyen Hoang","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "69.TruyenNT","full_name": "Nguyen Truyen","telegram_username": None,          "team": "Intern L1"},
+                {"display_name": "70.NamDV",   "full_name": "Vu Nam",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "71.Andd",    "full_name": "An",   "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "72.TungNT",  "full_name": "Nguyen Tung", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "73.LoanDTB", "full_name": "Bui Loan", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "74.GiangNT", "full_name": "Nguyen Giang","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "75.TrinhTTT","full_name": "Trinh Trinh","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "76.NhuBTQ",  "full_name": "Bui Nhu",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "77.MyCT",    "full_name": "Chu My",   "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "78.TrinhLTT","full_name": "Le Trinh","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "79.HieuLVM", "full_name": "Le Hieu", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "80.HueTH",   "full_name": "Hue",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "81.VanNTH",  "full_name": "Nguyen Van",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "82.HuyDNH",  "full_name": "Huy",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "83.HauDH",   "full_name": "Hau",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "84.PhuongNTT","full_name": "Nguyen Phuong","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "85.TrungNM", "full_name": "Nguyen Minh Trung","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "86.AnhTNK",  "full_name": "Kim Anh",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "87.BinhCT",  "full_name": "Binh", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "88.PhuongND","full_name": "Nguyen Phuong","telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "89.HaiLV",   "full_name": "Le Hai",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "90.VuTVH",  "full_name": "Vu",   "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "91.NhutNT",  "full_name": "Nguyen Nhut", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "92.KhueNP",  "full_name": "Nguyen Khue", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "93.NhatLM",  "full_name": "Le Nhat", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "94.TrangNT", "full_name": "Nguyen Trang", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "95.BengHT",  "full_name": "Beng", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "96.LanhNTM", "full_name": "Nguyen Lanh", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "97.DucTX",   "full_name": "Duc",  "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "98.BinhPV",  "full_name": "Pham Binh", "telegram_username": None,           "team": "Intern L1"},
+                {"display_name": "99.DoanTK",  "full_name": "Doan", "telegram_username": None,           "team": "Intern L1"},
+                # Freelancer
+                {"display_name": "201.HoaT",   "full_name": "Hoa",  "telegram_username": None,           "team": "Freelancer"},
+                {"display_name": "202.HienT",  "full_name": "Hien", "telegram_username": None,           "team": "Freelancer"},
+                {"display_name": "203.Thai",   "full_name": "Thai", "telegram_username": None,           "team": "Freelancer"},
+                # Back-Office
+                {"display_name": "801.LanVTN", "full_name": "Vu Lan",   "telegram_username": None,           "team": "Back-Office"},
             ]
             for data in initial_members:
                 try:
@@ -429,6 +534,7 @@ app.include_router(meetings_router.router,    prefix="/api/meetings")
 app.include_router(performance_settings.router, prefix="/api/performance-settings")
 app.include_router(accounts.router,            prefix="/api/accounts")
 app.include_router(ai_review.router,            prefix="/api")
+app.include_router(lunch_router.router,         prefix="/api/lunch")
 
 @app.get("/health")
 @app.get("/api/health")
