@@ -11,7 +11,7 @@ from ..utils.auth import hash_password, require_admin
 
 router = APIRouter()
 
-VALID_ROLES = {"admin", "member"}
+VALID_ROLES = {"admin", "member", "super_admin"}
 MIN_PASSWORD_LENGTH = 8
 
 
@@ -35,12 +35,12 @@ def ensure_admin_remains(db: Session, account: User, *, role=None, active=None, 
     next_role = account.role if role is None else role
     next_active = account.is_active if active is None else active
     removes_active_admin = (
-        account.role == "admin"
+        account.role in {"admin", "super_admin"}
         and account.is_active
-        and (deleting or next_role != "admin" or not next_active)
+        and (deleting or next_role not in {"admin", "super_admin"} or not next_active)
     )
     if removes_active_admin:
-        active_admins = db.query(User).filter(User.role == "admin", User.is_active.is_(True)).count()
+        active_admins = db.query(User).filter(User.role.in_({"admin", "super_admin"}), User.is_active.is_(True)).count()
         if active_admins <= 1:
             raise HTTPException(400, "Hệ thống phải còn ít nhất một tài khoản admin đang hoạt động.")
 
@@ -199,10 +199,10 @@ def update_account(
         new_role = str(body["role"]).strip().lower()
         if new_role not in VALID_ROLES:
             raise HTTPException(400, f"Role không hợp lệ. Chọn một trong: {sorted(VALID_ROLES)}")
-        if admin.id == account.id and new_role != "admin":
+        if admin.id == account.id and new_role not in {"admin", "super_admin"}:
             raise HTTPException(400, "Bạn không thể tự hạ quyền admin của chính mình.")
         ensure_admin_remains(db, account, role=new_role)
-        if is_bootstrap_superadmin(account) and new_role != "admin":
+        if is_bootstrap_superadmin(account) and new_role not in {"admin", "super_admin"}:
             raise HTTPException(400, "The bootstrap super-admin cannot be demoted.")
         account.role = new_role
 

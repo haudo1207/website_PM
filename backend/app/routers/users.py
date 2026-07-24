@@ -97,7 +97,7 @@ def update_user(uid: int, body: dict, db: Session = Depends(get_db), admin=Depen
             role = str(v).strip().lower()
             if role not in VALID_ROLES:
                 raise HTTPException(400, f"Invalid role. Must be one of: {VALID_ROLES}")
-            if admin.id == u.id and role != "admin":
+            if admin.id == u.id and role not in {"admin", "super_admin"}:
                 raise HTTPException(400, "You cannot demote your own admin account")
             ensure_admin_remains(db, u, role=role)
             u.role = role

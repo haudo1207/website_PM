@@ -36,12 +36,12 @@ def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)
         raise HTTPException(401, "Invalid token")
 
 def require_admin(user=Depends(get_current_user)):
-    if user.role != "admin":
+    if user.role not in {"admin", "super_admin"}:
         raise HTTPException(403, "Admin required")
     return user
 
 def require_admin_write(request: Request, user=Depends(get_current_user)):
     """Allow every active account to read, but reserve mutations for admins."""
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin":
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role not in {"admin", "super_admin"}:
         raise HTTPException(403, "Admin required for write access")
     return user

@@ -95,7 +95,7 @@ def require_route_project_access(
         require_project(db, user, int(project_id))
 
     # Role-based write authorization.
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin":
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role not in {"admin", "super_admin"}:
         # Members may perform Task CRUD if assigned to the current project.
         if _is_task_write(request) and project_id is not None and _is_member_of_project(db, user, int(project_id)):
             return user

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 import datetime
 
 from ..database import get_db
+from ..config import settings
 from ..models.member import Member, member_skills
 from ..models.skill_master import Skill
 from ..models.task import Task
@@ -288,3 +289,158 @@ def delete_member(id: int, db: Session = Depends(get_db), _=Depends(require_admi
 def list_teams(db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.query(Member.team).filter(Member.team.isnot(None)).distinct().all()
     return sorted([r[0] for r in rows if r[0]])
+
+
+# ─── SYNC CANDIDATE ──────────────────────────────────────────
+@router.post("/sync-candidate")
+def sync_candidate(
+    body: dict,
+    x_sync_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    # Verify token
+    expected_token = settings.INTERNAL_SYNC_TOKEN or "markee-kpi-sync-secret-key-2026"
+    if not x_sync_token or x_sync_token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized sync token")
+        
+    full_name = str(body.get("full_name", "")).strip()
+    email = str(body.get("email", "")).strip().lower()
+    phone = str(body.get("phone", "")).strip()
+    level = str(body.get("level", "")).strip().lower()
+    position = str(body.get("position", "")).strip()
+    team = str(body.get("team", "")).strip()
+    telegram_username = str(body.get("telegram", "")).strip()
+    cv_link = str(body.get("cv_link", "")).strip()
+    
+    birth_date_str = body.get("birth_date")
+    birth_date = None
+    if birth_date_str:
+        try:
+            birth_date = datetime.date.fromisoformat(str(birth_date_str).strip()[:10])
+        except ValueError:
+            pass
+    
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Họ và tên không được để trống")
+        
+    # 1. Abbreviate Display Name: Keep last two words in full, abbreviate previous ones
+    words = [w for w in full_name.split() if w]
+    if len(words) <= 2:
+        display_name = " ".join(words)
+    else:
+        abbr = ".".join([w[0].upper() for w in words[:-2]])
+        last_two = " ".join(words[-2:])
+        display_name = f"{abbr} {last_two}"
+        
+    # 2. Map Candidate Level to Cột Team
+    mapped_team = team
+    if level == "lv1":
+        if team in ["AI", "Dev/DevOps", "Infrastructure"]:
+            mapped_team = "Intern L1 Tech"
+        else:
+            mapped_team = "Intern L1"
+    elif level == "lv2":
+        mapped_team = "Intern L2"
+    else:
+        # For fresher, lv3, core
+        if team == "Dev/DevOps":
+            mapped_team = "Dev"
+        else:
+            mapped_team = team
+            
+    # 3. Find if member already exists by email or display_name
+    member = None
+    if email:
+        member = db.query(Member).filter(Member.email.ilike(email)).first()
+    if not member:
+        member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
+        
+    if member:
+        # Update existing member
+        member.full_name = full_name
+        member.display_name = display_name
+        if email:
+            member.email = email
+        if phone:
+            member.phone = phone
+        if telegram_username:
+            member.telegram_username = telegram_username
+        if mapped_team:
+            member.team = mapped_team
+        if position:
+            member.position = position
+        if birth_date:
+            member.birth_date = birth_date
+        if cv_link:
+            member.cv_link = cv_link
+    else:
+        # Create new member
+        member = Member(
+            display_name=display_name,
+            full_name=full_name,
+            email=email or None,
+            phone=phone or None,
+            telegram_username=telegram_username or None,
+            team=mapped_team or None,
+            position=position or None,
+            department=team or None,  # Set department to team name (e.g. Marketing, AI)
+            birth_date=birth_date,
+            cv_link=cv_link or None
+        )
+        db.add(member)
+        
+    try:
+        db.commit()
+        db.refresh(member)
+        return {"status": "success", "member_id": member.id, "display_name": member.display_name}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi database: {str(e)}")
+
+
+@router.post("/remove-candidate")
+def remove_candidate(
+    body: dict,
+    x_sync_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    # Verify token
+    expected_token = settings.INTERNAL_SYNC_TOKEN or "markee-kpi-sync-secret-key-2026"
+    if not x_sync_token or x_sync_token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized sync token")
+
+    email = str(body.get("email", "")).strip().lower()
+    full_name = str(body.get("full_name", "")).strip()
+
+    if not email and not full_name:
+        raise HTTPException(status_code=400, detail="Cần cung cấp email hoặc họ tên để xóa")
+
+    # 1. Standardize Display Name from full_name to match if no email
+    display_name = ""
+    if full_name:
+        words = [w for w in full_name.split() if w]
+        if len(words) <= 2:
+            display_name = " ".join(words)
+        else:
+            abbr = ".".join([w[0].upper() for w in words[:-2]])
+            last_two = " ".join(words[-2:])
+            display_name = f"{abbr} {last_two}"
+
+    # 2. Find matching member
+    member = None
+    if email:
+        member = db.query(Member).filter(Member.email.ilike(email)).first()
+    if not member and display_name:
+        member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
+
+    if not member:
+        return {"status": "not_found", "message": "Không tìm thấy thành viên để xóa"}
+
+    try:
+        db.delete(member)
+        db.commit()
+        return {"status": "success", "message": f"Đã gỡ bỏ thành viên {member.display_name}"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi database khi gỡ bỏ: {str(e)}")
+

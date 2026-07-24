@@ -11,10 +11,10 @@ export const getToken = () => typeof window !== 'undefined' ? localStorage.getIt
 export const getRole = () => typeof window !== 'undefined' ? localStorage.getItem('role') : null;
 export const getName = () => typeof window !== 'undefined' ? localStorage.getItem('name') : null;
 export const getAvatar = () => typeof window !== 'undefined' ? localStorage.getItem('avatar') : null;
-export const isAdmin = () => getRole() === 'admin';
+export const isAdmin = () => getRole() === 'admin' || getRole() === 'super_admin';
 // Kept for compatibility with existing imports; the two-role model reserves
 // every write operation for Admin.
-export const isGroupA = () => getRole() === 'admin';
+export const isGroupA = () => getRole() === 'admin' || getRole() === 'super_admin';
 export const logout = () => {
   if (typeof window === 'undefined') return;
   localStorage.clear();

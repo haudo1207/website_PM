@@ -118,6 +118,9 @@ def apply_schema_updates():
             SET customer_id = (SELECT id FROM customers WHERE customers.name = projects.customer_name)
             WHERE customer_id IS NULL AND customer_name IS NOT NULL
         """))
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS cv_link VARCHAR(255)"
+        ))
 
 apply_schema_updates()
 
