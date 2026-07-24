@@ -137,6 +137,10 @@ def apply_schema_updates():
             WHERE customer_id IN (SELECT id FROM customers WHERE LOWER(business_unit) = 'markee')
         """))
 
+        # Add remark_type and description to performance_settings
+        conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
+        conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))
+
 apply_schema_updates()
 
 def init_db_defaults():
@@ -467,6 +471,20 @@ def init_db_defaults():
                     is_active=True
                 ))
             print("[*] Seeded initial Performance KPI rules")
+
+        # Seed Master Phases if table empty
+        from app.models.master_phase import MasterPhase
+        if db.query(MasterPhase).count() == 0:
+            default_phases = [
+                "1. Tư vấn", "2. Báo giá", "3. Làm specs", "4. Duyệt HSMT",
+                "5. Chờ ra thầu", "6. Tham gia thầu POP", "6. Tham gia thầu nhà phụ",
+                "7. Trúng Thầu", "7. Rớt thầu", "8. Ký hợp đồng", "9. Đặt hàng",
+                "10. Giao hàng", "11. Triển khai", "12. Hoàn thành triển khai",
+                "13. Nghiệm thu", "14. Thanh toán", "15. Kết thúc dự án", "16. Bảo trì"
+            ]
+            for idx, p_name in enumerate(default_phases, 1):
+                db.add(MasterPhase(name=p_name, sort_order=idx, is_active=True))
+            print("[*] Seeded initial Master Phases")
 
         db.commit()
     except RuntimeError:

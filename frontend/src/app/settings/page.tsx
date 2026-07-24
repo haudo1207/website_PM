@@ -741,18 +741,19 @@ export default function SettingsPage() {
 
           {activeTab === 'system_categories' && (
             <SystemCategoriesView
-              positions={dbPositions}
               departments={dbDepartments}
-              statuses={dbStatuses}
               teams={dbTeams}
-              customers={dbCustomers}
               onReload={reloadSystemCategories}
               onFlash={flash}
             />
           )}
 
           {activeTab === 'kpis' && (
-            <KPIsView onFlash={flash} />
+            <KPIsView
+              statuses={dbStatuses}
+              onReload={reloadSystemCategories}
+              onFlash={flash}
+            />
           )}
 
           {activeTab === 'ai_prompts' && (

@@ -3,8 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import json
 
+from sqlalchemy import func as sql_func
 from ..database import get_db
 from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer
+from ..models.master_phase import MasterPhase
 from ..models.user import User
 from ..models.task import Task
 from ..utils.auth import require_admin, get_current_user
@@ -390,3 +392,59 @@ def delete_customer(id: int, db: Session = Depends(get_db), _=Depends(require_ad
     db.delete(c)
     db.commit()
     return {"message": "Đã xóa khách hàng thành công"}
+
+
+# ----------------- MASTER PHASES -----------------
+@router.get("/master-phases")
+def list_master_phases(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return db.query(MasterPhase).order_by(MasterPhase.sort_order.asc(), MasterPhase.id.asc()).all()
+
+@router.post("/master-phases")
+def create_master_phase(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise HTTPException(400, "Tên giai đoạn không được để trống")
+    desc = str(body.get("description", "")).strip()
+    max_order = db.query(sql_func.max(MasterPhase.sort_order)).scalar() or 0
+    mp = MasterPhase(name=name, description=desc or None, sort_order=max_order + 1, is_active=True)
+    db.add(mp)
+    db.commit()
+    db.refresh(mp)
+    return mp
+
+@router.put("/master-phases/reorder")
+def reorder_master_phases(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    order_ids = body.get("ids", [])
+    for idx, mp_id in enumerate(order_ids):
+        db.query(MasterPhase).filter(MasterPhase.id == mp_id).update({"sort_order": idx + 1})
+    db.commit()
+    return {"message": "Đã cập nhật thứ tự giai đoạn"}
+
+@router.put("/master-phases/{id}")
+def update_master_phase(id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    mp = db.query(MasterPhase).filter(MasterPhase.id == id).first()
+    if not mp:
+        raise HTTPException(404, "Không tìm thấy giai đoạn master")
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise HTTPException(400, "Tên giai đoạn không được để trống")
+    mp.name = name
+    if "description" in body:
+        mp.description = body["description"]
+    if "sort_order" in body:
+        mp.sort_order = body["sort_order"]
+    if "is_active" in body:
+        mp.is_active = body["is_active"]
+    db.commit()
+    db.refresh(mp)
+    return mp
+
+@router.delete("/master-phases/{id}")
+def delete_master_phase(id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    mp = db.query(MasterPhase).filter(MasterPhase.id == id).first()
+    if not mp:
+        raise HTTPException(404, "Không tìm thấy giai đoạn master")
+    db.delete(mp)
+    db.commit()
+    return {"message": "Đã xóa giai đoạn thành công"}
+
