@@ -37,8 +37,10 @@ export const googleLogin = (credential: string) =>
 // ═══════════════════════════════════════════════════════════
 // PROJECTS (v5)
 // ═══════════════════════════════════════════════════════════
-export const getProjects = () => api.get('/projects').then(r => r.data);
-export const getSidebarTree = () => api.get('/projects/sidebar-tree').then(r => r.data);
+export const getProjects = (businessUnit?: string) =>
+  api.get('/projects', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+export const getSidebarTree = (businessUnit?: string) =>
+  api.get('/projects/sidebar-tree', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
 export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r.data);
 export const createProject = (data: object) => api.post('/projects', data).then(r => r.data);
 export const updateProject = (id: number, data: object) => api.patch(`/projects/${id}`, data).then(r => r.data);
@@ -163,9 +165,12 @@ export const updateMember = (id: number, data: object) => api.put(`/members/${id
 export const deleteMember = (id: number) => api.delete(`/members/${id}`).then(r => r.data);
 
 // Customers
-export const getCustomers = () => api.get('/system-categories/customers').then(r => r.data);
-export const createCustomer = (data: { name: string; description?: string }) => api.post('/system-categories/customers', data).then(r => r.data);
-export const updateCustomer = (id: number, data: { name: string; description?: string }) => api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
+export const getCustomers = (businessUnit?: string) =>
+  api.get('/system-categories/customers', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+export const createCustomer = (data: { name: string; description?: string; business_unit?: string }) =>
+  api.post('/system-categories/customers', data).then(r => r.data);
+export const updateCustomer = (id: number, data: { name: string; description?: string; business_unit?: string }) =>
+  api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
 export const deleteCustomer = (id: number) => api.delete(`/system-categories/customers/${id}`).then(r => r.data);
 
 // Leave Requests

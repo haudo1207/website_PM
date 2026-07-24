@@ -2,6 +2,7 @@
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
 from collections import defaultdict
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case
@@ -9,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
+from ..models.system_category import Customer
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
@@ -132,7 +134,9 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "name": p.name,
         "code": p.code,
         "project_code": str(p.year) if p.year else p.code,
-        "customer_name": p.customer_name,
+        "customer_name": p.customer.name if p.customer else p.customer_name,
+        "customer_id": p.customer_id,
+        "business_unit": p.customer.business_unit if p.customer else "securityzone",
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": ", ".join(m[1] for m in pms) or None,
@@ -161,8 +165,11 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
 
 
 @router.get("/projects")
-def list_projects(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    projects = project_query_for_user(db, current_user).order_by(Project.id.desc()).all()
+def list_projects(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    q = project_query_for_user(db, current_user)
+    if business_unit:
+        q = q.join(Customer, Project.customer_id == Customer.id).filter(Customer.business_unit == business_unit.lower())
+    projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
         return []
@@ -332,13 +339,18 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
 
 
 @router.get("/projects/sidebar-tree")
-def get_sidebar_tree(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_sidebar_tree(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Returns projects grouped by year then customer for the sidebar tree hierarchy."""
     projects = project_query_for_user(db, current_user).all()
 
     years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
+    target_bu = business_unit.lower().strip() if business_unit else None
 
     for p in projects:
+        c_bu = (getattr(p.customer, 'business_unit', 'securityzone') or 'securityzone').lower() if p.customer else 'securityzone'
+        if target_bu and c_bu != target_bu:
+            continue
+
         yr = p.year or 2026
         c_id = p.customer_id
         c_name = p.customer.name if p.customer else (p.customer_name or "Khác")

@@ -24,23 +24,36 @@ function NavbarContent() {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
-  const [treeData, setTreeData] = useState<YearNode[]>([]);
-  const [expandedYear, setExpandedYear] = useState<number | null>(null);
-  const [customerSearch, setCustomerSearch] = useState('');
+
+  const [activeBU, setActiveBU] = useState<'securityzone' | 'markee'>('securityzone');
+  const [expandedYearBU, setExpandedYearBU] = useState<Record<string, number | null>>({
+    securityzone: null,
+    markee: null
+  });
+  const [customerSearchBU, setCustomerSearchBU] = useState<Record<string, string>>({
+    securityzone: '',
+    markee: ''
+  });
+  const [treeDataBU, setTreeDataBU] = useState<Record<string, YearNode[]>>({
+    securityzone: [],
+    markee: []
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setName(getName() ?? '');
     setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
+  }, []);
 
-    getSidebarTree()
+  useEffect(() => {
+    getSidebarTree(activeBU)
       .then((data: YearNode[]) => {
-        setTreeData(data || []);
+        setTreeDataBU(prev => ({ ...prev, [activeBU]: data || [] }));
       })
       .catch(() => {
         // Fallback calculation if API fails
-        Promise.all([getCustomers(), getProjects()]).then(([custs, projs]) => {
+        Promise.all([getCustomers(activeBU), getProjects()]).then(([custs, projs]) => {
           const yearMap = new Map<number, Map<string, CustomerNode>>();
           (projs || []).forEach((p: any) => {
             const yr = p.year || new Date().getFullYear();
@@ -58,21 +71,24 @@ function NavbarContent() {
           const fallbackData: YearNode[] = Array.from(yearMap.entries())
             .sort((a, b) => b[0] - a[0])
             .map(([yr, cMap]) => {
-              const custs = Array.from(cMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-              const total = custs.reduce((sum, c) => sum + c.project_count, 0);
-              return { year: yr, project_count: total, customers: custs };
+              const custsList = Array.from(cMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+              const total = custsList.reduce((sum, c) => sum + c.project_count, 0);
+              return { year: yr, project_count: total, customers: custsList };
             });
-          setTreeData(fallbackData);
+          setTreeDataBU(prev => ({ ...prev, [activeBU]: fallbackData }));
         });
       });
-  }, [path]);
+  }, [activeBU, path]);
 
   const currentParamYear = searchParams.get('year');
   const currentCustId = searchParams.get('customer_id');
   const currentCustName = searchParams.get('customer');
 
   const toggleYear = (year: number) => {
-    setExpandedYear(prev => (prev === year ? null : year));
+    setExpandedYearBU(prev => ({
+      ...prev,
+      [activeBU]: prev[activeBU] === year ? null : year
+    }));
   };
 
   const nav = [
@@ -84,11 +100,6 @@ function NavbarContent() {
     { href: '/projects', label: 'Projects', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-      </svg>
-    )},
-    { href: '/customers', label: 'Customers', icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5m0 0h4m-4 0V11m0 0h4m-4 0H9m4 0V7m0 0h4m-4 0H9m-4 4h4" />
       </svg>
     )},
     { href: '/kpi', label: 'KPI', icon: (
@@ -121,16 +132,19 @@ function NavbarContent() {
   ].filter(n => n.show !== false);
 
   const renderTreeContent = () => {
-    const searchLow = customerSearch.trim().toLowerCase();
+    const currentTreeData = treeDataBU[activeBU] || [];
+    const currentExpandedYear = expandedYearBU[activeBU];
+    const currentSearch = customerSearchBU[activeBU] || '';
+    const searchLow = currentSearch.trim().toLowerCase();
 
-    return treeData.map(yNode => {
+    return currentTreeData.map(yNode => {
       const matchingCusts = yNode.customers.filter(c =>
         !searchLow || c.name.toLowerCase().includes(searchLow)
       );
 
       if (searchLow && matchingCusts.length === 0) return null;
 
-      const isExpanded = searchLow ? true : (expandedYear === yNode.year);
+      const isExpanded = searchLow ? true : (currentExpandedYear === yNode.year);
 
       return (
         <div key={yNode.year} className="space-y-1 mb-2">
@@ -157,8 +171,8 @@ function NavbarContent() {
             <div className="pl-3.5 space-y-0.5 border-l border-slate-800/80 ml-2.5">
               {matchingCusts.map(c => {
                 const href = c.id
-                  ? `/projects?year=${yNode.year}&customer_id=${c.id}`
-                  : `/projects?year=${yNode.year}&customer=${encodeURIComponent(c.name)}`;
+                  ? `/projects?year=${yNode.year}&customer_id=${c.id}&business_unit=${activeBU}`
+                  : `/projects?year=${yNode.year}&customer=${encodeURIComponent(c.name)}&business_unit=${activeBU}`;
 
                 const isItemActive = (path === '/projects' || path === '/project') &&
                   currentParamYear === String(yNode.year) &&
@@ -257,14 +271,33 @@ function NavbarContent() {
         {/* Projects Tree Section */}
         <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CUSTOMERS</span>
-            {isAdmin() && (
-              <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50" title="Thêm dự án mới">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </Link>
-            )}
+            <Link href="/customers" className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors" title="Mở trang Quản lý Khách hàng">
+              CUSTOMERS
+            </Link>
+          </div>
+
+          {/* Business Unit Tabs Switcher */}
+          <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
+            <button
+              onClick={() => setActiveBU('securityzone')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'securityzone'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              SecurityZone
+            </button>
+            <button
+              onClick={() => setActiveBU('markee')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'markee'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Markee
+            </button>
           </div>
 
           {/* Quick Search Input */}
@@ -272,8 +305,11 @@ function NavbarContent() {
             <input
               type="text"
               placeholder="🔍 Search Customer..."
-              value={customerSearch}
-              onChange={e => setCustomerSearch(e.target.value)}
+              value={customerSearchBU[activeBU] || ''}
+              onChange={e => {
+                const val = e.target.value;
+                setCustomerSearchBU(prev => ({ ...prev, [activeBU]: val }));
+              }}
               className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
@@ -349,21 +385,44 @@ function NavbarContent() {
         {/* Mobile Projects Tree Section */}
         <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CUSTOMERS</span>
-            {isAdmin() && (
-              <Link href="/projects/new" className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-md transition-all duration-150 flex items-center justify-center border border-transparent hover:border-slate-700/50">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </Link>
-            )}
+            <Link href="/customers" onClick={() => setMobileMenuOpen(false)} className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors" title="Mở trang Quản lý Khách hàng">
+              CUSTOMERS
+            </Link>
           </div>
+
+          {/* Mobile Business Unit Tabs Switcher */}
+          <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
+            <button
+              onClick={() => setActiveBU('securityzone')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'securityzone'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              SecurityZone
+            </button>
+            <button
+              onClick={() => setActiveBU('markee')}
+              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                activeBU === 'markee'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Markee
+            </button>
+          </div>
+
           <div className="relative px-1 mb-2">
             <input
               type="text"
               placeholder="🔍 Search Customer..."
-              value={customerSearch}
-              onChange={e => setCustomerSearch(e.target.value)}
+              value={customerSearchBU[activeBU] || ''}
+              onChange={e => {
+                const val = e.target.value;
+                setCustomerSearchBU(prev => ({ ...prev, [activeBU]: val }));
+              }}
               className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
