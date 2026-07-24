@@ -348,13 +348,13 @@ def delete_team(id: int, db: Session = Depends(get_db), _=Depends(require_admin)
 def list_customers(business_unit: Optional[str] = None, db: Session = Depends(get_db), _=Depends(get_current_user)):
     q = db.query(Customer)
     if business_unit:
-        q = q.filter(Customer.business_unit == business_unit.lower())
+        q = q.filter(Customer.business_unit == business_unit.lower().strip())
     return q.order_by(Customer.name.asc()).all()
 
 @router.post("/customers")
 def create_customer(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
     name = str(body.get("name", "")).strip()
-    bu = str(body.get("business_unit", "securityzone")).strip().lower()
+    bu = str(body.get("business_unit", "infrastructure")).strip().lower()
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
     if db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu).first():
@@ -371,7 +371,7 @@ def update_customer(id: int, body: dict, db: Session = Depends(get_db), _=Depend
     if not c:
         raise HTTPException(404, "Không tìm thấy khách hàng")
     name = str(body.get("name", "")).strip()
-    bu = str(body.get("business_unit", c.business_unit or "securityzone")).strip().lower()
+    bu = str(body.get("business_unit", c.business_unit or "infrastructure")).strip().lower()
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
     dup = db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu, Customer.id != id).first()

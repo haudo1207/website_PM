@@ -125,8 +125,9 @@ def apply_schema_updates():
         """))
 
         # Add business_unit column to customers and drop obsolete unique name constraint
-        conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50) NOT NULL DEFAULT 'securityzone'"))
+        conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50) NOT NULL DEFAULT 'infrastructure'"))
         conn.execute(text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_name_key"))
+        conn.execute(text("UPDATE customers SET business_unit = 'infrastructure' WHERE LOWER(business_unit) IN ('securityzone', 'securityzone')"))
 
         # Add business column to projects
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS business VARCHAR(30) NOT NULL DEFAULT 'Infrastructure'"))
@@ -444,18 +445,18 @@ def init_db_defaults():
                 {"performance": "(P) FAIL 3", "kpi": Decimal("0.0")},
 
                 # III. Tasks làm ngoài giờ
-                {"performance": "1 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("3")},
-                {"performance": "2 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("6")},
-                {"performance": "3 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("9")},
-                {"performance": "4 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("12")},
-                {"performance": "5 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("15")},
-                {"performance": "1 day - Xử lý sự cố cuối tuần", "kpi": Decimal("6")},
-                {"performance": "2 day - Xử lý sự cố cuối tuần", "kpi": Decimal("12")},
-                {"performance": "1 day - Xử lý sự cố ngày lễ", "kpi": Decimal("10")},
-                {"performance": "2 day - Xử lý sự cố ngày lễ", "kpi": Decimal("20")},
-                {"performance": "3 day - Xử lý sự cố ngày lễ", "kpi": Decimal("30")},
-                {"performance": "4 day - Xử lý sự cố ngày lễ", "kpi": Decimal("40")},
-                {"performance": "5 day - Xử lý sự cố ngày lễ", "kpi": Decimal("50")},
+                {"performance": "1 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "2 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "3 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "4 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "5 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "1 day - Xử lý sự cố cuối tuần", "kpi": Decimal("0")},
+                {"performance": "2 day - Xử lý sự cố cuối tuần", "kpi": Decimal("0")},
+                {"performance": "1 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "2 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "3 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "4 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "5 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
 
                 # IV. Tasks phát sinh
                 {"performance": "Rework - Làm lại do lỗi nội bộ", "kpi": Decimal("0")},
@@ -464,9 +465,11 @@ def init_db_defaults():
                 {"performance": "Unplanned - Các công việc nhỏ phát sinh ngoài scope", "kpi": Decimal("0")}
             ]
             for idx, r in enumerate(initial_kpi_rules):
+                rtype = "Penalty" if (r["kpi"] < 0 or r["performance"].startswith("(P)")) else "Bonus"
                 db.add(PerformanceSetting(
                     performance=r["performance"],
                     kpi=r["kpi"],
+                    remark_type=rtype,
                     sort_order=idx,
                     is_active=True
                 ))
@@ -476,11 +479,24 @@ def init_db_defaults():
         from app.models.master_phase import MasterPhase
         if db.query(MasterPhase).count() == 0:
             default_phases = [
-                "1. Tư vấn", "2. Báo giá", "3. Làm specs", "4. Duyệt HSMT",
-                "5. Chờ ra thầu", "6. Tham gia thầu POP", "6. Tham gia thầu nhà phụ",
-                "7. Trúng Thầu", "7. Rớt thầu", "8. Ký hợp đồng", "9. Đặt hàng",
-                "10. Giao hàng", "11. Triển khai", "12. Hoàn thành triển khai",
-                "13. Nghiệm thu", "14. Thanh toán", "15. Kết thúc dự án", "16. Bảo trì"
+                '1. Tư vấn',
+                '2. Báo giá',
+                '3. Làm specs',
+                '4. Duyệt HSMT',
+                '5. Chờ ra thầu',
+                '6. Tham gia thầu POP',
+                '6. Tham gia thầu nhà phụ',
+                '7. Trúng Thầu',
+                '7. Rớt thầu',
+                '8. Ký hợp đồng',
+                '9. Đặt hàng',
+                '10. Giao hàng',
+                '11. Triển khai',
+                '12. Hoàn thành triển khai',
+                '13. Nghiệm thu',
+                '14. Thanh toán',
+                '15. Kết thúc dự án',
+                '0. Huỷ'
             ]
             for idx, p_name in enumerate(default_phases, 1):
                 db.add(MasterPhase(name=p_name, sort_order=idx, is_active=True))

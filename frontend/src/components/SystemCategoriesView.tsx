@@ -226,7 +226,7 @@ export default function SystemCategoriesView({
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
           }`}
         >
-          💼 Level (Cấp bậc)
+          💼 Level
         </button>
         <button
           onClick={() => setActiveTab('phases')}
@@ -354,7 +354,7 @@ export default function SystemCategoriesView({
           <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <div>
               <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
-                💼 Quản lý Level (Cấp bậc thành viên)
+                💼 Level
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Danh mục các cấp bậc chuyên môn (Intern, Fresher, Junior, Middle, Senior, Leader, PM)</p>
             </div>

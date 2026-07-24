@@ -247,7 +247,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
           }`}
         >
-          ⚡ Priority (Mức độ ưu tiên)
+          ⚡ Priority
         </button>
         <button
           onClick={() => setActiveTab('status')}
@@ -257,7 +257,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
           }`}
         >
-          📌 Status (Trạng thái công việc)
+          📌 Status
         </button>
         <button
           onClick={() => setActiveTab('remark')}
@@ -267,7 +267,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
           }`}
         >
-          🏷️ Remark (Cấu hình Performance)
+          🏷️ Remark
         </button>
       </div>
 
@@ -277,7 +277,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
           <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <div>
               <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
-                ⚡ Priority (Mức độ ưu tiên)
+                ⚡ Priority
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Cấu hình độ ưu tiên Task (Normal, High, Critical, Interrupt) và KPI Base</p>
             </div>
@@ -414,7 +414,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
           <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <div>
               <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
-                📌 Status (Trạng thái công việc)
+                📌 Status
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Cấu hình các trạng thái cho Task (Waiting, Processing, Done, Cancel, Rework)</p>
             </div>
@@ -502,7 +502,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
           <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <div>
               <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
-                🏷️ Remark (Cấu hình Performance KPI)
+                🏷️ Remark
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Quản lý các Remark dùng trong Task, hệ số/điểm KPI (+/-) và loại Thưởng/Phạt</p>
             </div>
