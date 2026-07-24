@@ -7,36 +7,33 @@ import {
   getPriorities,
   createPriority,
   updatePriority,
-  deletePriority
+  deletePriority,
+  getStatuses,
+  createStatus,
+  updateStatus,
+  deleteStatus
 } from '@/lib/api';
 
-interface KPIRule {
+interface RemarkRule {
   id: number;
   performance: string;
   kpi: number;
+  remark_type?: string;
+  description?: string;
   sort_order: number;
   is_active: boolean;
 }
 
 interface KPIsViewProps {
+  statuses?: any[];
+  onReload?: () => void;
   onFlash: (msg: string) => void;
 }
 
-export default function KPIsView({ onFlash }: KPIsViewProps) {
-  const [rules, setRules] = useState<KPIRule[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  
-  // Inline edit state
-  const [editPerf, setEditPerf] = useState('');
-  const [editKpi, setEditKpi] = useState(0);
+export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewProps) {
+  const [activeTab, setActiveTab] = useState<'priority' | 'status' | 'remark'>('priority');
 
-  // New KPI Temp Rule State
-  const [newRuleMode, setNewRuleMode] = useState(false);
-  const [newPerf, setNewPerf] = useState('');
-  const [newKpi, setNewKpi] = useState(0);
-
-  // Priorities States
+  // 1. PRIORITIES STATES
   const [priorities, setPriorities] = useState<any[]>([]);
   const [showAddPrio, setShowAddPrio] = useState(false);
   const [newPrioName, setNewPrioName] = useState('');
@@ -48,26 +45,53 @@ export default function KPIsView({ onFlash }: KPIsViewProps) {
   const [editingPrioKpi, setEditingPrioKpi] = useState(6);
   const [editingPrioColor, setEditingPrioColor] = useState('');
 
+  // 2. STATUSES STATES
+  const [dbStatuses, setDbStatuses] = useState<any[]>(statuses);
+  const [showAddStatus, setShowAddStatus] = useState(false);
+  const [newStatusName, setNewStatusName] = useState('');
+  const [editingStatusId, setEditingStatusId] = useState<number | null>(null);
+  const [editingStatusName, setEditingStatusName] = useState('');
+
+  // 3. REMARK STATES (formerly Performance Settings)
+  const [remarks, setRemarks] = useState<RemarkRule[]>([]);
+  const [showAddRemark, setShowAddRemark] = useState(false);
+  const [newRemarkPerf, setNewRemarkPerf] = useState('');
+  const [newRemarkKpi, setNewRemarkKpi] = useState(0);
+  const [newRemarkType, setNewRemarkType] = useState('Bonus');
+  const [newRemarkDesc, setNewRemarkDesc] = useState('');
+
+  const [editingRemarkId, setEditingRemarkId] = useState<number | null>(null);
+  const [editingRemarkPerf, setEditingRemarkPerf] = useState('');
+  const [editingRemarkKpi, setEditingRemarkKpi] = useState(0);
+  const [editingRemarkType, setEditingRemarkType] = useState('Bonus');
+  const [editingRemarkDesc, setEditingRemarkDesc] = useState('');
+
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    loadRules();
+    loadAll();
   }, []);
 
-  const loadRules = async () => {
+  const loadAll = async () => {
     setLoading(true);
     try {
-      const data = await getPerformanceSettings();
-      setRules(data);
-      const prioData = await getPriorities();
-      setPriorities(prioData);
+      const [prioData, statusData, remarkData] = await Promise.all([
+        getPriorities(),
+        getStatuses().catch(() => []),
+        getPerformanceSettings()
+      ]);
+      setPriorities(prioData || []);
+      setDbStatuses(statusData || []);
+      setRemarks(remarkData || []);
     } catch (err) {
       console.error(err);
-      onFlash('Lỗi tải danh sách cấu hình KPI');
+      onFlash('Lỗi tải danh sách Cấu hình KPI');
     } finally {
       setLoading(false);
     }
   };
 
-  // Priorities Handlers
+  // --- HANDLERS: PRIORITY ---
   const handleAddPrio = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPrioName.trim()) return;
@@ -80,10 +104,10 @@ export default function KPIsView({ onFlash }: KPIsViewProps) {
       setNewPrioName('');
       setNewPrioKpi(6);
       setShowAddPrio(false);
-      loadRules();
-      onFlash('Đã thêm mức độ ưu tiên mới thành công');
+      loadAll();
+      onFlash('Đã thêm Priority mới thành công');
     } catch (err: any) {
-      onFlash(err.response?.data?.detail || 'Lỗi thêm mức độ ưu tiên');
+      onFlash(err.response?.data?.detail || 'Lỗi thêm Priority');
     }
   };
 
@@ -96,511 +120,551 @@ export default function KPIsView({ onFlash }: KPIsViewProps) {
     try {
       await updatePriority(id, { name: editingPrioName, kpi_base: editingPrioKpi, color: editingPrioColor });
       setEditingPrioId(null);
-      loadRules();
-      onFlash('Đã cập nhật mức độ ưu tiên thành công');
+      loadAll();
+      onFlash('Đã cập nhật Priority thành công');
     } catch (err: any) {
-      onFlash(err.response?.data?.detail || 'Lỗi cập nhật mức độ ưu tiên');
+      onFlash(err.response?.data?.detail || 'Lỗi cập nhật Priority');
     }
   };
 
   const handleDeletePrio = async (id: number, name: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa mức độ ưu tiên "${name}"?`)) return;
+    if (!confirm(`Bạn có chắc chắn muốn xóa Priority "${name}"?`)) return;
     try {
       await deletePriority(id);
-      loadRules();
-      onFlash('Đã xóa mức độ ưu tiên thành công');
+      loadAll();
+      onFlash('Đã xóa Priority thành công');
     } catch (err: any) {
-      onFlash(err.response?.data?.detail || 'Lỗi khi xóa mức độ ưu tiên');
+      onFlash(err.response?.data?.detail || 'Lỗi khi xóa Priority');
     }
   };
 
-  const handleStartEdit = (rule: KPIRule) => {
-    setEditingId(rule.id);
-    setEditPerf(rule.performance);
-    setEditKpi(rule.kpi);
-  };
-
-  const handleCancelEdit = () => {
-    setEditingId(null);
-  };
-
-  const handleSaveEdit = async (id: number) => {
-    if (!editPerf.trim()) {
-      onFlash('Nội dung Performance không được để trống');
-      return;
-    }
+  // --- HANDLERS: STATUS ---
+  const handleAddStatus = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newStatusName.trim()) return;
     try {
-      await updatePerformanceSetting(id, {
-        performance: editPerf,
-        kpi: editKpi
-      });
-      setEditingId(null);
-      loadRules();
-      onFlash('Đã cập nhật cấu hình KPI thành công');
-    } catch (err) {
-      console.error(err);
-      onFlash('Lỗi cập nhật cấu hình KPI');
+      await createStatus({ name: newStatusName });
+      setNewStatusName('');
+      setShowAddStatus(false);
+      loadAll();
+      if (onReload) onReload();
+      onFlash('Đã thêm Status mới thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi thêm Status');
     }
   };
 
-  const handleAddKPI = async () => {
-    if (!newPerf.trim()) {
-      onFlash('Vui lòng điền nội dung Performance');
-      return;
+  const handleUpdateStatus = async (id: number) => {
+    if (!editingStatusName.trim()) return;
+    try {
+      await updateStatus(id, { name: editingStatusName });
+      setEditingStatusId(null);
+      loadAll();
+      if (onReload) onReload();
+      onFlash('Đã cập nhật Status thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi cập nhật Status');
     }
+  };
+
+  const handleDeleteStatus = async (id: number, name: string) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa Status "${name}"?`)) return;
+    try {
+      await deleteStatus(id);
+      loadAll();
+      if (onReload) onReload();
+      onFlash('Đã xóa Status thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi khi xóa Status');
+    }
+  };
+
+  // --- HANDLERS: REMARK ---
+  const handleAddRemark = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRemarkPerf.trim()) return;
     try {
       await createPerformanceSetting({
-        performance: newPerf,
-        kpi: newKpi
+        performance: newRemarkPerf.trim(),
+        kpi: Number(newRemarkKpi),
+        remark_type: newRemarkType,
+        description: newRemarkDesc.trim() || undefined
       });
-      setNewRuleMode(false);
-      setNewPerf('');
-      setNewKpi(0);
-      loadRules();
-      onFlash('Đã tạo mới cấu hình KPI thành công');
-    } catch (err) {
-      console.error(err);
-      onFlash('Lỗi tạo mới cấu hình KPI');
+      setNewRemarkPerf('');
+      setNewRemarkKpi(0);
+      setNewRemarkType('Bonus');
+      setNewRemarkDesc('');
+      setShowAddRemark(false);
+      loadAll();
+      onFlash('Đã thêm Remark mới thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi thêm Remark');
     }
   };
 
-  const handleDeleteRule = async (id: number) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa cấu hình KPI này?')) return;
+  const handleUpdateRemark = async (id: number) => {
+    if (!editingRemarkPerf.trim()) return;
+    try {
+      await updatePerformanceSetting(id, {
+        performance: editingRemarkPerf.trim(),
+        kpi: Number(editingRemarkKpi),
+        remark_type: editingRemarkType,
+        description: editingRemarkDesc.trim() || undefined
+      });
+      setEditingRemarkId(null);
+      loadAll();
+      onFlash('Đã cập nhật Remark thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi cập nhật Remark');
+    }
+  };
+
+  const handleDeleteRemark = async (id: number, name: string) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa Remark "${name}"?`)) return;
     try {
       await deletePerformanceSetting(id);
-      loadRules();
-      onFlash('Đã xóa cấu hình KPI thành công');
-    } catch (err) {
-      console.error(err);
-      onFlash('Lỗi xóa cấu hình KPI');
+      loadAll();
+      onFlash('Đã xóa Remark thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi khi xóa Remark');
     }
   };
-
-  // Helper to determine group of a rule
-  const getRuleGroup = (performance: string): string => {
-    const p = performance.trim().toLowerCase();
-    if (p.startsWith('(t)')) {
-      return 'I. Tasks khen thưởng';
-    }
-    if (p.startsWith('(p)')) {
-      return 'II. Tasks bị phạt';
-    }
-    if (
-      p.includes('rework') ||
-      p.includes('change request') ||
-      p.includes('issue') ||
-      p.includes('unplanned')
-    ) {
-      return 'IV. Tasks phát sinh';
-    }
-    if (
-      p.includes('xử lý sự cố') ||
-      p.includes('ngày lễ') ||
-      p.includes('cuối tuần') ||
-      p.includes('tối trong tuần') ||
-      p.includes('ot') ||
-      /^\d+\s*day/.test(p)
-    ) {
-      return 'III. Tasks làm ngoài giờ';
-    }
-    return 'IV. Tasks phát sinh';
-  };
-
-  const groupsOrder = [
-    'I. Tasks khen thưởng',
-    'II. Tasks bị phạt',
-    'III. Tasks làm ngoài giờ',
-    'IV. Tasks phát sinh'
-  ];
-
-  const groupedRules = groupsOrder.reduce((acc, groupName) => {
-    acc[groupName] = rules.filter(r => getRuleGroup(r.performance) === groupName);
-    return acc;
-  }, {} as Record<string, KPIRule[]>);
 
   return (
-    <div className="space-y-6">
-      {/* MỨC ĐỘ ƯU TIÊN CARD */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mb-6">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
-          <div>
-            <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
-              ⚡ Mức độ ưu tiên & KPI Base
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5 font-medium uppercase tracking-wider">Cấu hình Priority, KPI Base và màu sắc hiển thị</p>
-          </div>
-          <button
-            onClick={() => setShowAddPrio(!showAddPrio)}
-            className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold transition-all shadow-sm"
-          >
-            {showAddPrio ? 'Đóng' : '+ Thêm Priority'}
-          </button>
-        </div>
+    <div className="space-y-6 max-w-5xl mx-auto pb-12">
+      <div>
+        <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CẤU HÌNH KPI</h1>
+        <p className="text-sm text-slate-500 mt-1">Cấu hình các dữ liệu liên quan đến Task và tính điểm KPI: Priority, Status và Remark</p>
+      </div>
 
-        {showAddPrio && (
-          <form onSubmit={handleAddPrio} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col md:flex-row gap-4 items-end">
-            <div className="flex-1 flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên mức độ</label>
-              <input
-                required
-                type="text"
-                placeholder="Ví dụ: Normal, High, Critical..."
-                value={newPrioName}
-                onChange={e => setNewPrioName(e.target.value)}
-                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 outline-none focus:border-blue-500 transition-all"
-              />
-            </div>
-            <div className="w-[120px] flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">KPI Base</label>
-              <input
-                required
-                type="number"
-                min="1"
-                value={newPrioKpi}
-                onChange={e => setNewPrioKpi(Number(e.target.value))}
-                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 transition-all"
-              />
-            </div>
-            <div className="w-[160px] flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Màu / Icon</label>
-              <select
-                value={newPrioColor}
-                onChange={e => setNewPrioColor(e.target.value)}
-                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 transition-all"
-              >
-                <option value="🟢 Xanh">🟢 Xanh</option>
-                <option value="🟠 Cam">🟠 Cam</option>
-                <option value="🔴 Đỏ">🔴 Đỏ</option>
-                <option value="🟣 Tím">🟣 Tím</option>
-                <option value="🔵 Lam">🔵 Lam</option>
-                <option value="🟡 Vàng">🟡 Vàng</option>
-                <option value="⚫ Đen">⚫ Đen</option>
-              </select>
+      {/* Navigation Sub-Tabs */}
+      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-fit">
+        <button
+          onClick={() => setActiveTab('priority')}
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'priority'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          ⚡ Priority
+        </button>
+        <button
+          onClick={() => setActiveTab('status')}
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'status'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          📌 Status
+        </button>
+        <button
+          onClick={() => setActiveTab('remark')}
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'remark'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          🏷️ Remark
+        </button>
+      </div>
+
+      {/* TAB 1: PRIORITY */}
+      {activeTab === 'priority' && (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
+                ⚡ Priority
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Cấu hình độ ưu tiên Task (Normal, High, Critical, Interrupt) và KPI Base</p>
             </div>
             <button
-              type="submit"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0 h-[36px]"
+              onClick={() => setShowAddPrio(!showAddPrio)}
+              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg font-bold transition-all shadow-sm"
             >
-              Lưu lại
+              {showAddPrio ? 'Đóng' : '+ Thêm Priority'}
             </button>
-          </form>
-        )}
+          </div>
 
-        <div className="divide-y divide-slate-100">
-          {priorities.length === 0 ? (
-            <p className="text-xs text-slate-400 italic p-6 text-center">Chưa có mức độ ưu tiên nào.</p>
-          ) : (
-            priorities.map(p => {
-              const isEditing = editingPrioId === p.id;
-              return (
-                <div key={p.id} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50/40 transition-colors">
-                  {isEditing ? (
-                    <div className="flex-1 flex gap-3 mr-4">
+          {showAddPrio && (
+            <form onSubmit={handleAddPrio} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col md:flex-row gap-4 items-end">
+              <div className="flex-1 flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Priority <span className="text-red-500">*</span></label>
+                <input
+                  required
+                  type="text"
+                  placeholder="Ví dụ: Normal, High, Critical, Interrupt..."
+                  value={newPrioName}
+                  onChange={e => setNewPrioName(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="w-32 flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">KPI Base</label>
+                <input
+                  required
+                  type="number"
+                  min={1}
+                  value={newPrioKpi}
+                  onChange={e => setNewPrioKpi(Number(e.target.value))}
+                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="w-40 flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Màu sắc</label>
+                <select
+                  value={newPrioColor}
+                  onChange={e => setNewPrioColor(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer"
+                >
+                  <option value="🟢 Xanh">🟢 Xanh</option>
+                  <option value="🟡 Vàng">🟡 Vàng</option>
+                  <option value="🔴 Đỏ">🔴 Đỏ</option>
+                  <option value="🟣 Tím">🟣 Tím</option>
+                </select>
+              </div>
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shrink-0"
+              >
+                Lưu Priority
+              </button>
+            </form>
+          )}
+
+          <div className="divide-y divide-slate-100">
+            {priorities.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400">Chưa có Priority nào.</div>
+            ) : (
+              priorities.map(prio => (
+                <div key={prio.id} className="p-4 px-6 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
+                  {editingPrioId === prio.id ? (
+                    <div className="flex-1 flex flex-col md:flex-row gap-3 items-center">
                       <input
-                        required
                         type="text"
                         value={editingPrioName}
                         onChange={e => setEditingPrioName(e.target.value)}
-                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none w-1/3"
+                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
                       />
                       <input
-                        required
                         type="number"
-                        min="1"
+                        min={1}
                         value={editingPrioKpi}
                         onChange={e => setEditingPrioKpi(Number(e.target.value))}
-                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none w-[100px]"
+                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] w-24"
                       />
                       <select
                         value={editingPrioColor}
                         onChange={e => setEditingPrioColor(e.target.value)}
-                        className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-[#0f172a] focus:border-blue-500 outline-none w-[120px]"
+                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
                       >
                         <option value="🟢 Xanh">🟢 Xanh</option>
-                        <option value="🟠 Cam">🟠 Cam</option>
+                        <option value="🟡 Vàng">🟡 Vàng</option>
                         <option value="🔴 Đỏ">🔴 Đỏ</option>
                         <option value="🟣 Tím">🟣 Tím</option>
-                        <option value="🔵 Lam">🔵 Lam</option>
-                        <option value="🟡 Vàng">🟡 Vàng</option>
-                        <option value="⚫ Đen">⚫ Đen</option>
                       </select>
+                      <div className="flex gap-2">
+                        <button onClick={() => handleUpdatePrio(prio.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
+                        <button onClick={() => setEditingPrioId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-4 text-xs font-semibold text-[#0f172a]">
-                      <span className="px-2 py-0.5 rounded border border-slate-200 bg-slate-50 flex items-center gap-1.5">
-                        <span className="text-sm leading-none">{p.color?.split(' ')[0] || '🟢'}</span>
-                        <span>{p.name}</span>
-                      </span>
-                      <span className="text-slate-400 font-medium">
-                        KPI Base: <strong className="text-slate-700">{p.kpi_base}</strong>
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-3">
-                    {isEditing ? (
-                      <>
-                        <button
-                          onClick={() => handleUpdatePrio(p.id)}
-                          className="text-[11px] bg-blue-600 text-white px-2.5 py-1 rounded font-bold hover:bg-blue-700"
-                        >
-                          Lưu
-                        </button>
-                        <button
-                          onClick={() => setEditingPrioId(null)}
-                          className="text-[11px] bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-300"
-                        >
-                          Hủy
-                        </button>
-                      </>
-                    ) : (
-                      <>
+                    <>
+                      <div className="flex items-center gap-3">
+                        <span className="text-base">{prio.color?.split(' ')[0] || '🟢'}</span>
+                        <div>
+                          <div className="text-xs font-bold text-[#0f172a]">{prio.name}</div>
+                          <div className="text-[11px] text-slate-500 font-medium">KPI Base: <span className="font-bold text-blue-600">{prio.kpi_base}</span></div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
                         <button
                           onClick={() => {
-                            setEditingPrioId(p.id);
-                            setEditingPrioName(p.name);
-                            setEditingPrioKpi(p.kpi_base);
-                            setEditingPrioColor(p.color || '🟢 Xanh');
+                            setEditingPrioId(prio.id);
+                            setEditingPrioName(prio.name);
+                            setEditingPrioKpi(prio.kpi_base);
+                            setEditingPrioColor(prio.color || '🟢 Xanh');
                           }}
-                          className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
+                          className="text-xs text-blue-600 hover:underline font-semibold"
                         >
                           Sửa
                         </button>
                         <button
-                          onClick={() => handleDeletePrio(p.id, p.name)}
-                          className="text-xs text-red-600 hover:text-red-700 font-semibold"
+                          onClick={() => handleDeletePrio(prio.id, prio.name)}
+                          className="text-xs text-red-600 hover:underline font-semibold"
                         >
                           Xóa
                         </button>
-                      </>
-                    )}
-                  </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-
-      {/* Upper header with + Thêm KPI button */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-xl font-bold text-[#0b1c30] tracking-tight">Cấu hình Performance KPI</h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Quản lý danh sách các quy tắc thưởng/phạt và làm ngoài giờ (OT) từ ô Remark.
-          </p>
-        </div>
-        {!newRuleMode && (
-          <button
-            onClick={() => setNewRuleMode(true)}
-            className="bg-[#0058be] hover:bg-[#0047a0] text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-            </svg>
-            Thêm KPI
-          </button>
-        )}
-      </div>
-
-      {/* Form thêm mới nhanh */}
-      {newRuleMode && (
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4 animate-fade-in">
-          <h3 className="text-xs font-bold uppercase text-[#0b1c30] tracking-wider">Thêm quy tắc KPI mới</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <div className="md:col-span-2 space-y-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Nội dung Performance</label>
-              <input
-                type="text"
-                value={newPerf}
-                onChange={e => setNewPerf(e.target.value)}
-                placeholder="Ví dụ: (T) Có tài liệu đào tạo upload lên website"
-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0b1c30] placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Giá trị KPI (Cộng/Trừ/Hệ số)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={newKpi}
-                onChange={e => setNewKpi(Number(e.target.value))}
-                placeholder="Ví dụ: 5, -5, 0.7"
-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0b1c30] placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-              />
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleAddKPI}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
-              >
-                Lưu
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setNewRuleMode(false);
-                  setNewPerf('');
-                  setNewKpi(0);
-                }}
-                className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition-all"
-              >
-                Hủy
-              </button>
-            </div>
+              ))
+            )}
           </div>
         </div>
       )}
 
-      {/* Main Table View */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-6 py-3.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider w-[65%]">Performance</th>
-                <th className="px-6 py-3.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider w-[20%] text-center">KPI</th>
-                <th className="px-6 py-3.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider w-[15%] text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {loading ? (
-                <tr>
-                  <td colSpan={3} className="px-6 py-12 text-center text-xs text-slate-400 italic">
-                    Đang tải danh sách cấu hình...
-                  </td>
-                </tr>
-              ) : rules.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="px-6 py-12 text-center text-xs text-slate-400 italic">
-                    Chưa có cấu hình KPI nào được ghi nhận.
-                  </td>
-                </tr>
-              ) : (
-                groupsOrder.map(groupName => {
-                  const groupRules = groupedRules[groupName] || [];
-                  if (groupRules.length === 0) return null;
+      {/* TAB 2: STATUS */}
+      {activeTab === 'status' && (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
+                📌 Status
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Cấu hình các trạng thái cho Task (Waiting, Processing, Done, Cancel, Rework)</p>
+            </div>
+            <button
+              onClick={() => setShowAddStatus(!showAddStatus)}
+              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg font-bold transition-all shadow-sm"
+            >
+              {showAddStatus ? 'Đóng' : '+ Thêm Status'}
+            </button>
+          </div>
 
-                  return (
-                    <React.Fragment key={groupName}>
-                      {/* Section Header Row */}
-                      <tr className="bg-slate-100/70 border-y border-slate-200/80">
-                        <td colSpan={3} className="px-6 py-2.5 text-[10px] font-extrabold text-[#0058be] uppercase tracking-wider">
-                          {groupName}
-                        </td>
-                      </tr>
-                      {groupRules.map(rule => {
-                        const isEditing = editingId === rule.id;
+          {showAddStatus && (
+            <form onSubmit={handleAddStatus} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col md:flex-row gap-4 items-end">
+              <div className="flex-1 flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Status <span className="text-red-500">*</span></label>
+                <input
+                  required
+                  type="text"
+                  placeholder="Ví dụ: Waiting, Processing, Done, Cancel, Rework..."
+                  value={newStatusName}
+                  onChange={e => setNewStatusName(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                />
+              </div>
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shrink-0"
+              >
+                Lưu Status
+              </button>
+            </form>
+          )}
 
-                        return (
-                          <tr key={rule.id} className="hover:bg-slate-50/40 transition-colors group">
-                            {/* Performance Cell */}
-                            <td className="px-6 py-4">
-                              {isEditing ? (
-                                <textarea
-                                  value={editPerf}
-                                  onChange={e => setEditPerf(e.target.value)}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter' && !e.shiftKey) {
-                                      e.preventDefault();
-                                      handleSaveEdit(rule.id);
-                                    } else if (e.key === 'Escape') {
-                                      handleCancelEdit();
-                                    }
-                                  }}
-                                  autoFocus
-                                  rows={1}
-                                  className="w-full bg-white border border-blue-500 focus:ring-1 focus:ring-blue-500 rounded px-2.5 py-1.5 text-xs text-[#0b1c30] font-medium outline-none resize-y"
-                                />
-                              ) : (
-                                <div className="text-xs text-[#0b1c30] font-medium min-h-[28px] flex items-center px-1.5">
-                                  {rule.performance}
-                                </div>
-                              )}
-                            </td>
-
-                            {/* KPI Value Cell */}
-                            <td className="px-6 py-4 text-center">
-                              {isEditing ? (
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={editKpi}
-                                  onChange={e => setEditKpi(Number(e.target.value))}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') {
-                                      handleSaveEdit(rule.id);
-                                    } else if (e.key === 'Escape') {
-                                      handleCancelEdit();
-                                    }
-                                  }}
-                                  className="w-24 text-center bg-white border border-blue-500 focus:ring-1 focus:ring-blue-500 rounded px-2.5 py-1 text-xs text-[#0b1c30] font-semibold outline-none"
-                                />
-                              ) : (
-                                <div
-                                  className={`inline-block font-semibold text-xs px-2.5 py-0.5 rounded-full transition-colors ${
-                                    rule.kpi > 1
-                                      ? 'bg-emerald-50 text-emerald-700'
-                                      : rule.kpi < 0
-                                      ? 'bg-red-50 text-red-600'
-                                      : 'bg-amber-50 text-amber-700'
-                                  }`}
-                                >
-                                  {rule.kpi}
-                                </div>
-                              )}
-                            </td>
-
-                            {/* Actions Cell */}
-                            <td className="px-6 py-4 text-center">
-                              <div className="flex items-center justify-center gap-3">
-                                {isEditing ? (
-                                  <>
-                                    <button
-                                      onClick={() => handleSaveEdit(rule.id)}
-                                      className="text-xs font-bold text-emerald-600 hover:text-emerald-800 transition-colors"
-                                    >
-                                      Lưu
-                                    </button>
-                                    <button
-                                      onClick={handleCancelEdit}
-                                      className="text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors"
-                                    >
-                                      Hủy
-                                    </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <button
-                                      onClick={() => handleStartEdit(rule)}
-                                      className="text-slate-400 hover:text-[#0058be] transition-colors p-1 rounded hover:bg-slate-100"
-                                      title="Sửa"
-                                    >
-                                      ✏️
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteRule(rule.id)}
-                                      className="text-slate-400 hover:text-red-600 transition-colors p-1 rounded hover:bg-slate-100"
-                                      title="Xóa"
-                                    >
-                                      🗑️
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </React.Fragment>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+          <div className="divide-y divide-slate-100">
+            {dbStatuses.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400">Chưa có Status nào.</div>
+            ) : (
+              dbStatuses.map(st => (
+                <div key={st.id} className="p-4 px-6 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
+                  {editingStatusId === st.id ? (
+                    <div className="flex-1 flex gap-3 items-center">
+                      <input
+                        type="text"
+                        value={editingStatusName}
+                        onChange={e => setEditingStatusName(e.target.value)}
+                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => handleUpdateStatus(st.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
+                        <button onClick={() => setEditingStatusId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-xs font-bold text-[#0f172a]">{st.name}</div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => {
+                            setEditingStatusId(st.id);
+                            setEditingStatusName(st.name);
+                          }}
+                          className="text-xs text-blue-600 hover:underline font-semibold"
+                        >
+                          Sửa
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStatus(st.id, st.name)}
+                          className="text-xs text-red-600 hover:underline font-semibold"
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* TAB 3: REMARK */}
+      {activeTab === 'remark' && (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
+                🏷️ Remark
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Quản lý các Remark dùng trong Task, hệ số/điểm KPI (+/-) và loại Thưởng/Phạt</p>
+            </div>
+            <button
+              onClick={() => setShowAddRemark(!showAddRemark)}
+              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg font-bold transition-all shadow-sm"
+            >
+              {showAddRemark ? 'Đóng' : '+ Thêm Remark'}
+            </button>
+          </div>
+
+          {showAddRemark && (
+            <form onSubmit={handleAddRemark} className="p-6 bg-slate-50/30 border-b border-slate-200 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2 flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Remark <span className="text-red-500">*</span></label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Ví dụ: (T) Có tài liệu đào tạo, (P) Điền sai form..."
+                    value={newRemarkPerf}
+                    onChange={e => setNewRemarkPerf(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Loại (Thưởng/Phạt)</label>
+                  <select
+                    value={newRemarkType}
+                    onChange={e => setNewRemarkType(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
+                  >
+                    <option value="Bonus">🎁 Thưởng (Bonus)</option>
+                    <option value="Penalty">⚠️ Phạt (Penalty)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">KPI (+/- hệ số hoặc điểm)</label>
+                  <input
+                    required
+                    type="number"
+                    step="0.1"
+                    placeholder="Ví dụ: 1.2, -0.5, 2..."
+                    value={newRemarkKpi}
+                    onChange={e => setNewRemarkKpi(Number(e.target.value))}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="md:col-span-2 flex gap-3 items-end">
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả (tùy chọn)</label>
+                    <input
+                      type="text"
+                      placeholder="Mô tả trường hợp áp dụng Remark..."
+                      value={newRemarkDesc}
+                      onChange={e => setNewRemarkDesc(e.target.value)}
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 h-[38px]"
+                  >
+                    Lưu Remark
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          <div className="divide-y divide-slate-100">
+            {remarks.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400">Chưa có Remark nào được tạo.</div>
+            ) : (
+              remarks.map(rm => {
+                const isBonus = rm.remark_type === 'Bonus' || rm.kpi >= 0;
+                return (
+                  <div key={rm.id} className="p-4 px-6 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
+                    {editingRemarkId === rm.id ? (
+                      <div className="flex-1 flex flex-col md:flex-row gap-3 items-center">
+                        <input
+                          type="text"
+                          value={editingRemarkPerf}
+                          onChange={e => setEditingRemarkPerf(e.target.value)}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
+                        />
+                        <select
+                          value={editingRemarkType}
+                          onChange={e => setEditingRemarkType(e.target.value)}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
+                        >
+                          <option value="Bonus">🎁 Thưởng</option>
+                          <option value="Penalty">⚠️ Phạt</option>
+                        </select>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={editingRemarkKpi}
+                          onChange={e => setEditingRemarkKpi(Number(e.target.value))}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] w-20"
+                        />
+                        <div className="flex gap-2">
+                          <button onClick={() => handleUpdateRemark(rm.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
+                          <button onClick={() => setEditingRemarkId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            isBonus ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
+                          }`}>
+                            {isBonus ? '🎁 Thưởng' : '⚠️ Phạt'}
+                          </span>
+                          <div>
+                            <div className="text-xs font-bold text-[#0f172a]">
+                              {rm.performance}
+                            </div>
+                            {rm.description && <div className="text-[11px] text-slate-500 mt-0.5">{rm.description}</div>}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                          <span className={`text-xs font-bold font-mono px-2 py-1 rounded ${
+                            isBonus ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {rm.kpi > 0 ? `+${rm.kpi}` : rm.kpi} KPI
+                          </span>
+
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => {
+                                setEditingRemarkId(rm.id);
+                                setEditingRemarkPerf(rm.performance);
+                                setEditingRemarkKpi(rm.kpi);
+                                setEditingRemarkType(rm.remark_type || (rm.kpi >= 0 ? 'Bonus' : 'Penalty'));
+                                setEditingRemarkDesc(rm.description || '');
+                              }}
+                              className="text-xs text-blue-600 hover:underline font-semibold"
+                            >
+                              Sửa
+                            </button>
+                            <button
+                              onClick={() => handleDeleteRemark(rm.id, rm.performance)}
+                              className="text-xs text-red-600 hover:underline font-semibold"
+                            >
+                              Xóa
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

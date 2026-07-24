@@ -8,6 +8,8 @@ class PerformanceSetting(Base):
     id          = Column(Integer, primary_key=True, index=True)
     performance = Column(String(500), nullable=False)
     kpi         = Column(Numeric(10, 2), nullable=False)
+    remark_type = Column(String(20), nullable=False, default="Bonus", server_default="Bonus")
+    description = Column(String, nullable=True)
     sort_order  = Column(Integer, default=0)
     is_active   = Column(Boolean, default=True)
     created_at  = Column(DateTime, server_default=func.now())

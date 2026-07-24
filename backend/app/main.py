@@ -39,10 +39,15 @@ def apply_schema_updates():
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub_unique "
             "ON users (google_sub) WHERE google_sub IS NOT NULL"
         ))
-        # Consolidate the legacy three-role model into Admin/Member. Permissions
-        # remain independent from project data scope.
+        # Consolidate the legacy three-role model into the new 4-role model.
+        # Permissions remain independent from project data scope.
         conn.execute(text(
             "UPDATE users SET role = 'member' WHERE role IN ('group_a', 'group_b')"
+        ))
+        # Migrate the 2-role model (admin/member) to the 4-role model.
+        # admin → super_admin. member stays as member.
+        conn.execute(text(
+            "UPDATE users SET role = 'super_admin' WHERE role = 'admin'"
         ))
         conn.execute(text("""
             DO $$
@@ -121,6 +126,24 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS cv_link VARCHAR(255)"
         ))
+
+        # Add business_unit column to customers and drop obsolete unique name constraint
+        conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50) NOT NULL DEFAULT 'infrastructure'"))
+        conn.execute(text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_name_key"))
+        conn.execute(text("UPDATE customers SET business_unit = 'infrastructure' WHERE LOWER(business_unit) IN ('securityzone', 'securityzone')"))
+
+        # Add business column to projects
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS business VARCHAR(30) NOT NULL DEFAULT 'Infrastructure'"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_business ON projects (business)"))
+        conn.execute(text("""
+            UPDATE projects 
+            SET business = 'Markee' 
+            WHERE customer_id IN (SELECT id FROM customers WHERE LOWER(business_unit) = 'markee')
+        """))
+
+        # Add remark_type and description to performance_settings
+        conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
+        conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))
 
 apply_schema_updates()
 
@@ -204,7 +227,7 @@ def init_db_defaults():
                     email=app_settings.DEFAULT_ADMIN_EMAIL.strip().lower(),
                     full_name="Admin Company",
                     hashed_pw=hash_password(default_admin_password),
-                    role="admin",
+                    role="super_admin",
                     is_active=True
                 )
                 db.add(admin)
@@ -221,13 +244,13 @@ def init_db_defaults():
                     # NOT NULL legacy column; this marker is intentionally not a
                     # valid password hash because Google is the only login path.
                     hashed_pw="!google-only!",
-                    role="admin",
+                    role="super_admin",
                     data_scope="all",
                     is_active=True,
                 )
                 db.add(admin)
             else:
-                admin.role = "admin"
+                admin.role = "super_admin"
                 admin.data_scope = "all"
                 admin.is_active = True
 
@@ -425,18 +448,18 @@ def init_db_defaults():
                 {"performance": "(P) FAIL 3", "kpi": Decimal("0.0")},
 
                 # III. Tasks làm ngoài giờ
-                {"performance": "1 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("3")},
-                {"performance": "2 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("6")},
-                {"performance": "3 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("9")},
-                {"performance": "4 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("12")},
-                {"performance": "5 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("15")},
-                {"performance": "1 day - Xử lý sự cố cuối tuần", "kpi": Decimal("6")},
-                {"performance": "2 day - Xử lý sự cố cuối tuần", "kpi": Decimal("12")},
-                {"performance": "1 day - Xử lý sự cố ngày lễ", "kpi": Decimal("10")},
-                {"performance": "2 day - Xử lý sự cố ngày lễ", "kpi": Decimal("20")},
-                {"performance": "3 day - Xử lý sự cố ngày lễ", "kpi": Decimal("30")},
-                {"performance": "4 day - Xử lý sự cố ngày lễ", "kpi": Decimal("40")},
-                {"performance": "5 day - Xử lý sự cố ngày lễ", "kpi": Decimal("50")},
+                {"performance": "1 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "2 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "3 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "4 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "5 day - Xử lý sự cố TỐI trong tuần", "kpi": Decimal("0")},
+                {"performance": "1 day - Xử lý sự cố cuối tuần", "kpi": Decimal("0")},
+                {"performance": "2 day - Xử lý sự cố cuối tuần", "kpi": Decimal("0")},
+                {"performance": "1 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "2 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "3 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "4 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
+                {"performance": "5 day - Xử lý sự cố ngày lễ", "kpi": Decimal("0")},
 
                 # IV. Tasks phát sinh
                 {"performance": "Rework - Làm lại do lỗi nội bộ", "kpi": Decimal("0")},
@@ -445,13 +468,42 @@ def init_db_defaults():
                 {"performance": "Unplanned - Các công việc nhỏ phát sinh ngoài scope", "kpi": Decimal("0")}
             ]
             for idx, r in enumerate(initial_kpi_rules):
+                rtype = "Penalty" if (r["kpi"] < 0 or r["performance"].startswith("(P)")) else "Bonus"
                 db.add(PerformanceSetting(
                     performance=r["performance"],
                     kpi=r["kpi"],
+                    remark_type=rtype,
                     sort_order=idx,
                     is_active=True
                 ))
             print("[*] Seeded initial Performance KPI rules")
+
+        # Seed Master Phases if table empty
+        from app.models.master_phase import MasterPhase
+        if db.query(MasterPhase).count() == 0:
+            default_phases = [
+                '1. Tư vấn',
+                '2. Báo giá',
+                '3. Làm specs',
+                '4. Duyệt HSMT',
+                '5. Chờ ra thầu',
+                '6. Tham gia thầu POP',
+                '6. Tham gia thầu nhà phụ',
+                '7. Trúng Thầu',
+                '7. Rớt thầu',
+                '8. Ký hợp đồng',
+                '9. Đặt hàng',
+                '10. Giao hàng',
+                '11. Triển khai',
+                '12. Hoàn thành triển khai',
+                '13. Nghiệm thu',
+                '14. Thanh toán',
+                '15. Kết thúc dự án',
+                '0. Huỷ'
+            ]
+            for idx, p_name in enumerate(default_phases, 1):
+                db.add(MasterPhase(name=p_name, sort_order=idx, is_active=True))
+            print("[*] Seeded initial Master Phases")
 
         db.commit()
     except RuntimeError:

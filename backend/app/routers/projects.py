@@ -2,6 +2,7 @@
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
 from collections import defaultdict
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case
@@ -9,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
+from ..models.system_category import Customer
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
@@ -21,7 +23,7 @@ from ..utils.access import (
     require_route_project_access,
     user_scope,
 )
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, require_super_admin
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
@@ -93,6 +95,8 @@ def serialize_project(p, db):
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
+        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
+        "business_unit": p.customer.business_unit if p.customer else "infrastructure",
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": pm_names if pm_names else None,
@@ -132,7 +136,10 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "name": p.name,
         "code": p.code,
         "project_code": str(p.year) if p.year else p.code,
-        "customer_name": p.customer_name,
+        "customer_name": p.customer.name if p.customer else p.customer_name,
+        "customer_id": p.customer_id,
+        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
+        "business_unit": p.customer.business_unit if p.customer else "infrastructure",
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": ", ".join(m[1] for m in pms) or None,
@@ -161,8 +168,13 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
 
 
 @router.get("/projects")
-def list_projects(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    projects = project_query_for_user(db, current_user).order_by(Project.id.desc()).all()
+def list_projects(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    q = project_query_for_user(db, current_user)
+    target_b = (business or business_unit or "").strip().lower()
+    if target_b:
+        b_val = "Markee" if target_b == "markee" else "Infrastructure"
+        q = q.filter(Project.business == b_val)
+    projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
         return []
@@ -243,6 +255,8 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         if c_obj:
             cust_name = c_obj.name
 
+    biz_val = "Markee" if str(body.get("business") or body.get("business_unit") or "").strip().lower() == "markee" else "Infrastructure"
+
     p = Project(
         name=body.get("name", "").strip(),
         code=project_code,
@@ -251,6 +265,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         year=body.get("year"),
         description=body.get("description"),
         status=body.get("status", "Planning"),
+        business=biz_val,
         data_scope=requested_scope,
         current_phase=body.get("current_phase") or "1. Tư vấn",
     )
@@ -331,6 +346,47 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     return serialize_project(p, db)
 
 
+@router.get("/projects/sidebar-tree")
+def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Returns projects grouped by year then customer for the sidebar tree hierarchy."""
+    projects = project_query_for_user(db, current_user).all()
+
+    years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
+    b_input = (business or business_unit or "").strip().lower()
+    target_biz = "Markee" if b_input == "markee" else ("Infrastructure" if b_input else None)
+
+    for p in projects:
+        p_biz = p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure")
+        if target_biz and p_biz != target_biz:
+            continue
+
+        yr = p.year or 2026
+        c_id = p.customer_id
+        c_name = p.customer.name if p.customer else (p.customer_name or "Khác")
+
+        years_map[yr]["total"] += 1
+        c_key = (c_id, c_name.lower().strip())
+        years_map[yr]["customers"][c_key]["id"] = c_id
+        years_map[yr]["customers"][c_key]["name"] = c_name.strip()
+        years_map[yr]["customers"][c_key]["count"] += 1
+
+    result = []
+    for yr in sorted(years_map.keys(), reverse=True):
+        cust_list = []
+        for _, c_info in sorted(years_map[yr]["customers"].items(), key=lambda item: item[1]["name"]):
+            cust_list.append({
+                "id": c_info["id"],
+                "name": c_info["name"],
+                "project_count": c_info["count"]
+            })
+        result.append({
+            "year": yr,
+            "project_count": years_map[yr]["total"],
+            "customers": cust_list
+        })
+    return result
+
+
 @router.get("/projects/{pid}")
 def get_project(pid: int, db: Session = Depends(get_db)):
     p = db.query(Project).filter(Project.id == pid).first()
@@ -348,6 +404,9 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     for field in ["name", "code", "customer_name", "customer_id", "year", "description", "status", "current_phase"]:
         if field in body:
             setattr(p, field, body[field])
+    if "business" in body or "business_unit" in body:
+        b_in = str(body.get("business") or body.get("business_unit") or "").strip().lower()
+        p.business = "Markee" if b_in == "markee" else "Infrastructure"
     if "customer_id" in body and body["customer_id"]:
         from ..models.system_category import Customer as DB_Customer
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()
@@ -424,7 +483,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
 
 
 @router.delete("/projects/{pid}")
-def delete_project(pid: int, db: Session = Depends(get_db)):
+def delete_project(pid: int, db: Session = Depends(get_db), _=Depends(require_super_admin)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
         raise HTTPException(404, "Project not found.")

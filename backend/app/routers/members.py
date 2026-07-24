@@ -56,7 +56,8 @@ def list_members(
     task_query = db.query(
         Task.assigned_id,
         func.sum(Task.kpi_final).label('kpi_total'),
-        func.count(Task.id).label('task_count')
+        func.count(Task.id).label('task_count'),
+        func.sum(Task.manday_actual).label('manday_total')
     ).filter(
         Task.status == 'Done',
         Task.end_date_actual.isnot(None)
@@ -108,7 +109,8 @@ def list_members(
     q = db.query(
         Member,
         func.coalesce(kpi_subq.c.kpi_total, 0).label('kpi_total'),
-        func.coalesce(kpi_subq.c.task_count, 0).label('task_count')
+        func.coalesce(kpi_subq.c.task_count, 0).label('task_count'),
+        func.coalesce(kpi_subq.c.manday_total, 0).label('manday_total')
     ).outerjoin(
         kpi_subq, Member.id == kpi_subq.c.assigned_id
     ).options(joinedload(Member.skills))
@@ -130,11 +132,12 @@ def list_members(
     results = q.order_by(Member.display_name.asc()).all()
     
     out = []
-    for m, kpi_total, task_count in results:
+    for m, kpi_total, task_count, manday_total in results:
         d = member_to_dict(m)
         
         total = float(kpi_total) if kpi_total else 0.0
         count = int(task_count) if task_count else 0
+        md_total = float(manday_total) if manday_total else 0.0
         
         avg = 0.0
         bonus = 0.0
@@ -154,6 +157,7 @@ def list_members(
         d['kpi_total'] = total
         d['kpi_avg'] = avg
         d['kpi_bonus'] = round(bonus, 2)
+        d['manday_total'] = md_total
         
         out.append(d)
         

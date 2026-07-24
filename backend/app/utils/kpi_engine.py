@@ -92,36 +92,20 @@ def calc_manday_actual(status: str, start_date, end_date_actual):
 def calc_days_late(status: str, end_date_est, end_date_actual, today=None):
     """
     5.18: Days Late formula:
-    - Missing data → NULL
-    - Cancel → -1
-    - Done → End Actual - End EST
-    - Not Done & Today <= End EST → -1 (ahead of schedule)
-    - Not Done & Today > End EST → Today - End EST (overdue)
+    - If status is not "done" -> NULL (leave it empty)
+    - If status is "done" -> End Actual - End EST
     """
-    if today is None:
-        today = datetime.date.today()
-
     if not status:
         return None
 
     status_lower = status.strip().lower()
-
-    if status_lower == "cancel":
-        return -1
 
     if status_lower == "done":
         if not end_date_est or not end_date_actual:
             return None
         return (end_date_actual - end_date_est).days
 
-    # Status is Waiting, Process, Rework, To Do, etc.
-    if not end_date_est:
-        return None
-
-    if today <= end_date_est:
-        return -1  # ahead of schedule
-    else:
-        return (today - end_date_est).days  # overdue
+    return None
 
 
 def calc_kpi_base(priority_kpi: int, manday_est) -> Decimal:
@@ -239,13 +223,21 @@ def recalculate_task(task, db):
 
     # 2. Manday Actual
     task.manday_actual = calc_manday_actual(task.status, task.start_date, task.end_date_actual)
-
+ 
     # 3. Days Late
     task.days_late = calc_days_late(task.status, task.end_date_est, task.end_date_actual)
 
+    is_done = task.status and task.status.strip().lower() == "done"
+    is_cancel = task.status and task.status.strip().lower() == "cancel"
+
     # 4. KPI Base
-    priority_kpi = get_priority_kpi_base(task.priority, db)
-    task.kpi_base = calc_kpi_base(priority_kpi, task.manday_est)
+    if is_done:
+        priority_kpi = get_priority_kpi_base(task.priority, db)
+        task.kpi_base = calc_kpi_base(priority_kpi, task.manday_est)
+    elif is_cancel:
+        task.kpi_base = Decimal("0")
+    else:
+        task.kpi_base = None
 
     # Parse remark using dynamic performance settings from the DB
     remark_str = (task.remark or "").strip().lower()
@@ -302,21 +294,32 @@ def recalculate_task(task, db):
     except Exception as e:
         print(f"[!] Error parsing performance settings: {e}")
 
-    # 5. KPI Perform - Rule 03: Sum of rewards/penalties from Remark settings
-    task.kpi_perform = remark_perform
+    # Find the parent TaskGroup status
+    from ..models.task_group import TaskGroup
+    parent_group = db.query(TaskGroup).filter(TaskGroup.id == task.task_group_id).first()
+    parent_done = False
+    if parent_group:
+        parent_done = parent_group.status and parent_group.status.strip().lower() == "done"
 
-    # 6. KPI OT - Rule 04: Sum of overtime rules from Remark settings
-    task.kpi_ot = remark_ot
-
-    # 7. KPI Final - Rule 05: (Base + Perform + OT) * Fail Ratio multiplier
-    task.kpi_final = (task.kpi_base + task.kpi_perform + task.kpi_ot) * multiplier
-
-    # If status is Cancel, do not calculate KPI (set all to 0)
-    if task.status and task.status.strip().lower() == "cancel":
+    # 5. KPI Perform, OT, Final
+    if is_done:
+        if parent_done:
+            task.kpi_perform = remark_perform
+            task.kpi_ot = remark_ot
+            task.kpi_final = (task.kpi_base + task.kpi_perform + task.kpi_ot) * multiplier
+        else:
+            task.kpi_perform = None
+            task.kpi_ot = None
+            task.kpi_final = None
+    elif is_cancel:
         task.kpi_base = Decimal("0")
         task.kpi_perform = Decimal("0")
         task.kpi_ot = Decimal("0")
         task.kpi_final = Decimal("0")
+    else:
+        task.kpi_perform = None
+        task.kpi_ot = None
+        task.kpi_final = None
 
     # 8. Auto-set ratio if no support
     if not task.support_id:
@@ -324,11 +327,82 @@ def recalculate_task(task, db):
         task.kpi_ratio_support = 0
 
     # 9. KPI Split
-    task.kpi_assigned, task.kpi_support = calc_kpi_split(
-        task.kpi_final, task.kpi_ratio_assign or 90, task.kpi_ratio_support or 10
-    )
+    if task.kpi_final is not None:
+        task.kpi_assigned, task.kpi_support = calc_kpi_split(
+            task.kpi_final, task.kpi_ratio_assign or 90, task.kpi_ratio_support or 10
+        )
+    else:
+        task.kpi_assigned = None
+        task.kpi_support = None
 
     # 10. Solution lookup
     task.solution = lookup_solution(task.skill_vendor_id, db)
 
     return task
+
+# ═══════════════════════════════════════════════════════════
+# BỔ SUNG: HÀM TÍNH TOÁN TASK CON & TASK GROUP (END_ACTUAL, MD_ACTUAL, DAYS_LATE)
+# ═══════════════════════════════════════════════════════════
+def calculate_task_actuals(task):
+    """
+    Tính MD_ACTUAL và DAYS_LATE cho task con khi status chuyển thành Done:
+    - MD_ACTUAL = Ngày hoàn thành (end_date_actual) - Ngày bắt đầu (start_date) + 1
+    - DAYS_LATE = MD_ACTUAL - MANDAY_EST
+    """
+    if task.status and task.status.strip().lower() == "done":
+        # Nếu chưa có ngày kết thúc thực tế thì gán ngày hiện tại
+        if not task.end_date_actual:
+            task.end_date_actual = datetime.date.today()
+            
+        # MD_ACTUAL: Ngày kết thúc thực tế trừ ngày bắt đầu (+1 để tính trọn vẹn ngày)
+        if task.start_date and task.end_date_actual:
+            delta_days = (task.end_date_actual - task.start_date).days
+            task.manday_actual = Decimal(str(max(delta_days + 1, 1)))
+        
+        # DAYS_LATE = MD_ACTUAL - MANDAY_EST
+        if task.manday_actual is not None and task.manday_est is not None:
+            lateness = float(task.manday_actual) - float(task.manday_est)
+            task.days_late = int(lateness) if lateness > 0 else None
+        else:
+            task.days_late = None
+    else:
+        # Nếu chưa Done thì reset lại các giá trị thực tế
+        task.manday_actual = None
+        task.days_late = None
+
+
+def update_task_group_end_actual(task_group_id: int, db):
+    """
+    Khi tất cả task con chuyển trạng thái thành DONE:
+    - Đếm tổng số ngày (MD_ACTUAL) của các task con rồi hiển thị vào END_ACTUAL (manday_actual) của task lớn.
+    - Đồng thời chuyển trạng thái task lớn thành Done và kích hoạt KPI BASE / Recalculate nhảy số.
+    """
+    from ..models.project import TaskGroup, Task  # Import model tương ứng tại đây để tránh lỗi circular import
+
+    tg = db.query(TaskGroup).filter(TaskGroup.id == task_group_id).first()
+    if not tg:
+        return
+
+    tasks = db.query(Task).filter(Task.task_group_id == task_group_id).all()
+    if not tasks:
+        return
+
+    # Kiểm tra xem tất cả task con đã DONE hết chưa
+    all_done = all(t.status and t.status.strip().lower() == "done" for t in tasks)
+
+    if all_done:
+        # Tổng số ngày (MD_ACTUAL) của các task con
+        total_days = sum(float(t.manday_actual or t.manday_est or 0) for t in tasks)
+        
+        # Gán tổng số ngày vào END_ACTUAL (cột manday_actual của Task Group)
+        tg.manday_actual = Decimal(str(total_days))
+        
+        # Chuyển trạng thái task lớn thành Done
+        tg.status = "Done"
+
+        # KHI TASK LỚN DONE -> GỌI RECALCULATE ĐỂ KPI BASE NHẢY SỐ
+        for t in tasks:
+            recalculate_task(t, db)
+    else:
+        # Nếu chưa hoàn thành tất cả task con thì reset lại
+        tg.manday_actual = None

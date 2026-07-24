@@ -37,7 +37,10 @@ export const googleLogin = (credential: string) =>
 // ═══════════════════════════════════════════════════════════
 // PROJECTS (v5)
 // ═══════════════════════════════════════════════════════════
-export const getProjects = () => api.get('/projects').then(r => r.data);
+export const getProjects = (businessUnit?: string) =>
+  api.get('/projects', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+export const getSidebarTree = (businessUnit?: string) =>
+  api.get('/projects/sidebar-tree', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
 export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r.data);
 export const createProject = (data: object) => api.post('/projects', data).then(r => r.data);
 export const updateProject = (id: number, data: object) => api.patch(`/projects/${id}`, data).then(r => r.data);
@@ -162,9 +165,12 @@ export const updateMember = (id: number, data: object) => api.put(`/members/${id
 export const deleteMember = (id: number) => api.delete(`/members/${id}`).then(r => r.data);
 
 // Customers
-export const getCustomers = () => api.get('/system-categories/customers').then(r => r.data);
-export const createCustomer = (data: { name: string; description?: string }) => api.post('/system-categories/customers', data).then(r => r.data);
-export const updateCustomer = (id: number, data: { name: string; description?: string }) => api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
+export const getCustomers = (businessUnit?: string) =>
+  api.get('/system-categories/customers', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+export const createCustomer = (data: { name: string; description?: string; business_unit?: string }) =>
+  api.post('/system-categories/customers', data).then(r => r.data);
+export const updateCustomer = (id: number, data: { name: string; description?: string; business_unit?: string }) =>
+  api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
 export const deleteCustomer = (id: number) => api.delete(`/system-categories/customers/${id}`).then(r => r.data);
 
 // Leave Requests
@@ -194,9 +200,16 @@ export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r =>
 
 // Performance Settings CRUD
 export const getPerformanceSettings = () => api.get('/performance-settings').then(r => r.data);
-export const createPerformanceSetting = (data: { performance: string; kpi: number; sort_order?: number; is_active?: boolean }) => api.post('/performance-settings', data).then(r => r.data);
-export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; sort_order?: number; is_active?: boolean }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
+export const createPerformanceSetting = (data: { performance: string; kpi: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.post('/performance-settings', data).then(r => r.data);
+export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
 export const deletePerformanceSetting = (id: number) => api.delete(`/performance-settings/${id}`).then(r => r.data);
+
+// Master Phases CRUD
+export const getMasterPhases = () => api.get('/master-phases').then(r => r.data);
+export const createMasterPhase = (data: { name: string; description?: string }) => api.post('/master-phases', data).then(r => r.data);
+export const updateMasterPhase = (id: number, data: { name?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.put(`/master-phases/${id}`, data).then(r => r.data);
+export const reorderMasterPhases = (ids: number[]) => api.put('/master-phases/reorder', { ids }).then(r => r.data);
+export const deleteMasterPhase = (id: number) => api.delete(`/master-phases/${id}`).then(r => r.data);
 
 // Accounts Management
 export const getAccounts = () => api.get('/accounts').then(r => r.data);

@@ -7,6 +7,7 @@ from ..database import get_db
 from ..models.leave_request import LeaveRequest
 from ..models.user import User
 from ..utils.auth import get_current_user, require_admin
+from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER
 
 router = APIRouter()
 
@@ -48,7 +49,7 @@ def list_leave_requests(
     q = db.query(LeaveRequest).options(joinedload(LeaveRequest.user))
 
     # Admin can see all, regular users can only see their own
-    if current_user.role != 'admin':
+    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
         q = q.filter(LeaveRequest.user_id == current_user.id)
     else:
         # Admin can filter by specific user if provided
@@ -73,7 +74,7 @@ def get_leave_request(id: int, db: Session = Depends(get_db), current_user: User
         raise HTTPException(404, "Không tìm thấy leave request")
     
     # Check permission: admin can see all, user can only see their own
-    if current_user.role != 'admin' and lr.user_id != current_user.id:
+    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền xem")
     
     return leave_to_dict(lr)
@@ -110,11 +111,11 @@ def update_leave_request(id: int, body: dict, db: Session = Depends(get_db), cur
         raise HTTPException(404, "Không tìm thấy leave request")
     
     # Check permission: only admin or owner can update
-    if current_user.role != 'admin' and lr.user_id != current_user.id:
+    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền sửa")
     
     # Only admin can change status
-    if 'status' in body and current_user.role != 'admin':
+    if 'status' in body and current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
         raise HTTPException(403, "Chỉ admin mới có quyền thay đổi trạng thái")
     
     for field in ['leave_type', 'start_date', 'end_date', 'man_day', 'month', 'year', 'time',
@@ -135,7 +136,7 @@ def delete_leave_request(id: int, db: Session = Depends(get_db), current_user: U
         raise HTTPException(404, "Không tìm thấy leave request")
     
     # Check permission: only admin or owner can delete
-    if current_user.role != 'admin' and lr.user_id != current_user.id:
+    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền xóa")
     
     db.delete(lr)

@@ -13,7 +13,7 @@ def create(email, name, pwd):
             email=email,
             full_name=name,
             hashed_pw=hash_password(pwd),
-            role="admin",
+            role="super_admin",
             is_active=True
         )
         db.add(admin)
