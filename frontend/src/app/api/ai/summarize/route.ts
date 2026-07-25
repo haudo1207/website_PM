@@ -24,6 +24,41 @@ Task cha đã chốt
 
 Lưu ý: Không viết thêm bất kỳ lời dẫn hay kết luận nào, chỉ trả về nội dung theo đúng cấu trúc trên.`;
 
+function getGeminiApiKey(): string | undefined {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  if (process.env.AI_API_KEY) return process.env.AI_API_KEY;
+  
+  try {
+    const envPaths = [
+      path.join(process.cwd(), '.env'),
+      path.join(process.cwd(), '..', '.env'),
+      path.join(process.cwd(), 'frontend', '.env'),
+      'd:\\PM_ProjectManager\\.env',
+      'd:\\PM_ProjectManager\\frontend\\.env'
+    ];
+    for (const envPath of envPaths) {
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf8');
+        const lines = content.split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('GEMINI_API_KEY=')) {
+            const val = trimmed.substring('GEMINI_API_KEY='.length).trim();
+            if (val) return val;
+          }
+          if (trimmed.startsWith('AI_API_KEY=')) {
+            const val = trimmed.substring('AI_API_KEY='.length).trim();
+            if (val) return val;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error reading fallback .env file:', e);
+  }
+  return undefined;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -36,10 +71,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const geminiKey = process.env.GEMINI_API_KEY;
+    const geminiKey = getGeminiApiKey();
     if (!geminiKey) {
       return NextResponse.json(
-        { success: false, error: 'Chưa cấu hình GEMINI_API_KEY trong file .env. Vui lòng kiểm tra lại.' },
+        { success: false, error: 'Chưa cấu hình GEMINI_API_KEY hoặc AI_API_KEY trong file .env. Vui lòng kiểm tra lại.' },
         { status: 500 }
       );
     }

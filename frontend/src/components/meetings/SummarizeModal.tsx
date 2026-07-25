@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Sparkles, AlertTriangle, FileText, Save, Edit3, Eye } from 'lucide-react';
 
 import { updateMeeting } from '@/lib/api';
+import { getToken } from '@/lib/auth';
 
 interface Props { isOpen: boolean; onClose: () => void; meeting: any; onSave: (m: any) => void; }
 
@@ -25,7 +26,15 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
     if (!transcript.trim()) { setError('Vui lòng dán/nhập biên bản cuộc họp trước.'); return; }
     setIsLoading(true); setError('');
     try {
-      const res = await fetch('/api/ai/summarize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ meetingId: meeting.id, transcript }) });
+      const token = getToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/ai/summarize', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ meetingId: meeting.id, transcript })
+      });
       const data = await res.json();
       if (res.ok && data.success) { setSummary(data.summary || []); setIsEditingSummary(false); }
       else setError(data.error || 'Lỗi khi gửi văn bản đến AI.');
@@ -92,7 +101,7 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
                   setIsEditingSummary(true);
                 } else setIsEditingSummary(!isEditingSummary);
               }} className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-md transition-colors border border-emerald-200">
-                {isEditingSummary ? <><Eye size={14} />Xem trước</> : <><Edit3 size={14} />{summary.length === 0 ? '+ Tự viết' : 'Chỉnh sửa'}</>}
+                {isEditingSummary ? <><Eye size={14} />Xem trước</> : <><Edit3 size={14} />Chỉnh sửa</>}
               </button>
             </div>
             {isEditingSummary ? (
