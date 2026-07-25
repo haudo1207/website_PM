@@ -48,71 +48,89 @@ def list_members(
     skill_id: Optional[int] = None,
     month: Optional[int] = None,
     year: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
     _=Depends(get_current_user)
 ):
-    # Subquery to calculate KPI from Tasks for each member (assigned_id)
-    # Chỉ lấy các task đã hoàn thành (Done) VÀ bắt buộc phải có ngày hoàn thành thực tế (end_date_actual)
-    task_query = db.query(
-        Task.assigned_id,
-        func.sum(Task.kpi_final).label('kpi_total'),
-        func.count(Task.id).label('task_count'),
-        func.sum(Task.manday_actual).label('manday_total')
+    # Subquery to calculate KPI from Tasks for each member
+    # Using UNION ALL to combine assigned and support portions of the task
+    q_assigned = db.query(
+        Task.assigned_id.label('member_id'),
+        Task.kpi_assigned.label('kpi_final'),
+        (Task.manday_actual * Task.kpi_ratio_assign / 100.0).label('manday_actual'),
+        (Task.manday_est * Task.kpi_ratio_assign / 100.0).label('manday_est'),
+        (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
+        Task.id.label('task_id')
     ).filter(
         Task.status == 'Done',
-        Task.end_date_actual.isnot(None)
+        Task.end_date_actual.isnot(None),
+        Task.assigned_id.isnot(None)
     )
 
-    # Custom Fiscal Calendar Template (Hỗ trợ mọi năm)
-    # Cấu trúc: (start_month_day, end_month_day, start_year_offset, end_year_offset, weeks)
-    CYCLE_TEMPLATE = {
-        1:  ("-12-22", "-01-18", -1, 0, 4),
-        2:  ("-01-19", "-02-22", 0, 0, 5),
-        3:  ("-02-23", "-03-22", 0, 0, 4),
-        4:  ("-03-23", "-04-19", 0, 0, 4),
-        5:  ("-04-20", "-05-24", 0, 0, 5),
-        6:  ("-05-25", "-06-21", 0, 0, 4),
-        7:  ("-06-22", "-07-19", 0, 0, 4),
-        8:  ("-07-20", "-08-23", 0, 0, 5),
-        9:  ("-08-24", "-09-20", 0, 0, 4),
-        10: ("-09-21", "-10-25", 0, 0, 5),
-        11: ("-10-26", "-11-22", 0, 0, 4),
-        12: ("-11-23", "-12-20", 0, 0, 4),
-    }
+    q_support = db.query(
+        Task.support_id.label('member_id'),
+        Task.kpi_support.label('kpi_final'),
+        (Task.manday_actual * Task.kpi_ratio_support / 100.0).label('manday_actual'),
+        (Task.manday_est * Task.kpi_ratio_support / 100.0).label('manday_est'),
+        (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
+        Task.id.label('task_id')
+    ).filter(
+        Task.status == 'Done',
+        Task.end_date_actual.isnot(None),
+        Task.support_id.isnot(None)
+    )
 
-    weeks_divisor = 52 # Mặc định nếu chọn Tất cả các tháng (của 1 năm) là 52 tuần
-
-    if year:
-        if month and month in CYCLE_TEMPLATE:
-            s_md, e_md, s_yo, e_yo, weeks = CYCLE_TEMPLATE[month]
-            weeks_divisor = weeks
-            start_dt = f"{year + s_yo}{s_md}"
-            end_dt = f"{year + e_yo}{e_md}"
-            task_query = task_query.filter(
-                Task.end_date_actual >= start_dt,
-                Task.end_date_actual <= end_dt
-            )
-        else:
-            # Lấy toàn bộ chu kỳ của năm đó (từ 22/12 năm trước đến 20/12 năm nay)
-            task_query = task_query.filter(
-                Task.end_date_actual >= f"{year - 1}-12-22",
-                Task.end_date_actual <= f"{year}-12-20"
-            )
+    # Apply date filters
+    if start_date and end_date:
+        q_assigned = q_assigned.filter(
+            Task.end_date_actual >= start_date,
+            Task.end_date_actual <= end_date
+        )
+        q_support = q_support.filter(
+            Task.end_date_actual >= start_date,
+            Task.end_date_actual <= end_date
+        )
     else:
-        # Nếu chỉ có tháng mà không có năm (mặc dù UI bắt buộc chọn năm)
-        if month:
-            task_query = task_query.filter(extract('month', Task.end_date_actual) == month)
+        if year:
+            if month and month in CYCLE_TEMPLATE:
+                s_md, e_md, s_yo, e_yo, weeks = CYCLE_TEMPLATE[month]
+                weeks_divisor = weeks
+                start_dt = f"{year + s_yo}{s_md}"
+                end_dt = f"{year + e_yo}{e_md}"
+                q_assigned = q_assigned.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
+                q_support = q_support.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
+            else:
+                q_assigned = q_assigned.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
+                q_support = q_support.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
+        else:
+            if month:
+                q_assigned = q_assigned.filter(extract('month', Task.end_date_actual) == month)
+                q_support = q_support.filter(extract('month', Task.end_date_actual) == month)
 
-    kpi_subq = task_query.group_by(Task.assigned_id).subquery()
+    union_q = q_assigned.union_all(q_support).subquery('union_q')
+
+    task_query = db.query(
+        union_q.c.member_id.label('member_id'),
+        func.sum(union_q.c.kpi_final).label('kpi_total'),
+        func.count(union_q.c.task_id).label('task_count'),
+        func.sum(union_q.c.manday_actual).label('manday_total'),
+        func.sum(union_q.c.manday_est).label('manday_est_total'),
+        func.sum(union_q.c.kpi_base).label('kpi_base_total')
+    ).group_by(union_q.c.member_id)
+
+    kpi_subq = task_query.subquery()
 
     # Query Member with KPI
     q = db.query(
         Member,
         func.coalesce(kpi_subq.c.kpi_total, 0).label('kpi_total'),
         func.coalesce(kpi_subq.c.task_count, 0).label('task_count'),
-        func.coalesce(kpi_subq.c.manday_total, 0).label('manday_total')
+        func.coalesce(kpi_subq.c.manday_total, 0).label('manday_total'),
+        func.coalesce(kpi_subq.c.manday_est_total, 0).label('manday_est_total'),
+        func.coalesce(kpi_subq.c.kpi_base_total, 0).label('kpi_base_total')
     ).outerjoin(
-        kpi_subq, Member.id == kpi_subq.c.assigned_id
+        kpi_subq, Member.id == kpi_subq.c.member_id
     ).options(joinedload(Member.skills))
 
     if search:
@@ -132,12 +150,14 @@ def list_members(
     results = q.order_by(Member.display_name.asc()).all()
     
     out = []
-    for m, kpi_total, task_count, manday_total in results:
+    for m, kpi_total, task_count, manday_total, manday_est_total, kpi_base_total in results:
         d = member_to_dict(m)
         
         total = float(kpi_total) if kpi_total else 0.0
         count = int(task_count) if task_count else 0
         md_total = float(manday_total) if manday_total else 0.0
+        md_est_t = float(manday_est_total) if manday_est_total else 0.0
+        kpi_base_t = float(kpi_base_total) if kpi_base_total else 0.0
         
         avg = 0.0
         bonus = 0.0
@@ -158,6 +178,8 @@ def list_members(
         d['kpi_avg'] = avg
         d['kpi_bonus'] = round(bonus, 2)
         d['manday_total'] = md_total
+        d['manday_est_total'] = float(md_est_t)
+        d['kpi_base_total'] = float(kpi_base_t)
         
         out.append(d)
         
