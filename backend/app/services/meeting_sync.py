@@ -236,13 +236,18 @@ def _load_google_tokens(db, user_id: int) -> Optional[dict]:
     """Load Google OAuth tokens from PostgreSQL database."""
     if not user_id:
         return None
-    from ..models.google_token import GoogleToken
-    gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
-    if gtoken:
-        return {
-            "access_token": gtoken.access_token,
-            "refresh_token": gtoken.refresh_token,
-        }
+    try:
+        from ..models.user import User
+        from ..models.google_token import GoogleToken
+        gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
+        if gtoken:
+            return {
+                "access_token": gtoken.access_token,
+                "refresh_token": gtoken.refresh_token,
+            }
+    except Exception as e:
+        logger.warning(f"Error loading google tokens: {e}")
+
     # Fallback to local file for compatibility / initial migration
     token_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "google-tokens.json")
     if os.path.exists(token_path):
@@ -258,6 +263,7 @@ def _save_google_tokens(db, user_id: int, tokens: dict):
     """Save Google OAuth tokens to PostgreSQL database."""
     if not user_id:
         return
+    from ..models.user import User
     from ..models.google_token import GoogleToken
     gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
     if not gtoken:
@@ -279,40 +285,46 @@ def is_google_connected(db, user_id: int) -> bool:
 def create_google_meet_link(db, user_id: int, topic: str, start_time: str, duration_minutes: int = 60) -> dict:
     """
     Create a Google Calendar event with Google Meet link.
+    If Google OAuth is not connected or fails, fallback to instant Google Meet creation URL.
     Returns { join_url, id }.
     """
-    from googleapiclient.discovery import build
+    try:
+        if is_google_connected(db, user_id):
+            from googleapiclient.discovery import build
 
-    creds = _get_google_credentials(db, user_id)
-    calendar = build("calendar", "v3", credentials=creds)
+            creds = _get_google_credentials(db, user_id)
+            calendar = build("calendar", "v3", credentials=creds)
 
-    start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-    end = start + datetime.timedelta(minutes=duration_minutes)
+            start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            end = start + datetime.timedelta(minutes=duration_minutes)
 
-    event = {
-        "summary": topic or "Cuộc họp mới",
-        "description": "Được tạo tự động từ hệ thống Meeting Logs",
-        "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
-        "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
-        "conferenceData": {
-            "createRequest": {
-                "requestId": f"meet-{int(datetime.datetime.now().timestamp())}",
-                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            event = {
+                "summary": topic or "Cuộc họp mới",
+                "description": "Được tạo tự động từ hệ thống Meeting Logs",
+                "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
+                "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
+                "conferenceData": {
+                    "createRequest": {
+                        "requestId": f"meet-{int(datetime.datetime.now().timestamp())}",
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                },
             }
-        },
-    }
 
-    response = calendar.events().insert(
-        calendarId="primary",
-        body=event,
-        conferenceDataVersion=1,
-    ).execute()
+            response = calendar.events().insert(
+                calendarId="primary",
+                body=event,
+                conferenceDataVersion=1,
+            ).execute()
 
-    hangout_link = response.get("hangoutLink")
-    if not hangout_link:
-        raise ValueError("Google Calendar không trả về link Google Meet.")
+            hangout_link = response.get("hangoutLink")
+            if hangout_link:
+                return {"join_url": hangout_link, "id": response.get("id")}
+    except Exception as e:
+        logger.warning(f"Google Calendar Meet creation fallback used due to: {e}")
 
-    return {"join_url": hangout_link, "id": response.get("id")}
+    # Fallback: Official instant Google Meet link
+    return {"join_url": "https://meet.google.com/new", "id": None}
 
 
 def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> dict:

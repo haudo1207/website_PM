@@ -1,7 +1,6 @@
-'use client';
-
 import React, { useState, useEffect } from 'react';
-import { X, Calendar as CalendarIcon } from 'lucide-react';
+import { X, Calendar as CalendarIcon, Sparkles, RefreshCw } from 'lucide-react';
+import { generateMeetingLink } from '@/lib/api';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
@@ -13,29 +12,31 @@ interface CreateMeetingModalProps {
 export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData }: CreateMeetingModalProps) {
   const [formData, setFormData] = useState({
     title: '',
-    platform: 'Zoom',
+    platform: 'Google Meet',
     date: '',
     time: '',
     duration: '60',
-    link: '',
-    project: ''
+    link: ''
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (initialData) {
-      setFormData({ ...initialData, project: initialData.project || '' });
+      setFormData({ 
+        ...initialData, 
+        platform: initialData.platform || 'Google Meet' 
+      });
     } else {
       const today = new Date().toISOString().split('T')[0];
       setFormData({
         title: '',
-        platform: 'Zoom',
+        platform: 'Google Meet',
         date: today,
         time: '09:00',
         duration: '60',
-        link: '',
-        project: ''
+        link: ''
       });
     }
     setError('');
@@ -59,6 +60,33 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     }
     const formattedHour = String(newH24).padStart(2, '0');
     setFormData({ ...formData, time: `${formattedHour}:${mVal}` });
+  };
+
+  const handleGenerateLink = async () => {
+    if (!formData.title || !formData.date || !formData.time) {
+      setError('Vui lòng điền tiêu đề, ngày và giờ bắt đầu trước khi tạo link');
+      return;
+    }
+    setIsGeneratingLink(true);
+    setError('');
+    try {
+      const data = await generateMeetingLink({
+        platform: formData.platform,
+        title: formData.title,
+        date: formData.date,
+        time: formData.time,
+        duration: formData.duration
+      });
+      if (data.success && data.join_url) {
+        setFormData(prev => ({ ...prev, link: data.join_url }));
+      } else {
+        setError('Không thể tạo link meeting tự động');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || err.message || 'Lỗi khi tạo link meeting');
+    } finally {
+      setIsGeneratingLink(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -113,28 +141,16 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               />
             </div>
 
-            <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Dự án liên quan</label>
-              <input 
-                type="text" 
-                value={formData.project}
-                onChange={e => setFormData({...formData, project: e.target.value})}
-                placeholder="VD: Core Banking System" 
-                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-              />
-            </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Nền tảng</label>
                 <select 
                   value={formData.platform}
                   onChange={e => setFormData({...formData, platform: e.target.value})}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors"
+                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
                 >
-                  <option value="Zoom">🎥 Zoom</option>
                   <option value="Google Meet">💻 Google Meet</option>
-                  <option value="Teams">👥 Microsoft Teams</option>
+                  <option value="Zoom">🎥 Zoom</option>
                 </select>
               </div>
               <div>
@@ -147,6 +163,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 />
               </div>
             </div>
+
+            {formData.platform === 'Zoom' && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 leading-relaxed flex items-start gap-2">
+                <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0 mt-0.5">info</span>
+                <div>
+                  <span className="font-bold text-amber-900">Lưu ý khi chọn Zoom:</span> Hệ thống dùng 1 tài khoản Zoom cố định. Tại cùng một khung giờ chỉ khởi tạo được 1 cuộc họp Zoom. Nếu trùng giờ với cuộc họp Zoom khác, sẽ không tạo thêm được link mới (khuyên dùng <b>Google Meet</b>).
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -207,7 +232,20 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Link meeting (tùy chọn)</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Link meeting (tùy chọn)</label>
+                {(formData.platform === 'Zoom' || formData.platform === 'Google Meet') && (
+                  <button
+                    type="button"
+                    onClick={handleGenerateLink}
+                    disabled={isGeneratingLink}
+                    className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline disabled:opacity-50"
+                  >
+                    <Sparkles size={13} className={isGeneratingLink ? 'animate-spin text-amber-500' : 'text-[#0058be]'} />
+                    {isGeneratingLink ? 'Đang tạo link...' : `⚡ Tạo link ${formData.platform}`}
+                  </button>
+                )}
+              </div>
               <input 
                 type="text" 
                 value={formData.link}
@@ -220,13 +258,13 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   {formData.platform === 'Zoom' && (
                     <p className="text-[11px] text-[#0058be] mt-1 flex items-center gap-1">
                       <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
-                      Link Zoom sẽ tự động được tạo nếu bạn để trống.
+                      Link Zoom sẽ tự động được tạo khi nhấn &quot;Tạo meeting&quot; nếu để trống.
                     </p>
                   )}
                   {formData.platform === 'Google Meet' && (
                     <p className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1">
                       <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
-                      Link Google Meet sẽ tự động được tạo nếu bạn để trống.
+                      Link Google Meet sẽ tự động được tạo khi nhấn &quot;Tạo meeting&quot; nếu để trống (yêu cầu kết nối Google).
                     </p>
                   )}
                 </>
