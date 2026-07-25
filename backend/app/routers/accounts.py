@@ -17,7 +17,6 @@ from ..utils.access import (
 from ..utils.auth import hash_password, require_manager, get_current_user
 
 router = APIRouter()
-
 MIN_PASSWORD_LENGTH = 8
 
 
@@ -41,12 +40,12 @@ def ensure_superadmin_remains(db: Session, account: User, *, role=None, active=N
     next_role = account.role if role is None else role
     next_active = account.is_active if active is None else active
     removes_active_superadmin = (
-        account.role == ROLE_SUPER_ADMIN
+        account.role in {ROLE_SUPER_ADMIN, "admin"}
         and account.is_active
-        and (deleting or next_role != ROLE_SUPER_ADMIN or not next_active)
+        and (deleting or next_role not in {ROLE_SUPER_ADMIN, "admin"} or not next_active)
     )
     if removes_active_superadmin:
-        active_superadmins = db.query(User).filter(User.role == ROLE_SUPER_ADMIN, User.is_active.is_(True)).count()
+        active_superadmins = db.query(User).filter(User.role.in_({ROLE_SUPER_ADMIN, "admin"}), User.is_active.is_(True)).count()
         if active_superadmins <= 1:
             raise HTTPException(400, "Hệ thống phải còn ít nhất một tài khoản Super Admin đang hoạt động.")
 
@@ -220,10 +219,10 @@ def update_account(
         if caller.id == account.id and new_role != caller.role:
             raise HTTPException(400, "Bạn không thể tự thay đổi role của chính mình.")
         # Leader may not promote anyone to super_admin.
-        if caller.role == ROLE_LEADER and new_role == ROLE_SUPER_ADMIN:
+        if caller.role == ROLE_LEADER and new_role in {ROLE_SUPER_ADMIN, "admin"}:
             raise HTTPException(403, "Leader không có quyền gán role Super Admin.")
         ensure_superadmin_remains(db, account, role=new_role)
-        if is_bootstrap_superadmin(account) and new_role != ROLE_SUPER_ADMIN:
+        if is_bootstrap_superadmin(account) and new_role not in {ROLE_SUPER_ADMIN, "admin"}:
             raise HTTPException(400, "The bootstrap super-admin cannot be demoted.")
         account.role = new_role
 

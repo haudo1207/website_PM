@@ -19,9 +19,8 @@ ROLE_SUPER_ADMIN = "super_admin"
 ROLE_LEADER = "leader"
 ROLE_MEMBER = "member"
 ROLE_VIEWER = "viewer"
-VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}
-# Roles that may perform write operations on projects / tasks / phases.
-WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER}
+VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER, "admin"}
+WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, "admin"}
 # Teams a Leader may be assigned to (Leader cannot use "all").
 LEADER_ALLOWED_SCOPES = {DEFAULT_SCOPE, "markee"}
 

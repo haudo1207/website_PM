@@ -11,7 +11,6 @@ export const getToken = () => typeof window !== 'undefined' ? localStorage.getIt
 export const getRole = () => typeof window !== 'undefined' ? localStorage.getItem('role') : null;
 export const getName = () => typeof window !== 'undefined' ? localStorage.getItem('name') : null;
 export const getAvatar = () => typeof window !== 'undefined' ? localStorage.getItem('avatar') : null;
-
 // ── 4-role model helpers ──
 export const isSuperAdmin = () => {
   const r = getRole();
@@ -29,7 +28,6 @@ export const isAdmin = () => {
 
 // Kept for backward compatibility — maps to isAdmin().
 export const isGroupA = isAdmin;
-
 export const logout = () => {
   if (typeof window === 'undefined') return;
   localStorage.clear();

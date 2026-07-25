@@ -57,32 +57,39 @@ def meeting_to_dict(m: Meeting) -> dict:
         if end_mins >= start_mins:
             duration = end_mins - start_mins
 
-    # Format AI Summary object (JSONB/dict) to a flat array for frontend compatibility
+    # Format AI Summary object (JSONB/dict/list) to a flat array for frontend compatibility
     summary_list = []
     if m.ai_summary:
-        if isinstance(m.ai_summary, dict):
-            summary_list.append("MEETING SUMMARY")
-            summary_list.append(m.ai_summary.get("summary") or "Chưa có tóm tắt.")
-            
-            decisions = m.ai_summary.get("decisions") or []
-            if decisions:
-                summary_list.append("1. QUYẾT ĐỊNH CHÍNH:")
-                for d in decisions:
-                    summary_list.append(f"• {d}")
-                    
-            action_items = m.ai_summary.get("action_items") or []
-            if action_items:
-                summary_list.append("2. HÀNH ĐỘNG TIẾP THEO:")
-                for a in action_items:
-                    summary_list.append(f"• {a}")
-                    
-            issues = m.ai_summary.get("issues") or []
-            if issues:
-                summary_list.append("3. VẤN ĐỀ CẦN GIẢI QUYẾT:")
-                for i in issues:
-                    summary_list.append(f"• {i}")
-        elif isinstance(m.ai_summary, list):
-            summary_list = m.ai_summary
+        if isinstance(m.ai_summary, list):
+            summary_list = [str(item) for item in m.ai_summary]
+        elif isinstance(m.ai_summary, dict):
+            if "lines" in m.ai_summary and isinstance(m.ai_summary["lines"], list):
+                summary_list = [str(item) for item in m.ai_summary["lines"]]
+            else:
+                sum_text = m.ai_summary.get("summary")
+                if sum_text:
+                    if "MEETING SUMMARY" in str(sum_text):
+                        summary_list = [l.rstrip() for l in str(sum_text).split("\n") if l.strip()]
+                    else:
+                        summary_list.append(str(sum_text))
+
+                decisions = m.ai_summary.get("decisions") or []
+                if decisions:
+                    summary_list.append("1. QUYẾT ĐỊNH CHÍNH:")
+                    for d in decisions:
+                        summary_list.append(f"• {d}")
+
+                action_items = m.ai_summary.get("action_items") or []
+                if action_items and not ("MEETING SUMMARY" in str(sum_text or "")):
+                    summary_list.append("2. HÀNH ĐỘNG TIẾP THEO:")
+                    for a in action_items:
+                        summary_list.append(f"• {a}")
+
+                issues = m.ai_summary.get("issues") or []
+                if issues:
+                    summary_list.append("3. VẤN ĐỀ CẦN GIẢI QUYẾT:")
+                    for i in issues:
+                        summary_list.append(f"• {i}")
         else:
             summary_list = [str(m.ai_summary)]
 
@@ -156,6 +163,48 @@ def list_meetings(
 
     meetings = q.order_by(Meeting.meeting_date.desc(), Meeting.start_time.desc()).all()
     return {"success": True, "data": [meeting_to_dict(m) for m in meetings]}
+
+# ─── GENERATE LINK (Zoom / Google Meet) ────────────────
+@router.post("/generate-link")
+def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Generate a Zoom or Google Meet link on demand."""
+    platform = str(body.get("platform", "")).strip()
+    title = str(body.get("title", "Cuộc họp mới")).strip()
+    date_val = body.get("meeting_date") or body.get("date")
+    meeting_date = parse_date(date_val) if date_val else datetime.date.today()
+    time_val = body.get("start_time") or body.get("time")
+    start_time = parse_time(time_val) if time_val else datetime.time(9, 0)
+    
+    dur_mins = 60
+    try:
+        dur_mins = int(body.get("duration", 60))
+    except Exception:
+        pass
+
+    start_datetime = f"{meeting_date.isoformat()}T{start_time.strftime('%H:%M')}:00Z"
+
+    if platform.lower() == "zoom":
+        try:
+            from ..services.meeting_sync import create_zoom_meeting
+            result = create_zoom_meeting(title, start_datetime, dur_mins)
+            return {"success": True, "join_url": result["join_url"], "platform": "Zoom"}
+        except Exception as e:
+            logger.error(f"Generate Zoom link failed: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Không thể tự động tạo link Zoom: {str(e)}. Hãy chắc chắn các khoá ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET được cấu hình đầy đủ trong file .env."
+            )
+    elif "google" in platform.lower() or "meet" in platform.lower():
+        try:
+            from ..services.meeting_sync import create_google_meet_link
+            result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
+            return {"success": True, "join_url": result.get("join_url", "https://meet.google.com/new"), "platform": "Google Meet"}
+        except Exception as e:
+            logger.error(f"Generate Google Meet link fallback triggered: {e}")
+            return {"success": True, "join_url": "https://meet.google.com/new", "platform": "Google Meet"}
+    else:
+        raise HTTPException(status_code=400, detail=f"Nền tảng '{platform}' chưa hỗ trợ tự động tạo link.")
+
 
 # ─── GET ONE ─────────────────────────────────────────────
 @router.get("/{id}")
@@ -255,34 +304,20 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                     status_code=400,
                     detail=f"Không thể tự động tạo link Zoom: {str(e)}. Hãy chắc chắn các khoá ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET được cấu hình đầy đủ trong file .env."
                 )
-        elif platform.lower() == "google meet":
+        elif "google" in platform.lower() or "meet" in platform.lower():
             try:
                 from ..services.meeting_sync import create_google_meet_link
                 result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
-                meeting_url = result["join_url"]
+                meeting_url = result.get("join_url", "https://meet.google.com/new")
             except Exception as e:
-                logger.error(f"Auto-generate Google Meet link failed: {e}")
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Không thể tự động tạo link Google Meet: {str(e)}. Hãy chắc chắn bạn đã kết nối tài khoản Google trong phần 'Cấu hình AI'."
-                )
+                logger.error(f"Auto-generate Google Meet link fallback: {e}")
+                meeting_url = "https://meet.google.com/new"
 
     # Handle AI summary formatting
     ai_summary = body.get("ai_summary") or body.get("summary")
-    # If summary is a flat list of strings, keep it or convert it
     if ai_summary and isinstance(ai_summary, list):
-        # Check if first item is our marker
-        if len(ai_summary) > 1 and ai_summary[0] == "MEETING SUMMARY":
-            # Already mapped, try to extract parts or store as list
-            pass
-        else:
-            # Map flat string array to structured JSONB
-            ai_summary = {
-                "summary": "Tóm tắt cuộc họp",
-                "decisions": [],
-                "issues": [],
-                "action_items": ai_summary
-            }
+        # Store flat list of strings directly
+        ai_summary = [str(item) for item in ai_summary]
 
     m = Meeting(
         title=title,
@@ -367,22 +402,12 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     m.transcript = body.get("transcript", m.transcript)
     
     # Store ai_summary if provided (or keep old if not in payload)
-    # Check both 'ai_summary' and 'summary'
     ai_summary_input = body.get("ai_summary") or body.get("summary")
     if ai_summary_input is not None:
         if isinstance(ai_summary_input, list):
-            # Convert flat list to structured JSONB if not already formatted
-            if len(ai_summary_input) > 1 and ai_summary_input[0] == "MEETING SUMMARY":
-                # Old structure representation
-                pass
-            else:
-                ai_summary_input = {
-                    "summary": "Tóm tắt cuộc họp",
-                    "decisions": [],
-                    "issues": [],
-                    "action_items": ai_summary_input
-                }
-        m.ai_summary = ai_summary_input
+            m.ai_summary = [str(item) for item in ai_summary_input]
+        else:
+            m.ai_summary = ai_summary_input
 
     project_id = body.get("project_id")
     project_input = body.get("project")

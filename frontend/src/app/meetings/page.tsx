@@ -142,7 +142,7 @@ export default function MeetingsPage() {
             <div className="flex items-center gap-2">
               <label className="text-[11px] font-bold text-[#565e74] hidden sm:block whitespace-nowrap">Nền tảng:</label>
               <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} className="px-3 py-2 bg-[#f0f2f5] border border-[#c2c6d6] rounded-lg text-xs focus:outline-none focus:border-[#0058be] min-w-[130px] text-[#0b1c30]">
-                <option value="All">Tất cả</option><option value="Zoom">Zoom</option><option value="Teams">Teams</option><option value="Google Meet">Google Meet</option>
+                <option value="All">Tất cả</option><option value="Google Meet">Google Meet</option><option value="Zoom">Zoom</option>
               </select>
             </div>
             <div className="flex items-center gap-2">

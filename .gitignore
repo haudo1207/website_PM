@@ -52,3 +52,7 @@ frontend/data/
 .claude/
 
 prompts/
+
+# TypeScript build info
+*.tsbuildinfo
+

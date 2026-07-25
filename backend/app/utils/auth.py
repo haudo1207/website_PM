@@ -57,12 +57,8 @@ def require_manager_write(request: Request, user=Depends(get_current_user)):
 
 def require_admin(user=Depends(get_current_user)):
     """Legacy alias — maps to require_super_admin."""
-    if user.role not in {"super_admin", "admin"}:
-        raise HTTPException(403, "Yêu cầu quyền Super Admin")
-    return user
+    return require_super_admin(user)
 
 def require_admin_write(request: Request, user=Depends(get_current_user)):
     """Legacy alias — maps to require_manager_write."""
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role not in {"super_admin", "leader"}:
-        raise HTTPException(403, "Yêu cầu quyền quản lý để thực hiện thao tác ghi")
-    return user
+    return require_manager_write(request, user)

@@ -173,6 +173,16 @@ export const updateCustomer = (id: number, data: { name: string; description?: s
   api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
 export const deleteCustomer = (id: number) => api.delete(`/system-categories/customers/${id}`).then(r => r.data);
 
+// Lunch Records
+export const getLunchRecords = (params?: { date?: string; member_id?: number }) =>
+  api.get('/lunch', { params }).then(r => r.data);
+export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean; status?: string }) =>
+  api.post('/lunch', data).then(r => r.data);
+export const deleteLunchRecord = (id: number) =>
+  api.delete(`/lunch/${id}`).then(r => r.data);
+export const getLunchMonthlySummary = (year: number, month: number) =>
+  api.get('/lunch/monthly-summary', { params: { year, month } }).then(r => r.data);
+
 // Leave Requests
 export const getLeaveRequests = (params?: { status?: string; user_id?: number; from_date?: string; to_date?: string }) =>
   api.get('/leave-requests', { params }).then(r => r.data);
@@ -194,15 +204,24 @@ export const updateTranscript = (id: number, transcript: string) => api.post(`/m
 export const addMeetingMember = (id: number, memberId: number, role?: string) => api.post(`/meetings/${id}/members`, { member_id: memberId, role }).then(r => r.data);
 export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);
 export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
+export const generateMeetingLink = (data: { platform: string; title: string; date?: string; time?: string; duration?: string | number }) =>
+  api.post('/meetings/generate-link', data).then(r => r.data);
 export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);
 export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
 
 
 // Performance Settings CRUD
 export const getPerformanceSettings = () => api.get('/performance-settings').then(r => r.data);
-export const createPerformanceSetting = (data: { performance: string; kpi: number; sort_order?: number; is_active?: boolean }) => api.post('/performance-settings', data).then(r => r.data);
-export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; sort_order?: number; is_active?: boolean }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
+export const createPerformanceSetting = (data: { performance: string; kpi: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.post('/performance-settings', data).then(r => r.data);
+export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
 export const deletePerformanceSetting = (id: number) => api.delete(`/performance-settings/${id}`).then(r => r.data);
+
+// Master Phases CRUD
+export const getMasterPhases = () => api.get('/system-categories/master-phases').then(r => r.data);
+export const createMasterPhase = (data: { name: string; description?: string }) => api.post('/system-categories/master-phases', data).then(r => r.data);
+export const updateMasterPhase = (id: number, data: { name?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.put(`/system-categories/master-phases/${id}`, data).then(r => r.data);
+export const reorderMasterPhases = (ids: number[]) => api.put('/system-categories/master-phases/reorder', { ids }).then(r => r.data);
+export const deleteMasterPhase = (id: number) => api.delete(`/system-categories/master-phases/${id}`).then(r => r.data);
 
 // Accounts Management
 export const getAccounts = () => api.get('/accounts').then(r => r.data);

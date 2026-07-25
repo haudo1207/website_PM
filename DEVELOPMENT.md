@@ -41,7 +41,7 @@ không commit bất kỳ URL có mật khẩu nào.
 
 | Biến | Bắt buộc | Mục đích |
 |---|---:|---|
-| `DATABASE_URL` | Có | Supabase Cloud session-pooler port `5432`, password URL-encoded, `sslmode=require` |
+| `DATABASE_URL` | Có | Supabase Cloud transaction-pooler port `6543`, password URL-encoded, `sslmode=require` |
 | `DOCKER_NETWORK_MTU` | Không | Mặc định `1420`; không liên quan tới việc truy cập DB Cloud |
 | `SECRET_KEY` | Có | Ký JWT; mỗi môi trường phải dùng secret riêng |
 | `GOOGLE_LOGIN_ENABLED` | Có | Đặt `true` |
