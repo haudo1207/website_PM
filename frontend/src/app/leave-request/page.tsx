@@ -239,13 +239,12 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
                 <table className="min-w-full divide-y divide-[#c2c6d6] text-sm">
                   <thead className="bg-[#f8f9ff] text-[#565e74]">
                     <tr>
-                      <th className="px-3 py-3 text-left font-semibold">STT</th>
-                      <th className="px-3 py-3 text-left font-semibold">Ho ten</th>
+                      <th className="px-3 py-3 text-left font-semibold">No.</th>
+                      <th className="px-3 py-3 text-left font-semibold">Họ và tên</th>
                       <th className="px-3 py-3 text-left font-semibold">Team</th>
-                      <th className="px-3 py-3 text-center font-semibold">So ngay an com</th>
-                      <th className="px-3 py-3 text-center font-semibold">So ngay khong an</th>
-                      <th className="px-3 py-3 text-center font-semibold">Tong ngay dang ky</th>
-                      <th className="px-3 py-3 text-center font-semibold">Tong tien (VND)</th>
+                      <th className="px-3 py-3 text-center font-semibold">Số ngày ăn cơm</th>
+                      <th className="px-3 py-3 text-center font-semibold">Số ngày không ăn</th>
+                      <th className="px-3 py-3 text-center font-semibold">Số ngày working</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#eef2f7] bg-white">
@@ -267,21 +266,9 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
                         <td className="px-3 py-3 text-center font-semibold text-[#0b1c30]">
                           {m.total_registered_days}
                         </td>
-                        <td className="px-3 py-3 text-center font-semibold text-amber-700">
-                          {(m.total_cost || 0).toLocaleString('vi-VN')}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-[#f8f9ff]">
-                    <tr className="font-bold">
-                      <td colSpan={3} className="px-3 py-3 text-right text-[#0b1c30]">TONG CONG</td>
-                      <td className="px-3 py-3 text-center text-emerald-700">{monthlyData.total_lunch}</td>
-                      <td className="px-3 py-3 text-center text-rose-700">{monthlyData.total_no_lunch}</td>
-                      <td className="px-3 py-3 text-center text-[#0b1c30]">{monthlyData.total_lunch + monthlyData.total_no_lunch}</td>
-                      <td className="px-3 py-3 text-center text-amber-700">{(monthlyData.total_cost || 0).toLocaleString('vi-VN')}</td>
-                    </tr>
-                  </tfoot>
                 </table>
               </div>
             </>
@@ -422,15 +409,6 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
               );
             })}
           </tbody>
-          {isAdmin && summary && (
-            <tfoot className="bg-[#f8f9ff]">
-              <tr className="font-bold">
-                <td colSpan={4} className="px-3 py-3 text-right text-[#0b1c30]">TỔNG CỘNG</td>
-                <td className="px-3 py-3 text-center text-emerald-700">{summary.registeredLunch}</td>
-                <td className="px-3 py-3 text-center text-amber-700">{(summary.registeredLunch * 40000).toLocaleString('vi-VN')}</td>
-              </tr>
-            </tfoot>
-          )}
         </table>
       </div>
       {!isAdmin && !currentMemberId && (
@@ -514,7 +492,7 @@ export default function LeaveRequestPage() {
 
         // Check if user is admin
         const role = localStorage.getItem('role');
-        setIsAdmin(role === 'super_admin' || role === 'leader');
+        setIsAdmin(role === 'super_admin' || role === 'admin');
       } catch (error) {
         console.error('Error fetching data:', error);
         // Fallback to mock data

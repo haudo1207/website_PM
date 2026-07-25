@@ -55,7 +55,7 @@ export default function CheckLunchPage() {
       const role = localStorage.getItem('role');
       const userIdStr = localStorage.getItem('user_id');
       const userId = userIdStr ? Number(userIdStr) : null;
-      setIsAdmin(role === 'admin');
+      setIsAdmin(role === 'admin' || role === 'super_admin' );
       setCurrentUserId(userId);
 
       // Get current user's member_id from members list (match by user_id from accounts)

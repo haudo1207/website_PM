@@ -37,7 +37,7 @@ def list_lunch_records(
     """Get lunch records. Admin can see all; regular users see only their own."""
     q = db.query(LunchRecord)
 
-    if current_user.role != "admin":
+    if current_user.role not in ["admin", "super_admin"]:
         q = q.filter(LunchRecord.member_id == current_user.member_id)
 
     if date:
@@ -173,7 +173,7 @@ def upsert_lunch_record(
     current_user: User = Depends(get_current_user),
 ):
     """Create or update lunch record for a member on a given date."""
-    if current_user.role != "admin" and body.member_id != (current_user.member_id or 0):
+    if ( current_user.role not in ["admin", "super_admin"] and body.member_id != (current_user.member_id or 0)):
         raise HTTPException(403, "Ban khong co quyen dang ky cho nguoi khac")
 
     parsed_date = body.date
@@ -231,7 +231,7 @@ def delete_lunch_record(
     if not record:
         raise HTTPException(404, "Khong tim thay ban ghi")
 
-    if current_user.role != "admin" and record.member_id != (current_user.member_id or 0):
+    if current_user.role not in ["admin", "supper_admin"] and record.member_id != (current_user.member_id or 0):
         raise HTTPException(403, "Khong co quyen xoa")
 
     db.delete(record)
