@@ -71,6 +71,113 @@ def recalculate_task_group_dates(tg, db):
     return tg
 
 
+def sync_group_dates(tg, db, extra_start=None, extra_end=None):
+    """Sync TaskGroup start_date_est (min) and end_date_est (max) from child tasks.
+    extra_start: start_date of a newly added/modified task not yet committed.
+    extra_end: end_date_est of a newly added/modified task not yet committed.
+    """
+    rows = db.query(Task.start_date, Task.end_date_est).filter(
+        Task.task_group_id == tg.id
+    ).all()
+    start_dates = [r[0] for r in rows if r[0] is not None]
+    end_dates   = [r[1] for r in rows if r[1] is not None]
+    if extra_start is not None:
+        start_dates.append(extra_start)
+    if extra_end is not None:
+        end_dates.append(extra_end)
+    tg.start_date_est = min(start_dates) if start_dates else None
+    tg.end_date_est   = max(end_dates)   if end_dates   else None
+    return tg
+
+
+def get_parent_code(task_code: str):
+    if not task_code or "." not in task_code:
+        return None
+    return task_code.rsplit(".", 1)[0]
+
+
+def decimal_or_zero(value) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    return Decimal(str(value))
+
+
+def format_decimal(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def validate_kpi_ratio(assign, support):
+    try:
+        assign_val = int(assign)
+        support_val = int(support)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "KPI RATIO phải là số hợp lệ, ví dụ 90/10 hoặc 50/50.")
+
+    if assign_val < 0 or support_val < 0 or assign_val > 100 or support_val > 100:
+        raise HTTPException(400, "KPI RATIO mỗi giá trị phải nằm trong khoảng 0 đến 100.")
+
+    if assign_val + support_val != 100:
+        raise HTTPException(400, "Tổng KPI RATIO phải bằng 100, ví dụ 90/10 hoặc 50/50.")
+
+    return assign_val, support_val
+
+
+def validate_manday_budget(gid: int, task_code: str, manday_est, db: Session, exclude_task_id: int = None):
+    """Ensure direct child tasks do not exceed their parent Task/TaskGroup MANDAY EST."""
+    if manday_est is None or not task_code:
+        return
+
+    new_manday = decimal_or_zero(manday_est)
+    if new_manday <= 0:
+        return
+
+    parent_code = get_parent_code(task_code)
+    if not parent_code:
+        return
+
+    parent_task = db.query(Task).filter(
+        Task.task_group_id == gid,
+        Task.task_code == parent_code
+    ).first()
+
+    if parent_task:
+        parent_label = f"task cha {parent_code}"
+        parent_manday = decimal_or_zero(parent_task.manday_est)
+    else:
+        tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+        if not tg:
+            return
+        parent_label = f"Task Group {tg.name}"
+        parent_manday = decimal_or_zero(tg.manday_est)
+
+    if parent_manday <= 0:
+        return
+
+    siblings = db.query(Task).filter(Task.task_group_id == gid).all()
+    used_manday = Decimal("0")
+    for sibling in siblings:
+        if exclude_task_id is not None and sibling.id == exclude_task_id:
+            continue
+        if get_parent_code(sibling.task_code) == parent_code:
+            used_manday += decimal_or_zero(sibling.manday_est)
+
+    if used_manday >= parent_manday:
+        raise HTTPException(
+            400,
+            f"Tổng MANDAY EST của task con ({format_decimal(used_manday)}) đã đạt/vượt "
+            f"MANDAY EST của {parent_label} ({format_decimal(parent_manday)}), không thể thêm task mới."
+        )
+
+    total_manday = used_manday + new_manday
+    if total_manday > parent_manday:
+        remaining = parent_manday - used_manday
+        raise HTTPException(
+            400,
+            f"MANDAY EST task mới ({format_decimal(new_manday)}) làm tổng task con "
+            f"vượt MANDAY EST của {parent_label}. Còn lại tối đa {format_decimal(remaining)} manday."
+        )
+
+
 def get_group_index(tg, db) -> int:
     """Get 1-based index of this group within its phase (by sort_order)."""
     groups = db.query(TaskGroup).filter(
@@ -424,9 +531,16 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db)):
     if assigned_id and support_id and assigned_id == support_id:
         raise HTTPException(400, "Support cannot be the same as Assigned.")
 
+    task_code = body.get("task_code", next_code)
+    validate_manday_budget(gid, task_code, manday_est, db)
+    ratio_assign, ratio_support = validate_kpi_ratio(
+        body.get("kpi_ratio_assign", 100),
+        body.get("kpi_ratio_support", 0),
+    )
+
     task = Task(
         task_group_id=gid,
-        task_code=body.get("task_code", next_code),
+        task_code=task_code,
         detail=detail,
         priority=body.get("priority", "Normal"),
         manday_est=manday_est,
@@ -434,8 +548,8 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db)):
         start_date=parse_date(body.get("start_date")),
         assigned_id=assigned_id,
         support_id=support_id,
-        kpi_ratio_assign=body.get("kpi_ratio_assign", 100),
-        kpi_ratio_support=body.get("kpi_ratio_support", 0),
+        kpi_ratio_assign=ratio_assign,
+        kpi_ratio_support=ratio_support,
         skill_solution_id=body.get("skill_solution_id"),
         skill_vendor_id=body.get("skill_vendor_id"),
         ticket_id=body.get("ticket_id"),
@@ -449,6 +563,9 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db)):
 
     # Recalculate KPI
     task = recalculate_task(task, db)
+
+    # Sync group start_date (min) and end_date_est (max) from child tasks
+    tg = sync_group_dates(tg, db, extra_start=task.start_date, extra_end=task.end_date_est)
 
     # Update group progress
     tg.progress = Decimal(str(calc_group_progress(gid, db)))
@@ -539,10 +656,13 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
         raise HTTPException(400, "Support cannot be the same as Assigned.")
 
     # KPI Ratio
-    if "kpi_ratio_assign" in body:
-        task.kpi_ratio_assign = body["kpi_ratio_assign"]
-    if "kpi_ratio_support" in body:
-        task.kpi_ratio_support = body["kpi_ratio_support"]
+    if "kpi_ratio_assign" in body or "kpi_ratio_support" in body:
+        ratio_assign, ratio_support = validate_kpi_ratio(
+            body.get("kpi_ratio_assign", task.kpi_ratio_assign),
+            body.get("kpi_ratio_support", task.kpi_ratio_support),
+        )
+        task.kpi_ratio_assign = ratio_assign
+        task.kpi_ratio_support = ratio_support
 
     # Skill
     if "skill_solution_id" in body:
@@ -558,6 +678,9 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
     # Sort order
     if "sort_order" in body:
         task.sort_order = body["sort_order"]
+
+    if "manday_est" in body or "task_code" in body:
+        validate_manday_budget(gid, task.task_code, task.manday_est, db, exclude_task_id=task.id)
 
     # Recalculate KPI
     task = recalculate_task(task, db)
@@ -577,6 +700,8 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     if tg:
         tg.progress = Decimal(str(calc_group_progress(gid, db)))
+        # Sync group start_date from earliest child task start_date
+        tg = sync_group_dates(tg, db)
 
     # Trigger Recheck logic: check if any trigger fields are present in the update payload
     trigger_fields = ["detail", "priority", "manday_est", "status", "start_date", "end_date_actual", "assigned_id", "support_id", "remark"]
@@ -600,10 +725,11 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Task not found.")
     db.delete(task)
 
-    # Update group progress
+    # Update group progress and sync start_date
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     if tg:
         tg.progress = Decimal(str(calc_group_progress(gid, db)))
+        tg = sync_group_dates(tg, db)
 
     db.commit()
     return {"ok": True}
@@ -618,6 +744,7 @@ def duplicate_task(gid: int, tid: int, db: Session = Depends(get_db)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     group_index = get_group_index(tg, db) if tg else 1
     new_code = get_next_task_code(group_index, gid, db)
+    validate_manday_budget(gid, new_code, original.manday_est, db)
 
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == gid).scalar() or 0
     new_task = Task(
@@ -672,7 +799,9 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
 
     # Auto-generate new task_code for target group
     new_group_index = get_group_index(new_group, db)
-    task.task_code = get_next_task_code(new_group_index, new_group_id, db)
+    new_task_code = get_next_task_code(new_group_index, new_group_id, db)
+    validate_manday_budget(new_group_id, new_task_code, task.manday_est, db, exclude_task_id=task.id)
+    task.task_code = new_task_code
 
     # Update progress for both groups
     old_tg = db.query(TaskGroup).filter(TaskGroup.id == old_group_id).first()

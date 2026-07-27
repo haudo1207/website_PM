@@ -144,30 +144,39 @@ def calc_kpi_perform(days_late, kpi_base, manday_est, manday_actual, priority_na
         return Decimal(str(-days_late))
 
 
-def calc_kpi_ot(remark: str = None, priority_name: str = None):
+def calc_kpi_ot(days_late=None, kpi_base=None, priority_name: str = None):
     """
-    5.21: KPI OT — depends on Remark + Priority.
-    
-    Current placeholder logic (will be refined when Remark setting is configured):
-    - If remark contains 'OT': add bonus based on priority
+    KPI Overtime:
+    - Normal: abs(days_late) * 1
+    - High: abs(days_late) * 2
+    - Critical: abs(days_late) * 3
+    - Cap at 50% KPI Base
+    - Early bonus is additionally capped at 20 points
+    - Late is negative, early is positive
     """
-    if not remark:
+    if days_late is None or days_late == 0:
         return Decimal("0")
 
-    remark_lower = remark.strip().lower()
+    priority_multipliers = {
+        "normal": Decimal("1"),
+        "medium": Decimal("1"),
+        "high": Decimal("2"),
+        "critical": Decimal("3"),
+    }
+    pname = (priority_name or "normal").strip().lower()
+    multiplier = priority_multipliers.get(pname, Decimal("1"))
 
-    # Simple OT detection — will be replaced with Setting-driven logic later
-    if "ot" in remark_lower or "overtime" in remark_lower:
-        # OT bonus depends on priority
-        priority_bonuses = {
-            "normal": 3,
-            "high": 6,
-            "critical": 10,
-            "interrupt": 3,
-        }
-        pname = (priority_name or "normal").strip().lower()
-        return Decimal(str(priority_bonuses.get(pname, 3)))
+    raw_value = Decimal(str(abs(days_late))) * multiplier
+    cap = Decimal(str(kpi_base or 0)) * Decimal("0.5")
+    if days_late < 0:
+        cap = min(cap, Decimal("20"))
+    capped_value = min(raw_value, cap)
 
+    return -capped_value if days_late > 0 else capped_value
+
+
+def calc_legacy_remark_kpi_ot(remark: str = None, priority_name: str = None):
+    """Deprecated placeholder kept for backward compatibility with old imports."""
     return Decimal("0")
 
 
@@ -242,7 +251,6 @@ def recalculate_task(task, db):
     # Parse remark using dynamic performance settings from the DB
     remark_str = (task.remark or "").strip().lower()
     remark_perform = Decimal("0")
-    remark_ot = Decimal("0")
     multiplier = Decimal("1.0")
 
     # Split remark by common separators to match multiple rules
@@ -286,11 +294,8 @@ def recalculate_task(task, db):
                 if (0.0 <= rule_kpi <= 1.0) and ("fail" in rule_perf or "rework" in rule_perf):
                     multiplier *= rule_kpi
                 else:
-                    # Determine if it's an OT rule
-                    if any(kw in rule_perf for kw in ["xử lý sự cố", "ngày lễ", "cuối tuần", "tối trong tuần", "ot"]):
-                        remark_ot += rule_kpi
-                    else:
-                        remark_perform += rule_kpi
+                    # Remark +/- values are shown in KPI Perform immediately.
+                    remark_perform += rule_kpi
     except Exception as e:
         print(f"[!] Error parsing performance settings: {e}")
 
@@ -305,10 +310,10 @@ def recalculate_task(task, db):
     if is_done:
         if parent_done:
             task.kpi_perform = remark_perform
-            task.kpi_ot = remark_ot
+            task.kpi_ot = calc_kpi_ot(task.days_late, task.kpi_base, task.priority)
             task.kpi_final = (task.kpi_base + task.kpi_perform + task.kpi_ot) * multiplier
         else:
-            task.kpi_perform = None
+            task.kpi_perform = remark_perform if remark_str else None
             task.kpi_ot = None
             task.kpi_final = None
     elif is_cancel:
@@ -317,7 +322,7 @@ def recalculate_task(task, db):
         task.kpi_ot = Decimal("0")
         task.kpi_final = Decimal("0")
     else:
-        task.kpi_perform = None
+        task.kpi_perform = remark_perform if remark_str else None
         task.kpi_ot = None
         task.kpi_final = None
 
