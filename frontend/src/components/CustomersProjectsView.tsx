@@ -179,20 +179,19 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     customerProjects.forEach(p => {
       if (p.year) yearsSet.add(p.year);
     });
-    
-    const yearsList = Array.from(yearsSet).sort((a, b) => b - a); // Descending order
-    
-    // Auto-select the first year if available and the current selected year is not in the list
-    if (yearsList.length > 0) {
-      if (!selectedYear || !yearsList.includes(selectedYear)) {
-        setSelectedYear(yearsList[0]);
+    return Array.from(yearsSet).sort((a, b) => b - a); // Descending order
+  }, [customerProjects]);
+
+  // Sync selected year when customerYears change
+  useEffect(() => {
+    if (customerYears.length > 0) {
+      if (!selectedYear || !customerYears.includes(selectedYear)) {
+        setSelectedYear(customerYears[0]);
       }
     } else {
       setSelectedYear(null);
     }
-
-    return yearsList;
-  }, [customerProjects, selectedYear]);
+  }, [customerYears]);
 
   // Final filtered projects for the third column (selected customer + selected year)
   const filteredProjects = useMemo(() => {

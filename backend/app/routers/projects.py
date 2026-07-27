@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
 from ..models.system_category import Customer
@@ -169,7 +169,7 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
 
 @router.get("/projects")
 def list_projects(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    q = project_query_for_user(db, current_user)
+    q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b:
         b_val = "Markee" if target_b == "markee" else "Infrastructure"
