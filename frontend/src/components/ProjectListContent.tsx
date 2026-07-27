@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, getCustomers } from '@/lib/api';
@@ -100,9 +100,17 @@ export default function ProjectListContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
 
-  const reload = () => {
-    getProjects().then(setProjects).catch(() => {});
-    getCustomers().then(setCustomers).catch(() => {});
+  const reload = async () => {
+    try {
+      const [projs, custs] = await Promise.all([
+        getProjects(),
+        getCustomers()
+      ]);
+      setProjects(projs || []);
+      setCustomers(custs || []);
+    } catch {
+      // Fallback safe load
+    }
   };
   useEffect(() => { reload(); }, []);
 
@@ -152,36 +160,48 @@ export default function ProjectListContent() {
     router.push('/projects');
   };
 
-  // Dynamic lists from loaded data
-  const dbCustomerNames = customers.map(c => c.name);
-  const projCustomerNames = projects.map(p => p.customer_name).filter(Boolean);
-  const uniqueCustomers = Array.from(new Set([...dbCustomerNames, ...projCustomerNames])).sort();
-  const uniquePms = Array.from(new Set(projects.map(p => p.pm_name).filter(Boolean)));
-  const uniqueYears = Array.from(new Set(projects.map(p => p.year).filter(v => v !== null && v !== undefined))).sort((a, b) => b - a);
+  // Dynamic lists from loaded data memoized
+  const uniqueCustomers = useMemo(() => {
+    const dbCustomerNames = customers.map(c => c.name);
+    const projCustomerNames = projects.map(p => p.customer_name).filter(Boolean);
+    return Array.from(new Set([...dbCustomerNames, ...projCustomerNames])).sort();
+  }, [customers, projects]);
 
-  // Filter
-  const filtered = projects.filter(p => {
+  const uniquePms = useMemo(() => {
+    return Array.from(new Set(projects.map(p => p.pm_name).filter(Boolean)));
+  }, [projects]);
+
+  const uniqueYears = useMemo(() => {
+    return Array.from(new Set(projects.map(p => p.year).filter(v => v !== null && v !== undefined))).sort((a, b) => (b as number) - (a as number));
+  }, [projects]);
+
+  // Filter memoized
+  const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
-    const pBiz = (p.business || (p.business_unit === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase();
-    const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase();
-    const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
-    const matchCustomer = customerFilter === 'All' ||
-      (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
-      (paramCustId && String(p.customer_id) === String(paramCustId));
-    const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
-    const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
-    return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchYear;
-  });
+    return projects.filter(p => {
+      const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
+      const pBiz = (p.business || (p.business_unit === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase();
+      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all');
+      const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
+      const matchCustomer = customerFilter === 'All' ||
+        (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
+        (paramCustId && String(p.customer_id) === String(paramCustId));
+      const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
+      const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
+      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchYear;
+    });
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, yearFilter]);
 
-  // Sort
-  const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'newest') return b.id - a.id;
-    if (sortBy === 'oldest') return a.id - b.id;
-    if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
-    if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
-    return 0;
-  });
+  // Sort memoized
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'newest') return b.id - a.id;
+      if (sortBy === 'oldest') return a.id - b.id;
+      if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
+      if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
+      return 0;
+    });
+  }, [filtered, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const paged = sorted.slice((page - 1) * pageSize, page * pageSize);

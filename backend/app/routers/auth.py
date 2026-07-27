@@ -103,6 +103,18 @@ def google_login(body: dict, db: Session = Depends(get_db)):
     if google_avatar and user.avatar_url != google_avatar:
         user.avatar_url = google_avatar
         changed = True
+
+    # Automatically ensure GoogleToken record exists for Google SSO user
+    try:
+        from ..models.google_token import GoogleToken
+        gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user.id).first()
+        if not gtoken:
+            gtoken = GoogleToken(user_id=user.id, access_token="google_sso_session")
+            db.add(gtoken)
+            changed = True
+    except Exception:
+        pass
+
     if changed:
         db.commit()
         db.refresh(user)

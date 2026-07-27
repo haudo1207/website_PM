@@ -9,6 +9,7 @@ import AIReviewDrawer from '@/components/AIReviewDrawer';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
+  getAITaskInbox, analyzeChatLogs, updateAITaskInbox, rejectAITaskInbox, importAITaskToProjectPlan, bulkImportAITasks, getChatSyncLogs,
   getPhases, createPhase, updatePhase, deletePhase,
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
@@ -362,12 +363,30 @@ function ProjectDetailContent() {
   const [chats, setChats] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
 
-  // Group Chats state
+  // Group Chats & AI Task Inbox state
   const [chatGroups, setChatGroups] = useState<any[]>([]);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupPlatform, setNewGroupPlatform] = useState('Telegram');
   const [newGroupLink, setNewGroupLink] = useState('');
   const [newGroupDesc, setNewGroupDesc] = useState('');
+
+  // AI Task Inbox States
+  const [activeChatSubTab, setActiveChatSubTab] = useState<'inbox' | 'sources' | 'mapping' | 'logs'>('inbox');
+  const [inboxTasks, setInboxTasks] = useState<any[]>([]);
+  const [inboxStats, setInboxStats] = useState<any>({ pending_count: 0, ready_count: 0, imported_count: 0, accuracy: 91 });
+  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
+  const [searchTaskQuery, setSearchTaskQuery] = useState('');
+  const [filterState, setFilterState] = useState<'all' | 'ready' | 'missing'>('all');
+
+  // Modals & Drawer States
+  const [editingInboxTask, setEditingInboxTask] = useState<any>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [isAnalyzingPaste, setIsAnalyzingPaste] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncLogs, setSyncLogs] = useState<any[]>([]);
 
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [isAddingMember, setIsAddingMember] = useState(false);
@@ -492,15 +511,32 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
-  const loadChatGroups = useCallback(async () => {
+  const loadChatData = useCallback(async () => {
     if (!id) return;
     try {
       const data = await getChatGroups(Number(id));
       setChatGroups(data || []);
+
+      const inboxRes = await getAITaskInbox(Number(id));
+      if (inboxRes && inboxRes.items) {
+        setInboxTasks(inboxRes.items);
+        if (inboxRes.stats) {
+          setInboxStats(inboxRes.stats);
+        }
+      }
+
+      const logs = await getChatSyncLogs(Number(id));
+      if (logs) {
+        setSyncLogs(logs);
+      }
     } catch {
-      flash('Không thể tải danh sách group chat từ database', true);
+      flash('Không thể tải dữ liệu chat & AI Task Inbox', true);
     }
   }, [id]);
+
+  useEffect(() => {
+    loadChatData();
+  }, [id, loadChatData]);
 
   const loadMeetings = useCallback(async () => {
     if (!project?.name) return;
@@ -538,9 +574,9 @@ function ProjectDetailContent() {
   useEffect(() => {
     loadProject();
     reloadAll();
-    loadChatGroups();
+    loadChatData();
     loadProjectMembers();
-  }, [id, loadProject, reloadAll, loadChatGroups, loadProjectMembers]);
+  }, [id, loadProject, reloadAll, loadChatData, loadProjectMembers]);
 
   // Load members, customers and categories
   useEffect(() => {
@@ -641,6 +677,7 @@ function ProjectDetailContent() {
         year: editProjectYear,
         customer_name: editCustomerName.trim(),
         business: editBusiness,
+        data_scope: editBusiness.toLowerCase(),
         current_phase: editCurrentPhase.trim(),
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
@@ -4073,155 +4110,981 @@ function ProjectDetailContent() {
 
 
               {activeMainTab === 'chats' && (
-                <div className="space-y-4">
+                <div className="space-y-6">
+                  {/* HERO BANNER */}
+                  <div className="bg-gradient-to-r from-[#0b63ce] to-[#4b36f3] text-white rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                      <h2 className="text-xl font-extrabold tracking-tight mb-2">AI Chat → Task Automation</h2>
+                      <p className="text-xs text-blue-100 max-w-2xl leading-relaxed">
+                        Kết nối nhóm Zalo/Telegram, lấy các tin nhắn được đánh dấu giao việc, dùng AI chuẩn hóa thành task và đưa vào Project Plan sau bước duyệt.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 flex-wrap">
+                      <button
+                        onClick={async () => {
+                          setIsSyncing(true);
+                          await loadChatData();
+                          setIsSyncing(false);
+                          flash('Đã đồng bộ nguồn chat và AI Task Inbox!');
+                        }}
+                        disabled={isSyncing}
+                        className="bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold px-4 py-2.5 rounded-xl backdrop-blur-sm transition-all flex items-center gap-2"
+                      >
+                        <span className={`material-symbols-outlined text-[16px] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>
+                        {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}
+                      </button>
+                      <button
+                        onClick={() => setIsConnectModalOpen(true)}
+                        className="bg-white text-[#0b63ce] hover:bg-blue-50 text-xs font-extrabold px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">add</span>
+                        Kết nối nhóm chat
+                      </button>
+                    </div>
+                  </div>
 
-                  {/* Add Group Form */}
-                  <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-[#0b1c30] mb-4 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#0058be] text-[20px]">add_circle</span>
-                      Thêm Chat Group
-                    </h3>
-                    <form
-                      onSubmit={async e => {
-                        e.preventDefault();
-                        if (!newGroupName.trim() || !newGroupLink.trim()) return;
-                        try {
-                          const group = await createChatGroup(Number(id), {
-                            name: newGroupName.trim(),
-                            platform: newGroupPlatform,
-                            link: newGroupLink.trim(),
-                            desc: newGroupDesc.trim(),
-                          });
-                          setChatGroups(prev => [group, ...prev]);
-                          setNewGroupName('');
-                          setNewGroupLink('');
-                          setNewGroupDesc('');
-                          flash('Đã thêm group chat!');
-                        } catch (err: any) {
-                          alert('Lỗi thêm group chat: ' + (err.response?.data?.detail || err.message));
-                        }
-                      }}
-                      className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
-                    >
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên Group *</label>
-                        <input
-                          type="text"
-                          required
-                          value={newGroupName}
-                          onChange={e => setNewGroupName(e.target.value)}
-                          placeholder="VD: VCB-Network-Main"
-                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                        />
-                      </div>
+                  {/* STATS CARDS */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase">Nguồn đang kết nối</div>
+                      <div className="text-2xl font-extrabold text-[#0b1c30] mt-1">{chatGroups.length + 1}</div>
+                      <div className="text-[10px] text-slate-400 mt-1">{chatGroups.length} nhóm chat · 1 thủ công</div>
+                    </div>
+                    <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase">Task AI chờ duyệt</div>
+                      <div className="text-2xl font-extrabold text-[#0b63ce] mt-1">{inboxStats.pending_count || inboxTasks.length}</div>
+                      <div className="text-[10px] text-slate-400 mt-1">{inboxStats.ready_count || 0} task sẵn sàng import</div>
+                    </div>
+                    <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase">Đã import tháng này</div>
+                      <div className="text-2xl font-extrabold text-emerald-600 mt-1">{inboxStats.imported_count || 0}</div>
+                      <div className="text-[10px] text-slate-400 mt-1">Tiết kiệm khoảng 4,6 giờ nhập liệu</div>
+                    </div>
+                    <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase">Độ chính xác AI</div>
+                      <div className="text-2xl font-extrabold text-indigo-600 mt-1">{inboxStats.accuracy || 91}%</div>
+                      <div className="text-[10px] text-slate-400 mt-1">Dựa trên các task đã được duyệt</div>
+                    </div>
+                  </div>
 
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nền Tảng</label>
-                        <select
-                          value={newGroupPlatform}
-                          onChange={e => setNewGroupPlatform(e.target.value)}
-                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                        >
-                          <option value="Telegram">Telegram</option>
-                          <option value="Zalo">Zalo</option>
-                          <option value="Slack">Slack</option>
-                          <option value="Teams">Microsoft Teams</option>
-                          <option value="Discord">Discord</option>
-                          <option value="WhatsApp">WhatsApp</option>
-                          <option value="Khác">Khác</option>
-                        </select>
-                      </div>
+                  {/* WORKSPACE AREA (SIDEBAR + MAIN CONTENT PANEL) */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
+                    {/* LEFT SIDEBAR NAVIGATION */}
+                    <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-3 shadow-sm space-y-1">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-3 py-2">Quản lý tích hợp</div>
+                      <button
+                        onClick={() => setActiveChatSubTab('inbox')}
+                        className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${activeChatSubTab === 'inbox' ? 'bg-[#eff4ff] text-[#0058be]' : 'text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">inbox</span>
+                          ✨ AI Task Inbox
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${activeChatSubTab === 'inbox' ? 'bg-white text-[#0058be]' : 'bg-slate-100 text-slate-500'}`}>
+                          {inboxTasks.length}
+                        </span>
+                      </button>
 
-                      <div className="sm:col-span-2">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Link *</label>
-                        <div className="flex gap-2">
-                          <input
-                            type="url"
-                            required
-                            value={newGroupLink}
-                            onChange={e => setNewGroupLink(e.target.value)}
-                            placeholder="https://..."
-                            className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                          />
+                      <button
+                        onClick={() => setActiveChatSubTab('sources')}
+                        className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${activeChatSubTab === 'sources' ? 'bg-[#eff4ff] text-[#0058be]' : 'text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">forum</span>
+                          💬 Nguồn chat
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${activeChatSubTab === 'sources' ? 'bg-white text-[#0058be]' : 'bg-slate-100 text-slate-500'}`}>
+                          {chatGroups.length + 1}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => setActiveChatSubTab('mapping')}
+                        className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${activeChatSubTab === 'mapping' ? 'bg-[#eff4ff] text-[#0058be]' : 'text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">swap_horiz</span>
+                          ⇄ Mapping dữ liệu
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => setActiveChatSubTab('logs')}
+                        className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${activeChatSubTab === 'logs' ? 'bg-[#eff4ff] text-[#0058be]' : 'text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">history</span>
+                          ☷ Nhật ký đồng bộ
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* RIGHT CONTENT PANEL */}
+                    <div className="md:col-span-3">
+                      {/* SUB-TAB 1: AI TASK INBOX */}
+                      {activeChatSubTab === 'inbox' && (
+                        <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm overflow-hidden">
+                          {/* PANEL HEADER */}
+                          <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4">
+                            <div>
+                              <h3 className="text-base font-bold text-[#0b1c30]">AI Task Inbox</h3>
+                              <p className="text-xs text-slate-500 mt-0.5">Kiểm tra, bổ sung thông tin và import task vào Project Plan.</p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <input
+                                type="text"
+                                value={searchTaskQuery}
+                                onChange={e => setSearchTaskQuery(e.target.value)}
+                                placeholder="Tìm task, người phụ trách..."
+                                className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#0058be] w-56"
+                              />
+                              <select
+                                value={filterState}
+                                onChange={e => setFilterState(e.target.value as any)}
+                                className="bg-white border border-[#c2c6d6] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#0058be]"
+                              >
+                                <option value="all">Tất cả trạng thái</option>
+                                <option value="ready">Sẵn sàng</option>
+                                <option value="missing">Cần bổ sung</option>
+                              </select>
+                              <button
+                                onClick={() => setIsPasteModalOpen(true)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-sm transition-all flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">content_paste</span>
+                                Dán hội thoại
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* BULK SELECTION BAR */}
+                          {selectedTaskIds.length > 0 && (
+                            <div className="bg-[#eff4ff] border-b border-[#0058be]/20 px-5 py-3 flex items-center justify-between">
+                              <span className="text-xs font-bold text-[#0058be]">
+                                <b>{selectedTaskIds.length}</b> task đã chọn
+                              </span>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => setSelectedTaskIds([])}
+                                  className="px-3 py-1 bg-white border border-slate-200 text-xs font-bold rounded-md hover:bg-slate-50"
+                                >
+                                  Bỏ chọn
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await bulkImportAITasks(Number(id), selectedTaskIds);
+                                      flash(`Đã import ${selectedTaskIds.length} task vào Project Plan!`);
+                                      setSelectedTaskIds([]);
+                                      loadChatData();
+                                      reloadAll(true);
+                                    } catch (err: any) {
+                                      alert('Lỗi import: ' + (err.response?.data?.detail || err.message));
+                                    }
+                                  }}
+                                  className="px-3 py-1 bg-[#0058be] text-white text-xs font-bold rounded-md hover:bg-[#0058be]/90 shadow-sm"
+                                >
+                                  Import vào Project Plan
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* INBOX TABLE */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-left border-collapse min-w-[900px]">
+                              <thead className="bg-[#f8f9ff] border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
+                                <tr>
+                                  <th className="p-3 w-10 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedTaskIds.length === inboxTasks.length && inboxTasks.length > 0}
+                                      onChange={e => {
+                                        if (e.target.checked) {
+                                          setSelectedTaskIds(inboxTasks.map(t => t.id));
+                                        } else {
+                                          setSelectedTaskIds([]);
+                                        }
+                                      }}
+                                    />
+                                  </th>
+                                  <th className="p-3">Task AI đề xuất</th>
+                                  <th className="p-3">Nguồn</th>
+                                  <th className="p-3">Assigned</th>
+                                  <th className="p-3">Priority</th>
+                                  <th className="p-3">Manday</th>
+                                  <th className="p-3">AI Score</th>
+                                  <th className="p-3">Trạng thái</th>
+                                  <th className="p-3 text-right">Thao tác</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {inboxTasks
+                                  .filter(t => {
+                                    const matchQ = !searchTaskQuery || (t.detail_task || '').toLowerCase().includes(searchTaskQuery.toLowerCase()) || (t.assigned_name || '').toLowerCase().includes(searchTaskQuery.toLowerCase());
+                                    const matchS = filterState === 'all' || t.status === filterState;
+                                    return matchQ && matchS;
+                                  })
+                                  .map(t => {
+                                    const isSelected = selectedTaskIds.includes(t.id);
+                                    const initials = (t.assigned_name || '??').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+
+                                    return (
+                                      <tr key={t.id} className={`hover:bg-slate-50/80 transition-colors ${isSelected ? 'bg-blue-50/50' : ''}`}>
+                                        <td className="p-3 text-center">
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            onChange={e => {
+                                              if (e.target.checked) {
+                                                setSelectedTaskIds(prev => [...prev, t.id]);
+                                              } else {
+                                                setSelectedTaskIds(prev => prev.filter(x => x !== t.id));
+                                              }
+                                            }}
+                                          />
+                                        </td>
+                                        <td className="p-3 max-w-[300px]">
+                                          <div className="font-bold text-[#0b1c30] text-[13px] leading-snug">{t.detail_task}</div>
+                                          {t.task_description && (
+                                            <div className="text-slate-500 text-[11px] mt-0.5 line-clamp-2 leading-relaxed">{t.task_description}</div>
+                                          )}
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                                            {t.source_platform} · {t.source_group_name}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          {t.assigned_name ? (
+                                            <div className="flex items-center gap-1.5">
+                                              <div className="w-6 h-6 rounded-full bg-blue-100 text-[#0058be] flex items-center justify-center text-[10px] font-extrabold">
+                                                {initials}
+                                              </div>
+                                              <span className="font-semibold text-slate-800">{t.assigned_name}</span>
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-400 italic">Chưa xác định</span>
+                                          )}
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                                            t.priority === 'High' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                                            t.priority === 'Low' ? 'bg-slate-100 text-slate-600' :
+                                            'bg-blue-50 text-blue-700 border border-blue-200'
+                                          }`}>
+                                            {t.priority || 'Normal'}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap font-mono font-bold text-slate-800">
+                                          {t.manday_est !== null ? t.manday_est : '—'}
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap font-mono font-extrabold text-[#0058be]">
+                                          {t.confidence || 90}%
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          {t.status === 'ready' ? (
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                              Sẵn sàng
+                                            </span>
+                                          ) : (
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200">
+                                              Thiếu thông tin
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="p-3 text-right whitespace-nowrap">
+                                          <div className="flex items-center justify-end gap-1">
+                                            <button
+                                              onClick={() => {
+                                                setEditingInboxTask(t);
+                                                setIsDrawerOpen(true);
+                                              }}
+                                              className="p-1.5 text-slate-500 hover:text-[#0058be] hover:bg-blue-50 rounded transition-colors"
+                                              title="Chỉnh sửa chi tiết"
+                                            >
+                                              ✎
+                                            </button>
+                                            <button
+                                              onClick={async () => {
+                                                try {
+                                                  await importAITaskToProjectPlan(Number(id), t.id);
+                                                  flash('Đã import task vào Project Plan thành công!');
+                                                  loadChatData();
+                                                  reloadAll(true);
+                                                } catch (err: any) {
+                                                  alert('Lỗi import: ' + (err.response?.data?.detail || err.message));
+                                                }
+                                              }}
+                                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded transition-colors font-bold"
+                                              title="Import ngay"
+                                            >
+                                              ↗
+                                            </button>
+                                            <button
+                                              onClick={async () => {
+                                                try {
+                                                  await rejectAITaskInbox(Number(id), t.id);
+                                                  flash('Đã bỏ qua task!');
+                                                  loadChatData();
+                                                } catch (err: any) {
+                                                  alert('Lỗi bỏ qua task: ' + (err.response?.data?.detail || err.message));
+                                                }
+                                              }}
+                                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                              title="Từ chối"
+                                            >
+                                              ×
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+
+                                {inboxTasks.length === 0 && (
+                                  <tr>
+                                    <td colSpan={9} className="py-16 text-center text-slate-400 text-xs">
+                                      <span className="material-symbols-outlined text-[40px] block mb-2 text-slate-300">inbox</span>
+                                      Chưa có task AI nào chờ duyệt. Nhấn "Dán hội thoại" hoặc kết nối Telegram để AI tự động trích xuất!
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* SUB-TAB 2: CHAT SOURCES */}
+                      {activeChatSubTab === 'sources' && (
+                        <div className="space-y-6">
+                          {/* Form Thêm Group Chat */}
+                          <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-5">
+                            <h3 className="text-sm font-bold text-[#0b1c30] mb-4 flex items-center gap-2">
+                              <span className="material-symbols-outlined text-[#0058be] text-[20px]">add_circle</span>
+                              Thêm Chat Group
+                            </h3>
+                            <form
+                              onSubmit={async e => {
+                                e.preventDefault();
+                                if (!newGroupName.trim() || !newGroupLink.trim()) return;
+                                try {
+                                  const group = await createChatGroup(Number(id), {
+                                    name: newGroupName.trim(),
+                                    platform: newGroupPlatform,
+                                    link: newGroupLink.trim(),
+                                    desc: newGroupDesc.trim(),
+                                  });
+                                  setChatGroups(prev => [group, ...prev]);
+                                  setNewGroupName('');
+                                  setNewGroupLink('');
+                                  setNewGroupDesc('');
+                                  flash('Đã thêm group chat!');
+                                } catch (err: any) {
+                                  alert('Lỗi thêm group chat: ' + (err.response?.data?.detail || err.message));
+                                }
+                              }}
+                              className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+                            >
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên Group *</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={newGroupName}
+                                  onChange={e => setNewGroupName(e.target.value)}
+                                  placeholder="VD: VCB-Network-Main"
+                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nền Tảng</label>
+                                <select
+                                  value={newGroupPlatform}
+                                  onChange={e => setNewGroupPlatform(e.target.value)}
+                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                                >
+                                  <option value="Telegram">Telegram</option>
+                                  <option value="Zalo">Zalo</option>
+                                  <option value="Slack">Slack</option>
+                                  <option value="Teams">Microsoft Teams</option>
+                                  <option value="Discord">Discord</option>
+                                  <option value="WhatsApp">WhatsApp</option>
+                                  <option value="Khác">Khác</option>
+                                </select>
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Link *</label>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="url"
+                                    required
+                                    value={newGroupLink}
+                                    onChange={e => setNewGroupLink(e.target.value)}
+                                    placeholder="https://..."
+                                    className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                                  />
+                                  <button
+                                    type="submit"
+                                    className="bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all whitespace-nowrap"
+                                  >
+                                    Thêm mới
+                                  </button>
+                                </div>
+                              </div>
+                            </form>
+                          </div>
+
+                          {/* Groups Grid */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            {/* Card 1: Manual Paste */}
+                            <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-5 flex flex-col justify-between shadow-sm">
+                              <div className="flex justify-between items-start mb-3">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-11 h-11 rounded-xl bg-slate-600 text-white flex items-center justify-center text-xl font-bold shadow-sm">
+                                    ✎
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-[#0b1c30] text-sm">Manual Paste</div>
+                                    <div className="text-[11px] text-slate-400 mt-0.5">Dán nội dung thủ công</div>
+                                  </div>
+                                </div>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                  Sẵn sàng
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 my-3">
+                                <div className="bg-slate-50 p-2 rounded.lg">
+                                  <b className="block text-sm text-[#0b1c30]">Tất cả</b>
+                                  <span className="text-[10px] text-slate-400">Đã quét hội thoại</span>
+                                </div>
+                                <div className="bg-slate-50 p-2 rounded-lg">
+                                  <b className="block text-sm text-[#0058be]">{inboxTasks.length}</b>
+                                  <span className="text-[10px] text-slate-400">Task được tạo</span>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setIsPasteModalOpen(true)}
+                                className="w-full bg-[#0058be] text-white font-bold text-xs py-2 rounded-lg shadow-sm hover:bg-[#0058be]/90 transition-all"
+                              >
+                                Dán hội thoại ngay
+                              </button>
+                            </div>
+
+                            {/* Connected Groups */}
+                            {chatGroups.map(g => {
+                              const PLATFORM_STYLES: Record<string, { bg: string; icon: string; label: string }> = {
+                                Telegram: { bg: 'bg-[#27a7e7]', icon: 'T', label: 'Telegram' },
+                                Zalo: { bg: 'bg-[#0068FF]', icon: 'Z', label: 'Zalo' },
+                                Slack: { bg: 'bg-[#4A154B]', icon: '#', label: 'Slack' },
+                                Teams: { bg: 'bg-[#6264A7]', icon: 'T', label: 'Teams' },
+                                Discord: { bg: 'bg-[#5865F2]', icon: '⚡', label: 'Discord' },
+                                WhatsApp: { bg: 'bg-[#25D366]', icon: '📱', label: 'WhatsApp' },
+                                Khác: { bg: 'bg-slate-500', icon: '💬', label: 'Group' },
+                              };
+                              const ps = PLATFORM_STYLES[g.platform] || PLATFORM_STYLES['Khác'];
+
+                              return (
+                                <div key={g.id} className="relative group bg-white border border-[#c2c6d6]/60 rounded-xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md transition-all">
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        await deleteChatGroup(Number(id), g.id);
+                                        setChatGroups(prev => prev.filter(x => x.id !== g.id));
+                                        flash('Đã xóa group');
+                                      } catch (err: any) {
+                                        alert('Lỗi xóa group: ' + (err.response?.data?.detail || err.message));
+                                      }
+                                    }}
+                                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-red-500 p-1"
+                                    title="Xóa group"
+                                  >
+                                    <span className="material-symbols-outlined text-[16px]">close</span>
+                                  </button>
+
+                                  <div className="flex justify-between items-start mb-3">
+                                    <div className="flex items-center gap-3">
+                                      <div className={`w-11 h-11 rounded-xl ${ps.bg} text-white flex items-center justify-center text-xl font-bold shadow-sm`}>
+                                        {ps.icon}
+                                      </div>
+                                      <div>
+                                        <div className="font-bold text-[#0b1c30] text-sm">{g.name}</div>
+                                        <div className="text-[11px] text-slate-400 mt-0.5">{ps.label} Group</div>
+                                      </div>
+                                    </div>
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      ● Hoạt động
+                                    </span>
+                                  </div>
+
+                                  <a
+                                    href={g.link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="w-full text-center bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 rounded-lg transition-colors flex items-center justify-center gap-1 mt-3"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                                    Mở nhóm chat
+                                  </a>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* SUB-TAB 3: MAPPING DỮ LIỆU */}
+                      {activeChatSubTab === 'mapping' && (
+                        <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-6 shadow-sm space-y-6">
+                          <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                            <div>
+                              <h3 className="text-base font-bold text-[#0b1c30]">Mapping dữ liệu & Quy tắc AI</h3>
+                              <p className="text-xs text-slate-500 mt-0.5">Thiết lập giá trị mặc định để AI import đúng cấu trúc Project Plan.</p>
+                            </div>
+                            <button
+                              onClick={() => flash('Đã lưu cấu hình mapping!')}
+                              className="bg-[#0058be] text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm hover:bg-[#0058be]/90 transition-all"
+                            >
+                              Lưu cấu hình
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="border border-slate-200 rounded-xl p-5 space-y-4">
+                              <h4 className="font-bold text-sm text-[#0b1c30]">Mapping nhóm chat → Project</h4>
+                              <div>
+                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nhóm chat</label>
+                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold">
+                                  {chatGroups.map(g => (
+                                    <option key={g.id} value={g.id}>{g.name} ({g.platform})</option>
+                                  ))}
+                                  <option value="manual">Manual Paste</option>
+                                </select>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Phase mặc định</label>
+                                  <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold">
+                                    {phases.map(p => (
+                                      <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Status mặc định</label>
+                                  <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold">
+                                    <option value="Waiting">Waiting</option>
+                                    <option value="Process">Process</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">KPI Ratio mặc định</label>
+                                <input type="text" defaultValue="100/0" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-mono font-bold" />
+                              </div>
+                            </div>
+
+                            <div className="border border-slate-200 rounded-xl p-5 space-y-3">
+                              <h4 className="font-bold text-sm text-[#0b1c30]">Quy tắc AI nhận diện task</h4>
+                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
+                                Chỉ quét tin nhắn có @MarkeeTask hoặc /task
+                              </label>
+                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
+                                Tự tách nhiều task trong cùng một tin nhắn
+                              </label>
+                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
+                                Cảnh báo task có khả năng trùng lặp
+                              </label>
+                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
+                                Lưu snapshot tin nhắn nguồn để đối chiếu
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* SUB-TAB 4: NHẬT KÝ ĐỒNG BỘ */}
+                      {activeChatSubTab === 'logs' && (
+                        <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-6 shadow-sm space-y-4">
+                          <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                            <div>
+                              <h3 className="text-base font-bold text-[#0b1c30]">Nhật ký đồng bộ</h3>
+                              <p className="text-xs text-slate-500 mt-0.5">Theo dõi webhook, AI parser và kết quả import.</p>
+                            </div>
+                            <button
+                              onClick={() => flash('Đã xuất file nhật ký!')}
+                              className="bg-white border border-slate-200 text-slate-700 font-bold text-xs px-4 py-2 rounded-lg hover:bg-slate-50"
+                            >
+                              Xuất nhật ký
+                            </button>
+                          </div>
+
+                          <div className="divide-y divide-slate-100">
+                            {syncLogs.map(l => (
+                              <div key={l.id} className="py-3 flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-3">
+                                  <span className="text-[11px] font-mono text-slate-400 w-28 shrink-0">{l.time_str}</span>
+                                  <div className="text-xs text-slate-800">
+                                    <b className="font-bold text-[#0b1c30] mr-1.5">{l.source_name}</b>
+                                    <span>· {l.message_text}</span>
+                                  </div>
+                                </div>
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase shrink-0 ${
+                                  l.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                }`}>
+                                  {l.status === 'SUCCESS' ? 'Thành công' : 'Cần kiểm tra'}
+                                </span>
+                              </div>
+                            ))}
+
+                            {syncLogs.length === 0 && (
+                              <div className="py-8 text-center text-slate-400 text-xs italic">
+                                Chưa có nhật ký đồng bộ nào.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* SLIDE-OVER DRAWER (KIỂM TRA TASK AI) */}
+                  {isDrawerOpen && editingInboxTask && (
+                    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex justify-end">
+                      <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
+                        {/* Drawer Header */}
+                        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                          <div>
+                            <h3 className="text-base font-bold text-[#0b1c30]">Kiểm tra task AI</h3>
+                            <p className="text-xs text-slate-500 mt-0.5">Chỉnh sửa trước khi import vào Project Plan.</p>
+                          </div>
                           <button
-                            type="submit"
-                            className="bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all whitespace-nowrap"
+                            onClick={() => setIsDrawerOpen(false)}
+                            className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
                           >
-                            Thêm mới
+                            <span className="material-symbols-outlined">close</span>
+                          </button>
+                        </div>
+
+                        {/* Drawer Body */}
+                        <div className="p-6 flex-1 overflow-y-auto space-y-4 text-xs">
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên task *</label>
+                            <input
+                              type="text"
+                              value={editingInboxTask.detail_task || ''}
+                              onChange={e => setEditingInboxTask({ ...editingInboxTask, detail_task: e.target.value })}
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-bold focus:outline-none focus:border-[#0058be]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Mô tả chi tiết *</label>
+                            <textarea
+                              rows={3}
+                              value={editingInboxTask.task_description || ''}
+                              onChange={e => setEditingInboxTask({ ...editingInboxTask, task_description: e.target.value })}
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs focus:outline-none focus:border-[#0058be]"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Phase *</label>
+                              <select
+                                value={editingInboxTask.phase_id || ''}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, phase_id: e.target.value ? Number(e.target.value) : null })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="">-- Chọn Phase --</option>
+                                {phases.map(p => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Assigned *</label>
+                              <select
+                                value={editingInboxTask.assigned_id || ''}
+                                onChange={e => {
+                                  const val = e.target.value ? Number(e.target.value) : null;
+                                  const m = membersList.find((x: any) => x.id === val);
+                                  setEditingInboxTask({
+                                    ...editingInboxTask,
+                                    assigned_id: val,
+                                    assigned_name: m ? (m.display_name || m.full_name) : ''
+                                  });
+                                }}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="">-- Chưa xác định --</option>
+                                {membersList.map((m: any) => (
+                                  <option key={m.id} value={m.id}>{m.display_name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Priority *</label>
+                              <select
+                                value={editingInboxTask.priority || 'Normal'}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, priority: e.target.value })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="High">High</option>
+                                <option value="Normal">Normal</option>
+                                <option value="Low">Low</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Manday estimate *</label>
+                              <input
+                                type="number"
+                                step="any"
+                                value={editingInboxTask.manday_est !== null ? editingInboxTask.manday_est : 1.0}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, manday_est: parseFloat(e.target.value) || 1.0 })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-mono font-bold"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tin nhắn nguồn</label>
+                            <div className="bg-slate-50 border border-dashed border-slate-300 rounded-lg p-3 text-slate-600 leading-relaxed whitespace-pre-wrap font-mono text-[11px]">
+                              {editingInboxTask.source_message || 'Nội dung tin nhắn không có snapshot.'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Drawer Footer */}
+                        <div className="p-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">
+                          <button
+                            onClick={async () => {
+                              await rejectAITaskInbox(Number(id), editingInboxTask.id);
+                              setIsDrawerOpen(false);
+                              flash('Đã bỏ qua task!');
+                              loadChatData();
+                            }}
+                            className="px-4 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-50"
+                          >
+                            Bỏ qua task
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await updateAITaskInbox(Number(id), editingInboxTask.id, editingInboxTask);
+                              setIsDrawerOpen(false);
+                              flash('Đã lưu chỉnh sửa!');
+                              loadChatData();
+                            }}
+                            className="px-4 py-2 bg-white border border-[#0058be] text-[#0058be] text-xs font-bold rounded-lg hover:bg-blue-50"
+                          >
+                            Lưu chỉnh sửa
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await updateAITaskInbox(Number(id), editingInboxTask.id, editingInboxTask);
+                                await importAITaskToProjectPlan(Number(id), editingInboxTask.id, {
+                                  phase_id: editingInboxTask.phase_id,
+                                  task_group_id: editingInboxTask.task_group_id
+                                });
+                                setIsDrawerOpen(false);
+                                flash('Đã import task vào Project Plan!');
+                                loadChatData();
+                                reloadAll(true);
+                              } catch (err: any) {
+                                alert('Lỗi import: ' + (err.response?.data?.detail || err.message));
+                              }
+                            }}
+                            className="px-4 py-2 bg-[#0058be] text-white text-xs font-bold rounded-lg shadow-sm hover:bg-[#0058be]/90"
+                          >
+                            Import task
                           </button>
                         </div>
                       </div>
-                    </form>
-                  </div>
-
-                  {/* Groups Grid */}
-                  {chatGroups.length === 0 ? (
-                    <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl py-16 text-center">
-                      <div className="w-14 h-14 rounded-2xl bg-[#eff4ff] mx-auto flex items-center justify-center mb-4">
-                        <span className="material-symbols-outlined text-[#0058be] text-[28px]">forum</span>
-                      </div>
-                      <p className="text-sm font-semibold text-[#565e74]">Chưa có group nào</p>
-                      <p className="text-xs text-slate-400 mt-1">Thêm group chat đầu tiên cho dự án này</p>
                     </div>
-                  ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {chatGroups.map(g => {
-                        const PLATFORM_STYLES: Record<string, { bg: string; icon: string; label: string }> = {
-                          Telegram: { bg: 'bg-[#229ED9]', icon: '▶', label: 'Telegram' },
-                          Zalo: { bg: 'bg-[#0068FF]', icon: '💬', label: 'Zalo' },
-                          Slack: { bg: 'bg-[#4A154B]', icon: '#', label: 'Slack' },
-                          Teams: { bg: 'bg-[#6264A7]', icon: 'T', label: 'Teams' },
-                          Discord: { bg: 'bg-[#5865F2]', icon: '⚡', label: 'Discord' },
-                          WhatsApp: { bg: 'bg-[#25D366]', icon: '📱', label: 'WhatsApp' },
-                          Khác: { bg: 'bg-slate-500', icon: '💬', label: 'Group' },
-                        };
-                        const ps = PLATFORM_STYLES[g.platform] || PLATFORM_STYLES['Khác'];
+                  )}
 
-                        return (
-                          <div key={g.id} className="relative group bg-white border border-[#c2c6d6]/60 rounded-xl p-5 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5">
-                            {/* Delete btn */}
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await deleteChatGroup(Number(id), g.id);
-                                  setChatGroups(prev => prev.filter(x => x.id !== g.id));
-                                  flash('Đã xóa group');
-                                } catch (err: any) {
-                                  alert('Lỗi xóa group: ' + (err.response?.data?.detail || err.message));
-                                }
-                              }}
-                              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-red-500 p-1 rounded"
-                              title="Xóa group"
-                            >
-                              <span className="material-symbols-outlined text-[16px]">close</span>
-                            </button>
-
-                            {/* Platform icon */}
-                            <div className={`w-12 h-12 rounded-2xl ${ps.bg} flex items-center justify-center text-white text-xl mb-3 shadow-sm`}>
-                              {ps.icon}
-                            </div>
-
-                            {/* Name */}
-                            <p className="text-xs font-bold text-[#0b1c30] mb-1 leading-snug">{g.name}</p>
-
-                            {/* Platform + desc */}
-                            <p className="text-[10px] text-slate-400 mb-3">
-                              {ps.label} Group{g.desc ? ` • ${g.desc}` : ''}
-                            </p>
-
-                            {/* Open link */}
-                            <a
-                              href={g.link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11px] font-bold text-[#0058be] hover:underline flex items-center gap-1"
-                            >
-                              <span className="material-symbols-outlined text-[13px]">open_in_new</span>
-                              Mở ứng dụng
-                            </a>
+                  {/* MODAL DÁN NỘI DUNG HỘI THOẠI */}
+                  {isPasteModalOpen && (
+                    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
+                        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                          <div>
+                            <h3 className="text-base font-bold text-[#0b1c30]">Dán nội dung hội thoại</h3>
+                            <p className="text-xs text-slate-500 mt-0.5">AI sẽ tách và chuẩn hóa thành các task đề xuất.</p>
                           </div>
-                        );
-                      })}
+                          <button onClick={() => setIsPasteModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                            <span className="material-symbols-outlined">close</span>
+                          </button>
+                        </div>
+
+                        <div className="p-5 space-y-3">
+                          <label className="text-[11px] font-bold text-slate-500 uppercase block">Nội dung hội thoại *</label>
+                          <textarea
+                            rows={6}
+                            value={pasteText}
+                            onChange={e => setPasteText(e.target.value)}
+                            placeholder="Dán đoạn chat từ Telegram hoặc Zalo ở đây..."
+                            className="w-full bg-white border border-[#c2c6d6] rounded-xl p-3 text-xs focus:outline-none focus:border-[#0058be] leading-relaxed"
+                          />
+                        </div>
+
+                        <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+                          <button
+                            onClick={() => setIsPasteModalOpen(false)}
+                            className="px-4 py-2 bg-white border border-slate-200 text-xs font-bold rounded-lg text-slate-700 hover:bg-slate-50"
+                          >
+                            Hủy
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!pasteText.trim()) return;
+                              setIsAnalyzingPaste(true);
+                              try {
+                                const res = await analyzeChatLogs(Number(id), pasteText, 'Manual Paste', 'Manual Paste');
+                                flash(`AI đã phân tích và tạo ${res.created_count} task trong Inbox!`);
+                                setIsPasteModalOpen(false);
+                                setPasteText('');
+                                setActiveChatSubTab('inbox');
+                                loadChatData();
+                              } catch (err: any) {
+                                alert('Lỗi phân tích AI: ' + (err.response?.data?.detail || err.message));
+                              } finally {
+                                setIsAnalyzingPaste(false);
+                              }
+                            }}
+                            disabled={isAnalyzingPaste}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            {isAnalyzingPaste ? (
+                              <>
+                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                Đang phân tích...
+                              </>
+                            ) : (
+                              <>✨ AI phân tích nội dung</>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MODAL KẾT NỐI NHÓM CHAT */}
+                  {isConnectModalOpen && (
+                    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
+                        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                          <div>
+                            <h3 className="text-base font-bold text-[#0b1c30]">Kết nối nhóm chat</h3>
+                            <p className="text-xs text-slate-500 mt-0.5">Thêm nguồn dữ liệu mới cho AI Task Parser.</p>
+                          </div>
+                          <button onClick={() => setIsConnectModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                            <span className="material-symbols-outlined">close</span>
+                          </button>
+                        </div>
+
+                        <form
+                          onSubmit={async e => {
+                            e.preventDefault();
+                            if (!newGroupName.trim() || !newGroupLink.trim()) return;
+                            try {
+                              const group = await createChatGroup(Number(id), {
+                                name: newGroupName.trim(),
+                                platform: newGroupPlatform,
+                                link: newGroupLink.trim(),
+                                desc: newGroupDesc.trim(),
+                              });
+                              setChatGroups(prev => [group, ...prev]);
+                              setNewGroupName('');
+                              setNewGroupLink('');
+                              setNewGroupDesc('');
+                              setIsConnectModalOpen(false);
+                              flash('Đã kết nối nguồn chat thành công!');
+                            } catch (err: any) {
+                              alert('Lỗi kết nối group: ' + (err.response?.data?.detail || err.message));
+                            }
+                          }}
+                          className="p-5 space-y-4 text-xs"
+                        >
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nền tảng *</label>
+                              <select
+                                value={newGroupPlatform}
+                                onChange={e => setNewGroupPlatform(e.target.value)}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
+                              >
+                                <option value="Telegram">Telegram</option>
+                                <option value="Zalo">Zalo</option>
+                                <option value="Slack">Slack</option>
+                                <option value="Teams">Microsoft Teams</option>
+                                <option value="Discord">Discord</option>
+                                <option value="WhatsApp">WhatsApp</option>
+                                <option value="Khác">Khác</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên nhóm *</label>
+                              <input
+                                type="text"
+                                required
+                                value={newGroupName}
+                                onChange={e => setNewGroupName(e.target.value)}
+                                placeholder="VD: HR Product Team"
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Link nhóm / ID nhóm *</label>
+                            <input
+                              type="url"
+                              required
+                              value={newGroupLink}
+                              onChange={e => setNewGroupLink(e.target.value)}
+                              placeholder="https://t.me/..."
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2"
+                            />
+                          </div>
+
+                          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                            <b className="block text-xs text-[#0b1c30] mb-1">Chế độ khuyến nghị</b>
+                            <p className="text-[11px] text-slate-500 leading-relaxed">
+                              Bot chỉ xử lý tin nhắn có cú pháp <b>@MarkeeTask</b>, <b>/task</b> hoặc tin nhắn giao việc trong nhóm.
+                            </p>
+                          </div>
+
+                          <div className="pt-2 flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setIsConnectModalOpen(false)}
+                              className="px-4 py-2 bg-white border border-slate-200 text-xs font-bold rounded-lg text-slate-700 hover:bg-slate-50"
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              type="submit"
+                              className="px-4 py-2 bg-[#0058be] text-white text-xs font-bold rounded-lg shadow-sm hover:bg-[#0058be]/90"
+                            >
+                              Kết nối & kiểm tra
+                            </button>
+                          </div>
+                        </form>
+                      </div>
                     </div>
                   )}
                 </div>

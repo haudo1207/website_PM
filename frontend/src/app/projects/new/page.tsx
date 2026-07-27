@@ -25,6 +25,7 @@ export default function NewProjectPage() {
   const [name, setName] = useState('');
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [customerName, setCustomerName] = useState('');
+  const [business, setBusiness] = useState<'Infrastructure' | 'Markee' | 'All'>('Infrastructure');
   const [currentPhase, setCurrentPhase] = useState('1. Tư vấn');
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
@@ -138,6 +139,8 @@ export default function NewProjectPage() {
         code: `${name}-${year}`,
         year,
         customer_name: customerName || undefined,
+        business,
+        data_scope: business.toLowerCase(),
         current_phase: currentPhase,
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
@@ -203,7 +206,7 @@ export default function NewProjectPage() {
               <h4 className="text-[11px] font-bold text-[#0058be] uppercase tracking-wider border-b border-slate-100 pb-2">
                 1. Thông tin chung
               </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Project Name */}
                 <div className="space-y-2">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
@@ -219,6 +222,23 @@ export default function NewProjectPage() {
                   />
                 </div>
 
+                {/* Business Selector */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">
+                    Business <span className="text-rose-500 font-bold ml-0.5">*</span>
+                  </label>
+                  <select
+                    required
+                    value={business}
+                    onChange={(e) => setBusiness(e.target.value as 'Infrastructure' | 'Markee' | 'All')}
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
+                  >
+                    <option value="Infrastructure">Infrastructure</option>
+                    <option value="Markee">Markee</option>
+                    <option value="All">All (Cả 2 team)</option>
+                  </select>
+                </div>
+
                 {/* Project Year */}
                 <div className="space-y-2">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
@@ -228,7 +248,7 @@ export default function NewProjectPage() {
                     required
                     value={year}
                     onChange={(e) => setYear(parseInt(e.target.value, 10))}
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold"
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
                   >
                     {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 5 + i).map((y) => (
                       <option key={y} value={y}>{y}</option>

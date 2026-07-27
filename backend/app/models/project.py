@@ -12,8 +12,8 @@ project_members = Table(
     'project_members_v2',
     Base.metadata,
     Column('id', Integer, primary_key=True, autoincrement=True),
-    Column('project_id', Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False),
-    Column('member_id', Integer, ForeignKey('members.id', ondelete='CASCADE'), nullable=False),
+    Column('project_id', Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('member_id', Integer, ForeignKey('members.id', ondelete='CASCADE'), nullable=False, index=True),
     Column('role', String(50), default='Member'),  # PM / Leader / Member
 )
 
@@ -40,10 +40,10 @@ class Project(Base):
     name                  = Column(String(200), nullable=False)
     code                  = Column(String(50), nullable=True, unique=True, index=True)
     customer_name         = Column(String(200), nullable=True)
-    customer_id           = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
-    year                  = Column(Integer, nullable=True)
-    pm_id                 = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
-    technical_leader_id   = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
+    customer_id           = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
+    year                  = Column(Integer, nullable=True, index=True)
+    pm_id                 = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, index=True)
+    technical_leader_id   = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, index=True)
     description           = Column(Text, nullable=True)
     status                = Column(String(50), default="Planning")  # Planning / Developing / Completed / Archived
     current_phase         = Column(String(100), nullable=True, default="1. Tư vấn")
@@ -84,3 +84,12 @@ class ProjectLink(Base):
     # Relationships
     project  = relationship("Project", back_populates="links")
     platform = relationship("Platform", back_populates="links", lazy="select")
+
+
+from sqlalchemy import event
+
+@event.listens_for(Project, 'before_insert')
+@event.listens_for(Project, 'before_update')
+def sync_project_data_scope(mapper, connection, target):
+    if target.business:
+        target.data_scope = str(target.business).strip().lower()

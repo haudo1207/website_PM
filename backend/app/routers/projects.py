@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
 from ..models.system_category import Customer
@@ -169,11 +169,11 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
 
 @router.get("/projects")
 def list_projects(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    q = project_query_for_user(db, current_user)
+    q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
-    if target_b:
+    if target_b and target_b != "all":
         b_val = "Markee" if target_b == "markee" else "Infrastructure"
-        q = q.filter(Project.business == b_val)
+        q = q.filter(Project.business.in_([b_val, "All"]))
     projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
@@ -238,7 +238,15 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
 
 @router.post("/projects")
 def create_project(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    requested_scope = str(body.get("data_scope") or user_scope(current_user)).strip().lower()
+    biz_input = str(body.get("business") or body.get("business_unit") or "").strip().lower()
+    if biz_input == "all":
+        biz_val = "All"
+    elif biz_input == "markee":
+        biz_val = "Markee"
+    else:
+        biz_val = "Infrastructure"
+    default_scope = biz_val.lower() if biz_input else user_scope(current_user)
+    requested_scope = str(body.get("data_scope") or default_scope).strip().lower()
     if requested_scope not in VALID_DATA_SCOPES:
         raise HTTPException(400, "Invalid data scope.")
     if user_scope(current_user) != ALL_SCOPE:
@@ -254,8 +262,6 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == cust_id).first()
         if c_obj:
             cust_name = c_obj.name
-
-    biz_val = "Markee" if str(body.get("business") or body.get("business_unit") or "").strip().lower() == "markee" else "Infrastructure"
 
     p = Project(
         name=body.get("name", "").strip(),
@@ -367,7 +373,7 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
 
     for p in projects:
         p_biz = p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure")
-        if target_biz and p_biz != target_biz:
+        if target_biz and p_biz != target_biz and p_biz != "All":
             continue
 
         yr = p.year or 2026
@@ -416,7 +422,14 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             setattr(p, field, body[field])
     if "business" in body or "business_unit" in body:
         b_in = str(body.get("business") or body.get("business_unit") or "").strip().lower()
-        p.business = "Markee" if b_in == "markee" else "Infrastructure"
+        if b_in == "all":
+            p.business = "All"
+        elif b_in == "markee":
+            p.business = "Markee"
+        else:
+            p.business = "Infrastructure"
+        if "data_scope" not in body and (user_scope(current_user) == ALL_SCOPE or getattr(current_user, "role", None) in {"admin", "super_admin"}):
+            p.data_scope = b_in
     if "customer_id" in body and body["customer_id"]:
         from ..models.system_category import Customer as DB_Customer
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()

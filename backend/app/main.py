@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
@@ -651,6 +651,7 @@ app.include_router(performance_settings.router, prefix="/api/performance-setting
 app.include_router(accounts.router,            prefix="/api/accounts")
 app.include_router(ai_review.router,            prefix="/api")
 app.include_router(lunch_router.router,         prefix="/api/lunch")
+app.include_router(chat_ai.router,              prefix="/api")
 
 @app.get("/health")
 @app.get("/api/health")
@@ -662,6 +663,7 @@ import asyncio
 @app.on_event("startup")
 async def start_auto_sync_loop():
     async def _loop():
+        await asyncio.sleep(5)  # Allow FastAPI to complete startup first
         from .database import SessionLocal
         from .services.meeting_sync import auto_sync_all_ended_meetings
         while True:
