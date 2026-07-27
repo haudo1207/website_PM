@@ -36,6 +36,7 @@ function getGeminiApiKey(): string | undefined {
       path.join(process.cwd(), '.env'),
       path.join(process.cwd(), '..', '.env'),
       path.join(process.cwd(), 'frontend', '.env'),
+      '/home/portalkpi/website_PM/.env',
       'd:\\PM_ProjectManager\\.env',
       'd:\\PM_ProjectManager\\frontend\\.env'
     ];
