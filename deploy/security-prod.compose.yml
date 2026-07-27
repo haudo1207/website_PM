@@ -47,6 +47,7 @@ services:
     image: portal-security-prod-frontend:${APP_COMMIT}
     container_name: task_frontend
     restart: unless-stopped
+    env_file: ./.env
     build:
       context: ${SOURCE_DIR}/frontend
       args:
@@ -54,6 +55,8 @@ services:
         NEXT_PUBLIC_PORTAL_BRAND: securityzone
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_API_KEY: ${AI_API_KEY:-}
     ports:
       - "0.0.0.0:${FRONTEND_PORT:-3000}:3000"
     depends_on:
@@ -64,6 +67,7 @@ services:
     image: portal-markee-prod-frontend:${APP_COMMIT}
     container_name: markee_prod_frontend
     restart: unless-stopped
+    env_file: ./.env
     build:
       context: ${SOURCE_DIR}/frontend
       args:
@@ -71,6 +75,8 @@ services:
         NEXT_PUBLIC_PORTAL_BRAND: markee
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_API_KEY: ${AI_API_KEY:-}
     ports:
       - "0.0.0.0:${MARKEE_FRONTEND_PORT:-3300}:3000"
     depends_on:
