@@ -34,5 +34,6 @@ class TaskStatus(Base):
 class Customer(Base):
     __tablename__ = "customers"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
     description = Column(String, nullable=True)
+    business_unit = Column(String, nullable=False, default="infrastructure")

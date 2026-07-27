@@ -7,17 +7,424 @@ import SummaryCard from '@/components/leave-request/SummaryCard';
 import StatusBadge from '@/components/leave-request/StatusBadge';
 import LeaveRequestForm from '@/components/leave-request/LeaveRequestForm';
 import Portal from '@/components/Portal';
-import { LeaveRequest, LeaveRequestFormValues, getStorageKey, mockLeaveRequests } from '@/lib/leave-request';
-import { formatDateLabel } from '@/lib/leave-request';
-import { getMembers, getLeaveRequests, createLeaveRequest, updateLeaveRequest, deleteLeaveRequest, approveLeaveRequest } from '@/lib/api';
+import { formatDateLabel, LeaveRequest, LeaveRequestFormValues, getStorageKey, mockLeaveRequests } from '@/lib/leave-request';
+import { getMembers, getLeaveRequests, createLeaveRequest, updateLeaveRequest, deleteLeaveRequest, approveLeaveRequest, getLunchRecords, upsertLunchRecord, getLunchMonthlySummary } from '@/lib/api';
 
 const ITEMS_PER_PAGE = 5;
 
 interface TeamMember {
   id: number;
   name: string;
-  department: string;
+  team: string;
   role: string;
+  email?: string;
+  telegram_username?: string;
+  phone?: string;
+  position?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LUNCH CHECK-IN COMPONENT (with backend API)
+// ═══════════════════════════════════════════════════════════════
+function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { members: TeamMember[]; leaveRequests: LeaveRequest[]; calendarDate: string; isAdmin: boolean }) {
+  const [lunchRecords, setLunchRecords] = useState<{ id: number; member_id: number; date: string; has_lunch: boolean; status?: string }[]>([]);
+  const [selectedTeam, setSelectedTeam] = useState('All');
+  const [saving, setSaving] = useState(false);
+  const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
+  const [lunchView, setLunchView] = useState<'daily' | 'monthly'>('daily');
+  const [monthlyYear, setMonthlyYear] = useState(new Date().getFullYear());
+  const [monthlyMonth, setMonthlyMonth] = useState(new Date().getMonth() + 1);
+  const [monthlyData, setMonthlyData] = useState<any>(null);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+
+  useEffect(() => {
+    const storedMemberId = localStorage.getItem('member_id');
+    if (storedMemberId) setCurrentMemberId(Number(storedMemberId));
+  }, []);
+
+  // Fetch lunch records from API when date changes or view switches
+  useEffect(() => {
+    const fetchLunch = async () => {
+      try {
+        const records = await getLunchRecords({ date: calendarDate });
+        setLunchRecords(records);
+      } catch (err) {
+        console.error('Error fetching lunch records:', err);
+      }
+    };
+    fetchLunch();
+  }, [calendarDate]);
+
+  // Fetch monthly summary when admin switches to monthly view
+  useEffect(() => {
+    if (!isAdmin || lunchView !== 'monthly') return;
+    const fetchMonthly = async () => {
+      setMonthlyLoading(true);
+      try {
+        const data = await getLunchMonthlySummary(monthlyYear, monthlyMonth);
+        setMonthlyData(data);
+      } catch (err) {
+        console.error('Error fetching monthly summary:', err);
+      } finally {
+        setMonthlyLoading(false);
+      }
+    };
+    fetchMonthly();
+  }, [isAdmin, lunchView, monthlyYear, monthlyMonth]);
+
+  const teamsFromDB = useMemo(() => {
+    const teams = new Set<string>();
+    members.forEach((m) => { if (m.team) teams.add(m.team); });
+    return ['All', ...Array.from(teams).sort()];
+  }, [members]);
+
+  const target = new Date(calendarDate);
+  const offMap: Record<number, boolean> = {};
+  leaveRequests.forEach((req) => {
+    // Only count approved leave requests as off
+    if (req.status !== 'Approved') return;
+    const s = new Date(req.start_date);
+    const e = new Date(req.end_date);
+    if (s <= target && target <= e) {
+      // Try member_id first, then user.member_id, then user_id (same as Calendar Team)
+      const mid = req.member_id || req.user?.member_id || req.user_id;
+      if (mid) offMap[mid] = true;
+    }
+  });
+
+  // Filter members based on role
+  const membersToShow = useMemo(() => {
+    if (isAdmin) {
+      if (selectedTeam === 'All') return members;
+      return members.filter((m) => m.team === selectedTeam);
+    }
+    const memberId = currentMemberId;
+    if (memberId) return members.filter((m) => m.id === memberId);
+    return [];
+  }, [isAdmin, members, selectedTeam, currentMemberId]);
+
+  const handleToggle = async (memberId: number, hasLunchVal: boolean) => {
+    if (!isAdmin && memberId !== currentMemberId) {
+      alert('Bạn chỉ có thể đăng ký cơm cho chính mình');
+      return;
+    }
+    setSaving(true);
+    try {
+      const status = hasLunchVal ? 'lunch' : 'no_lunch';
+      await upsertLunchRecord({ member_id: memberId, date: calendarDate, has_lunch: hasLunchVal, status: status });
+      const records = await getLunchRecords({ date: calendarDate });
+      setLunchRecords(records);
+    } catch (err) {
+      console.error('Error saving lunch record:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStatusChange = async (memberId: number, status: string) => {
+    if (!isAdmin) return;
+    setSaving(true);
+    try {
+      const hasLunch = status === 'lunch' || status === 'bonus';
+      await upsertLunchRecord({ member_id: memberId, date: calendarDate, has_lunch: hasLunch, status: status });
+      const records = await getLunchRecords({ date: calendarDate });
+      setLunchRecords(records);
+    } catch (err) {
+      console.error('Error saving lunch record:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Admin summary
+  const summary = useMemo(() => {
+    if (!isAdmin) return null;
+    const total = membersToShow.length;
+    const offCount = membersToShow.filter((m) => offMap[m.id]).length;
+    const working = membersToShow.filter((m) => !offMap[m.id]);
+    const registeredLunch = working.filter((m) =>
+      lunchRecords.some((r) => r.member_id === m.id && (r.status === 'lunch' || r.status === 'bonus' || (!r.status && r.has_lunch)))
+    ).length;
+    const bonusCount = working.filter((m) =>
+      lunchRecords.some((r) => r.member_id === m.id && r.status === 'bonus')
+    ).length;
+    const notRegistered = working.length - registeredLunch;
+    return { total, offCount, working: working.length, registeredLunch, notRegistered, bonusCount };
+  }, [isAdmin, membersToShow, offMap, lunchRecords]);
+
+  return (
+    <div>
+      {/* View toggle - Admin only */}
+      {isAdmin && (
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex rounded-lg border border-[#c2c6d6] overflow-hidden">
+            <button
+              onClick={() => setLunchView('daily')}
+              className={`px-4 py-2 text-sm font-semibold ${lunchView === 'daily' ? 'bg-[#0058be] text-white' : 'bg-white text-[#565e74] hover:bg-[#f8f9ff]'}`}
+            >
+              Theo ngay
+            </button>
+            <button
+              onClick={() => setLunchView('monthly')}
+              className={`px-4 py-2 text-sm font-semibold ${lunchView === 'monthly' ? 'bg-[#0058be] text-white' : 'bg-white text-[#565e74] hover:bg-[#f8f9ff]'}`}
+            >
+              Theo thang
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Monthly Summary View - Admin only */}
+      {isAdmin && lunchView === 'monthly' && (
+        <div>
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-semibold">Nam</label>
+              <select
+                value={monthlyYear}
+                onChange={e => setMonthlyYear(Number(e.target.value))}
+                className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none"
+              >
+                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-semibold">Thang</label>
+              <select
+                value={monthlyMonth}
+                onChange={e => setMonthlyMonth(Number(e.target.value))}
+                className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none"
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                  <option key={m} value={m}>Thang {m}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {monthlyLoading && (
+            <div className="py-8 text-center text-sm text-[#565e74]">Dang tai du lieu...</div>
+          )}
+
+          {monthlyData && !monthlyLoading && (
+            <>
+              {/* Summary cards */}
+              <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border bg-white p-3 text-center">
+                  <div className="text-lg font-bold text-[#0b1c30]">{monthlyData.working_days}</div>
+                  <div className="text-xs text-[#565e74]">Ngay lam viec</div>
+                </div>
+                <div className="rounded-lg border bg-emerald-50 p-3 text-center">
+                  <div className="text-lg font-bold text-emerald-600">{monthlyData.total_lunch}</div>
+                  <div className="text-xs text-[#565e74]">Tong so suat an</div>
+                </div>
+                <div className="rounded-lg border bg-rose-50 p-3 text-center">
+                  <div className="text-lg font-bold text-rose-600">{monthlyData.total_no_lunch}</div>
+                  <div className="text-xs text-[#565e74]">Tong khong an</div>
+                </div>
+                <div className="rounded-lg border bg-blue-50 p-3 text-center">
+                  <div className="text-lg font-bold text-blue-600">{monthlyData.members.length}</div>
+                  <div className="text-xs text-[#565e74]">Tong nhan vien</div>
+                </div>
+                <div className="rounded-lg border bg-amber-50 p-3 text-center">
+                  <div className="text-lg font-bold text-amber-600">{(monthlyData.total_cost || 0).toLocaleString('vi-VN')}d</div>
+                  <div className="text-xs text-[#565e74]">Tong tien</div>
+                </div>
+              </div>
+
+              {/* Member table */}
+              <div className="overflow-x-auto rounded-xl border border-[#c2c6d6]/70">
+                <table className="min-w-full divide-y divide-[#c2c6d6] text-sm">
+                  <thead className="bg-[#f8f9ff] text-[#565e74]">
+                    <tr>
+                      <th className="px-3 py-3 text-left font-semibold">No.</th>
+                      <th className="px-3 py-3 text-left font-semibold">Họ và tên</th>
+                      <th className="px-3 py-3 text-left font-semibold">Team</th>
+                      <th className="px-3 py-3 text-center font-semibold">Số ngày ăn cơm</th>
+                      <th className="px-3 py-3 text-center font-semibold">Số ngày không ăn</th>
+                      <th className="px-3 py-3 text-center font-semibold">Số ngày working</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#eef2f7] bg-white">
+                    {monthlyData.members.map((m: any, idx: number) => (
+                      <tr key={m.member_id} className="hover:bg-[#f8f9ff]">
+                        <td className="px-3 py-3 font-semibold text-[#0b1c30]">{idx + 1}</td>
+                        <td className="px-3 py-3 text-[#0b1c30]">{m.full_name}</td>
+                        <td className="px-3 py-3 text-[#565e74]">{m.team}</td>
+                        <td className="px-3 py-3 text-center">
+                          <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                            {m.lunch_count}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <span className="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700">
+                            {m.no_lunch_count}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-center font-semibold text-[#0b1c30]">
+                          {m.total_registered_days}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Daily View */}
+      {lunchView === 'daily' && (
+        <>
+      <div className="mb-4 flex items-center gap-3">
+        {isAdmin && (
+          <div>
+            <label className="mb-1 block text-sm font-semibold">Team</label>
+            <select value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)} className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none">
+              {teamsFromDB.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {saving && <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">Saving...</div>}
+
+      {/* Admin summary cards */}
+      {isAdmin && summary && (
+        <div className="mb-4 grid grid-cols-2 md:grid-cols-7 gap-3">
+          <div className="rounded-lg border bg-white p-3 text-center">
+            <div className="text-lg font-bold text-[#0b1c30]">{summary.total}</div>
+            <div className="text-xs text-[#565e74]">Total</div>
+          </div>
+          <div className="rounded-lg border bg-white p-3 text-center">
+            <div className="text-lg font-bold text-emerald-600">{summary.working}</div>
+            <div className="text-xs text-[#565e74]">Working</div>
+          </div>
+          <div className="rounded-lg border bg-white p-3 text-center">
+            <div className="text-lg font-bold text-rose-600">{summary.offCount}</div>
+            <div className="text-xs text-[#565e74]">Off</div>
+          </div>
+          <div className="rounded-lg border bg-emerald-50 p-3 text-center">
+            <div className="text-lg font-bold text-emerald-600">{summary.registeredLunch}</div>
+            <div className="text-xs text-[#565e74]">Đã đăng ký cơm</div>
+          </div>
+          <div className="rounded-lg border bg-amber-50 p-3 text-center">
+            <div className="text-lg font-bold text-amber-600">{summary.notRegistered}</div>
+            <div className="text-xs text-[#565e74]">Chưa đăng ký</div>
+          </div>
+          <div className="rounded-lg border bg-amber-50 p-3 text-center">
+            <div className="text-lg font-bold text-amber-600">{summary.bonusCount || 0}</div>
+            <div className="text-xs text-[#565e74]">Bonus</div>
+          </div>
+          <div className="rounded-lg border bg-amber-50 p-3 text-center">
+            <div className="text-lg font-bold text-amber-600">{(summary.registeredLunch * 40000).toLocaleString('vi-VN')}đ</div>
+            <div className="text-xs text-[#565e74]">Tổng tiền</div>
+          </div>
+        </div>
+      )}
+
+      {/* Daily table view */}
+      <div className="overflow-x-auto rounded-xl border border-[#c2c6d6]/70">
+        <table className="min-w-full divide-y divide-[#c2c6d6] text-sm">
+          <thead className="bg-[#f8f9ff] text-[#565e74]">
+            <tr>
+              <th className="px-3 py-3 text-left font-semibold">STT</th>
+              <th className="px-3 py-3 text-left font-semibold">Họ tên</th>
+              <th className="px-3 py-3 text-left font-semibold">Team</th>
+              <th className="px-3 py-3 text-center font-semibold">Trạng thái</th>
+              <th className="px-3 py-3 text-center font-semibold">Cơm trưa</th>
+              <th className="px-3 py-3 text-center font-semibold">Tiền (VNĐ)</th>
+              {!isAdmin && <th className="px-3 py-3 text-center font-semibold">Thao tác</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#eef2f7] bg-white">
+            {membersToShow.map((m, idx) => {
+              const isOff = !!offMap[m.id];
+              const lunch = lunchRecords.find(r => r.member_id === m.id);
+              const hasRegistered = lunch !== undefined;
+              const cost = (!isOff && (lunch?.status === 'lunch' || lunch?.status === 'bonus' || (!lunch?.status && lunch?.has_lunch))) ? 40000 : 0;
+
+              return (
+                <tr key={m.id} className="hover:bg-[#f8f9ff]">
+                  <td className="px-3 py-3 font-semibold text-[#0b1c30]">{idx + 1}</td>
+                  <td className="px-3 py-3 text-[#0b1c30]">{m.name}</td>
+                  <td className="px-3 py-3 text-[#565e74]">{m.team}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${isOff ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {isOff ? 'Off' : 'Working'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    {isAdmin ? (
+                      <select
+                        value={isOff ? 'no_lunch' : (lunch?.status || (lunch?.has_lunch ? 'lunch' : 'no_lunch'))}
+                        onChange={(e) => handleStatusChange(m.id, e.target.value)}
+                        disabled={saving || isOff}
+                        className="rounded-lg border border-[#c2c6d6] bg-white px-2 py-1 text-xs font-semibold outline-none"
+                      >
+                        <option value="off">Off</option>
+                        <option value="lunch">Có ăn</option>
+                        <option value="no_lunch">Không ăn</option>
+                        <option value="bonus">Bonus</option>
+                      </select>
+                    ) : isOff ? (
+                      <span className="text-[#565e74]">-</span>
+                    ) : hasRegistered ? (
+                      <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                        lunch.status === 'bonus' ? 'bg-amber-100 text-amber-700' :
+                        lunch.status === 'off' ? 'bg-rose-100 text-rose-700' :
+                        lunch.has_lunch ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                      }`}>
+                        {lunch.status === 'bonus' ? 'Bonus' :
+                         lunch.status === 'off' ? 'Off' :
+                         lunch.has_lunch ? 'Có ăn' : 'Không ăn'}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-amber-600">Chưa đăng ký</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-center font-semibold text-amber-700">
+                    {cost > 0 ? cost.toLocaleString('vi-VN') : '0'}
+                  </td>
+                  {!isAdmin && (
+                    <td className="px-3 py-3">
+                      {!isOff && (
+                        <div className="flex items-center justify-center gap-2">
+                          <button onClick={() => handleToggle(m.id, true)} disabled={saving}
+                            className={`rounded-full px-3 py-1 text-xs font-semibold transition-all ${lunch?.has_lunch === true ? 'bg-emerald-100 text-emerald-700 ring-2 ring-emerald-400' : 'bg-gray-100 text-gray-600 hover:bg-emerald-50'}`}>
+                            Có ăn
+                          </button>
+                          <button onClick={() => handleToggle(m.id, false)} disabled={saving}
+                            className={`rounded-full px-3 py-1 text-xs font-semibold transition-all ${lunch?.has_lunch === false ? 'bg-rose-100 text-rose-700 ring-2 ring-rose-400' : 'bg-gray-100 text-gray-600 hover:bg-rose-50'}`}>
+                            Không ăn
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {!isAdmin && !currentMemberId && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+          Không thể xác định member của bạn. Vui lòng liên hệ admin để thiết lập tài khoản.
+        </div>
+      )}
+      {membersToShow.length === 0 && (
+        <div className="py-8 text-center text-sm text-[#565e74]">
+          {isAdmin ? 'No members found.' : 'No member information found for your account.'}
+        </div>
+      )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function dateToYMD(d: Date) {
@@ -35,9 +442,11 @@ export default function LeaveRequestPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [toast, setToast] = useState('');
   const [viewingRequest, setViewingRequest] = useState<LeaveRequest | null>(null);
+  const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
+  const [selectedMemberDetail, setSelectedMemberDetail] = useState<any>(null);
   const [openActionId, setOpenActionId] = useState<number | null>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; height?: number } | null>(null);
-  const [view, setView] = useState<'list' | 'calendar'>('list');
+  const [view, setView] = useState<'list' | 'calendar' | 'lunch'>('list');
   const todayDefault = dateToYMD(new Date());
   const [calendarDate, setCalendarDate] = useState<string>(todayDefault);
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
@@ -46,6 +455,8 @@ export default function LeaveRequestPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Calendar team filter
+  const [calendarSelectedTeam, setCalendarSelectedTeam] = useState('All');
 
   const editingId = useMemo(() => {
     const idParam = searchParams.get('edit');
@@ -70,14 +481,18 @@ export default function LeaveRequestPage() {
         const mapped: TeamMember[] = membersData.map((m: any) => ({
           id: m.id,
           name: m.full_name || m.display_name,
-          department: m.department || 'Unassigned',
-          role: m.position || m.team || 'Member',
+          team: m.team || 'Unassigned',
+          role: m.position || 'Member',
+          email: m.email,
+          telegram_username: m.telegram_username,
+          phone: m.phone,
+          position: m.position,
         }));
         setTeamMembers(mapped);
 
         // Check if user is admin
         const role = localStorage.getItem('role');
-        setIsAdmin(role === 'admin');
+        setIsAdmin(role === 'super_admin' || role === 'admin');
       } catch (error) {
         console.error('Error fetching data:', error);
         // Fallback to mock data
@@ -169,6 +584,30 @@ export default function LeaveRequestPage() {
     return map;
   }, [calendarDate, requests, teamMembers]);
 
+  // Extract unique teams from DB for calendar filter
+  const calendarTeams = useMemo(() => {
+    const teams = new Set<string>();
+    teamMembers.forEach((m) => { if (m.team) teams.add(m.team); });
+    return ['All', ...Array.from(teams).sort()];
+  }, [teamMembers]);
+
+  // Filter team members based on calendar team filter
+  const filteredCalendarMembers = useMemo(() => {
+    if (calendarSelectedTeam === 'All') return teamMembers;
+    return teamMembers.filter((m) => m.team === calendarSelectedTeam);
+  }, [teamMembers, calendarSelectedTeam]);
+
+  // Group filtered members by team
+  const calendarTeamsGrouped = useMemo(() => {
+    const teamMap = new Map<string, TeamMember[]>();
+    filteredCalendarMembers.forEach((m) => {
+      const t = m.team || 'Unassigned';
+      if (!teamMap.has(t)) teamMap.set(t, []);
+      teamMap.get(t)!.push(m);
+    });
+    return Array.from(teamMap.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [filteredCalendarMembers]);
+
   const totalPages = Math.max(1, Math.ceil(requests.length / ITEMS_PER_PAGE));
   const pageItems = useMemo(() => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -235,17 +674,6 @@ export default function LeaveRequestPage() {
 
   const isSubmitForm = pathname === '/leave-request/new';
 
-  // Group team members by department
-  const departments = useMemo(() => {
-    const deptMap = new Map<string, TeamMember[]>();
-    teamMembers.forEach((m) => {
-      const dept = m.department || 'Unassigned';
-      if (!deptMap.has(dept)) deptMap.set(dept, []);
-      deptMap.get(dept)!.push(m);
-    });
-    return Array.from(deptMap.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [teamMembers]);
-
   if (loading) {
     return (
       <div className="min-h-screen bg-[#f0f2f5] text-[#0b1c30] flex items-center justify-center">
@@ -299,6 +727,16 @@ export default function LeaveRequestPage() {
                   }`}
                 >
                   Calendar Team
+                </button>
+                <button
+                  onClick={() => setView('lunch')}
+                  className={`px-4 py-3 font-semibold text-sm transition-all ${
+                    view === 'lunch'
+                      ? 'text-[#0058be] border-b-2 border-[#0058be]'
+                      : 'text-[#565e74] hover:text-[#0b1c30]'
+                  }`}
+                >
+                  Check Working / Lunch
                 </button>
               </div>
 
@@ -527,69 +965,85 @@ export default function LeaveRequestPage() {
                     </div>
                   </div>
                 </>
+              ) : view === 'lunch' ? (
+                /* ========== LUNCH CHECK-IN VIEW ========== */
+                <LunchCheckIn 
+                  members={teamMembers} 
+                  leaveRequests={requests}
+                  calendarDate={calendarDate}
+                  isAdmin={isAdmin}
+                />
               ) : (
                 /* ========== CALENDAR VIEW ========== */
                 <>
-                  <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                     <div>
                       <p className="text-sm text-[#565e74]">
                         Team working status for a selected day. Select date to view who's working and who's off.
                       </p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <label className="text-sm font-semibold text-[#565e74]">Select Date:</label>
-                      <input
-                        type="date"
-                        value={calendarDate}
-                        onChange={(e) => setCalendarDate(e.target.value)}
-                        className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none"
-                      />
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold">Date</label>
+                        <input
+                          type="date"
+                          value={calendarDate}
+                          onChange={(e) => setCalendarDate(e.target.value)}
+                          className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold">Team</label>
+                        <select
+                          value={calendarSelectedTeam}
+                          onChange={(e) => setCalendarSelectedTeam(e.target.value)}
+                          className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none"
+                        >
+                          {calendarTeams.map((team) => (
+                            <option key={team} value={team}>{team}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mb-6 rounded-lg border bg-[#f8f9ff] p-4">
-                    <div className="flex flex-wrap items-center gap-4 text-sm">
-                      <span>
-                        <span className="font-semibold">Viewing:</span>{' '}
-                        <span className="text-[#0058be] font-bold">{formatDateLabel(calendarDate)}</span>
-                      </span>
-                      <span className="text-[#565e74]">|</span>
-                      <span className="text-[#565e74]">
-                        Total: <span className="font-semibold">{teamMembers.length} members</span>
-                      </span>
-                      <span className="text-[#565e74]">|</span>
-                      <span className="text-[#565e74]">
-                        Working:{' '}
-                        <span className="font-semibold text-emerald-600">
-                          {teamMembers.filter((m) => !calendarStatusByMember[m.id]?.off).length}
-                        </span>
-                      </span>
-                      <span className="text-[#565e74]">|</span>
-                      <span className="text-[#565e74]">
-                        Off:{' '}
-                        <span className="font-semibold text-rose-600">
-                          {teamMembers.filter((m) => calendarStatusByMember[m.id]?.off).length}
-                        </span>
-                      </span>
+                  {/* Calendar summary */}
+                  <div className="mb-4 grid grid-cols-3 gap-3">
+                    <div className="rounded-lg border bg-white p-3 text-center">
+                      <div className="text-lg font-bold text-[#0b1c30]">{filteredCalendarMembers.length}</div>
+                      <div className="text-xs text-[#565e74]">Total</div>
+                    </div>
+                    <div className="rounded-lg border bg-emerald-50 p-3 text-center">
+                      <div className="text-lg font-bold text-emerald-600">
+                        {filteredCalendarMembers.filter((m) => !calendarStatusByMember[m.id]?.off).length}
+                      </div>
+                      <div className="text-xs text-[#565e74]">Working</div>
+                    </div>
+                    <div className="rounded-lg border bg-rose-50 p-3 text-center">
+                      <div className="text-lg font-bold text-rose-600">
+                        {filteredCalendarMembers.filter((m) => calendarStatusByMember[m.id]?.off).length}
+                      </div>
+                      <div className="text-xs text-[#565e74]">Off</div>
                     </div>
                   </div>
 
                   <div className="grid gap-6">
-                    {departments.length === 0 && (
+                    {calendarTeamsGrouped.length === 0 && (
                       <div className="py-8 text-center text-sm text-[#565e74]">
                         Loading team members...
                       </div>
                     )}
-                    {departments.map(([dept, members]) => (
-                      <div key={dept}>
-                        <h3 className="mb-3 text-base font-bold text-[#0b1c30]">{dept}</h3>
+                    {calendarTeamsGrouped.map(([team, members]) => (
+                      <div key={team}>
+                        <h3 className="mb-3 text-base font-bold text-[#0b1c30]">{team}</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                           {members.map((m) => {
                             const s = calendarStatusByMember[m.id];
                             return (
                               <div
                                 key={m.id}
-                                className={`rounded-lg border bg-white p-4 transition-shadow hover:shadow-sm ${
+                                onClick={() => setSelectedMember(m as any)}
+                                className={`rounded-lg border bg-white p-4 transition-shadow hover:shadow-sm cursor-pointer ${
                                   s.off ? 'border-rose-200 bg-rose-50/40' : 'border-emerald-200 bg-emerald-50/40'
                                 }`}
                               >
@@ -680,6 +1134,54 @@ export default function LeaveRequestPage() {
         {toast && (
           <div className="fixed bottom-4 right-4 rounded-lg bg-[#0b1c30] px-4 py-3 text-sm font-medium text-white shadow-lg">
             {toast}
+          </div>
+        )}
+
+        {selectedMember && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+              <div className="mb-4 flex items-start justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-[#0b1c30]">Thông tin thành viên</h3>
+                  <p className="text-sm text-[#565e74]">Chi tiết liên hệ và thông tin cá nhân.</p>
+                </div>
+                <button onClick={() => setSelectedMember(null)} className="text-sm text-[#565e74]">
+                  Close
+                </button>
+              </div>
+              <div className="space-y-3 text-sm text-[#0b1c30]">
+                <div className="flex justify-between">
+                  <span className="text-[#565e74]">Tên hiển thị</span>
+                  <span className="font-semibold">{selectedMember.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#565e74]">Team</span>
+                  <span className="font-semibold">{selectedMember.team}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#565e74]">Role</span>
+                  <span className="font-semibold">{selectedMember.role}</span>
+                </div>
+                {selectedMember.email && (
+                  <div className="flex justify-between">
+                    <span className="text-[#565e74]">Email</span>
+                    <span className="font-semibold">{selectedMember.email}</span>
+                  </div>
+                )}
+                {selectedMember.telegram_username && (
+                  <div className="flex justify-between">
+                    <span className="text-[#565e74]">Telegram</span>
+                    <span className="font-semibold">{selectedMember.telegram_username}</span>
+                  </div>
+                )}
+                {selectedMember.phone && (
+                  <div className="flex justify-between">
+                    <span className="text-[#565e74]">Phone</span>
+                    <span className="font-semibold">{selectedMember.phone}</span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

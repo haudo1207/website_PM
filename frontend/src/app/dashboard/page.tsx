@@ -14,10 +14,10 @@ function DashboardContent() {
   useEffect(() => {
     Promise.all([
       getProjects().then(setProjects),
-      getPriorities().then(setPriorities).catch(() => {}),
-      getStatuses().then(setStatuses).catch(() => {}),
+      getPriorities().then(setPriorities).catch(() => { }),
+      getStatuses().then(setStatuses).catch(() => { }),
     ])
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, []);
 
@@ -116,11 +116,10 @@ function DashboardContent() {
                           <td className="px-4 py-3 font-bold text-[#0b1c30]">{p.name}</td>
                           <td className="px-4 py-3 text-slate-500">{p.customer_name || '—'}</td>
                           <td className="px-4 py-3">
-                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              p.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                              p.status === 'Developing' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
-                              'bg-amber-50 text-amber-700 border border-amber-200'
-                            }`}>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${p.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                p.status === 'Developing' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                                  'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}>
                               {p.status}
                             </span>
                           </td>
@@ -136,7 +135,7 @@ function DashboardContent() {
             {/* Side Panel: System Categories Info */}
             <div className="bg-white rounded-xl border border-[#c2c6d6]/60 p-5 shadow-sm flex flex-col space-y-4">
               <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wider">Cấu hình Hệ thống</h3>
-              
+
               <div className="space-y-3 flex-1 overflow-y-auto">
                 <div>
                   <h4 className="text-xs font-bold text-[#565e74] mb-1.5">Mức độ ưu tiên (Priorities)</h4>

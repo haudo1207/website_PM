@@ -97,103 +97,112 @@ def sync_zoom_meeting(meeting_url: str, meeting_info: dict) -> dict:
         raise ValueError("Link Zoom không đúng định dạng (/j/ID)")
 
     zoom_meeting_id = match.group(1)
-    token = get_zoom_access_token()
+    
+    # Check if meeting has ended by time or status
+    is_ended = False
+    try:
+        meeting_date = meeting_info.get("meeting_date")
+        start_time = meeting_info.get("start_time")
+        duration = int(meeting_info.get("duration") or 60)
+        if meeting_date and start_time:
+            start_dt = datetime.datetime.combine(meeting_date, start_time)
+            end_dt = start_dt + datetime.timedelta(minutes=duration)
+            if datetime.datetime.now() >= end_dt:
+                is_ended = True
+    except Exception:
+        pass
 
-    # Check if meeting has ended
-    zoom_resp = requests.get(
-        f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=15,
-    )
-    if zoom_resp.status_code != 200:
-        raise ValueError(f"Không thể kết nối đến cuộc họp Zoom (ID: {zoom_meeting_id})")
+    try:
+        token = get_zoom_access_token()
 
-    zoom_data = zoom_resp.json()
-    is_ended = zoom_data.get("status") == "ended"
+        zoom_resp = requests.get(
+            f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        if zoom_resp.status_code == 200:
+            zoom_data = zoom_resp.json()
+            if zoom_data.get("status") == "ended":
+                is_ended = True
 
-    # Also check by time
-    if not is_ended:
+        if not is_ended and meeting_info.get("status") not in ("DONE", "ĐÃ DIỄN RA"):
+            raise ValueError("Cuộc họp chưa kết thúc trên Zoom. Chỉ có thể đồng bộ sau khi cuộc họp đã kết thúc.")
+
+        # ── Try Method 1: Zoom Cloud Recording Transcript (VTT) ──
         try:
-            meeting_date = meeting_info.get("meeting_date")
-            start_time = meeting_info.get("start_time")
-            duration = int(meeting_info.get("duration") or 60)
-            if meeting_date and start_time:
-                start_dt = datetime.datetime.combine(meeting_date, start_time)
-                end_dt = start_dt + datetime.timedelta(minutes=duration)
-                if datetime.datetime.now() > end_dt:
-                    is_ended = True
-        except Exception:
-            pass
+            rec_resp = requests.get(
+                f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}/recordings",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            if rec_resp.status_code == 200:
+                rec_data = rec_resp.json()
+                files = rec_data.get("recording_files", [])
 
-    if not is_ended:
-        raise ValueError("Cuộc họp chưa kết thúc trên Zoom. Chỉ có thể đồng bộ sau khi cuộc họp đã kết thúc.")
+                transcript_file = next((f for f in files if f.get("file_type") == "TRANSCRIPT"), None)
+                if transcript_file and transcript_file.get("download_url"):
+                    dl_resp = requests.get(
+                        f"{transcript_file['download_url']}?access_token={token}",
+                        timeout=30,
+                    )
+                    if dl_resp.status_code == 200:
+                        plain_transcript = _parse_vtt(dl_resp.text)
+                        summary = summarize_with_ai(plain_transcript, meeting_info)
+                        return {"transcript": plain_transcript, "summary": summary, "status": "DONE"}
+        except Exception as e:
+            logger.warning(f"Zoom transcript fetch failed: {e}")
 
-    # ── Try Method 1: Zoom Cloud Recording Transcript (VTT) ──
-    try:
-        rec_resp = requests.get(
-            f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}/recordings",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15,
-        )
-        if rec_resp.status_code == 200:
-            rec_data = rec_resp.json()
-            files = rec_data.get("recording_files", [])
+        # ── Try Method 2: Zoom Native AI Meeting Summary ──
+        try:
+            summary_resp = requests.get(
+                f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}/meeting_summary",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            if summary_resp.status_code == 200:
+                summary_data = summary_resp.json()
+                if summary_data.get("summary_details"):
+                    return {
+                        "transcript": summary_data["summary_details"],
+                        "summary": [summary_data["summary_details"]],
+                        "status": "DONE",
+                    }
+        except Exception as e:
+            logger.warning(f"Zoom AI Summary fetch failed: {e}")
 
-            transcript_file = next((f for f in files if f.get("file_type") == "TRANSCRIPT"), None)
-            if transcript_file and transcript_file.get("download_url"):
-                dl_resp = requests.get(
-                    f"{transcript_file['download_url']}?access_token={token}",
-                    timeout=30,
-                )
-                if dl_resp.status_code == 200:
-                    plain_transcript = _parse_vtt(dl_resp.text)
-                    summary = summarize_with_ai(plain_transcript, meeting_info)
-                    return {"transcript": plain_transcript, "summary": summary, "status": "DONE"}
+        # ── Try Method 3: AssemblyAI Pipeline (download audio → transcribe → summarize) ──
+        try:
+            rec_resp = requests.get(
+                f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}/recordings",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            if rec_resp.status_code == 200:
+                rec_data = rec_resp.json()
+                files = rec_data.get("recording_files", [])
+                media_file = next((f for f in files if f.get("file_type") == "M4A"), None) or \
+                             next((f for f in files if f.get("file_type") == "MP4"), None)
+
+                if media_file and media_file.get("download_url"):
+                    download_url = f"{media_file['download_url']}?access_token={token}"
+                    transcript = transcribe_with_assemblyai(download_url)
+                    summary = summarize_with_ai(transcript, meeting_info)
+                    return {"transcript": transcript, "summary": summary, "status": "DONE"}
+        except Exception as e:
+            logger.warning(f"AssemblyAI pipeline failed: {e}")
+
     except Exception as e:
-        logger.warning(f"Zoom transcript fetch failed: {e}")
+        logger.warning(f"Zoom API sync error: {e}")
 
-    # ── Try Method 2: Zoom Native AI Meeting Summary ──
-    try:
-        summary_resp = requests.get(
-            f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}/meeting_summary",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15,
-        )
-        if summary_resp.status_code == 200:
-            summary_data = summary_resp.json()
-            if summary_data.get("summary_details"):
-                return {
-                    "transcript": summary_data["summary_details"],
-                    "summary": [summary_data["summary_details"]],
-                    "status": "DONE",
-                }
-    except Exception as e:
-        logger.warning(f"Zoom AI Summary fetch failed: {e}")
-
-    # ── Try Method 3: AssemblyAI Pipeline (download audio → transcribe → summarize) ──
-    try:
-        rec_resp = requests.get(
-            f"https://api.zoom.us/v2/meetings/{zoom_meeting_id}/recordings",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15,
-        )
-        if rec_resp.status_code == 200:
-            rec_data = rec_resp.json()
-            files = rec_data.get("recording_files", [])
-            media_file = next((f for f in files if f.get("file_type") == "M4A"), None) or \
-                         next((f for f in files if f.get("file_type") == "MP4"), None)
-
-            if media_file and media_file.get("download_url"):
-                download_url = f"{media_file['download_url']}?access_token={token}"
-                transcript = transcribe_with_assemblyai(download_url)
-                summary = summarize_with_ai(transcript, meeting_info)
-                return {"transcript": transcript, "summary": summary, "status": "DONE"}
-    except Exception as e:
-        logger.warning(f"AssemblyAI pipeline failed: {e}")
+    # ── Fallback Method 4: Existing Transcript on Meeting ──
+    existing_transcript = meeting_info.get("transcript")
+    if existing_transcript and existing_transcript.strip():
+        summary = summarize_with_ai(existing_transcript, meeting_info)
+        return {"transcript": existing_transcript, "summary": summary, "status": "DONE"}
 
     raise ValueError(
-        "Không tìm thấy file Transcript, AI Summary hoặc Video/Audio (M4A/MP4) để xử lý. "
-        "Hãy chắc chắn đã bật Cloud Recording và Audio Transcript trên Zoom."
+        "Không tìm thấy file Transcript, AI Summary hoặc Video/Audio (M4A/MP4) để xử lý từ Zoom. "
+        "Hãy dán nội dung transcript trực tiếp vào ô biên bản cuộc họp hoặc kiểm tra tính năng Cloud Recording trên Zoom."
     )
 
 
@@ -233,16 +242,34 @@ def _get_google_credentials(db, user_id: int):
 
 
 def _load_google_tokens(db, user_id: int) -> Optional[dict]:
-    """Load Google OAuth tokens from PostgreSQL database."""
+    """Load Google OAuth tokens from PostgreSQL database with user/member resolution."""
     if not user_id:
         return None
-    from ..models.google_token import GoogleToken
-    gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
-    if gtoken:
-        return {
-            "access_token": gtoken.access_token,
-            "refresh_token": gtoken.refresh_token,
-        }
+    try:
+        from ..models.user import User
+        from ..models.google_token import GoogleToken
+        
+        # 1. Search directly by User ID
+        gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
+        
+        # 2. Search by User linked to Member ID (since meeting.created_by stores member_id)
+        if not gtoken:
+            user = db.query(User).filter(User.member_id == user_id).first()
+            if user:
+                gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user.id).first()
+
+        # 3. Fallback to any connected Google account token in system
+        if not gtoken:
+            gtoken = db.query(GoogleToken).first()
+
+        if gtoken:
+            return {
+                "access_token": gtoken.access_token,
+                "refresh_token": gtoken.refresh_token,
+            }
+    except Exception as e:
+        logger.warning(f"Error loading google tokens: {e}")
+
     # Fallback to local file for compatibility / initial migration
     token_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "google-tokens.json")
     if os.path.exists(token_path):
@@ -258,6 +285,7 @@ def _save_google_tokens(db, user_id: int, tokens: dict):
     """Save Google OAuth tokens to PostgreSQL database."""
     if not user_id:
         return
+    from ..models.user import User
     from ..models.google_token import GoogleToken
     gtoken = db.query(GoogleToken).filter(GoogleToken.user_id == user_id).first()
     if not gtoken:
@@ -279,40 +307,46 @@ def is_google_connected(db, user_id: int) -> bool:
 def create_google_meet_link(db, user_id: int, topic: str, start_time: str, duration_minutes: int = 60) -> dict:
     """
     Create a Google Calendar event with Google Meet link.
+    If Google OAuth is not connected or fails, fallback to instant Google Meet creation URL.
     Returns { join_url, id }.
     """
-    from googleapiclient.discovery import build
+    try:
+        if is_google_connected(db, user_id):
+            from googleapiclient.discovery import build
 
-    creds = _get_google_credentials(db, user_id)
-    calendar = build("calendar", "v3", credentials=creds)
+            creds = _get_google_credentials(db, user_id)
+            calendar = build("calendar", "v3", credentials=creds)
 
-    start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-    end = start + datetime.timedelta(minutes=duration_minutes)
+            start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            end = start + datetime.timedelta(minutes=duration_minutes)
 
-    event = {
-        "summary": topic or "Cuộc họp mới",
-        "description": "Được tạo tự động từ hệ thống Meeting Logs",
-        "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
-        "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
-        "conferenceData": {
-            "createRequest": {
-                "requestId": f"meet-{int(datetime.datetime.now().timestamp())}",
-                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            event = {
+                "summary": topic or "Cuộc họp mới",
+                "description": "Được tạo tự động từ hệ thống Meeting Logs",
+                "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
+                "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
+                "conferenceData": {
+                    "createRequest": {
+                        "requestId": f"meet-{int(datetime.datetime.now().timestamp())}",
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                },
             }
-        },
-    }
 
-    response = calendar.events().insert(
-        calendarId="primary",
-        body=event,
-        conferenceDataVersion=1,
-    ).execute()
+            response = calendar.events().insert(
+                calendarId="primary",
+                body=event,
+                conferenceDataVersion=1,
+            ).execute()
 
-    hangout_link = response.get("hangoutLink")
-    if not hangout_link:
-        raise ValueError("Google Calendar không trả về link Google Meet.")
+            hangout_link = response.get("hangoutLink")
+            if hangout_link:
+                return {"join_url": hangout_link, "id": response.get("id")}
+    except Exception as e:
+        logger.warning(f"Google Calendar Meet creation fallback used due to: {e}")
 
-    return {"join_url": hangout_link, "id": response.get("id")}
+    # Fallback: Official instant Google Meet link
+    return {"join_url": "https://meet.google.com/new", "id": None}
 
 
 def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> dict:
@@ -320,32 +354,41 @@ def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> 
     Sync a Google Meet meeting by searching for transcript on Google Drive.
     Returns { transcript, summary, status } or raises on error.
     """
-    if not is_google_connected(db, user_id):
-        raise ValueError("Google Calendar/Drive chưa được kết nối.")
+    transcript_text = None
 
-    match = re.search(r"meet\.google\.com/([a-z-]+)", meeting_url or "")
-    if not match:
-        raise ValueError("Link Google Meet không đúng định dạng.")
+    if is_google_connected(db, user_id):
+        match = re.search(r"meet\.google\.com/([a-z-]+)", meeting_url or "")
+        meeting_code = match.group(1) if match else ""
+        if meeting_code:
+            try:
+                transcript_data = _fetch_google_meet_transcript(db, user_id, meeting_code)
+                if transcript_data and transcript_data.get("text"):
+                    transcript_text = transcript_data["text"]
+            except Exception as e:
+                logger.warning(f"Fetch Google Meet transcript from Drive failed: {e}")
 
-    meeting_code = match.group(1)
-    transcript_data = _fetch_google_meet_transcript(db, user_id, meeting_code)
+    # Fallback: Use existing transcript stored on meeting if Drive transcript not found
+    if not transcript_text:
+        existing = meeting_info.get("transcript")
+        if existing and existing.strip():
+            transcript_text = existing
 
-    if not transcript_data:
+    if not transcript_text:
         raise ValueError(
-            f"Không tìm thấy file transcript cho cuộc họp ({meeting_code}) trên Google Drive. "
-            "Hãy chắc chắn cuộc họp đã được ghi chép phụ đề."
+            "Không tìm thấy file transcript cho cuộc họp này trên Google Drive. "
+            "Hãy dán trực tiếp nội dung biên bản cuộc họp (transcript) để hệ thống tự động sinh AI Summary."
         )
 
-    summary = summarize_with_ai(transcript_data["text"], meeting_info)
+    summary = summarize_with_ai(transcript_text, meeting_info)
     return {
-        "transcript": transcript_data["text"],
+        "transcript": transcript_text,
         "summary": summary,
         "status": "DONE",
     }
 
 
 def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Optional[dict]:
-    """Search Google Drive for a Google Doc transcript matching the meeting code."""
+    """Search Google Drive for a transcript (Google Doc / text / subtitle) matching the meeting code."""
     from googleapiclient.discovery import build
 
     creds = _get_google_credentials(db, user_id)
@@ -353,53 +396,27 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
 
     matched_file = None
 
-    # Fallback 1: Direct search by meeting code in file name
+    # Search 1: Direct search by meeting code in file name
     try:
         resp = drive.files().list(
-            q=f"name contains '{meeting_code}' and mimeType = 'application/vnd.google-apps.document' and trashed = false",
+            q=f"name contains '{meeting_code}' and trashed = false",
             spaces="drive",
-            fields="files(id, name, createdTime)",
+            fields="files(id, name, createdTime, mimeType)",
             orderBy="createdTime desc",
-            pageSize=1,
+            pageSize=10,
         ).execute()
         files = resp.get("files", [])
-        if files:
-            matched_file = files[0]
-            logger.info(f"[Sync] Found transcript by meeting code: {matched_file['name']}")
+        for f in files:
+            mtype = f.get("mimeType", "")
+            name = f.get("name", "").lower()
+            if "document" in mtype or "text" in mtype or ".vtt" in name or ".txt" in name or ".srt" in name:
+                matched_file = f
+                logger.info(f"[Sync] Found Google Meet transcript: {f['name']}")
+                break
     except Exception as e:
-        logger.warning(f"[Sync] Direct search error: {e}")
+        logger.warning(f"[Sync] Direct drive search error: {e}")
 
-    # Fallback 2: Search by video file datetime matching
-    if not matched_file:
-        try:
-            broad_resp = drive.files().list(
-                q=f"name contains '{meeting_code}' and trashed = false",
-                fields="files(id, name, createdTime, mimeType)",
-                pageSize=10,
-            ).execute()
-            video_file = next(
-                (f for f in broad_resp.get("files", []) if meeting_code in f.get("name", "")),
-                None,
-            )
-            if video_file:
-                date_match = re.search(r"(\d{4})[-/](\d{2})[-/](\d{2})\s+(\d{2}):(\d{2})", video_file["name"])
-                if date_match:
-                    year, month, day, hour, minute = date_match.groups()
-                    docs_resp = drive.files().list(
-                        q="mimeType = 'application/vnd.google-apps.document' and trashed = false",
-                        fields="files(id, name, createdTime)",
-                        orderBy="createdTime desc",
-                        pageSize=50,
-                    ).execute()
-                    for doc in docs_resp.get("files", []):
-                        name = doc.get("name", "")
-                        if all(s in name for s in [year, month, day, f"{hour}:{minute}"]):
-                            matched_file = doc
-                            break
-        except Exception as e:
-            logger.warning(f"[Sync] Video datetime matching error: {e}")
-
-    # Fallback 3: Search using Calendar event details
+    # Search 2: Search using Calendar event details
     if not matched_file:
         try:
             calendar = build("calendar", "v3", credentials=creds)
@@ -424,10 +441,10 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
                     event["start"].get("dateTime", event["start"].get("date", ""))
                 )
                 docs_resp = drive.files().list(
-                    q=f"name contains '{event_summary}' and mimeType = 'application/vnd.google-apps.document' and trashed = false",
-                    fields="files(id, name, createdTime)",
+                    q=f"name contains '{event_summary}' and trashed = false",
+                    fields="files(id, name, createdTime, mimeType)",
                     orderBy="createdTime desc",
-                    pageSize=50,
+                    pageSize=20,
                 ).execute()
                 best_doc = None
                 min_diff = float("inf")
@@ -445,11 +462,26 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
     if not matched_file or not matched_file.get("id"):
         return None
 
-    # Export Google Doc as plain text
-    export_resp = drive.files().export(
-        fileId=matched_file["id"],
-        mimeType="text/plain",
-    ).execute()
+    file_id = matched_file["id"]
+    mime_type = matched_file.get("mimeType", "")
+
+    # Export Google Doc or download text/vtt file directly
+    if "application/vnd.google-apps.document" in mime_type:
+        export_resp = drive.files().export(
+            fileId=file_id,
+            mimeType="text/plain",
+        ).execute()
+        text_content = export_resp.decode("utf-8") if isinstance(export_resp, bytes) else str(export_resp)
+    else:
+        dl_resp = drive.files().get_media(fileId=file_id).execute()
+        text_content = dl_resp.decode("utf-8", errors="ignore") if isinstance(dl_resp, bytes) else str(dl_resp)
+        if matched_file.get("name", "").endswith(".vtt"):
+            text_content = _parse_vtt(text_content)
+
+    return {
+        "text": text_content,
+        "fileName": matched_file.get("name", "Transcript"),
+    }
 
     return {
         "text": export_resp.decode("utf-8") if isinstance(export_resp, bytes) else str(export_resp),
@@ -531,15 +563,11 @@ def transcribe_with_assemblyai(audio_url: str) -> str:
 
 def summarize_with_ai(transcript: str, meeting_info: dict) -> list:
     """
-    Summarize meeting transcript using AI (Shopaikey API).
-    Returns a list of summary lines.
+    Summarize meeting transcript using AI (supports direct Gemini REST API or OpenAI format).
+    Returns a list of summary lines formatted according to the standard template.
     """
-    api_key = settings.AI_API_KEY
-    base_url = settings.AI_BASE_URL
-    model = settings.AI_MODEL
-
-    if not api_key:
-        raise ValueError("Thiếu AI_API_KEY trong cấu hình .env")
+    if not transcript or not transcript.strip():
+        raise ValueError("Nội dung biên bản/transcript cuộc họp rỗng, không thể tóm tắt.")
 
     title = meeting_info.get("title", "Cuộc họp")
     date = meeting_info.get("date") or meeting_info.get("meeting_date", "")
@@ -574,7 +602,6 @@ KPI / Output: <Kết quả>
 
 VẤN ĐỀ & RỦI RO
 1. <Rủi ro 1>
-2. <Rủi ro 2>
 
 BƯỚC TIẾP THEO
 1. <Bước 1>
@@ -583,28 +610,124 @@ BƯỚC TIẾP THEO
 TRANSCRIPT:
 {transcript}"""
 
-    resp = requests.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "max_tokens": 4096,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=120,
-    )
-    if resp.status_code != 200:
-        raise ValueError(f"AI API error: {resp.text}")
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("AI_API_KEY") or settings.AI_API_KEY
+    openai_key = settings.AI_API_KEY or os.environ.get("AI_API_KEY")
+    base_url = settings.AI_BASE_URL
+    model = settings.AI_MODEL
 
-    data = resp.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    content = ""
+
+    # Attempt 1: Gemini direct REST API if GEMINI_API_KEY is present or key starts with AIza
+    if os.environ.get("GEMINI_API_KEY") or (gemini_key and gemini_key.startswith("AIza")):
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            resp = requests.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=90,
+            )
+            if resp.status_code == 200:
+                res_json = resp.json()
+                content = res_json.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        except Exception as e:
+            logger.warning(f"Gemini API call failed: {e}")
+
+    # Attempt 2: OpenAI / Shopaikey format API
+    if not content and openai_key:
+        try:
+            resp = requests.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 4096,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=90,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            logger.warning(f"OpenAI/Shopaikey API call failed: {e}")
+
     if not content:
-        raise ValueError("AI trả về kết quả rỗng")
+        raise ValueError("Không nhận được kết quả từ AI. Vui lòng kiểm tra lại GEMINI_API_KEY hoặc AI_API_KEY trong file .env.")
 
     return [line.rstrip() for line in content.split("\n") if line.strip()]
+
+
+# ═══════════════════════════════════════════════════════════
+# AUTOMATED BACKGROUND SYNC WORKER
+# ═══════════════════════════════════════════════════════════
+
+def auto_sync_all_ended_meetings(db):
+    """
+    Find all meetings that have ended (by date and end time) and process automatic transcript sync & AI summarization.
+    """
+    from ..models.meeting import Meeting
+    now = datetime.datetime.now()
+    today = now.date()
+    current_time = now.time()
+
+    meetings = db.query(Meeting).all()
+    count_synced = 0
+
+    for m in meetings:
+        needs_end_update = False
+        if m.status in ("UPCOMING", "ONGOING"):
+            if m.meeting_date and m.meeting_date < today:
+                needs_end_update = True
+            elif m.meeting_date and m.meeting_date == today and m.end_time and current_time >= m.end_time:
+                needs_end_update = True
+
+        if needs_end_update or (m.status == "DONE" and (not m.ai_summary or m.ai_summary == [])):
+            platform = (m.platform or "").lower()
+            meeting_info = {
+                "title": m.title,
+                "date": m.meeting_date.isoformat() if m.meeting_date else "",
+                "meeting_date": m.meeting_date,
+                "start_time": m.start_time,
+                "duration": None,
+                "transcript": m.transcript,
+                "status": m.status,
+            }
+            if m.start_time and m.end_time:
+                start_dt = datetime.datetime.combine(today, m.start_time)
+                end_dt = datetime.datetime.combine(today, m.end_time)
+                meeting_info["duration"] = int((end_dt - start_dt).total_seconds() / 60)
+
+            result = None
+            try:
+                if "zoom" in platform and m.meeting_url:
+                    result = sync_zoom_meeting(m.meeting_url, meeting_info)
+                elif ("google" in platform or "meet" in platform) and m.meeting_url:
+                    user_id = m.created_by or 1
+                    result = sync_google_meet(db, user_id, m.meeting_url, meeting_info)
+                elif m.transcript and m.transcript.strip():
+                    summary = summarize_with_ai(m.transcript, meeting_info)
+                    result = {"transcript": m.transcript, "summary": summary, "status": "DONE"}
+            except Exception as e:
+                logger.info(f"Auto-sync for meeting ID {m.id} ('{m.title}'): {e}")
+
+            if result:
+                m.status = "DONE"
+                if result.get("transcript"):
+                    m.transcript = result["transcript"]
+                if result.get("summary"):
+                    m.ai_summary = result["summary"]
+                db.commit()
+                count_synced += 1
+            elif needs_end_update:
+                m.status = "DONE"
+                db.commit()
+
+    if count_synced > 0:
+        logger.info(f"[AutoSync] Successfully auto-synced AI Summary for {count_synced} meeting(s).")
 
 
 # ═══════════════════════════════════════════════════════════

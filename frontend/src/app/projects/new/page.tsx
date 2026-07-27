@@ -2,13 +2,14 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { createProject, getMembers, getCustomers } from '@/lib/api';
+import { createProject, getMembers, getCustomers, getMasterPhases } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 export default function NewProjectPage() {
   const router = useRouter();
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
+  const [masterPhases, setMasterPhases] = useState<any[]>([]);
 
   // Danh sách giai đoạn dự án chuẩn
   const PROJECT_PHASES = [
@@ -19,10 +20,12 @@ export default function NewProjectPage() {
     '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
   ];
 
+  const availablePhases = masterPhases.length > 0 ? masterPhases.map(m => m.name) : PROJECT_PHASES;
+
   const [name, setName] = useState('');
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [customerName, setCustomerName] = useState('');
-  const [currentPhase, setCurrentPhase] = useState(PROJECT_PHASES[0]);
+  const [currentPhase, setCurrentPhase] = useState('1. Tư vấn');
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
@@ -95,6 +98,15 @@ export default function NewProjectPage() {
       .catch((err) => {
         console.error('Error fetching customers:', err);
       });
+
+    getMasterPhases()
+      .then((data) => {
+        if (data && data.length > 0) {
+          setMasterPhases(data);
+          setCurrentPhase(data[0].name);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -320,7 +332,7 @@ export default function NewProjectPage() {
                       onClick={(e) => e.stopPropagation()}
                       className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
                     >
-                      {PROJECT_PHASES.map((p) => (
+                      {availablePhases.map((p) => (
                         <button
                           key={p}
                           type="button"

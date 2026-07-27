@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, getCustomers } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, isSuperAdmin } from '@/lib/auth';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
   'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
@@ -88,6 +88,7 @@ export default function ProjectListContent() {
   const [projects, setProjects] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [search, setSearch] = useState('');
+  const [businessFilter, setBusinessFilter] = useState('All');
   const [phaseFilter, setPhaseFilter] = useState('All');
   const [customerFilter, setCustomerFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
@@ -116,10 +117,14 @@ export default function ProjectListContent() {
       }
     } else if (paramCustName) {
       setCustomerFilter(paramCustName);
+    } else {
+      setCustomerFilter('All');
     }
 
     if (paramYear) {
       setYearFilter(paramYear);
+    } else {
+      setYearFilter('All');
     }
   }, [paramCustId, paramCustName, paramYear, customers]);
 
@@ -138,6 +143,7 @@ export default function ProjectListContent() {
 
   const handleResetFilters = () => {
     setSearch('');
+    setBusinessFilter('All');
     setPhaseFilter('All');
     setCustomerFilter('All');
     setPmFilter('All');
@@ -157,13 +163,15 @@ export default function ProjectListContent() {
   const filtered = projects.filter(p => {
     const q = search.toLowerCase();
     const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
+    const pBiz = (p.business || (p.business_unit === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase();
+    const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase();
     const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
     const matchCustomer = customerFilter === 'All' ||
       (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
       (paramCustId && String(p.customer_id) === String(paramCustId));
     const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
     const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
-    return matchSearch && matchPhase && matchCustomer && matchPm && matchYear;
+    return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchYear;
   });
 
   // Sort
@@ -205,13 +213,6 @@ export default function ProjectListContent() {
                   <option value="name_desc">Tên (Z-A)</option>
                 </select>
               </div>
-
-              {canManage && <button onClick={() => router.push('/projects/new')} className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-5 py-2 rounded-lg text-sm font-bold shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 transition-all duration-200">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Thêm dự án
-              </button>}
             </div>
           </div>
 
@@ -251,6 +252,15 @@ export default function ProjectListContent() {
                 {uniquePms.map(pm => (
                   <option key={pm} value={pm}>{pm}</option>
                 ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col flex-shrink-0 w-[140px]">
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Business</label>
+              <select value={businessFilter} onChange={e => { setBusinessFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
+                <option value="All">Tất cả Business</option>
+                <option value="Infrastructure">Infrastructure</option>
+                <option value="Markee">Markee</option>
               </select>
             </div>
 
@@ -335,17 +345,6 @@ export default function ProjectListContent() {
                 </div>
               );
             })}
-
-            {canManage && <div onClick={() => router.push('/projects/new')}
-              className="border-2 border-dashed border-slate-200 rounded-xl bg-white/60 flex flex-col items-center justify-center p-8 cursor-pointer hover:bg-slate-50 hover:border-indigo-500 transition-all duration-300 group min-h-[220px] shadow-sm text-center">
-              <div className="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-indigo-50 group-hover:border-indigo-200 transition-all duration-300 shadow-sm">
-                <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </div>
-              <h4 className="text-[14px] font-bold text-slate-800">Thêm dự án mới</h4>
-              <p className="text-xs text-slate-500 mt-2 px-4 max-w-[280px]">Bắt đầu khởi tạo quy trình tuân thủ mới cho khách hàng.</p>
-            </div>}
           </div>
 
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4 border-t border-slate-200 pt-6">
@@ -436,7 +435,14 @@ export default function ProjectListContent() {
             <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa dự án này?</p>
             <div className="flex justify-end gap-3">
               <button onClick={() => setDeleteId(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
-              <button onClick={async () => { try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null); }}
+              <button onClick={async () => {
+                if (!isSuperAdmin()) {
+                  flash('Chỉ Super Admin mới có quyền xóa dự án!', true);
+                  setDeleteId(null);
+                  return;
+                }
+                try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null);
+              }}
                 className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm">Xóa</button>
             </div>
           </div>

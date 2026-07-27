@@ -139,12 +139,18 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
                     const trimmed = item.trim();
                     const isBullet = trimmed.startsWith('•') || trimmed.startsWith('*') || trimmed.startsWith('-');
                     const isNumbered = /^\d+\./.test(trimmed);
-                    const isTitle = trimmed.startsWith('MEETING SUMMARY') || trimmed.startsWith('Task cha đã chốt');
+                    const isTitle = trimmed.startsWith('MEETING SUMMARY') || 
+                                    trimmed.startsWith('Task cha đã chốt') || 
+                                    trimmed.startsWith('TỔNG QUAN') || 
+                                    trimmed.startsWith('VẤN ĐỀ') || 
+                                    trimmed.startsWith('BƯỚC TIẾP THEO') ||
+                                    trimmed.startsWith('QUYẾT ĐỊNH CHÍNH') ||
+                                    trimmed.startsWith('HÀNH ĐỘNG TIẾP THEO');
                     
                     let className = "min-h-[20px]";
                     if (isBullet) className += " pl-5 text-[#727785] font-normal";
-                    else if (isNumbered) className += " font-bold text-[#0b1c30] mt-3";
-                    else if (isTitle) className += " font-bold text-[#0b1c30] text-[13px] mt-2 block";
+                    else if (isTitle) className += " font-bold text-[#0058be] text-[13px] mt-3 block border-b border-[#0058be]/10 pb-0.5";
+                    else if (isNumbered) className += " font-semibold text-[#0b1c30] mt-2 pl-2";
                     else className += " text-[#565e74]";
 
                     return (

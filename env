@@ -1,0 +1,46 @@
+# KPI development/local — shared Supabase Cloud (no VPN/WARP/tunnel required)
+DATABASE_URL=postgresql://postgres.asvtfrbkvgllqsksuyxp:Poptech%40123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require
+NEXT_PUBLIC_SUPABASE_URL=https://asvtfrbkvgllqsksuyxp.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_4umyHYPNsvIN64t-02tdhQ_qKaQjBQm
+SUPABASE_URL=https://asvtfrbkvgllqsksuyxp.supabase.co
+SUPABASE_ANON_KEY=sb_publishable_4umyHYPNsvIN64t-02tdhQ_qKaQjBQm
+
+# Application authentication
+SECRET_KEY=8b7e289c09fe542f8c5b5257ef671d49e108cf1c944733e8a4d46c82302f23b2
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+GOOGLE_LOGIN_ENABLED=true
+PASSWORD_LOGIN_ENABLED=false
+AUTH_SUPERADMIN_EMAILS=a01204496068@gmail.com
+DEFAULT_ADMIN_EMAIL=admin@company.com
+DEFAULT_ADMIN_PASSWORD=
+GOOGLE_CLIENT_ID=1013840177963-i8nin4nd97n1qqqd58hk05v747clgo76.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=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
+
+# Local frontend
+PORTAL_BRAND=markee
+FRONTEND_PORT=3000
+NEXT_PUBLIC_API_BASE_URL=/api
+FRONTEND_URL=http://localhost:3000
+
+# Google Meet / Drive
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/meetings/google/callback
+GOOGLE_APPLICATION_CREDENTIALS=
+
+# Zoom Server-to-Server OAuth
+ZOOM_ACCOUNT_ID=697wscaGQ-Wr8v5l0pPI5A
+ZOOM_CLIENT_ID=4tlSJH6HSMa_aZwKjgCYRw
+ZOOM_CLIENT_SECRET=PfvOibOMaqQwy7XLPNPfe9QoSXPv9MkY
+
+# AI / transcription
+GEMINI_API_KEY=AQ.Ab8RN6JuVD5qHlCYTiUUdEeA_8mHHCHILdkXtPis05-hv_rWgg
+ASSEMBLYAI_API_KEY=03780e3ebc1f4faebb2470a1f1208ea1
+AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+AI_API_KEY=AQ.Ab8RN6JuVD5qHlCYTiUUdEeA_8mHHCHILdkXtPis05-hv_rWgg
+AI_MODEL=gemini-2.5-flash
+AI_TIMEOUT_SECONDS=60
+CHECK_INTERVAL_SECONDS=3600
+
+# Optional in local backend-only mode
+REDIS_URL=
+DOCKER_NETWORK_MTU=1420

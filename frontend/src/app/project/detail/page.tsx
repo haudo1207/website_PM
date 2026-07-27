@@ -13,7 +13,7 @@ import {
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
-  getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings,
+  getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getMasterPhases,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting
 } from '@/lib/api';
@@ -387,7 +387,9 @@ function ProjectDetailContent() {
   const [editProjectName, setEditProjectName] = useState('');
   const [editProjectYear, setEditProjectYear] = useState<number>(new Date().getFullYear());
   const [editCustomerName, setEditCustomerName] = useState('');
+  const [editBusiness, setEditBusiness] = useState<'Infrastructure' | 'Markee'>('Infrastructure');
   const [editCurrentPhase, setEditCurrentPhase] = useState('');
+  const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
 
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
@@ -589,6 +591,14 @@ function ProjectDetailContent() {
       .catch((err) => {
         console.error('Error fetching performance settings:', err);
       });
+
+    getMasterPhases()
+      .then((data) => {
+        setDbMasterPhases(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching master phases:', err);
+      });
   }, []);
 
   useEffect(() => {
@@ -630,6 +640,7 @@ function ProjectDetailContent() {
         code: `${editProjectName.trim()}-${editProjectYear}`,
         year: editProjectYear,
         customer_name: editCustomerName.trim(),
+        business: editBusiness,
         current_phase: editCurrentPhase.trim(),
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
@@ -3508,6 +3519,7 @@ function ProjectDetailContent() {
                         setEditProjectName(project.name || '');
                         setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
                         setEditCustomerName(project.customer_name || '');
+                        setEditBusiness(project.business || 'Infrastructure');
                         setEditCurrentPhase(project.current_phase || '');
 
                         setSelectedPms(project.pm_ids || (project.pm_id ? [project.pm_id] : []));
@@ -4342,8 +4354,8 @@ function ProjectDetailContent() {
 
             {/* Modal Form Content */}
             <div className="p-6 max-h-[70vh] overflow-y-auto space-y-4">
-              {/* Row 1: Tên dự án & Năm */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Row 1: Tên dự án, Business & Năm */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Project Name */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
@@ -4359,6 +4371,22 @@ function ProjectDetailContent() {
                   />
                 </div>
 
+                {/* Business */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[#565e74] block">
+                    Business <span className="text-rose-500 font-bold">*</span>
+                  </label>
+                  <select
+                    required
+                    value={editBusiness}
+                    onChange={(e) => setEditBusiness(e.target.value as 'Infrastructure' | 'Markee')}
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
+                  >
+                    <option value="Infrastructure">Infrastructure</option>
+                    <option value="Markee">Markee</option>
+                  </select>
+                </div>
+
                 {/* Project Year */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
@@ -4368,7 +4396,7 @@ function ProjectDetailContent() {
                     required
                     value={editProjectYear}
                     onChange={(e) => setEditProjectYear(parseInt(e.target.value, 10))}
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold"
+                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
                   >
                     {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 5 + i).map((y) => (
                       <option key={y} value={y}>{y}</option>
@@ -4473,13 +4501,13 @@ function ProjectDetailContent() {
                       onClick={(e) => e.stopPropagation()}
                       className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
                     >
-                      {[
+                      {(dbMasterPhases.length > 0 ? dbMasterPhases.map((m: any) => m.name) : [
                         '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
                         '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
                         '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
                         '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
                         '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
-                      ].map((p) => (
+                      ]).map((p) => (
                         <button
                           key={p}
                           type="button"

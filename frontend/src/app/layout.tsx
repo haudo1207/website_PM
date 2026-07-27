@@ -3,7 +3,6 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { brand } from '@/lib/brand'
 
-
 const inter = Inter({ subsets: ['latin'] })
 
 export const viewport: Viewport = {

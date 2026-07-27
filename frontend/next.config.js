@@ -1,4 +1,10 @@
 /** @type {import('next').NextConfig} */
+const path = require('path');
+const { loadEnvConfig } = require('@next/env');
+
+// Load environment variables from parent root directory
+loadEnvConfig(path.resolve(__dirname, '..'));
+
 const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
@@ -17,3 +23,4 @@ const nextConfig = {
 }
 
 module.exports = nextConfig
+

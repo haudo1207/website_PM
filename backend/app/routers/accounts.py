@@ -6,13 +6,21 @@ from ..database import get_db
 from ..config import settings
 from ..models.member import Member
 from ..models.user import User
-from ..utils.access import DEFAULT_SCOPE, VALID_DATA_SCOPES
-from ..utils.auth import hash_password, require_admin
+from ..utils.access import (
+    DEFAULT_SCOPE,
+    VALID_DATA_SCOPES,
+    VALID_ROLES,
+    ROLE_SUPER_ADMIN,
+    ROLE_LEADER,
+    ROLE_MEMBER,
+    ROLE_VIEWER,
+)
+from ..utils.auth import hash_password, require_manager, get_current_user
 
 router = APIRouter()
-
-VALID_ROLES = {"admin", "member"}
 MIN_PASSWORD_LENGTH = 8
+SUPER_ADMIN_ROLES = {ROLE_SUPER_ADMIN, "admin"}
+LEADER_MANAGED_ROLES = {ROLE_MEMBER, ROLE_VIEWER}
 
 
 def normalize_email(value) -> str:
@@ -30,24 +38,35 @@ def require_account(db: Session, account_id: int) -> User:
     return account
 
 
-def ensure_admin_remains(db: Session, account: User, *, role=None, active=None, deleting=False) -> None:
-    """Prevent the last active admin from being disabled, demoted, or deleted."""
+def ensure_superadmin_remains(db: Session, account: User, *, role=None, active=None, deleting=False) -> None:
+    """Prevent the last active super_admin from being disabled, demoted, or deleted."""
     next_role = account.role if role is None else role
     next_active = account.is_active if active is None else active
-    removes_active_admin = (
-        account.role == "admin"
+    removes_active_superadmin = (
+        account.role in {ROLE_SUPER_ADMIN, "admin"}
         and account.is_active
-        and (deleting or next_role != "admin" or not next_active)
+        and (deleting or next_role not in {ROLE_SUPER_ADMIN, "admin"} or not next_active)
     )
-    if removes_active_admin:
-        active_admins = db.query(User).filter(User.role == "admin", User.is_active.is_(True)).count()
-        if active_admins <= 1:
-            raise HTTPException(400, "Hệ thống phải còn ít nhất một tài khoản admin đang hoạt động.")
+    if removes_active_superadmin:
+        active_superadmins = db.query(User).filter(User.role.in_(SUPER_ADMIN_ROLES), User.is_active.is_(True)).count()
+        if active_superadmins <= 1:
+            raise HTTPException(400, "Hệ thống phải còn ít nhất một tài khoản Super Admin đang hoạt động.")
 
 
 def validate_password(password: str) -> None:
     if len(password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(400, f"Mật khẩu phải có ít nhất {MIN_PASSWORD_LENGTH} ký tự.")
+
+
+def _leader_guard(caller: User, target: User, action: str = "thao tác") -> None:
+    """Raise 403 if a Leader tries to modify accounts outside Member/Viewer."""
+    if caller.role == ROLE_LEADER and target.role not in LEADER_MANAGED_ROLES:
+        raise HTTPException(403, f"Leader không có quyền {action} tài khoản này.")
+
+
+def _ensure_leader_allowed_role(caller: User, role: str) -> None:
+    if caller.role == ROLE_LEADER and role not in LEADER_MANAGED_ROLES:
+        raise HTTPException(403, "Leader chỉ có quyền gán role Member hoặc Viewer.")
 
 
 def account_to_dict(u: User) -> dict:
@@ -77,13 +96,18 @@ def account_to_dict(u: User) -> dict:
 
 
 @router.get("")
-def list_accounts(db: Session = Depends(get_db), _=Depends(require_admin)):
-    users = db.query(User).order_by(User.id.asc()).all()
+def list_accounts(db: Session = Depends(get_db), caller=Depends(require_manager)):
+    query = db.query(User)
+    if caller.role == ROLE_LEADER:
+        query = query.filter(
+            (User.id == caller.id) | (User.role.in_(LEADER_MANAGED_ROLES))
+        )
+    users = query.order_by(User.id.asc()).all()
     return [account_to_dict(u) for u in users]
 
 
 @router.get("/available-members")
-def available_members(db: Session = Depends(get_db), _=Depends(require_admin)):
+def available_members(db: Session = Depends(get_db), _=Depends(require_manager)):
     linked_ids = [
         uid for (uid,) in db.query(User.member_id).filter(User.member_id.isnot(None)).all()
     ]
@@ -106,7 +130,7 @@ def available_members(db: Session = Depends(get_db), _=Depends(require_admin)):
 
 
 @router.post("")
-def create_account(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(require_manager)):
     email = normalize_email(body.get("email"))
     password = str(body.get("password") or "")
     role = str(body.get("role") or "member").strip().lower()
@@ -123,6 +147,8 @@ def create_account(body: dict, db: Session = Depends(get_db), _=Depends(require_
         raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(VALID_DATA_SCOPES)}")
     if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(400, "Email đã tồn tại.")
+
+    _ensure_leader_allowed_role(caller, role)
 
     if member_id is not None:
         member = db.query(Member).filter(Member.id == member_id).first()
@@ -159,9 +185,10 @@ def update_account(
     account_id: int,
     body: dict,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    caller=Depends(require_manager),
 ):
     account = require_account(db, account_id)
+    _leader_guard(caller, account, "chỉnh sửa")
 
     if "email" in body:
         if is_bootstrap_superadmin(account):
@@ -199,10 +226,11 @@ def update_account(
         new_role = str(body["role"]).strip().lower()
         if new_role not in VALID_ROLES:
             raise HTTPException(400, f"Role không hợp lệ. Chọn một trong: {sorted(VALID_ROLES)}")
-        if admin.id == account.id and new_role != "admin":
-            raise HTTPException(400, "Bạn không thể tự hạ quyền admin của chính mình.")
-        ensure_admin_remains(db, account, role=new_role)
-        if is_bootstrap_superadmin(account) and new_role != "admin":
+        if caller.id == account.id and new_role != caller.role:
+            raise HTTPException(400, "Bạn không thể tự thay đổi role của chính mình.")
+        _ensure_leader_allowed_role(caller, new_role)
+        ensure_superadmin_remains(db, account, role=new_role)
+        if is_bootstrap_superadmin(account) and new_role not in SUPER_ADMIN_ROLES:
             raise HTTPException(400, "The bootstrap super-admin cannot be demoted.")
         account.role = new_role
 
@@ -224,10 +252,11 @@ def update_account(
 
 
 @router.post("/{account_id}/reset-password")
-def reset_password(account_id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def reset_password(account_id: int, body: dict, db: Session = Depends(get_db), caller=Depends(require_manager)):
     if not settings.PASSWORD_LOGIN_ENABLED:
         raise HTTPException(403, "Password login is disabled.")
     account = require_account(db, account_id)
+    _leader_guard(caller, account, "đặt lại mật khẩu")
     new_password = str(body.get("password") or "")
     validate_password(new_password)
     account.hashed_pw = hash_password(new_password)
@@ -239,22 +268,24 @@ def reset_password(account_id: int, body: dict, db: Session = Depends(get_db), _
 def lock_account(
     account_id: int,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    caller=Depends(require_manager),
 ):
     account = require_account(db, account_id)
+    _leader_guard(caller, account, "khóa")
     if is_bootstrap_superadmin(account):
         raise HTTPException(400, "The bootstrap super-admin cannot be locked.")
-    if admin.id == account.id:
+    if caller.id == account.id:
         raise HTTPException(400, "Bạn không thể tự khóa tài khoản đang đăng nhập.")
-    ensure_admin_remains(db, account, active=False)
+    ensure_superadmin_remains(db, account, active=False)
     account.is_active = False
     db.commit()
     return {"message": "Đã khóa tài khoản."}
 
 
 @router.post("/{account_id}/unlock")
-def unlock_account(account_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+def unlock_account(account_id: int, db: Session = Depends(get_db), caller=Depends(require_manager)):
     account = require_account(db, account_id)
+    _leader_guard(caller, account, "mở khóa")
     account.is_active = True
     db.commit()
     return {"message": "Đã mở khóa tài khoản."}
@@ -264,14 +295,15 @@ def unlock_account(account_id: int, db: Session = Depends(get_db), _=Depends(req
 def delete_account(
     account_id: int,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    caller=Depends(require_manager),
 ):
     account = require_account(db, account_id)
+    _leader_guard(caller, account, "xóa")
     if is_bootstrap_superadmin(account):
         raise HTTPException(400, "The bootstrap super-admin cannot be deleted.")
-    if admin.id == account.id:
+    if caller.id == account.id:
         raise HTTPException(400, "Bạn không thể tự xóa tài khoản đang đăng nhập.")
-    ensure_admin_remains(db, account, deleting=True)
+    ensure_superadmin_remains(db, account, deleting=True)
     db.delete(account)
     db.commit()
     return {"message": "Đã xóa tài khoản; thành viên liên kết vẫn được giữ nguyên."}
