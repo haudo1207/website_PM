@@ -662,6 +662,7 @@ import asyncio
 @app.on_event("startup")
 async def start_auto_sync_loop():
     async def _loop():
+        await asyncio.sleep(5)  # Allow FastAPI to complete startup first
         from .database import SessionLocal
         from .services.meeting_sync import auto_sync_all_ended_meetings
         while True:
