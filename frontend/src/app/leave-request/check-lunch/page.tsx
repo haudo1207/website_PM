@@ -37,6 +37,7 @@ export default function CheckLunchPage() {
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [myLunch, setMyLunch] = useState<boolean | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
@@ -62,9 +63,12 @@ export default function CheckLunchPage() {
       // For non-admin, try to match user_id from localStorage to member
       // Since we don't have a direct API for current user's member info,
       // we'll rely on member_id being stored somewhere
-      const storedMemberId = localStorage.getItem('member_id');
-      if (storedMemberId) {
-        setCurrentMemberId(Number(storedMemberId));
+      const member = membersRes.find(
+          (m: any) => m.user_id === userId
+      );
+
+      if (member) {
+          setCurrentMemberId(member.id);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -78,10 +82,19 @@ export default function CheckLunchPage() {
     try {
       const records = await getLunchRecords({ date: dateStr });
       setLunchRecords(records);
+
+      if (!isAdmin && currentMemberId) {
+        const mine = records.find((r: LunchRecord) => r.member_id === currentMemberId);
+        if (mine) {
+          setMyLunch(mine.has_lunch);
+        } else {
+          setMyLunch(null);
+        }
+      }
     } catch (error) {
       console.error('Error fetching lunch records:', error);
     }
-  }, []);
+  }, [isAdmin, currentMemberId]);
 
   useEffect(() => {
     fetchData();
@@ -105,18 +118,12 @@ export default function CheckLunchPage() {
   // Determine which members to show
   const membersToShow = useMemo(() => {
     if (isAdmin) {
-      if (selectedTeam === 'All') return members;
+      if (selectedTeam === "All") return members;
       return members.filter((m) => m.team === selectedTeam);
     }
-    // Non-admin: find their own member record
-    // We use currentMemberId or try to match by user_id
-    const memberId = currentMemberId;
-    if (memberId) {
-      return members.filter((m) => m.id === memberId);
-    }
-    // Fallback: show no members if we can't identify them
+
     return [];
-  }, [isAdmin, members, selectedTeam, currentMemberId]);
+  }, [isAdmin, members, selectedTeam]);
 
   // Who is off today
   const target = new Date(date);
@@ -125,7 +132,7 @@ export default function CheckLunchPage() {
     const s = new Date(req.start_date);
     const e = new Date(req.end_date);
     if (s <= target && target <= e) {
-      offMap[req.user_id] = true;
+      offMap[req.member_id] = true;
     }
   });
 
@@ -145,11 +152,17 @@ export default function CheckLunchPage() {
   const handleLunchToggle = async (memberId: number, hasLunchVal: boolean) => {
     setSaving(true);
     try {
-      await upsertLunchRecord({ member_id: memberId, date, has_lunch: hasLunchVal });
-      // Refresh records from server
+      await upsertLunchRecord({
+        member_id: memberId,
+        date,
+        has_lunch: hasLunchVal,
+      });
+
+      setMyLunch(hasLunchVal);
+
       await fetchLunchRecords(date);
     } catch (error) {
-      console.error('Error saving lunch record:', error);
+      console.error(error);
     } finally {
       setSaving(false);
     }
@@ -314,15 +327,56 @@ export default function CheckLunchPage() {
             })}
 
             {/* Non-admin: show current member info if member_id not set */}
-            {!isAdmin && !currentMemberId && currentUserId && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
-                Không thể xác định member của bạn. Vui lòng liên hệ admin để thiết lập tài khoản.
+            {!isAdmin && currentMemberId && (
+              <div className="rounded-lg border bg-white p-6">
+                <h3 className="text-lg font-semibold mb-2">
+                  Đăng ký cơm ngày {formatDateLabel(date)}
+                </h3>
+
+                <p className="text-sm text-[#565e74] mb-4">
+                  Chọn bạn có ăn cơm trưa hay không.
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleLunchToggle(currentMemberId, true)}
+                    disabled={saving}
+                    className={`rounded-lg px-5 py-2 font-semibold ${
+                      myLunch === true
+                        ? 'bg-emerald-500 text-white'
+                        : 'bg-gray-100'
+                    }`}
+                  >
+                    🍱 Có ăn
+                  </button>
+
+                  <button
+                    onClick={() => handleLunchToggle(currentMemberId, false)}
+                    disabled={saving}
+                    className={`rounded-lg px-5 py-2 font-semibold ${
+                      myLunch === false
+                        ? 'bg-rose-500 text-white'
+                        : 'bg-gray-100'
+                    }`}
+                  >
+                    ❌ Không ăn
+                  </button>
+                </div>
+
+                {myLunch !== null && (
+                  <p className="mt-4 text-sm text-[#565e74]">
+                    Bạn đã đăng ký:{" "}
+                    <span className="font-semibold">
+                      {myLunch ? "Có ăn" : "Không ăn"}
+                    </span>
+                  </p>
+                )}
               </div>
             )}
 
-            {membersToShow.length === 0 && (
+            {isAdmin && membersToShow.length === 0 && (
               <div className="py-8 text-center text-sm text-[#565e74]">
-                {isAdmin ? 'No members found.' : 'No member information found for your account.'}
+                No members found.
               </div>
             )}
           </div>
