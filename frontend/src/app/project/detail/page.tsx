@@ -641,6 +641,7 @@ function ProjectDetailContent() {
         year: editProjectYear,
         customer_name: editCustomerName.trim(),
         business: editBusiness,
+        data_scope: editBusiness.toLowerCase(),
         current_phase: editCurrentPhase.trim(),
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,

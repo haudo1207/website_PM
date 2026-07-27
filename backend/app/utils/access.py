@@ -45,7 +45,7 @@ def project_query_for_user(db: Session, user):
         return query
 
     if role == ROLE_LEADER:
-        return query.filter(Project.data_scope == scope)
+        return query.filter((Project.data_scope == scope) | (Project.data_scope == ALL_SCOPE) | (Project.business == "All"))
 
     # member / viewer — restrict to assigned projects only.
     member_id = getattr(user, "member_id", None)
@@ -70,7 +70,7 @@ def can_access_project(db: Session, user, project: Project) -> bool:
         return True
 
     if role == ROLE_LEADER:
-        return project.data_scope == scope
+        return (project.data_scope == scope) or (project.data_scope == ALL_SCOPE) or (project.business == "All")
 
     # member / viewer — must be an explicit project member.
     member_id = getattr(user, "member_id", None)

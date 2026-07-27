@@ -181,7 +181,7 @@ export default function ProjectListContent() {
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
       const pBiz = (p.business || (p.business_unit === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase();
-      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase();
+      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all');
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
