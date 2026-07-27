@@ -2,7 +2,7 @@ import sys
 import os
 from sqlalchemy import text
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.models.skill_master import Skill
 from app.models.member import Member
 from sqlalchemy import create_engine
