@@ -71,6 +71,20 @@ export const updateChatGroup = (pid: number, lid: number, d: object) =>
 export const deleteChatGroup = (pid: number, lid: number) =>
   api.delete(`/projects/${pid}/chat-groups/${lid}`).then(r => r.data);
 
+// AI Task Inbox
+export const getAITaskInbox = (pid: number) => api.get(`/projects/${pid}/ai-task-inbox`).then(r => r.data);
+export const analyzeChatLogs = (pid: number, content: string, source_platform = 'Manual Paste', source_group_name = 'Manual Paste') =>
+  api.post(`/projects/${pid}/ai-task-inbox/analyze`, { content, source_platform, source_group_name }).then(r => r.data);
+export const updateAITaskInbox = (pid: number, tid: number, d: object) =>
+  api.patch(`/projects/${pid}/ai-task-inbox/${tid}`, d).then(r => r.data);
+export const rejectAITaskInbox = (pid: number, tid: number) =>
+  api.delete(`/projects/${pid}/ai-task-inbox/${tid}`).then(r => r.data);
+export const importAITaskToProjectPlan = (pid: number, tid: number, d?: { phase_id?: number; task_group_id?: number }) =>
+  api.post(`/projects/${pid}/ai-task-inbox/${tid}/import`, d || {}).then(r => r.data);
+export const bulkImportAITasks = (pid: number, taskIds: number[], d?: { phase_id?: number; task_group_id?: number }) =>
+  api.post(`/projects/${pid}/ai-task-inbox/bulk-import`, { task_ids: taskIds, ...(d || {}) }).then(r => r.data);
+export const getChatSyncLogs = (pid: number) => api.get(`/projects/${pid}/chat-sync-logs`).then(r => r.data);
+
 // Platforms
 export const getPlatforms = () => api.get('/platforms').then(r => r.data);
 export const createPlatform = (data: { name: string; icon?: string; color?: string }) =>
