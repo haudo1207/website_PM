@@ -90,6 +90,17 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
     return tg
 
 
+def sync_group_actual_dates(tg, db):
+    """Sync TaskGroup end_date_actual (max) from child tasks."""
+    rows = db.query(Task.end_date_actual).filter(
+        Task.task_group_id == tg.id,
+        Task.end_date_actual.isnot(None)
+    ).all()
+    actual_end_dates = [r[0] for r in rows]
+    tg.end_date_actual = max(actual_end_dates) if actual_end_dates else None
+    return tg
+
+
 def get_parent_code(task_code: str):
     if not task_code or "." not in task_code:
         return None
@@ -227,7 +238,9 @@ def serialize_task_group(tg, db, group_index=None):
         "start_date_est": str(tg.start_date_est) if tg.start_date_est else None,
         "end_date_est": str(tg.end_date_est) if tg.end_date_est else None,
         "manday_actual": float(tg.manday_actual) if tg.manday_actual else None,
-        "end_date_actual": str(tg.end_date_actual) if tg.end_date_actual else None,
+        "end_date_actual": str(tg.end_date_actual_override or tg.end_date_actual) if tg.end_date_actual_override or tg.end_date_actual else None,
+        "end_date_actual_auto": str(tg.end_date_actual) if tg.end_date_actual else None,
+        "end_date_actual_override": str(tg.end_date_actual_override) if tg.end_date_actual_override else None,
         "task_count": task_count,
         "done_count": done_count,
         "created_at": str(tg.created_at) if tg.created_at else None,
@@ -294,6 +307,8 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
         tg.manday_est = val
     if "start_date_est" in body:
         tg.start_date_est = parse_date(body["start_date_est"])
+    if "end_date_actual_override" in body:
+        tg.end_date_actual_override = parse_date(body["end_date_actual_override"])
     tg = recalculate_task_group_dates(tg, db)
 
     new_status = tg.status
@@ -566,6 +581,7 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db)):
 
     # Sync group start_date (min) and end_date_est (max) from child tasks
     tg = sync_group_dates(tg, db, extra_start=task.start_date, extra_end=task.end_date_est)
+    tg = sync_group_actual_dates(tg, db)
 
     # Update group progress
     tg.progress = Decimal(str(calc_group_progress(gid, db)))
@@ -702,6 +718,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
         tg.progress = Decimal(str(calc_group_progress(gid, db)))
         # Sync group start_date from earliest child task start_date
         tg = sync_group_dates(tg, db)
+        tg = sync_group_actual_dates(tg, db)
 
     # Trigger Recheck logic: check if any trigger fields are present in the update payload
     trigger_fields = ["detail", "priority", "manday_est", "status", "start_date", "end_date_actual", "assigned_id", "support_id", "remark"]
@@ -730,6 +747,7 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db)):
     if tg:
         tg.progress = Decimal(str(calc_group_progress(gid, db)))
         tg = sync_group_dates(tg, db)
+        tg = sync_group_actual_dates(tg, db)
 
     db.commit()
     return {"ok": True}
