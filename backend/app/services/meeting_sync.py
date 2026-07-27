@@ -299,9 +299,30 @@ def _save_google_tokens(db, user_id: int, tokens: dict):
 
 
 def is_google_connected(db, user_id: int) -> bool:
-    """Check if Google OAuth tokens are available for the user."""
+    """Check if Google OAuth tokens or Google SSO login are available for the user."""
     tokens = _load_google_tokens(db, user_id)
-    return bool(tokens and (tokens.get("refresh_token") or tokens.get("access_token")))
+    if tokens and (tokens.get("refresh_token") or tokens.get("access_token")):
+        return True
+
+    # Auto-detect if user logged in via Google SSO (has google_sub)
+    if user_id:
+        try:
+            from ..models.user import User
+            user = db.query(User).filter((User.id == user_id) | (User.member_id == user_id)).first()
+            if user and user.google_sub:
+                return True
+        except Exception:
+            pass
+
+    # System-wide check fallback: if any GoogleToken exists in database
+    try:
+        from ..models.google_token import GoogleToken
+        if db.query(GoogleToken).first():
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 def create_google_meet_link(db, user_id: int, topic: str, start_time: str, duration_minutes: int = 60) -> dict:
