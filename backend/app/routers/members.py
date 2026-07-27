@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 import datetime
 
+from ..models.user import User
 from ..database import get_db
 from ..config import settings
 from ..models.member import Member, member_skills
@@ -18,6 +19,7 @@ router = APIRouter()
 def member_to_dict(m: Member) -> dict:
     return {
         "id": m.id,
+        "user_id": m.user.id if m.user else None,
         "display_name": m.display_name,
         "full_name": m.full_name,
         "email": m.email,
@@ -124,11 +126,14 @@ def list_members(
     # Query Member with KPI
     q = db.query(
         Member,
-        func.coalesce(kpi_subq.c.kpi_total, 0).label('kpi_total'),
-        func.coalesce(kpi_subq.c.task_count, 0).label('task_count'),
-        func.coalesce(kpi_subq.c.manday_total, 0).label('manday_total'),
-        func.coalesce(kpi_subq.c.manday_est_total, 0).label('manday_est_total'),
-        func.coalesce(kpi_subq.c.kpi_base_total, 0).label('kpi_base_total')
+        User.id.label("user_id"),
+        func.coalesce(kpi_subq.c.kpi_total, 0).label("kpi_total"),
+        func.coalesce(kpi_subq.c.task_count, 0).label("task_count"),
+        func.coalesce(kpi_subq.c.manday_total, 0).label("manday_total"),
+        func.coalesce(kpi_subq.c.manday_est_total, 0).label("manday_est_total"),
+        func.coalesce(kpi_subq.c.kpi_base_total, 0).label("kpi_base_total")
+    ).outerjoin(
+        User, User.member_id == Member.id
     ).outerjoin(
         kpi_subq, Member.id == kpi_subq.c.member_id
     ).options(joinedload(Member.skills))
@@ -150,8 +155,9 @@ def list_members(
     results = q.order_by(Member.display_name.asc()).all()
     
     out = []
-    for m, kpi_total, task_count, manday_total, manday_est_total, kpi_base_total in results:
+    for ( m, user_id, kpi_total, task_count, manday_total, manday_est_total, kpi_base_total ) in results:
         d = member_to_dict(m)
+        d["user_id"] = user_id
         
         total = float(kpi_total) if kpi_total else 0.0
         count = int(task_count) if task_count else 0
