@@ -359,6 +359,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         customer_id: Number(projectForm.customerId),
         customer_name: selectedCust ? selectedCust.name : '',
         business: projectForm.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure'),
+        data_scope: (projectForm.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase(),
         year: Number(projectForm.year),
         status: projectForm.status,
         description: projectForm.description,
@@ -899,6 +900,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                   >
                     <option value="Infrastructure">Infrastructure</option>
                     <option value="Markee">Markee</option>
+                    <option value="All">All (Cả 2 team)</option>
                   </select>
                 </div>
               </div>
