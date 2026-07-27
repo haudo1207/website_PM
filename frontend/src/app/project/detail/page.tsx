@@ -2015,14 +2015,14 @@ function ProjectDetailContent() {
               <div className="w-full border-t border-slate-300 border-dashed opacity-0 group-hover/spacer:opacity-100 transition-opacity duration-200"></div>
             </div>
             {/* Emerald pill button */}
-            <button
+            {/* <button
               type="button"
               onClick={handleAddTgClick}
               style={{ left: snappedPos, transform: 'translateX(-50%)' }}
               className="absolute opacity-0 group-hover/spacer:opacity-100 transition-all duration-200 bg-[#006847] hover:bg-[#00583b] text-white font-bold text-[10px] px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-1 active:scale-95 z-10 cursor-pointer hover:shadow-lg hover:scale-105"
             >
               <span className="text-[12px] font-extrabold">+</span> Thêm Task Group
-            </button>
+            </button> */}
           </div>
         </td>
       </tr>
@@ -2076,21 +2076,21 @@ function ProjectDetailContent() {
               <div className="w-full border-t border-slate-300 border-dashed opacity-0 group-hover/spacer:opacity-100 transition-opacity duration-200"></div>
             </div>
             {/* Teal/emerald pill button */}
-            <button
+            {/* <button
               type="button"
               onClick={handleAddClick}
               style={{ left: snappedPos, transform: 'translateX(-50%)' }}
               className="absolute opacity-0 group-hover/spacer:opacity-100 transition-all duration-200 bg-[#006847] hover:bg-[#00583b] text-white font-bold text-[10px] px-3.5 py-1.5 rounded-lg shadow-md flex items-center gap-1 active:scale-95 z-10 cursor-pointer hover:shadow-lg hover:scale-105"
             >
               <span className="text-[12px] font-extrabold">+</span> Thêm Task
-            </button>
+            </button> */}
           </div>
         </td>
       </tr>
     );
   };
 
-  const renderSingleTaskRow = (task: any, level: number, hasChildren: boolean, isCollapsedParent: boolean) => {
+  const renderSingleTaskRow = (task: any, level: number, hasChildren: boolean, isCollapsedParent: boolean, tIdx: number = 0, sortedTasks: any[] = []) => {
     const dynamicCols = getDynamicColumns();
     const taskIdVal = task.task_code || '';
     const isSubTask = level > 0;
@@ -2169,24 +2169,114 @@ function ProjectDetailContent() {
           }
         }}
       >
-        {/* DRAG HANDLE */}
-        <td className="px-1 py-2 text-center" style={{ width: '36px', minWidth: '36px' }}>
-          <button
-            type="button"
-            onMouseDown={() => {
-              const el = document.getElementById(`task-row-${task.id}`);
-              if (el) el.setAttribute('draggable', 'true');
-            }}
-            onMouseUp={() => {
-              const el = document.getElementById(`task-row-${task.id}`);
-              if (el) el.setAttribute('draggable', 'false');
-            }}
-            onClick={() => handleMoveTask(task.task_group_id, task.id)}
-            className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400 font-bold"
-            title="Di chuyển task sang group khác"
-          >
-            <span>☰</span>
-          </button>
+        {/* ACTION BUTTONS: ☰ ↑ ↓ 📄 🗑️ */}
+        <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
+          <div className="flex items-center justify-center gap-1">
+            {/* ☰ Drag / Move */}
+            <button
+              type="button"
+              onMouseDown={() => {
+                const el = document.getElementById(`task-row-${task.id}`);
+                if (el) el.setAttribute('draggable', 'true');
+              }}
+              onMouseUp={() => {
+                const el = document.getElementById(`task-row-${task.id}`);
+                if (el) el.setAttribute('draggable', 'false');
+              }}
+              onClick={() => handleMoveTask(task.task_group_id, task.id)}
+              className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400 font-bold"
+              title="Di chuyển task sang group khác"
+            >
+              <span>☰</span>
+            </button>
+
+            {/* ↑ Add Above */}
+            <button
+              type="button"
+              onClick={() => {
+                setAddingTaskGroupId(task.task_group_id);
+                const parentCode = getParentCode(task.task_code) || null;
+                setAddingTaskParentCode(parentCode);
+                // Find previous task code to insert after
+                const prevIdx = tIdx - 1;
+                if (prevIdx >= 0) {
+                  const prevTask = sortedTasks[prevIdx];
+                  setAddingTaskAfterCode(prevTask.task_code);
+                } else {
+                  setAddingTaskAfterCode(null);
+                }
+                const dynamicCols = getDynamicColumns();
+                const initialForm: Record<string, string> = {};
+                dynamicCols.forEach(col => { initialForm[col] = ''; });
+                const todayStr = fromPickerDate(new Date().toISOString().split('T')[0]);
+                const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                if (statusCol) initialForm[statusCol] = 'Waiting';
+                const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
+                if (priorityCol) initialForm[priorityCol] = 'Normal';
+                const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
+                if (startDateCol) initialForm[startDateCol] = todayStr;
+                const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
+                if (kpiRatioCol) initialForm[kpiRatioCol] = '100/0';
+                const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
+                if (mandayCol) initialForm[mandayCol] = '1.0';
+                setNewForm(initialForm);
+              }}
+              className="flex items-center justify-center w-5 h-5 hover:bg-blue-100 rounded text-blue-500 font-bold text-[12px]"
+              title="Thêm Task phía trên"
+            >
+              <span>↑</span>
+            </button>
+
+            {/* ↓ Add Below */}
+            <button
+              type="button"
+              onClick={() => {
+                setAddingTaskGroupId(task.task_group_id);
+                const parentCode = getParentCode(task.task_code) || null;
+                setAddingTaskParentCode(parentCode);
+                setAddingTaskAfterCode(task.task_code);
+                const dynamicCols = getDynamicColumns();
+                const initialForm: Record<string, string> = {};
+                dynamicCols.forEach(col => { initialForm[col] = ''; });
+                const todayStr = fromPickerDate(new Date().toISOString().split('T')[0]);
+                const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                if (statusCol) initialForm[statusCol] = 'Waiting';
+                const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
+                if (priorityCol) initialForm[priorityCol] = 'Normal';
+                const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
+                if (startDateCol) initialForm[startDateCol] = todayStr;
+                const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
+                if (kpiRatioCol) initialForm[kpiRatioCol] = '100/0';
+                const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
+                if (mandayCol) initialForm[mandayCol] = '1.0';
+                setNewForm(initialForm);
+              }}
+              className="flex items-center justify-center w-5 h-5 hover:bg-emerald-100 rounded text-emerald-600 font-bold text-[12px]"
+              title="Thêm Task phía dưới"
+            >
+              <span>↓</span>
+            </button>
+
+            {/* 📄 Duplicate */}
+            <button
+              type="button"
+              onClick={() => handleDuplicateTask(task.task_group_id, task.id)}
+              className="flex items-center justify-center w-5 h-5 hover:bg-amber-100 rounded text-amber-600"
+              title="Nhân bản Task"
+            >
+              <span>📄</span>
+            </button>
+
+            {/* 🗑️ Delete */}
+            <button
+              type="button"
+              onClick={() => setTaskToDelete(task.id)}
+              className="flex items-center justify-center w-5 h-5 hover:bg-red-100 rounded text-red-400"
+              title="Xóa Task"
+            >
+              <span>🗑️</span>
+            </button>
+          </div>
         </td>
 
         {/* DYNAMIC CELLS */}
@@ -3267,7 +3357,7 @@ function ProjectDetailContent() {
           const dotCount = (task.task_code || '').split('.').length - 1;
           const level = Math.max(0, dotCount);
 
-          result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent));
+          result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent, tIdx, sortedTasks));
 
           // 1. Render inline add row at hover position if adding after this task
           if (addingTaskGroupId === group.id && addingTaskAfterCode === task.task_code) {

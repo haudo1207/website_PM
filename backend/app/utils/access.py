@@ -39,10 +39,17 @@ def require_project(db: Session, user, project_id: int) -> Project:
 
 
 def _is_task_write(request: Request) -> bool:
-    """Check if the request is a Task-related write operation (Create/Update/Delete)."""
+    """Check if the request is a Task or TaskGroup write operation (Create/Update/Delete)."""
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return False
-    return re.search(r"/task-groups/\d+/tasks", request.url.path) is not None
+    path = request.url.path
+    # Allow task CRUD (create, update, delete tasks)
+    if re.search(r"/task-groups/\d+/tasks", path) is not None:
+        return True
+    # Allow task group POST (create), PATCH (status change, etc.) and DELETE
+    if request.method in {"POST", "PATCH", "DELETE"} and re.search(r"/phases/\d+/task-groups", path) is not None:
+        return True
+    return False
 
 
 def _is_member_of_project(db: Session, user, project_id: int) -> bool:
@@ -95,9 +102,10 @@ def require_route_project_access(
         require_project(db, user, int(project_id))
 
     # Role-based write authorization.
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and user.role != "admin":
-        # Members may perform Task CRUD if assigned to the current project.
-        if _is_task_write(request) and project_id is not None and _is_member_of_project(db, user, int(project_id)):
+    user_role = (user.role or "").strip().lower()
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and user_role != "admin":
+        # Members may perform Task & TaskGroup CRUD.
+        if _is_task_write(request):
             return user
         raise HTTPException(403, "Yêu cầu quyền admin, bạn không có quyền thực hiện thao tác này!")
 
