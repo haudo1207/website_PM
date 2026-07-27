@@ -3,15 +3,9 @@ import os
 from sqlalchemy import text
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from app.models.skill_master import Skill
+import app.main  # đăng ký đầy đủ SQLAlchemy models
+from app.database import SessionLocal
 from app.models.member import Member
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.config import settings
-
-db_url = settings.DATABASE_URL.replace(":5432", ":6543")
-engine = create_engine(db_url, pool_pre_ping=True)
-SessionLocalCustom = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def abbreviate_name(full_name: str) -> str:
     if not full_name:
@@ -33,7 +27,7 @@ def clean_display_name(display_name: str) -> str:
     return display_name
 
 def migrate():
-    db = SessionLocalCustom()
+    db = SessionLocal()
     try:
         members = db.query(Member).all()
         print(f"Found {len(members)} members in local database.")
