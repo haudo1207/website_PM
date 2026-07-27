@@ -656,3 +656,22 @@ app.include_router(lunch_router.router,         prefix="/api/lunch")
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "5.0.0"}
+
+import asyncio
+
+@app.on_event("startup")
+async def start_auto_sync_loop():
+    async def _loop():
+        from .database import SessionLocal
+        from .services.meeting_sync import auto_sync_all_ended_meetings
+        while True:
+            try:
+                db = SessionLocal()
+                auto_sync_all_ended_meetings(db)
+                db.close()
+            except Exception as e:
+                pass
+            await asyncio.sleep(60)
+
+    asyncio.create_task(_loop())
+

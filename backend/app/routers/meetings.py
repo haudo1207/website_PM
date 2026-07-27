@@ -555,8 +555,8 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
 
-    if not m.meeting_url:
-        raise HTTPException(400, "Cuộc họp không có link. Không thể đồng bộ.")
+    if not m.meeting_url and not (m.transcript and m.transcript.strip()):
+        raise HTTPException(400, "Cuộc họp không có link hoặc nội dung transcript. Không thể đồng bộ.")
 
     platform = (m.platform or "").lower()
     meeting_info = {
@@ -565,6 +565,8 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
         "meeting_date": m.meeting_date,
         "start_time": m.start_time,
         "duration": None,
+        "transcript": m.transcript,
+        "status": m.status,
     }
     if m.start_time and m.end_time:
         start_dt = datetime.datetime.combine(datetime.date.today(), m.start_time)
@@ -572,14 +574,18 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
         meeting_info["duration"] = int((end_dt - start_dt).total_seconds() / 60)
 
     try:
-        if "zoom" in platform:
+        if "zoom" in platform and m.meeting_url:
             from ..services.meeting_sync import sync_zoom_meeting
             result = sync_zoom_meeting(m.meeting_url, meeting_info)
-        elif "google" in platform or "meet" in platform:
+        elif ("google" in platform or "meet" in platform) and m.meeting_url:
             from ..services.meeting_sync import sync_google_meet
             result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info)
+        elif m.transcript and m.transcript.strip():
+            from ..services.meeting_sync import summarize_with_ai
+            summary = summarize_with_ai(m.transcript, meeting_info)
+            result = {"transcript": m.transcript, "summary": summary, "status": "DONE"}
         else:
-            raise HTTPException(400, f"Nền tảng '{m.platform}' không hỗ trợ đồng bộ tự động.")
+            raise HTTPException(400, f"Nền tảng '{m.platform}' chưa được hỗ trợ đồng bộ tự động.")
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
