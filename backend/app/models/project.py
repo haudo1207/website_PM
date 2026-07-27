@@ -84,3 +84,12 @@ class ProjectLink(Base):
     # Relationships
     project  = relationship("Project", back_populates="links")
     platform = relationship("Platform", back_populates="links", lazy="select")
+
+
+from sqlalchemy import event
+
+@event.listens_for(Project, 'before_insert')
+@event.listens_for(Project, 'before_update')
+def sync_project_data_scope(mapper, connection, target):
+    if target.business:
+        target.data_scope = str(target.business).strip().lower()
