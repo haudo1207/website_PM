@@ -11,6 +11,8 @@ COPY create_admin.py .
 COPY init_settings.py .
 COPY sync_members.py .
 COPY migrate_db.py .
+COPY sync_all_accepted_candidates.py .
+COPY migrate_display_names.py .
 COPY Skill_Master_From_Sheet.xlsx .
 
 RUN useradd -m appuser && chown -R appuser /app
