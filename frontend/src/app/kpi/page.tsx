@@ -8,6 +8,7 @@ import { getMembers, getTeams, getPositions, getDepartments } from '@/lib/api';
 export default function KPIPage() {
     const router = useRouter();
     const [authorized, setAuthorized] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<'KPItotal' | 'KPIweek'>('KPItotal');
     const [members, setMembers] = useState<any[]>([]);
     const [search, setSearch] = useState("");
@@ -67,7 +68,20 @@ export default function KPIPage() {
             if (department) params.department = department;
             if (search) params.search = search;
         }
-        getMembers(params).then(setMembers).catch(() => { });
+        let active = true;
+        setIsLoading(true);
+        getMembers(params)
+            .then((data) => {
+                if (active) setMembers(data);
+            })
+            .catch(() => { })
+            .finally(() => {
+                if (active) setIsLoading(false);
+            });
+            
+        return () => {
+            active = false;
+        };
     }, [activeTab, month, year, team, position, department, search, startDate, endDate]);
 
     const sortedMembers = useMemo(() => {
@@ -264,7 +278,15 @@ export default function KPIPage() {
                     </div>
 
                     {/* Table */}
-                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm relative">
+                        {isLoading && (
+                            <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-[2px] flex items-center justify-center rounded-xl">
+                                <div className="flex flex-col items-center gap-3">
+                                    <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                                    <p className="text-sm font-semibold text-blue-900">Đang tải dữ liệu...</p>
+                                </div>
+                            </div>
+                        )}
                         <div className="overflow-x-auto overflow-y-auto max-h-[60vh] relative">
                             <table className="w-full text-xs text-[#0f172a] whitespace-nowrap">
                                 {activeTab === 'KPItotal' ? (

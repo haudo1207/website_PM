@@ -103,16 +103,17 @@ def list_members(
     weeks_divisor = 52
 
     # Apply date filters
-    if start_date and end_date:
-        q_assigned = q_assigned.filter(
-            Task.end_date_actual >= start_date,
-            Task.end_date_actual <= end_date
-        )
-        q_support = q_support.filter(
-            Task.end_date_actual >= start_date,
-            Task.end_date_actual <= end_date
-        )
+    if start_date or end_date:
+        if start_date:
+            q_assigned = q_assigned.filter(Task.end_date_actual >= start_date)
+            q_support = q_support.filter(Task.end_date_actual >= start_date)
+        if end_date:
+            q_assigned = q_assigned.filter(Task.end_date_actual <= end_date)
+            q_support = q_support.filter(Task.end_date_actual <= end_date)
     else:
+        if month and not year:
+            year = datetime.datetime.now().year
+
         if year:
             if month and month in CYCLE_TEMPLATE:
                 s_md, e_md, s_yo, e_yo, weeks = CYCLE_TEMPLATE[month]
