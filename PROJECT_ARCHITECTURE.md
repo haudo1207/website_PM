@@ -6,7 +6,7 @@
 
 ## 1. Tổng quan
 
-Hệ thống **Task Compliance Portal** (KPI Portal) quản lý và theo dõi tiến độ dự án theo cấu trúc 4 cấp (Project → Phase → TaskGroup → Task), tính toán chỉ số hiệu suất KPI, đánh giá sức khỏe dự án bằng AI, hỗ trợ đồng bộ/tóm tắt biên bản họp (Zoom & Google Meet), và quản lý yêu cầu vắng mặt (Leave Request). Hệ thống hỗ trợ multi-brand deployment (Markee / SecurityZone).
+Hệ thống **Task Compliance Portal** (KPI Portal) quản lý và theo dõi tiến độ dự án theo cấu trúc 4 cấp (Project → Phase → TaskGroup → Task), tính toán chỉ số hiệu suất KPI, đánh giá sức khỏe dự án bằng AI, hỗ trợ đồng bộ/tóm tắt biên bản họp (Zoom & Google Meet), quản lý yêu cầu vắng mặt (Leave Request) và đăng ký suất ăn trưa. Hệ thống hỗ trợ multi-brand deployment (Markee / SecurityZone).
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
@@ -84,6 +84,8 @@ pm-new/
 │       │   ├── ai_review.py      # Bảng ai_prompts, ai_review_logs (AI đánh giá dự án)
 │       │   ├── google_token.py   # Bảng google_tokens (OAuth tokens)
 │       │   ├── leave_request.py  # Bảng leave_requests (Đơn xin nghỉ phép/công tác)
+│       │   ├── lunch_record.py   # Bảng lunch_records (Đăng ký suất ăn trưa)
+│       │   ├── master_phase.py   # Bảng master_phases (Các giai đoạn mẫu)
 │       │   └── setting.py        # Bảng settings + audit_logs
 │       │
 │       ├── routers/              # API Endpoints (FastAPI Routers)
@@ -99,7 +101,8 @@ pm-new/
 │       │   ├── meetings.py       # CRUD /api/meetings + sync Zoom/Google
 │       │   ├── performance_settings.py # CRUD /api/performance-settings
 │       │   ├── ai_review.py      # /api/ai-review (AI đánh giá dự án)
-│       │   └── leave_requests.py # CRUD /api/leave-requests (quản lý yêu cầu vắng mặt)
+│       │   ├── leave_requests.py # CRUD /api/leave-requests (quản lý yêu cầu vắng mặt)
+│       │   └── lunch.py          # CRUD /api/lunch (quản lý đăng ký suất ăn trưa)
 │       │
 │       ├── services/
 │       │   └── meeting_sync.py   # Zoom S2S, Google Calendar, AssemblyAI, AI Summary
@@ -151,6 +154,8 @@ pm-new/
             │   └── calendar-team/ # Lịch vắng mặt team
             ├── settings/         # Cài đặt hệ thống (categories, skills, platforms, KPIs, AI)
             ├── accounts/         # Quản lý tài khoản (admin only)
+            ├── customers/        # Quản lý khách hàng
+            ├── kpi/              # Bảng theo dõi và đánh giá KPI
             └── api/              # Next.js API Routes (proxy to backend)
                 ├── ai/settings/  # AI configuration proxy
                 ├── ai/summarize/ # AI summarization proxy
@@ -185,12 +190,13 @@ pm-new/
 | `/api/performance-settings` | performance_settings.py | Cấu hình KPI thresholds |
 | `/api/ai-review` | ai_review.py | AI đánh giá dự án + prompt management |
 | `/api/leave-requests` | leave_requests.py | Quản lý yêu cầu vắng mặt (Leave Request) |
+| `/api/lunch` | lunch.py | Quản lý đăng ký suất ăn trưa |
 | `GET /health` | main.py | Health check |
 
 ### 3.3 Business Logic
 
 - **KPI Engine** (`utils/kpi_engine.py`): Tính toán hiệu suất task/taskgroup dựa trên thời gian, deadline, trạng thái hoàn thành. Cấu hình thưởng/phạt từ `performance_settings`.
-- **Access Control** (`utils/access.py`): Lọc dữ liệu theo `data_scope` của user. Scope `all` xem toàn bộ, scope khác chỉ xem projects có cùng `data_scope`.
+- **Access Control** (`utils/access.py`): Lọc dữ liệu theo `data_scope` của user. Scope `all` xem toàn bộ, scope khác chỉ xem projects có cùng `data_scope`. Member được phân công dự án có quyền xem và cập nhật task.
 - **Meeting Sync** (`services/meeting_sync.py`): Đồng bộ lịch họp từ Google Calendar + Zoom (S2S OAuth), transcription qua AssemblyAI, tóm tắt bằng AI.
 
 ---
@@ -219,6 +225,8 @@ pm-new/
 | `/leave-request/calendar-team` | Lịch vắng mặt của team |
 | `/settings` | Cài đặt (Categories, Skills, Platforms, KPIs, AI Prompts) |
 | `/accounts` | Quản lý tài khoản (admin only) |
+| `/customers` | Quản lý danh sách khách hàng |
+| `/kpi` | Quản lý và theo dõi KPI |
 
 ### 4.3 Multi-brand
 
@@ -267,6 +275,8 @@ Cấu hình brand (logo, tên, màu sắc) nằm trong `src/lib/brand.ts`.
 | AIPrompt | `ai_prompts` | Template prompt AI cho từng dự án |
 | AIReviewLog | `ai_review_logs` | Log kết quả AI review (score, issues, suggestions) |
 | LeaveRequest | `leave_requests` | Yêu cầu vắng mặt (Work Remotely, Offline, Go on Business...) |
+| LunchRecord | `lunch_records` | Đăng ký suất ăn trưa của nhân viên |
+| MasterPhase | `master_phases` | Cấu hình các giai đoạn (phase) mẫu |
 
 ### 5.4 Junction Tables
 
@@ -294,25 +304,28 @@ Project → Phase → TaskGroup → Task (4 cấp)
 - Token expiry: 480 phút (8 giờ)
 - Frontend lưu token trong localStorage, gửi qua Bearer header
 
-### 6.2 Authorization — Role-based
+### 6.2 Authorization — Role-based (4-Role System)
 
 | Role | Quyền |
 |------|--------|
-| `admin` | Toàn quyền: accounts, members, settings, project, task, meeting và leave requests |
-| `member` | Chỉ đọc/thao tác dữ liệu trong phạm vi được cấp (và quản lý leave requests của bản thân) |
+| `super_admin` | Toàn quyền toàn hệ thống (tương đương admin cũ) |
+| `leader` | Quản lý dự án, task, meeting trong phạm vi `data_scope` được phân công |
+| `member` | Xem dự án được phân công, có quyền cập nhật (write) Task trong dự án đó |
+| `viewer` | Chỉ được xem (read-only) dự án được phân công |
 
 ### 6.3 Authorization — Data Scope
 
 | Scope | Mô tả |
 |-------|--------|
-| `all` | Xem toàn bộ dự án |
-| `infrastructure` (default) | Chỉ xem dự án có cùng `data_scope` |
+| `all` | Xem toàn bộ dự án (Dành cho super_admin) |
+| `infrastructure` (default) | Chỉ xem dự án thuộc team Infrastructure |
+| `markee` | Chỉ xem dự án thuộc team Markee |
 
 ### 6.4 Safeguards
 
-- Không thể xóa/demote admin cuối cùng
-- Admin không thể tự demote chính mình
-- Mọi write operation thuộc project/task/meeting/settings chỉ cho phép admin; backend trả 403 cho member
+- Không thể xóa/demote `super_admin` cuối cùng
+- Super Admin không thể tự demote chính mình
+- Write operation (CRUD dự án/settings) giới hạn ở `super_admin` và `leader` (theo scope). `member` chỉ được write Task. `viewer` bị chặn mọi write operation (403).
 
 ---
 
@@ -367,6 +380,11 @@ Admin panel: tạo/sửa/khóa/mở khóa/xóa tài khoản. Liên kết account
 ### 7.9 System Categories & Platforms
 
 Danh mục hệ thống cấu hình: positions, departments, teams, priorities, statuses, customers. Liên kết kênh giao tiếp cho từng dự án (Zalo, Telegram, Slack, v.v.).
+
+### 7.10 Đăng ký suất ăn trưa (Lunch Registration)
+
+- Quản lý việc đăng ký ăn trưa hàng ngày của nhân viên (`lunch_records`).
+- Admin/Leader có thể theo dõi và tổng hợp số lượng suất ăn.
 
 ---
 
