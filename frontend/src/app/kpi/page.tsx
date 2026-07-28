@@ -59,8 +59,13 @@ export default function KPIPage() {
             if (department) params.department = department;
             if (search) params.search = search;
         } else {
+            // KPI Tuần: gửi date range + các filter chung
             if (startDate) params.start_date = startDate;
             if (endDate) params.end_date = endDate;
+            if (team) params.team = team;
+            if (position) params.position = position;
+            if (department) params.department = department;
+            if (search) params.search = search;
         }
         getMembers(params).then(setMembers).catch(() => { });
     }, [activeTab, month, year, team, position, department, search, startDate, endDate]);
@@ -360,7 +365,7 @@ export default function KPIPage() {
                                                         <td className={`px-4 py-3 text-center font-semibold tabular-nums ${kpi_act === 0 ? 'text-slate-400' : 'text-slate-600'}`}>{kpi_act === 0 ? '0' : kpi_act.toFixed(2)}</td>
                                                         
                                                         <td className={`px-4 py-3 text-center font-bold tabular-nums ${achieved === 0 ? 'text-slate-400' : (achieved >= 100 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50')}`}>
-                                                            {achieved === 0 ? '' : `${achieved}%`}
+                                                            {`${achieved}%`}
                                                         </td>
                                                         
                                                         <td className="px-4 py-3 text-center font-semibold text-slate-400">-</td>

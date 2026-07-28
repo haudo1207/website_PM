@@ -83,6 +83,25 @@ def list_members(
         Task.support_id.isnot(None)
     )
 
+    # Custom Fiscal Calendar Template
+    # Structure: (start_month_day, end_month_day, start_year_offset, end_year_offset, weeks)
+    CYCLE_TEMPLATE = {
+        1:  ("-12-22", "-01-18", -1, 0, 4),
+        2:  ("-01-19", "-02-22", 0, 0, 5),
+        3:  ("-02-23", "-03-22", 0, 0, 4),
+        4:  ("-03-23", "-04-19", 0, 0, 4),
+        5:  ("-04-20", "-05-24", 0, 0, 5),
+        6:  ("-05-25", "-06-21", 0, 0, 4),
+        7:  ("-06-22", "-07-19", 0, 0, 4),
+        8:  ("-07-20", "-08-23", 0, 0, 5),
+        9:  ("-08-24", "-09-20", 0, 0, 4),
+        10: ("-09-21", "-10-25", 0, 0, 5),
+        11: ("-10-26", "-11-22", 0, 0, 4),
+        12: ("-11-23", "-12-20", 0, 0, 4),
+    }
+    # Default: full year = 52 weeks; will be overridden when a specific month is selected
+    weeks_divisor = 52
+
     # Apply date filters
     if start_date and end_date:
         q_assigned = q_assigned.filter(
