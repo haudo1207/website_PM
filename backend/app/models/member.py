@@ -35,3 +35,8 @@ class Member(Base):
         backref="members",
         lazy="select"
     )
+    user = relationship(
+        "User",
+        back_populates="member",
+        uselist=False
+    )

@@ -7,6 +7,7 @@ import { getMembers, getLeaveRequests } from '@/lib/api';
 
 interface Member {
   id: number;
+  user_id?: number;
   full_name?: string;
   display_name?: string;
   team?: string;
@@ -57,23 +58,40 @@ export default function CalendarTeamPage() {
     return ['All', ...Array.from(teams).sort()];
   }, [members]);
 
+  const memberByUserId = useMemo(() => {
+    const map: Record<number, number> = {};
+    members.forEach((m) => {
+      if (m.user_id) map[m.user_id] = m.id;
+    });
+    return map;
+  }, [members]);
+
   const statusByMember = useMemo(() => {
     const target = new Date(date);
     const map: Record<number, { off: boolean; leave?: any }> = {};
-    members.forEach((m) => (map[m.id] = { off: false }));
+    members.forEach((m) => {
+      map[m.id] = { off: false };
+    });
 
     leaveRequests.forEach((req) => {
+      if (req.status !== "Approved") return;
+
       const s = new Date(req.start_date);
       const e = new Date(req.end_date);
+
       if (s <= target && target <= e) {
-        if (map[req.user_id]) {
-          map[req.user_id] = { off: true, leave: req };
+        const memberId =
+          req.member_id ??
+          memberByUserId[req.user_id];
+
+        if (memberId && map[memberId]) {
+          map[memberId] = { off: true, leave: req };
         }
       }
     });
 
     return map;
-  }, [date, leaveRequests, members]);
+  }, [date, leaveRequests, members, memberByUserId]);
 
   const filteredMembers = useMemo(() => {
     if (selectedTeam === 'All') return members;

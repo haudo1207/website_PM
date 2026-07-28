@@ -264,3 +264,7 @@ export const getAIReviewHistory = (entityType: string, entityId: number) =>
 
 export const getAIReviewLog = (logId: number) =>
   api.get(`/ai-review/logs/${logId}`).then(r => r.data);
+
+export const syncAITasksFromChat = (projectId: number) =>
+  api.post(`/projects/${projectId}/ai-task-inbox/sync`).then(r => r.data);
+
