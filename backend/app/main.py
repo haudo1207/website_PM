@@ -146,6 +146,24 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))
 
+        # Add new columns to chat_ai_tasks
+        conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS skill_solution_id INTEGER NULL"))
+        conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS skill_vendor_id INTEGER NULL"))
+        conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS ticket_id VARCHAR(500) NULL"))
+        conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS remark VARCHAR(500) NULL"))
+        conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS send VARCHAR(500) NULL"))
+        conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS target_status VARCHAR(50) NOT NULL DEFAULT 'Waiting'"))
+
+        # Clean up Low priority and guarantee Normal, High, Critical, Interrupt exist
+        conn.execute(text("DELETE FROM task_priorities WHERE LOWER(name) = 'low'"))
+        conn.execute(text("UPDATE tasks_v2 SET priority = 'Normal' WHERE LOWER(priority) = 'low'"))
+        conn.execute(text("UPDATE chat_ai_tasks SET priority = 'Normal' WHERE LOWER(priority) = 'low'"))
+
+        conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Normal', 6, '🟢 Xanh') ON CONFLICT (name) DO NOTHING"))
+        conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('High', 12, '🟠 Cam') ON CONFLICT (name) DO NOTHING"))
+        conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Critical', 20, '🔴 Đỏ') ON CONFLICT (name) DO NOTHING"))
+        conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Interrupt', 25, '🟣 Tím') ON CONFLICT (name) DO NOTHING"))
+
 apply_schema_updates()
 
 def init_db_defaults():
