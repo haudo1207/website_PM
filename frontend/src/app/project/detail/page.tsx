@@ -475,8 +475,8 @@ function ProjectDetailContent() {
       await deleteProject(Number(id));
       flash('Xóa dự án thành công!');
       router.push('/project');
-    } catch {
-      flash('Xóa dự án thất bại', true);
+    } catch (err: any) {
+      flash('Xóa dự án thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
     }
   };
 
