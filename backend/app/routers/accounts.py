@@ -70,16 +70,24 @@ def _ensure_leader_allowed_role(caller: User, role: str) -> None:
 
 
 def account_to_dict(u: User) -> dict:
+    created_at = u.created_at
+    if created_at is not None and not hasattr(created_at, "isoformat"):
+        created_at = str(created_at)
+
     member_info = None
-    if u.member_id and u.member:
-        m = u.member
+    member = None
+    try:
+        member = u.member if u.member_id else None
+    except Exception:
+        member = None
+    if member:
         member_info = {
-            "id": m.id,
-            "display_name": m.display_name,
-            "full_name": m.full_name,
-            "team": m.team,
-            "position": m.position,
-            "department": m.department,
+            "id": member.id,
+            "display_name": member.display_name,
+            "full_name": member.full_name,
+            "team": member.team,
+            "position": member.position,
+            "department": member.department,
         }
     return {
         "id": u.id,
@@ -91,7 +99,7 @@ def account_to_dict(u: User) -> dict:
         "is_active": u.is_active,
         "member_id": u.member_id,
         "member": member_info,
-        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
     }
 
 
