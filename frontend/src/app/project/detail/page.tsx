@@ -128,8 +128,9 @@ function ProjectDetailContent() {
   const [selectedFormPhase, setSelectedFormPhase] = useState<string>('');
 
   // Interactive Task Management additions
-  const [editingCell, setEditingCell] = useState<{ taskId: number; colName: string } | null>(null);
-  const [editValue, setEditValue] = useState<string>('');
+  const [editingCell, setEditingCell] = useState<{ taskId: number, colName: string } | null>(null);
+  const [editingGroupDate, setEditingGroupDate] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
 
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
@@ -279,7 +280,7 @@ function ProjectDetailContent() {
 
   const TASK_COLUMNS = [
     "TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY EST", "STATUS", "START DATE",
-    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "TICKET ID",
+    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "LINK",
     "REMARK", "SEND", "END DATE EST", "MD ACTUAL", "END ACTUAL", "DAYS LATE",
     "KPI BASE", "KPI PERFORM", "KPI OVERTIME", "KPI FINAL", "SUB ID", "ROOT TASKS",
     "NOTES", "SOLUTION"
@@ -310,7 +311,7 @@ function ProjectDetailContent() {
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
-      case 'TICKET ID': return task.ticket_id || '';
+      case 'LINK': return task.ticket_id || '';
       case 'SKILL SOLUTION': return task.skill_solution_name || '';
       case 'SKILL VENDOR': return task.skill_vendor_name || '';
 
@@ -501,9 +502,11 @@ function ProjectDetailContent() {
 
       const tsks = await getAllProjectTasks(Number(id));
       setItems(tsks || []);
+      return { tasks: tsks || [], groups: allGroups };
     } catch (err) {
       console.error('Lỗi khi tải dữ liệu dự án:', err);
       flash('Không thể tải dữ liệu dự án', true);
+      return { tasks: [], groups: [] };
     } finally {
       if (!silent) {
         setLoadingTasks(false);
@@ -834,7 +837,7 @@ function ProjectDetailContent() {
   const getOrderedRows = () => {
     const rows: { type: 'group' | 'task'; id: number; task?: any; group?: any }[] = [];
     const phasesToRender = activePhase === 'ALL'
-      ? phases.filter(p => !p.is_master)
+      ? phases.filter(p => p.name.trim().toLowerCase() !== 'master')
       : phases.filter(p => p.name === activePhase);
 
     for (const p of phasesToRender) {
@@ -1054,27 +1057,52 @@ function ProjectDetailContent() {
 
     isSavingRef.current = true;
     try {
+      // 1. Update the task that was changed
       await updateTask(task.task_group_id, taskId, payload);
       flash('Đã cập nhật task thành công!');
-      await reloadAll(true);
+      
+      // 2. If the status was changed, check and update the parent Task Group
+      if (payload.status) {
+        const { tasks: updatedItems, groups: updatedGroups } = await reloadAll(true);
+        const parentGroupId = task.task_group_id;
+        const parentGroup = updatedGroups.find(g => g.id === parentGroupId);
+
+        if (parentGroup) {
+          const childTasks = updatedItems.filter((t: any) => t.task_group_id === parentGroupId);
+          const doneChildTasks = childTasks.filter((t: any) => {
+            const childStatus = (t.status || '').toLowerCase();
+            return (childStatus === 'done' || childStatus === 'completed' || childStatus.includes('hoàn') || childStatus.includes('finish')) && t.end_date_actual;
+          });
+
+          let latestDate: Date | null = null;
+          if (doneChildTasks.length > 0) {
+            const allTimestamps = doneChildTasks.map((t: any) => new Date(t.end_date_actual).getTime());
+            const maxTimestamp = Math.max(...allTimestamps);
+            latestDate = new Date(maxTimestamp);
+          }
+
+          const formattedDate = latestDate ? latestDate.toISOString().split('T')[0] : null;
+
+          if (parentGroup.end_date_actual !== formattedDate) {
+            await updateTaskGroup(parentGroup.phase_id, parentGroup.id, { end_date_actual: formattedDate });
+            // Reload again to get the updated group reflected everywhere
+            await reloadAll(true); 
+          }
+        }
+      } else {
+        // If status was not changed, just do a simple reload to reflect other changes
+        await reloadAll(true);
+      }
+
+      // 3. Handle UI logic for moving to the next cell
       if (nextAction) {
         activateNextCell(taskId, colName, nextAction);
       } else {
-        setEditingCell(prev => {
-          if (prev?.taskId === taskId && prev?.colName === colName) {
-            return null;
-          }
-          return prev;
-        });
+        setEditingCell(null);
       }
     } catch (err: any) {
       alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
-      setEditingCell(prev => {
-        if (prev?.taskId === taskId && prev?.colName === colName) {
-          return null;
-        }
-        return prev;
-      });
+      setEditingCell(null);
     } finally {
       isSavingRef.current = false;
     }
@@ -2056,7 +2084,7 @@ function ProjectDetailContent() {
           <div
             onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
             onMouseLeave={handleSpacerMouseLeave}
-            className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
+            className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
           >
             {/* Dashed line */}
             <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
@@ -2117,7 +2145,7 @@ function ProjectDetailContent() {
           <div
             onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
             onMouseLeave={handleSpacerMouseLeave}
-            className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
+            className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
           >
             {/* Dashed line */}
             <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
@@ -2169,7 +2197,7 @@ function ProjectDetailContent() {
       <tr
         id={`task-row-${task.id}`}
         key={task.id}
-        className={`group relative transition-colors border-b border-slate-200/60 ${rowBgClass}`}
+        className={`group relative transition-colors ${rowBgClass}`}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("application/json", JSON.stringify({ type: "task", taskId: task.id, groupId: task.task_group_id }));
@@ -2588,6 +2616,39 @@ function ProjectDetailContent() {
               );
             }
 
+            if (colUpper === 'LINK') {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[320px]">
+                  <textarea
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, editValue);
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, editValue, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    ref={el => {
+                      if (el) {
+                        el.style.height = 'auto';
+                        el.style.height = el.scrollHeight + 'px';
+                      }
+                    }}
+                    className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none resize-none overflow-hidden min-h-[60px] h-auto whitespace-pre-wrap break-words leading-relaxed"
+                    placeholder="Dán các link vào đây, mỗi link một dòng..."
+                  />
+                </td>
+              );
+            }
+            
             if (colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'))) {
               return (
                 <td key={col} className="px-2 py-1 min-w-[130px]">
@@ -2760,35 +2821,54 @@ function ProjectDetailContent() {
                 </span>
               );
             }
-          } else if (colUpper === 'TICKET ID') {
-            const isUrl = /^https?:\/\//i.test(val);
-            if (isUrl) {
-              // Extract a readable label from URL
-              let label = val;
-              try {
-                const u = new URL(val);
-                const host = u.hostname.replace('www.', '');
-                if (host.includes('docs.google.com')) label = 'Google Docs';
-                else if (host.includes('figma.com')) label = 'Figma Design';
-                else if (host.includes('drive.google.com')) label = 'Google Drive';
-                else if (host.includes('github.com')) label = 'GitHub';
-                else if (host.includes('jira')) label = 'Jira Ticket';
-                else if (host.includes('notion')) label = 'Notion Page';
-                else if (host.includes('confluence')) label = 'Confluence';
-                else label = host + (u.pathname.length > 20 ? u.pathname.substring(0, 20) + '...' : u.pathname);
-              } catch {}
+          } else if (colUpper === 'LINK') {
+            const links = (val || '').split('\n').filter(Boolean);
+            if (links.length > 0) {
               cellContent = (
-                <span
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors max-w-[180px] truncate shadow-sm"
-                  title={val}
-                  onClick={(e) => { e.stopPropagation(); window.open(val, '_blank', 'noopener,noreferrer'); }}
-                >
-                  🔗 {label}
-                </span>
-              );
-            } else if (val) {
-              cellContent = (
-                <span className="text-[12px] font-mono text-[#0b1c30]">{val}</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {links.map((link, index) => {
+                    const isUrl = /^https?:\/\//i.test(link);
+                    let label = link;
+                    if (isUrl) {
+                        try {
+                            const u = new URL(link);
+                            const host = u.hostname.replace('www.', '');
+                            if (host.includes('docs.google.com')) label = 'Google Docs';
+                            else if (host.includes('figma.com')) label = 'Figma Design';
+                            else if (host.includes('drive.google.com')) label = 'Google Drive';
+                            else if (host.includes('github.com')) label = 'GitHub';
+                            else if (host.includes('jira')) label = 'Jira Ticket';
+                            else if (host.includes('notion')) label = 'Notion Page';
+                            else if (host.includes('confluence')) label = 'Confluence';
+                            else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
+                        } catch {}
+                    }
+                    
+                    return (
+                      <div key={index} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden">
+                        <span
+                          className="px-2 py-0.5 cursor-pointer hover:bg-blue-100 transition-colors max-w-[160px] truncate"
+                          title={link}
+                          onClick={(e) => { e.stopPropagation(); if(isUrl) window.open(link, '_blank', 'noopener,noreferrer'); }}
+                        >
+                          🔗 {label}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newLinks = links.filter((_, i) => i !== index);
+                            const newValue = newLinks.join('\n');
+                            handleCellSave(task.id, col, newValue);
+                          }}
+                          className="px-1 py-0.5 hover:bg-blue-200 text-blue-500 hover:text-blue-700 transition-colors"
+                          title="Xóa link"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               );
             } else {
               cellContent = (
@@ -2840,7 +2920,7 @@ function ProjectDetailContent() {
     }
 
     const phasesToRender = activePhase === 'ALL'
-      ? phases.filter(p => !p.is_master)
+      ? phases.filter(p => p.name.trim().toLowerCase() !== 'master')
       : phases.filter(p => p.name === activePhase);
 
     if (phasesToRender.length === 0) {
@@ -3213,7 +3293,79 @@ function ProjectDetailContent() {
                 );
               }
 
-              // Inline edit for editable columns
+              // Special editable cell for END ACTUAL DATE
+              if (colUpper === 'END ACTUAL' || colUpper === 'END DATE ACTUAL') {
+                const isEditingDate = editingGroupDate === group.id;
+
+                if (isEditingDate) {
+                  return (
+                    <td key={col} className="px-2 py-1">
+                      <input
+                        type="date"
+                        defaultValue={group.end_date_actual_override ? toPickerDate(group.end_date_actual_override) : (group.end_date_actual ? toPickerDate(group.end_date_actual) : '')}
+                        autoFocus
+                        onBlur={async (e) => {
+                          const newDate = e.target.value ? fromPickerDate(e.target.value) : null;
+                          const originalDate = group.end_date_actual_override;
+                          
+                          if (newDate !== originalDate) {
+                            try {
+                              await updateTaskGroup(group.phase_id, group.id, { end_date_actual_override: newDate });
+                              flash('Đã cập nhật ngày hoàn thành thực tế!');
+                              reloadAll(true);
+                            } catch (err: any) {
+                              alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+                            }
+                          }
+                          setEditingGroupDate(null);
+                        }}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter') {
+                            const newDate = e.currentTarget.value ? fromPickerDate(e.currentTarget.value) : null;
+                            const originalDate = group.end_date_actual_override;
+                            if (newDate !== originalDate) {
+                                try {
+                                    await updateTaskGroup(group.phase_id, group.id, { end_date_actual_override: newDate });
+                                    flash('Đã cập nhật ngày hoàn thành thực tế!');
+                                    reloadAll(true);
+                                } catch (err: any) {
+                                    alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+                                }
+                            }
+                            setEditingGroupDate(null);
+                          } else if (e.key === 'Escape') {
+                            setEditingGroupDate(null);
+                          }
+                        }}
+                        className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs font-mono focus:outline-none font-bold"
+                      />
+                    </td>
+                  );
+                }
+
+                // Display mode with edit icon for END ACTUAL
+                const cellStyle = "px-4 py-2.5 text-xs font-bold text-[#1e293b] whitespace-nowrap";
+                return (
+                    <td key={col} className={`${cellStyle} group cursor-pointer hover:bg-indigo-100/60`} onClick={() => setEditingGroupDate(group.id)}>
+                        <div className="flex items-center justify-between w-full">
+                            <span className="font-mono" title={`Tự động: ${formatDateToShow(group.end_date_actual_auto || '')}`}>
+                                {group.status && group.status.toLowerCase() === 'done' ? (
+                                    group.end_date_actual_override ? (
+                                        <strong className="text-indigo-700" title="Ngày đã ghi đè thủ công">{formatDateToShow(group.end_date_actual_override)}</strong>
+                                    ) : (
+                                        val || <span className="text-slate-400 italic">Trống</span>
+                                    )
+                                ) : (
+                                    <span className="text-slate-400 italic">—</span>
+                                )}
+                            </span>
+                            <span className="opacity-0 group-hover:opacity-60 text-[10px] transition-opacity shrink-0">✏️</span>
+                        </div>
+                    </td>
+                );
+              }
+
+              // Inline edit for other editable columns
               if (isEditing) {
                 if (colUpper === 'STATUS') {
                   return (

@@ -91,9 +91,10 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
 
 
 def sync_group_actual_dates(tg, db):
-    """Sync TaskGroup end_date_actual (max) from child tasks."""
+    """Sync TaskGroup end_date_actual (max) from child tasks, considering only 'Done' tasks."""
     rows = db.query(Task.end_date_actual).filter(
         Task.task_group_id == tg.id,
+        Task.status.in_(["Done", "done"]),  # Only consider tasks with status 'Done'
         Task.end_date_actual.isnot(None)
     ).all()
     actual_end_dates = [r[0] for r in rows]
@@ -711,6 +712,9 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
         child_tasks = sorted(child_tasks, key=lambda t: t.task_code)
         for child in child_tasks:
             recalculate_task(child, db)
+
+    # Flush changes to the DB so that queries in sync functions see the latest state
+    db.flush()
 
     # Update group progress
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
