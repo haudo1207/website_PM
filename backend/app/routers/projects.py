@@ -537,13 +537,13 @@ def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends
     try:
         from ..models.meeting import Meeting
         from ..models.ai_task_inbox import AITaskInbox
-        from ..models.ai_review import AIReviewHistory, ChatSyncLog
+        from ..models.ai_review import AIPrompt, AIReviewLog
         db.query(Meeting).filter(Meeting.project_id == pid).delete(synchronize_session=False)
         db.query(AITaskInbox).filter(AITaskInbox.project_id == pid).delete(synchronize_session=False)
-        db.query(AIReviewHistory).filter(AIReviewHistory.project_id == pid).delete(synchronize_session=False)
-        db.query(ChatSyncLog).filter(ChatSyncLog.project_id == pid).delete(synchronize_session=False)
+        db.query(AIPrompt).filter(AIPrompt.project_id == pid).delete(synchronize_session=False)
+        db.query(AIReviewLog).filter(AIReviewLog.project_id == pid).delete(synchronize_session=False)
     except Exception as err:
-        print("Optional cascade clean warning:", err)
+        print("Cascade clean warning:", err)
 
     db.delete(p)
     db.commit()
