@@ -49,25 +49,21 @@ export default function KPIPage() {
     }, []);
 
     useEffect(() => {
-        if (!isAdmin()) {
-            router.push('/dashboard');
+        setAuthorized(true);
+        const params: any = {};
+        if (activeTab === 'KPItotal') {
+            if (month) params.month = parseInt(month);
+            if (year) params.year = parseInt(year);
+            if (team) params.team = team;
+            if (position) params.position = position;
+            if (department) params.department = department;
+            if (search) params.search = search;
         } else {
-            setAuthorized(true);
-            const params: any = {};
-            if (activeTab === 'KPItotal') {
-                if (month) params.month = parseInt(month);
-                if (year) params.year = parseInt(year);
-                if (team) params.team = team;
-                if (position) params.position = position;
-                if (department) params.department = department;
-                if (search) params.search = search;
-            } else {
-                if (startDate) params.start_date = startDate;
-                if (endDate) params.end_date = endDate;
-            }
-            getMembers(params).then(setMembers).catch(() => { });
+            if (startDate) params.start_date = startDate;
+            if (endDate) params.end_date = endDate;
         }
-    }, [router, activeTab, month, year, team, position, department, search, startDate, endDate]);
+        getMembers(params).then(setMembers).catch(() => { });
+    }, [activeTab, month, year, team, position, department, search, startDate, endDate]);
 
     const sortedMembers = useMemo(() => {
         let sortableItems = [...members];
