@@ -106,10 +106,6 @@ def account_to_dict(u: User) -> dict:
 @router.get("")
 def list_accounts(db: Session = Depends(get_db), caller=Depends(require_manager)):
     query = db.query(User)
-    if caller.role == ROLE_LEADER:
-        query = query.filter(
-            (User.id == caller.id) | (User.role.in_(LEADER_MANAGED_ROLES))
-        )
     users = query.order_by(User.id.asc()).all()
     return [account_to_dict(u) for u in users]
 
