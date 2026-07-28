@@ -441,6 +441,9 @@ function ProjectDetailContent() {
   const pmRef = useRef<HTMLDivElement>(null);
   const leaderRef = useRef<HTMLDivElement>(null);
   const memberRef = useRef<HTMLDivElement>(null);
+  const [addMemberDropdownOpen, setAddMemberDropdownOpen] = useState(false);
+  const [addMemberSearch, setAddMemberSearch] = useState('');
+  const addMemberRef = useRef<HTMLDivElement>(null);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
@@ -659,10 +662,14 @@ function ProjectDetailContent() {
         setMemberDropdownOpen(false);
         setMemberSearch('');
       }
+      if (addMemberDropdownOpen && addMemberRef.current && !addMemberRef.current.contains(target)) {
+        setAddMemberDropdownOpen(false);
+        setAddMemberSearch('');
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, memberDropdownOpen]);
+  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, memberDropdownOpen, addMemberDropdownOpen]);
 
   const handleUpdateProject = async () => {
     if (!editProjectName.trim()) {
@@ -5100,20 +5107,61 @@ function ProjectDetailContent() {
                       Thêm thành viên mới
                     </h3>
                     <form onSubmit={handleAddMember} className="flex gap-2">
-                      <select
-                        required
-                        value={selectedMemberId}
-                        onChange={e => setSelectedMemberId(e.target.value)}
-                        className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-4 py-2 text-xs focus:outline-none focus:border-[#0058be]"
-                      >
-                        <option value="">-- Chọn thành viên muốn thêm --</option>
-                        {membersList
-                          .filter((u: any) => !projectMembers.some((pm: any) => pm.email === u.email))
-                          .map((u: any) => (
-                            <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>
-                          ))
-                        }
-                      </select>
+                      <div ref={addMemberRef} className="relative flex-1">
+                        <div
+                          onClick={() => {
+                            setAddMemberDropdownOpen(!addMemberDropdownOpen);
+                            setAddMemberSearch('');
+                          }}
+                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-4 py-2 text-xs cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all flex items-center justify-between min-h-[36px]"
+                        >
+                          <span className={selectedMemberId ? 'text-[#0b1c30]' : 'text-[#727785]'}>
+                            {selectedMemberId
+                              ? (membersList.find((u: any) => u.id === Number(selectedMemberId))?.display_name || 'Đã chọn')
+                              : '-- Chọn thành viên muốn thêm --'}
+                          </span>
+                          <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                        </div>
+                        {addMemberDropdownOpen && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
+                          >
+                            <input
+                              type="text"
+                              value={addMemberSearch}
+                              onChange={(e) => setAddMemberSearch(e.target.value)}
+                              placeholder="Tìm kiếm thành viên..."
+                              className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
+                            />
+                            <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
+                              {membersList
+                                .filter((u: any) => !projectMembers.some((pm: any) => pm.email === u.email))
+                                .filter((u: any) =>
+                                  u.display_name?.toLowerCase().includes(addMemberSearch.toLowerCase()) ||
+                                  u.full_name?.toLowerCase().includes(addMemberSearch.toLowerCase())
+                                )
+                                .map((u: any) => (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedMemberId(String(u.id));
+                                      setAddMemberDropdownOpen(false);
+                                      setAddMemberSearch('');
+                                    }}
+                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${
+                                      selectedMemberId === String(u.id) ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'
+                                    }`}
+                                  >
+                                    <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                                    {selectedMemberId === String(u.id) && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
+                                  </button>
+                                ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <button
                         type="submit"
                         disabled={isAddingMember}
