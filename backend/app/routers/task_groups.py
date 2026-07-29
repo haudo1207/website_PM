@@ -461,51 +461,61 @@ def serialize_task(t, db):
     return {
         "id": t.id,
         "task_group_id": t.task_group_id,
-        "task_code": t.task_code,
+        "task_code": getattr(t, "task_code", None),
         "detail": t.detail,
-        "priority": t.priority,
-        "manday_est": safe_float(t.manday_est),
-        "status": t.status,
-        "start_date": str(t.start_date) if t.start_date else None,
-        "assigned_id": t.assigned_id,
+        "priority": getattr(t, "priority", "Normal") or "Normal",
+        "manday_est": safe_float(getattr(t, "manday_est", None)),
+        "status": getattr(t, "status", "Waiting") or "Waiting",
+        "start_date": str(t.start_date) if getattr(t, "start_date", None) else None,
+        "assigned_id": getattr(t, "assigned_id", None),
         "assigned_name": assigned_name,
-        "support_id": t.support_id,
+        "support_id": getattr(t, "support_id", None),
         "support_name": support_name,
-        "kpi_ratio_assign": t.kpi_ratio_assign,
-        "kpi_ratio_support": t.kpi_ratio_support,
-        "skill_solution_id": t.skill_solution_id,
+        "kpi_ratio_assign": getattr(t, "kpi_ratio_assign", 90),
+        "kpi_ratio_support": getattr(t, "kpi_ratio_support", 10),
+        "skill_solution_id": getattr(t, "skill_solution_id", None),
         "skill_solution_name": solution_name,
-        "skill_vendor_id": t.skill_vendor_id,
+        "skill_vendor_id": getattr(t, "skill_vendor_id", None),
         "skill_vendor_name": vendor_name,
-        "ticket_id": t.ticket_id,
-        "remark": t.remark,
-        "send": t.send,
-        "sort_order": t.sort_order,
+        "ticket_id": getattr(t, "ticket_id", None),
+        "remark": getattr(t, "remark", None),
+        "send": getattr(t, "send", None),
+        "sort_order": getattr(t, "sort_order", 0) or 0,
         # Computed
-        "end_date_est": str(t.end_date_est) if t.end_date_est else None,
-        "manday_actual": safe_float(t.manday_actual),
-        "end_date_actual": str(t.end_date_actual) if t.end_date_actual else None,
-        "days_late": t.days_late,
-        "kpi_base": safe_float(t.kpi_base),
-        "kpi_perform": safe_float(t.kpi_perform),
-        "kpi_ot": safe_float(t.kpi_ot),
-        "kpi_final": safe_float(t.kpi_final),
-        "kpi_assigned": safe_float(t.kpi_assigned),
-        "kpi_support": safe_float(t.kpi_support),
-        "notes": t.notes,
-        "solution": t.solution,
-        "ai_status": t.ai_status,
-        "last_ai_check_at": str(t.last_ai_check_at) if t.last_ai_check_at else None,
-        "last_ai_score": t.last_ai_score,
-        "last_review_id": t.last_review_id,
-        "created_at": str(t.created_at) if t.created_at else None,
+        "end_date_est": str(t.end_date_est) if getattr(t, "end_date_est", None) else None,
+        "manday_actual": safe_float(getattr(t, "manday_actual", None)),
+        "end_date_actual": str(t.end_date_actual) if getattr(t, "end_date_actual", None) else None,
+        "days_late": getattr(t, "days_late", None),
+        "kpi_base": safe_float(getattr(t, "kpi_base", 0)),
+        "kpi_perform": safe_float(getattr(t, "kpi_perform", 0)),
+        "kpi_ot": safe_float(getattr(t, "kpi_ot", 0)),
+        "kpi_final": safe_float(getattr(t, "kpi_final", 0)),
+        "kpi_assigned": safe_float(getattr(t, "kpi_assigned", 0)),
+        "kpi_support": safe_float(getattr(t, "kpi_support", 0)),
+        "notes": getattr(t, "notes", None),
+        "solution": getattr(t, "solution", None),
+        "ai_status": getattr(t, "ai_status", "NOT_CHECKED") or "NOT_CHECKED",
+        "last_ai_check_at": str(t.last_ai_check_at) if getattr(t, "last_ai_check_at", None) else None,
+        "last_ai_score": getattr(t, "last_ai_score", None),
+        "last_review_id": getattr(t, "last_review_id", None),
+        "created_at": str(t.created_at) if getattr(t, "created_at", None) else None,
     }
 
 
 @router.get("/task-groups/{gid}/tasks")
 def list_tasks(gid: int, db: Session = Depends(get_db)):
-    tasks = db.query(Task).filter(Task.task_group_id == gid).order_by(Task.sort_order, Task.id).all()
-    return [serialize_task(t, db) for t in tasks]
+    try:
+        tasks = db.query(Task).filter(Task.task_group_id == gid).order_by(Task.sort_order, Task.id).all()
+        out = []
+        for t in tasks:
+            try:
+                out.append(serialize_task(t, db))
+            except Exception as e:
+                print(f"Error serializing task {getattr(t, 'id', None)} in list_tasks: {e}")
+        return out
+    except Exception as exc:
+        print(f"Error in list_tasks for gid {gid}: {exc}")
+        return []
 
 
 @router.get("/projects/{pid}/all-tasks")
