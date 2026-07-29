@@ -674,7 +674,14 @@ app.include_router(chat_ai.router,              prefix="/api")
 @app.get("/health")
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "5.0.0"}
+    import os
+    from datetime import datetime, timezone
+    return {
+        "status": "ok",
+        "version": "5.0.0",
+        "commit": os.environ.get("APP_COMMIT", "dev"),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 import asyncio
 
