@@ -625,35 +625,48 @@ def remove_project_member(pid: int, mid: int, db: Session = Depends(get_db)):
 
 def serialize_phase(ph, db):
     # Count task groups
-    tg_count = db.query(TaskGroup).filter(TaskGroup.phase_id == ph.id).count()
-    # Count total tasks
-    task_count = (
-        db.query(Task)
-        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
-        .filter(TaskGroup.phase_id == ph.id)
-        .count()
-    )
+    tg_count = 0
+    task_count = 0
+    try:
+        tg_count = db.query(TaskGroup).filter(TaskGroup.phase_id == ph.id).count()
+    except Exception:
+        pass
+
+    try:
+        task_count = (
+            db.query(Task)
+            .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+            .filter(TaskGroup.phase_id == ph.id)
+            .count()
+        )
+    except Exception:
+        pass
+
     return {
         "id": ph.id,
         "project_id": ph.project_id,
         "name": ph.name,
         "description": ph.description,
-        "sort_order": ph.sort_order,
-        "status": ph.status,
+        "sort_order": getattr(ph, "sort_order", 0) or 0,
+        "status": getattr(ph, "status", "Waiting") or "Waiting",
         "task_group_count": tg_count,
         "task_count": task_count,
-        "ai_status": ph.ai_status,
-        "last_ai_check_at": str(ph.last_ai_check_at) if ph.last_ai_check_at else None,
-        "last_ai_score": ph.last_ai_score,
-        "last_review_id": ph.last_review_id,
-        "created_at": str(ph.created_at) if ph.created_at else None,
+        "ai_status": getattr(ph, "ai_status", "NOT_CHECKED") or "NOT_CHECKED",
+        "last_ai_check_at": str(ph.last_ai_check_at) if getattr(ph, "last_ai_check_at", None) else None,
+        "last_ai_score": getattr(ph, "last_ai_score", None),
+        "last_review_id": getattr(ph, "last_review_id", None),
+        "created_at": str(ph.created_at) if getattr(ph, "created_at", None) else None,
     }
 
 
 @router.get("/projects/{pid}/phases")
 def list_phases(pid: int, db: Session = Depends(get_db)):
-    phases = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order, Phase.id).all()
-    return [serialize_phase(ph, db) for ph in phases]
+    try:
+        phases = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order, Phase.id).all()
+        return [serialize_phase(ph, db) for ph in phases]
+    except Exception as exc:
+        print(f"Error in list_phases for pid {pid}: {exc}")
+        return []
 
 
 @router.post("/projects/{pid}/phases")
