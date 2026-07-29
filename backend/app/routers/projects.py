@@ -19,6 +19,10 @@ from sqlalchemy import func as sql_func
 from ..utils.access import (
     ALL_SCOPE,
     VALID_DATA_SCOPES,
+    ROLE_SUPER_ADMIN,
+    ROLE_LEADER,
+    ROLE_MEMBER,
+    can_access_project,
     project_query_for_user,
     require_route_project_access,
     user_scope,
@@ -506,14 +510,45 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
 
 
 @router.delete("/projects/{pid}")
-def delete_project(pid: int, db: Session = Depends(get_db), _=Depends(require_super_admin)):
+def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
         raise HTTPException(404, "Project not found.")
-    # RESTRICT: cannot delete if phases exist
-    phase_count = db.query(Phase).filter(Phase.project_id == pid).count()
-    if phase_count > 0:
-        raise HTTPException(400, f"Không thể xóa dự án vì còn {phase_count} Phase. Hãy xóa tất cả Phase trước.")
+
+    role = getattr(current_user, "role", ROLE_MEMBER)
+    scope = user_scope(current_user)
+    is_super = (role in [ROLE_SUPER_ADMIN, "admin"] or scope == ALL_SCOPE)
+    is_proj_leader = (role == ROLE_LEADER and can_access_project(db, current_user, p))
+
+    if not (is_super or is_proj_leader):
+        raise HTTPException(403, "Bạn không có quyền xóa dự án này.")
+
+    # Cascade delete all child tasks, task groups, phases, links, and project members
+    phases = db.query(Phase).filter(Phase.project_id == pid).all()
+    phase_ids = [ph.id for ph in phases]
+    if phase_ids:
+        task_groups = db.query(TaskGroup).filter(TaskGroup.phase_id.in_(phase_ids)).all()
+        tg_ids = [tg.id for tg in task_groups]
+        if tg_ids:
+            db.query(Task).filter(Task.task_group_id.in_(tg_ids)).delete(synchronize_session=False)
+            db.query(TaskGroup).filter(TaskGroup.id.in_(tg_ids)).delete(synchronize_session=False)
+        db.query(Phase).filter(Phase.id.in_(phase_ids)).delete(synchronize_session=False)
+
+    db.query(ProjectLink).filter(ProjectLink.project_id == pid).delete(synchronize_session=False)
+    db.execute(project_members.delete().where(project_members.c.project_id == pid))
+
+    # Additional cascade cleanup for associated entities
+    try:
+        from ..models.meeting import Meeting
+        from ..models.ai_task_inbox import AITaskInbox
+        from ..models.ai_review import AIPrompt, AIReviewLog
+        db.query(Meeting).filter(Meeting.project_id == pid).delete(synchronize_session=False)
+        db.query(AITaskInbox).filter(AITaskInbox.project_id == pid).delete(synchronize_session=False)
+        db.query(AIPrompt).filter(AIPrompt.project_id == pid).delete(synchronize_session=False)
+        db.query(AIReviewLog).filter(AIReviewLog.project_id == pid).delete(synchronize_session=False)
+    except Exception as err:
+        print("Cascade clean warning:", err)
+
     db.delete(p)
     db.commit()
     return {"ok": True}
@@ -628,9 +663,27 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
         status=body.get("status", "Waiting"),
     )
     db.add(ph)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, f"Phase with name '{name}' already exists in this project, or another integrity constraint was violated.") from exc
     db.refresh(ph)
-    return serialize_phase(ph, db)
+    return {
+        "id": ph.id,
+        "project_id": ph.project_id,
+        "name": ph.name,
+        "description": ph.description,
+        "sort_order": ph.sort_order,
+        "status": ph.status,
+        "task_group_count": 0,
+        "task_count": 0,
+        "ai_status": ph.ai_status,
+        "last_ai_check_at": str(ph.last_ai_check_at) if ph.last_ai_check_at else None,
+        "last_ai_score": ph.last_ai_score,
+        "last_review_id": ph.last_review_id,
+        "created_at": str(ph.created_at) if ph.created_at else None,
+    }
 
 
 @router.patch("/projects/{pid}/phases/{phid}")

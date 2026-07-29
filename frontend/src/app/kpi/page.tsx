@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
@@ -8,6 +8,7 @@ import { getMembers, getTeams, getPositions, getDepartments } from '@/lib/api';
 export default function KPIPage() {
     const router = useRouter();
     const [authorized, setAuthorized] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<'KPItotal' | 'KPIweek'>('KPItotal');
     const [members, setMembers] = useState<any[]>([]);
     const [search, setSearch] = useState("");
@@ -18,10 +19,29 @@ export default function KPIPage() {
     const [department, setDepartment] = useState("");
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
-    
     const [teamOptions, setTeamOptions] = useState<any[]>([]);
     const [positionOptions, setPositionOptions] = useState<any[]>([]);
     const [deptOptions, setDeptOptions] = useState<any[]>([]);
+    const [sortConfig, setSortConfig] = useState({
+        key: "kpi_total",
+        direction: "desc",
+    });
+
+    const handleSort = (key: string) => {
+    let direction = "asc";
+
+    if (
+        sortConfig.key === key &&
+        sortConfig.direction === "asc"
+    ) {
+        direction = "desc";
+    }
+
+    setSortConfig({
+        key,
+        direction,
+    });
+};
 
     useEffect(() => {
         getTeams().then(setTeamOptions).catch(() => {});
@@ -30,25 +50,69 @@ export default function KPIPage() {
     }, []);
 
     useEffect(() => {
-        if (!isAdmin()) {
-            router.push('/dashboard');
+        setAuthorized(true);
+        const params: any = {};
+        if (activeTab === 'KPItotal') {
+            if (month) params.month = parseInt(month);
+            if (year) params.year = parseInt(year);
+            if (team) params.team = team;
+            if (position) params.position = position;
+            if (department) params.department = department;
+            if (search) params.search = search;
         } else {
-            setAuthorized(true);
-            const params: any = {};
-            if (activeTab === 'KPItotal') {
-                if (month) params.month = parseInt(month);
-                if (year) params.year = parseInt(year);
-                if (team) params.team = team;
-                if (position) params.position = position;
-                if (department) params.department = department;
-                if (search) params.search = search;
-            } else {
-                if (startDate) params.start_date = startDate;
-                if (endDate) params.end_date = endDate;
-            }
-            getMembers(params).then(setMembers).catch(() => { });
+            // KPI Tuần: gửi date range + các filter chung
+            if (startDate) params.start_date = startDate;
+            if (endDate) params.end_date = endDate;
+            if (team) params.team = team;
+            if (position) params.position = position;
+            if (department) params.department = department;
+            if (search) params.search = search;
         }
-    }, [router, activeTab, month, year, team, position, department, search, startDate, endDate]);
+        let active = true;
+        setIsLoading(true);
+        getMembers(params)
+            .then((data) => {
+                if (active) setMembers(data);
+            })
+            .catch(() => { })
+            .finally(() => {
+                if (active) setIsLoading(false);
+            });
+            
+        return () => {
+            active = false;
+        };
+    }, [activeTab, month, year, team, position, department, search, startDate, endDate]);
+
+    const sortedMembers = useMemo(() => {
+        let sortableItems = [...members];
+        if (sortConfig.key !== "") {
+            sortableItems.sort((a, b) => {
+                let aValue = a[sortConfig.key] || 0;
+                let bValue = b[sortConfig.key] || 0;
+
+                // Handle derived percentage sorting for KPIweek tab
+                if (sortConfig.key === 'kpi_achieved') {
+                    const aEst = a.kpi_base_total || 0;
+                    const aAct = a.kpi_total || 0;
+                    aValue = aEst > 0 ? Math.round((aAct / aEst) * 100) : 0;
+                    
+                    const bEst = b.kpi_base_total || 0;
+                    const bAct = b.kpi_total || 0;
+                    bValue = bEst > 0 ? Math.round((bAct / bEst) * 100) : 0;
+                }
+
+                if (aValue < bValue) {
+                    return sortConfig.direction === "asc" ? -1 : 1;
+                }
+                if (aValue > bValue) {
+                    return sortConfig.direction === "asc" ? 1 : -1;
+                }
+                return 0;
+            });
+        }
+        return sortableItems;
+    }, [members, sortConfig]);
 
     if (!authorized) return null;
 
@@ -214,7 +278,15 @@ export default function KPIPage() {
                     </div>
 
                     {/* Table */}
-                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm relative">
+                        {isLoading && (
+                            <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-[2px] flex items-center justify-center rounded-xl">
+                                <div className="flex flex-col items-center gap-3">
+                                    <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                                    <p className="text-sm font-semibold text-blue-900">Đang tải dữ liệu...</p>
+                                </div>
+                            </div>
+                        )}
                         <div className="overflow-x-auto overflow-y-auto max-h-[60vh] relative">
                             <table className="w-full text-xs text-[#0f172a] whitespace-nowrap">
                                 {activeTab === 'KPItotal' ? (
@@ -226,14 +298,22 @@ export default function KPIPage() {
                                                 <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Team</th>
                                                 <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Chức vụ</th>
                                                 <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Phòng ban</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Manday</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Trung bình KPI</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">KPI Bonus</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-blue-600 bg-slate-50">Tổng KPI</th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("manday_total")}>
+                                                    Manday <span className="ml-1 opacity-60">{sortConfig.key === 'manday_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("kpi_avg")}>
+                                                    Trung bình KPI <span className="ml-1 opacity-60">{sortConfig.key === 'kpi_avg' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("kpi_bonus")}>
+                                                    KPI Bonus <span className="ml-1 opacity-60">{sortConfig.key === 'kpi_bonus' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-blue-600 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("kpi_total")}>
+                                                    Tổng KPI <span className="ml-1 opacity-60">{sortConfig.key === 'kpi_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-200 border-t border-slate-200">
-                                            {members.map((m, idx) => (
+                                            {sortedMembers.map((m, idx) => (
                                                 <tr key={m.id} className="hover:bg-slate-50/60 transition-colors group divide-x divide-slate-200">
                                                     <td className="px-4 py-3 text-slate-400 font-medium w-12 text-center">{idx + 1}</td>
                                                     <td className="px-4 py-3">
@@ -265,16 +345,28 @@ export default function KPIPage() {
                                             <tr className="divide-x divide-slate-200">
                                                 <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12 bg-slate-50">STT</th>
                                                 <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 min-w-[200px]">Display Name</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">(P) MANDAY EST</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">(P) MANDAY ACTUAL</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">(P) KPI EST</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">(P) KPI ACTUAL</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">(P) % KPI ACHIEVED</th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">(P) TASKS PROGRESS</th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("manday_est_total")}>
+                                                    (P) MANDAY EST <span className="ml-1 opacity-60">{sortConfig.key === 'manday_est_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("manday_total")}>
+                                                    (P) MANDAY ACTUAL <span className="ml-1 opacity-60">{sortConfig.key === 'manday_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("kpi_base_total")}>
+                                                    (P) KPI EST <span className="ml-1 opacity-60">{sortConfig.key === 'kpi_base_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("kpi_total")}>
+                                                    (P) KPI ACTUAL <span className="ml-1 opacity-60">{sortConfig.key === 'kpi_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("kpi_achieved")}>
+                                                    (P) % KPI ACHIEVED <span className="ml-1 opacity-60">{sortConfig.key === 'kpi_achieved' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                </th>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">
+                                                    (P) TASKS PROGRESS
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-200 border-t border-slate-200">
-                                            {members.map((m, idx) => {
+                                            {sortedMembers.map((m, idx) => {
                                                 const md_est = m.manday_est_total || 0;
                                                 const md_act = m.manday_total || 0;
                                                 const kpi_est = m.kpi_base_total || 0;
@@ -295,7 +387,7 @@ export default function KPIPage() {
                                                         <td className={`px-4 py-3 text-center font-semibold tabular-nums ${kpi_act === 0 ? 'text-slate-400' : 'text-slate-600'}`}>{kpi_act === 0 ? '0' : kpi_act.toFixed(2)}</td>
                                                         
                                                         <td className={`px-4 py-3 text-center font-bold tabular-nums ${achieved === 0 ? 'text-slate-400' : (achieved >= 100 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50')}`}>
-                                                            {achieved === 0 ? '' : `${achieved}%`}
+                                                            {`${achieved}%`}
                                                         </td>
                                                         
                                                         <td className="px-4 py-3 text-center font-semibold text-slate-400">-</td>

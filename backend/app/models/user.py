@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
+from .skill_master import user_skills
 from ..database import Base
 
 class User(Base):
@@ -19,5 +20,10 @@ class User(Base):
     created_at = Column(DateTime, server_default=func.now())
     member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, unique=True)
 
-    member = relationship("Member", foreign_keys=[member_id], lazy="joined")
+    member = relationship(
+        "Member",
+        foreign_keys=[member_id],
+        back_populates="user",
+        lazy="joined"
+    )
     skills = relationship("Skill", secondary="user_skills", backref="users")

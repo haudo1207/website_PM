@@ -161,82 +161,85 @@ export default function MembersView({ onFlash }: Props) {
   // ─── Render ───────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Quản Lý Thành Viên</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Quản lý danh sách thành viên, kỹ năng và thông tin tổ chức</p>
+      <div className="sticky top-[112px] z-20 bg-[#f8fafc]/95 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-8 py-6 space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Quản Lý Thành Viên</h1>
+              <p className="text-sm text-slate-500 mt-0.5">Quản lý danh sách thành viên, kỹ năng và thông tin tổ chức</p>
+            </div>
+            <button
+              onClick={openAdd}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Thêm thành viên
+            </button>
+          </div>
+
+          {/* Search & Filters */}
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px]">
+              <svg className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Tìm kiếm theo tên hoặc Display Name..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-[#0f172a] outline-none focus:border-blue-500 placeholder-slate-400"
+              />
+            </div>
+
+            <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
+              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
+              <option value="">Tất cả Team</option>
+              {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+            </select>
+
+            <select value={filterPosition} onChange={e => setFilterPosition(e.target.value)}
+              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
+              <option value="">Tất cả Chức vụ</option>
+              {positions.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+            </select>
+
+            <select value={filterDepartment} onChange={e => setFilterDepartment(e.target.value)}
+              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
+              <option value="">Tất cả Phòng ban</option>
+              {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+            </select>
+
+            {(filterTeam || filterPosition || filterDepartment || search) && (
+              <button onClick={() => { setSearch(''); setFilterTeam(''); setFilterPosition(''); setFilterDepartment(''); }}
+                className="text-xs text-slate-500 hover:text-red-600 font-medium transition-colors">
+                Xóa lọc
+              </button>
+            )}
+
+            <span className="ml-auto text-[11px] text-slate-400 font-medium">{members.length} thành viên</span>
+          </div>
         </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          Thêm thành viên
-        </button>
-      </div>
-
-      {/* Search & Filters */}
-      <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <svg className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Tìm kiếm theo tên hoặc Display Name..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-[#0f172a] outline-none focus:border-blue-500 placeholder-slate-400"
-          />
-        </div>
-
-        <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-          <option value="">Tất cả Team</option>
-          {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-        </select>
-
-        <select value={filterPosition} onChange={e => setFilterPosition(e.target.value)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-          <option value="">Tất cả Chức vụ</option>
-          {positions.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-        </select>
-
-        <select value={filterDepartment} onChange={e => setFilterDepartment(e.target.value)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-          <option value="">Tất cả Phòng ban</option>
-          {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-        </select>
-
-        {(filterTeam || filterPosition || filterDepartment || search) && (
-          <button onClick={() => { setSearch(''); setFilterTeam(''); setFilterPosition(''); setFilterDepartment(''); }}
-            className="text-xs text-slate-500 hover:text-red-600 font-medium transition-colors">
-            Xóa lọc
-          </button>
-        )}
-
-        <span className="ml-auto text-[11px] text-slate-400 font-medium">{members.length} thành viên</span>
       </div>
 
       {/* Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-[#0f172a]">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-auto shadow-sm" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+        <table className="w-full text-xs text-[#0f172a]">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-10">STT</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Họ tên</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Team</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Chức vụ</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phòng ban</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
-                <th className="px-4 py-3 w-16"></th>
+              <tr className="border-b border-slate-200">
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-10">STT</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Họ tên</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Team</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Chức vụ</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phòng ban</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 w-16"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -295,7 +298,6 @@ export default function MembersView({ onFlash }: Props) {
               )}
             </tbody>
           </table>
-        </div>
       </div>
 
       {/* Modal Add / Edit */}

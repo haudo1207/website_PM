@@ -9,7 +9,7 @@ import AIReviewDrawer from '@/components/AIReviewDrawer';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
-  getAITaskInbox, analyzeChatLogs, updateAITaskInbox, rejectAITaskInbox, importAITaskToProjectPlan, bulkImportAITasks, getChatSyncLogs,
+  getAITaskInbox, analyzeChatLogs, updateAITaskInbox, rejectAITaskInbox, importAITaskToProjectPlan, bulkImportAITasks, getChatSyncLogs, syncAITasksFromChat,
   getPhases, createPhase, updatePhase, deletePhase,
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
@@ -128,8 +128,9 @@ function ProjectDetailContent() {
   const [selectedFormPhase, setSelectedFormPhase] = useState<string>('');
 
   // Interactive Task Management additions
-  const [editingCell, setEditingCell] = useState<{ taskId: number; colName: string } | null>(null);
-  const [editValue, setEditValue] = useState<string>('');
+  const [editingCell, setEditingCell] = useState<{ taskId: number, colName: string } | null>(null);
+  const [editingGroupDate, setEditingGroupDate] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
 
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
@@ -139,6 +140,24 @@ function ProjectDetailContent() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [drawerForm, setDrawerForm] = useState<Record<string, any>>({});
   const [drawerSaving, setDrawerSaving] = useState(false);
+  const [importingInboxId, setImportingInboxId] = useState<number | null>(null);
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
+  const [pasteSelectedGroupId, setPasteSelectedGroupId] = useState<string>('manual');
+
+  // Mapping & AI Rules State
+  const [selectedMappingGroup, setSelectedMappingGroup] = useState<string>('all');
+  const [mappingPhaseId, setMappingPhaseId] = useState<number | null>(null);
+  const [mappingTaskGroupId, setMappingTaskGroupId] = useState<number | null>(null);
+  const [mappingStatus, setMappingStatus] = useState<string>('Waiting');
+  const [mappingPriority, setMappingPriority] = useState<string>('Normal');
+  const [mappingKpiAssign, setMappingKpiAssign] = useState<number>(100);
+  const [mappingKpiSupport, setMappingKpiSupport] = useState<number>(0);
+  const [ruleAutoNatural, setRuleAutoNatural] = useState<boolean>(true);
+  const [ruleExtractAssigned, setRuleExtractAssigned] = useState<boolean>(true);
+  const [ruleInferPriorityManday, setRuleInferPriorityManday] = useState<boolean>(true);
+  const [ruleSplitMultiTasks, setRuleSplitMultiTasks] = useState<boolean>(true);
+  const [ruleDetectDuplicates, setRuleDetectDuplicates] = useState<boolean>(true);
+  const [ruleSaveSnapshot, setRuleSaveSnapshot] = useState<boolean>(true);
 
   const toggleParentCollapse = (parentTaskId: string) => {
     setCollapsedParents(prev => {
@@ -279,7 +298,7 @@ function ProjectDetailContent() {
 
   const TASK_COLUMNS = [
     "TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY EST", "STATUS", "START DATE",
-    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "TICKET ID",
+    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "LINK",
     "REMARK", "SEND", "END DATE EST", "MD ACTUAL", "END ACTUAL", "DAYS LATE",
     "KPI BASE", "KPI PERFORM", "KPI OVERTIME", "KPI FINAL", "SUB ID", "ROOT TASKS",
     "NOTES", "SOLUTION"
@@ -310,7 +329,7 @@ function ProjectDetailContent() {
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
-      case 'TICKET ID': return task.ticket_id || '';
+      case 'LINK': return task.ticket_id || '';
       case 'SKILL SOLUTION': return task.skill_solution_name || '';
       case 'SKILL VENDOR': return task.skill_vendor_name || '';
 
@@ -441,6 +460,9 @@ function ProjectDetailContent() {
   const pmRef = useRef<HTMLDivElement>(null);
   const leaderRef = useRef<HTMLDivElement>(null);
   const memberRef = useRef<HTMLDivElement>(null);
+  const [addMemberDropdownOpen, setAddMemberDropdownOpen] = useState(false);
+  const [addMemberSearch, setAddMemberSearch] = useState('');
+  const addMemberRef = useRef<HTMLDivElement>(null);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
@@ -454,8 +476,8 @@ function ProjectDetailContent() {
       await deleteProject(Number(id));
       flash('Xóa dự án thành công!');
       router.push('/project');
-    } catch {
-      flash('Xóa dự án thất bại', true);
+    } catch (err: any) {
+      flash('Xóa dự án thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
     }
   };
 
@@ -501,9 +523,11 @@ function ProjectDetailContent() {
 
       const tsks = await getAllProjectTasks(Number(id));
       setItems(tsks || []);
+      return { tasks: tsks || [], groups: allGroups };
     } catch (err) {
       console.error('Lỗi khi tải dữ liệu dự án:', err);
       flash('Không thể tải dữ liệu dự án', true);
+      return { tasks: [], groups: [] };
     } finally {
       if (!silent) {
         setLoadingTasks(false);
@@ -659,10 +683,14 @@ function ProjectDetailContent() {
         setMemberDropdownOpen(false);
         setMemberSearch('');
       }
+      if (addMemberDropdownOpen && addMemberRef.current && !addMemberRef.current.contains(target)) {
+        setAddMemberDropdownOpen(false);
+        setAddMemberSearch('');
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, memberDropdownOpen]);
+  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, memberDropdownOpen, addMemberDropdownOpen]);
 
   const handleUpdateProject = async () => {
     if (!editProjectName.trim()) {
@@ -834,7 +862,7 @@ function ProjectDetailContent() {
   const getOrderedRows = () => {
     const rows: { type: 'group' | 'task'; id: number; task?: any; group?: any }[] = [];
     const phasesToRender = activePhase === 'ALL'
-      ? phases.filter(p => !p.is_master)
+      ? phases.filter(p => p.name.trim().toLowerCase() !== 'master')
       : phases.filter(p => p.name === activePhase);
 
     for (const p of phasesToRender) {
@@ -1054,27 +1082,52 @@ function ProjectDetailContent() {
 
     isSavingRef.current = true;
     try {
+      // 1. Update the task that was changed
       await updateTask(task.task_group_id, taskId, payload);
       flash('Đã cập nhật task thành công!');
-      await reloadAll(true);
+      
+      // 2. If the status was changed, check and update the parent Task Group
+      if (payload.status) {
+        const { tasks: updatedItems, groups: updatedGroups } = await reloadAll(true);
+        const parentGroupId = task.task_group_id;
+        const parentGroup = updatedGroups.find(g => g.id === parentGroupId);
+
+        if (parentGroup) {
+          const childTasks = updatedItems.filter((t: any) => t.task_group_id === parentGroupId);
+          const doneChildTasks = childTasks.filter((t: any) => {
+            const childStatus = (t.status || '').toLowerCase();
+            return (childStatus === 'done' || childStatus === 'completed' || childStatus.includes('hoàn') || childStatus.includes('finish')) && t.end_date_actual;
+          });
+
+          let latestDate: Date | null = null;
+          if (doneChildTasks.length > 0) {
+            const allTimestamps = doneChildTasks.map((t: any) => new Date(t.end_date_actual).getTime());
+            const maxTimestamp = Math.max(...allTimestamps);
+            latestDate = new Date(maxTimestamp);
+          }
+
+          const formattedDate = latestDate ? latestDate.toISOString().split('T')[0] : null;
+
+          if (parentGroup.end_date_actual !== formattedDate) {
+            await updateTaskGroup(parentGroup.phase_id, parentGroup.id, { end_date_actual: formattedDate });
+            // Reload again to get the updated group reflected everywhere
+            await reloadAll(true); 
+          }
+        }
+      } else {
+        // If status was not changed, just do a simple reload to reflect other changes
+        await reloadAll(true);
+      }
+
+      // 3. Handle UI logic for moving to the next cell
       if (nextAction) {
         activateNextCell(taskId, colName, nextAction);
       } else {
-        setEditingCell(prev => {
-          if (prev?.taskId === taskId && prev?.colName === colName) {
-            return null;
-          }
-          return prev;
-        });
+        setEditingCell(null);
       }
     } catch (err: any) {
       alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
-      setEditingCell(prev => {
-        if (prev?.taskId === taskId && prev?.colName === colName) {
-          return null;
-        }
-        return prev;
-      });
+      setEditingCell(null);
     } finally {
       isSavingRef.current = false;
     }
@@ -1185,11 +1238,11 @@ function ProjectDetailContent() {
 
   const getPriorityStyle = (priority: string) => {
     const p = (priority || '').trim().toLowerCase();
-    if (p === 'critical' || p === 'urgent') return 'bg-red-50 text-red-700 border-red-200';
-    if (p === 'high') return 'bg-orange-50 text-orange-700 border-orange-200';
+    if (p === 'interrupt') return 'bg-purple-50 text-purple-700 border-purple-200';
+    if (p === 'critical' || p === 'urgent') return 'bg-rose-50 text-rose-700 border-rose-200';
+    if (p === 'high') return 'bg-amber-50 text-amber-700 border-amber-200';
     if (p === 'normal' || p === 'medium') return 'bg-[#eff4ff] text-[#0058be] border-[#0058be]/20';
-    if (p === 'low') return 'bg-slate-50 text-slate-700 border-slate-200';
-    return 'bg-slate-50 text-slate-700 border-slate-200';
+    return 'bg-[#eff4ff] text-[#0058be] border-[#0058be]/20';
   };
 
   const handleSaveMeeting = async (meetingData: any) => {
@@ -1508,7 +1561,7 @@ function ProjectDetailContent() {
     // Editable columns
     const REQUIRED_COLS = [
       'DETAIL TASK', 'PRIORITY', 'MANDAY EST', 'STATUS',
-      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO'
+      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR'
     ];
     const isRequired = REQUIRED_COLS.includes(colUpper);
 
@@ -1563,6 +1616,7 @@ function ProjectDetailContent() {
               <option value="Normal">Normal</option>
               <option value="High">High</option>
               <option value="Critical">Critical</option>
+              <option value="Interrupt">Interrupt</option>
             </>
           ) : (
             dbPriorities.map((pr: any) => (
@@ -1744,6 +1798,10 @@ function ProjectDetailContent() {
     const mandayEstVal = parseFloat(newForm['MANDAY EST'] || '0');
     const statusVal = newForm['STATUS'] || 'Waiting';
     const startDateVal = newForm['START DATE'] || null;
+    const assignedVal = newForm['ASSIGNED'] || null;
+    const supportVal = newForm['SUPPORT'] || null;
+    const skillSolutionVal = newForm['SKILL SOLUTION'] || null;
+    const skillVendorVal = newForm['SKILL VENDOR'] || null;
 
     if (!detailVal) {
       alert('Tên nhiệm vụ (DETAIL TASK) không được để trống!');
@@ -1755,6 +1813,22 @@ function ProjectDetailContent() {
     }
     if (!startDateVal) {
       alert('Ngày bắt đầu (START DATE) không được để trống!');
+      return;
+    }
+    if (!assignedVal) {
+      alert('Cột ASSIGNED là bắt buộc.');
+      return;
+    }
+    if (!supportVal) {
+      alert('Cột SUPPORT là bắt buộc.');
+      return;
+    }
+    if (!skillSolutionVal) {
+      alert('Cột SKILL SOLUTION là bắt buộc.');
+      return;
+    }
+    if (!skillVendorVal) {
+      alert('Cột SKILL VENDOR là bắt buộc.');
       return;
     }
 
@@ -2056,7 +2130,7 @@ function ProjectDetailContent() {
           <div
             onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
             onMouseLeave={handleSpacerMouseLeave}
-            className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
+            className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
           >
             {/* Dashed line */}
             <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
@@ -2117,7 +2191,7 @@ function ProjectDetailContent() {
           <div
             onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
             onMouseLeave={handleSpacerMouseLeave}
-            className="relative flex items-center h-2 hover:h-11 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
+            className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
           >
             {/* Dashed line */}
             <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
@@ -2169,7 +2243,7 @@ function ProjectDetailContent() {
       <tr
         id={`task-row-${task.id}`}
         key={task.id}
-        className={`group relative transition-colors border-b border-slate-200/60 ${rowBgClass}`}
+        className={`group relative transition-colors ${rowBgClass}`}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("application/json", JSON.stringify({ type: "task", taskId: task.id, groupId: task.task_group_id }));
@@ -2588,6 +2662,39 @@ function ProjectDetailContent() {
               );
             }
 
+            if (colUpper === 'LINK') {
+              return (
+                <td key={col} className="px-2 py-1 min-w-[320px]">
+                  <textarea
+                    value={editValue}
+                    autoFocus
+                    onChange={e => setEditValue(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleCellSave(task.id, col, editValue);
+                      } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
+                        handleCellSave(task.id, col, editValue, act);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
+                    onBlur={() => handleCellSave(task.id, col, editValue)}
+                    ref={el => {
+                      if (el) {
+                        el.style.height = 'auto';
+                        el.style.height = el.scrollHeight + 'px';
+                      }
+                    }}
+                    className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none resize-none overflow-hidden min-h-[60px] h-auto whitespace-pre-wrap break-words leading-relaxed"
+                    placeholder="Dán các link vào đây, mỗi link một dòng..."
+                  />
+                </td>
+              );
+            }
+            
             if (colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'))) {
               return (
                 <td key={col} className="px-2 py-1 min-w-[130px]">
@@ -2760,35 +2867,54 @@ function ProjectDetailContent() {
                 </span>
               );
             }
-          } else if (colUpper === 'TICKET ID') {
-            const isUrl = /^https?:\/\//i.test(val);
-            if (isUrl) {
-              // Extract a readable label from URL
-              let label = val;
-              try {
-                const u = new URL(val);
-                const host = u.hostname.replace('www.', '');
-                if (host.includes('docs.google.com')) label = 'Google Docs';
-                else if (host.includes('figma.com')) label = 'Figma Design';
-                else if (host.includes('drive.google.com')) label = 'Google Drive';
-                else if (host.includes('github.com')) label = 'GitHub';
-                else if (host.includes('jira')) label = 'Jira Ticket';
-                else if (host.includes('notion')) label = 'Notion Page';
-                else if (host.includes('confluence')) label = 'Confluence';
-                else label = host + (u.pathname.length > 20 ? u.pathname.substring(0, 20) + '...' : u.pathname);
-              } catch {}
+          } else if (colUpper === 'LINK') {
+            const links = (val || '').split('\n').filter(Boolean);
+            if (links.length > 0) {
               cellContent = (
-                <span
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors max-w-[180px] truncate shadow-sm"
-                  title={val}
-                  onClick={(e) => { e.stopPropagation(); window.open(val, '_blank', 'noopener,noreferrer'); }}
-                >
-                  🔗 {label}
-                </span>
-              );
-            } else if (val) {
-              cellContent = (
-                <span className="text-[12px] font-mono text-[#0b1c30]">{val}</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {links.map((link, index) => {
+                    const isUrl = /^https?:\/\//i.test(link);
+                    let label = link;
+                    if (isUrl) {
+                        try {
+                            const u = new URL(link);
+                            const host = u.hostname.replace('www.', '');
+                            if (host.includes('docs.google.com')) label = 'Google Docs';
+                            else if (host.includes('figma.com')) label = 'Figma Design';
+                            else if (host.includes('drive.google.com')) label = 'Google Drive';
+                            else if (host.includes('github.com')) label = 'GitHub';
+                            else if (host.includes('jira')) label = 'Jira Ticket';
+                            else if (host.includes('notion')) label = 'Notion Page';
+                            else if (host.includes('confluence')) label = 'Confluence';
+                            else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
+                        } catch {}
+                    }
+                    
+                    return (
+                      <div key={index} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden">
+                        <span
+                          className="px-2 py-0.5 cursor-pointer hover:bg-blue-100 transition-colors max-w-[160px] truncate"
+                          title={link}
+                          onClick={(e) => { e.stopPropagation(); if(isUrl) window.open(link, '_blank', 'noopener,noreferrer'); }}
+                        >
+                          🔗 {label}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newLinks = links.filter((_, i) => i !== index);
+                            const newValue = newLinks.join('\n');
+                            handleCellSave(task.id, col, newValue);
+                          }}
+                          className="px-1 py-0.5 hover:bg-blue-200 text-blue-500 hover:text-blue-700 transition-colors"
+                          title="Xóa link"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               );
             } else {
               cellContent = (
@@ -2840,7 +2966,7 @@ function ProjectDetailContent() {
     }
 
     const phasesToRender = activePhase === 'ALL'
-      ? phases.filter(p => !p.is_master)
+      ? phases.filter(p => p.name.trim().toLowerCase() !== 'master')
       : phases.filter(p => p.name === activePhase);
 
     if (phasesToRender.length === 0) {
@@ -3213,7 +3339,79 @@ function ProjectDetailContent() {
                 );
               }
 
-              // Inline edit for editable columns
+              // Special editable cell for END ACTUAL DATE
+              if (colUpper === 'END ACTUAL' || colUpper === 'END DATE ACTUAL') {
+                const isEditingDate = editingGroupDate === group.id;
+
+                if (isEditingDate) {
+                  return (
+                    <td key={col} className="px-2 py-1">
+                      <input
+                        type="date"
+                        defaultValue={group.end_date_actual_override ? toPickerDate(group.end_date_actual_override) : (group.end_date_actual ? toPickerDate(group.end_date_actual) : '')}
+                        autoFocus
+                        onBlur={async (e) => {
+                          const newDate = e.target.value ? fromPickerDate(e.target.value) : null;
+                          const originalDate = group.end_date_actual_override;
+                          
+                          if (newDate !== originalDate) {
+                            try {
+                              await updateTaskGroup(group.phase_id, group.id, { end_date_actual_override: newDate });
+                              flash('Đã cập nhật ngày hoàn thành thực tế!');
+                              reloadAll(true);
+                            } catch (err: any) {
+                              alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+                            }
+                          }
+                          setEditingGroupDate(null);
+                        }}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter') {
+                            const newDate = e.currentTarget.value ? fromPickerDate(e.currentTarget.value) : null;
+                            const originalDate = group.end_date_actual_override;
+                            if (newDate !== originalDate) {
+                                try {
+                                    await updateTaskGroup(group.phase_id, group.id, { end_date_actual_override: newDate });
+                                    flash('Đã cập nhật ngày hoàn thành thực tế!');
+                                    reloadAll(true);
+                                } catch (err: any) {
+                                    alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+                                }
+                            }
+                            setEditingGroupDate(null);
+                          } else if (e.key === 'Escape') {
+                            setEditingGroupDate(null);
+                          }
+                        }}
+                        className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs font-mono focus:outline-none font-bold"
+                      />
+                    </td>
+                  );
+                }
+
+                // Display mode with edit icon for END ACTUAL
+                const cellStyle = "px-4 py-2.5 text-xs font-bold text-[#1e293b] whitespace-nowrap";
+                return (
+                    <td key={col} className={`${cellStyle} group cursor-pointer hover:bg-indigo-100/60`} onClick={() => setEditingGroupDate(group.id)}>
+                        <div className="flex items-center justify-between w-full">
+                            <span className="font-mono" title={`Tự động: ${formatDateToShow(group.end_date_actual_auto || '')}`}>
+                                {group.status && group.status.toLowerCase() === 'done' ? (
+                                    group.end_date_actual_override ? (
+                                        <strong className="text-indigo-700" title="Ngày đã ghi đè thủ công">{formatDateToShow(group.end_date_actual_override)}</strong>
+                                    ) : (
+                                        val || <span className="text-slate-400 italic">Trống</span>
+                                    )
+                                ) : (
+                                    <span className="text-slate-400 italic">—</span>
+                                )}
+                            </span>
+                            <span className="opacity-0 group-hover:opacity-60 text-[10px] transition-opacity shrink-0">✏️</span>
+                        </div>
+                    </td>
+                );
+              }
+
+              // Inline edit for other editable columns
               if (isEditing) {
                 if (colUpper === 'STATUS') {
                   return (
@@ -4111,33 +4309,44 @@ function ProjectDetailContent() {
 
               {activeMainTab === 'chats' && (
                 <div className="space-y-6">
-                  {/* HERO BANNER */}
-                  <div className="bg-gradient-to-r from-[#0b63ce] to-[#4b36f3] text-white rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div>
-                      <h2 className="text-xl font-extrabold tracking-tight mb-2">AI Chat → Task Automation</h2>
-                      <p className="text-xs text-blue-100 max-w-2xl leading-relaxed">
-                        Kết nối nhóm Zalo/Telegram, lấy các tin nhắn được đánh dấu giao việc, dùng AI chuẩn hóa thành task và đưa vào Project Plan sau bước duyệt.
-                      </p>
+                  {/* CLEAN WHITE HEADER CARD WITH PROMINENT BUTTONS */}
+                  <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-5 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 overflow-hidden">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0058be] flex items-center justify-center border border-blue-100/80 shadow-sm shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">forum</span>
+                      </div>
+                      <div>
+                        <h2 className="text-base font-extrabold text-[#0b1c30] tracking-tight">AI Chat & Tích hợp nhóm chat</h2>
+                        <p className="text-xs text-slate-500 mt-0.5 font-medium">Tự động nhận diện, trích xuất và đồng bộ nhiệm vụ từ nhóm chat vào Project Plan.</p>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0 flex-wrap">
+
+                    <div className="flex items-center gap-3 shrink-0 w-full md:w-auto">
                       <button
                         onClick={async () => {
                           setIsSyncing(true);
-                          await loadChatData();
-                          setIsSyncing(false);
-                          flash('Đã đồng bộ nguồn chat và AI Task Inbox!');
+                          try {
+                            const res = await syncAITasksFromChat(Number(id));
+                            await loadChatData();
+                            flash(res.message || 'Đã bóc tách thành công task từ nhóm chat!');
+                          } catch (err: any) {
+                            await loadChatData();
+                            flash('Đã đồng bộ dữ liệu chat!');
+                          } finally {
+                            setIsSyncing(false);
+                          }
                         }}
                         disabled={isSyncing}
-                        className="bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold px-4 py-2.5 rounded-xl backdrop-blur-sm transition-all flex items-center gap-2"
+                        className="bg-slate-100 hover:bg-slate-200 active:scale-95 text-[#0b1c30] text-xs font-bold px-4 py-2.5 rounded-xl transition-all inline-flex items-center justify-center gap-2 border border-slate-200/80 whitespace-nowrap"
                       >
-                        <span className={`material-symbols-outlined text-[16px] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>
+                        <span className={`material-symbols-outlined text-[18px] text-[#0058be] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>
                         {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}
                       </button>
                       <button
                         onClick={() => setIsConnectModalOpen(true)}
-                        className="bg-white text-[#0b63ce] hover:bg-blue-50 text-xs font-extrabold px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                        className="bg-[#0058be] hover:bg-[#004ca5] active:scale-95 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all inline-flex items-center justify-center gap-2 whitespace-nowrap"
                       >
-                        <span className="material-symbols-outlined text-[18px]">add</span>
+                        <span className="material-symbols-outlined text-[18px]">add_circle</span>
                         Kết nối nhóm chat
                       </button>
                     </div>
@@ -4271,20 +4480,35 @@ function ProjectDetailContent() {
                                   Bỏ chọn
                                 </button>
                                 <button
+                                  disabled={isBulkImporting}
                                   onClick={async () => {
+                                    setIsBulkImporting(true);
                                     try {
-                                      await bulkImportAITasks(Number(id), selectedTaskIds);
-                                      flash(`Đã import ${selectedTaskIds.length} task vào Project Plan!`);
+                                      const res = await bulkImportAITasks(Number(id), selectedTaskIds);
+                                      if (res.errors && res.errors.length > 0) {
+                                        flash(`Đã import ${res.imported_count} task. Lỗi ${res.errors.length} task!`, true);
+                                      } else {
+                                        flash(`Đã import ${selectedTaskIds.length} task vào Project Plan thành công!`);
+                                      }
                                       setSelectedTaskIds([]);
                                       loadChatData();
                                       reloadAll(true);
                                     } catch (err: any) {
                                       alert('Lỗi import: ' + (err.response?.data?.detail || err.message));
+                                    } finally {
+                                      setIsBulkImporting(false);
                                     }
                                   }}
-                                  className="px-3 py-1 bg-[#0058be] text-white text-xs font-bold rounded-md hover:bg-[#0058be]/90 shadow-sm"
+                                  className="px-3 py-1 bg-[#0058be] text-white text-xs font-bold rounded-md hover:bg-[#0058be]/90 shadow-sm flex items-center gap-1.5 disabled:opacity-50"
                                 >
-                                  Import vào Project Plan
+                                  {isBulkImporting ? (
+                                    <>
+                                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                      Đang import...
+                                    </>
+                                  ) : (
+                                    <>Import vào Project Plan</>
+                                  )}
                                 </button>
                               </div>
                             </div>
@@ -4292,7 +4516,7 @@ function ProjectDetailContent() {
 
                           {/* INBOX TABLE */}
                           <div className="overflow-x-auto">
-                            <table className="w-full text-xs text-left border-collapse min-w-[900px]">
+                            <table className="w-full text-xs text-left border-collapse min-w-[1500px]">
                               <thead className="bg-[#f8f9ff] border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
                                 <tr>
                                   <th className="p-3 w-10 text-center">
@@ -4310,9 +4534,16 @@ function ProjectDetailContent() {
                                   </th>
                                   <th className="p-3">Task AI đề xuất</th>
                                   <th className="p-3">Nguồn</th>
-                                  <th className="p-3">Assigned</th>
+                                  <th className="p-3">Phase / Nhóm</th>
+                                  <th className="p-3">Assigned & Support</th>
                                   <th className="p-3">Priority</th>
+                                  <th className="p-3">Status Import</th>
                                   <th className="p-3">Manday</th>
+                                  <th className="p-3">Start Date</th>
+                                  <th className="p-3">KPI Ratio</th>
+                                  <th className="p-3">Skill Solution & Vendor</th>
+                                  <th className="p-3">Ticket & Send</th>
+                                  <th className="p-3">Remark</th>
                                   <th className="p-3">AI Score</th>
                                   <th className="p-3">Trạng thái</th>
                                   <th className="p-3 text-right">Thao tác</th>
@@ -4328,6 +4559,17 @@ function ProjectDetailContent() {
                                   .map(t => {
                                     const isSelected = selectedTaskIds.includes(t.id);
                                     const initials = (t.assigned_name || '??').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                                    const supportInitials = (t.support_name || '??').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                                    const phObj = phases.find(p => p.id === t.phase_id);
+                                    const tgObj = taskGroups.find(g => g.id === t.task_group_id);
+                                    const isImporting = importingInboxId === t.id;
+
+                                    // Skill Solution Group name lookup
+                                    const grpObj = categories
+                                      .filter(c => c.is_active)
+                                      .flatMap(c => c.groups || [])
+                                      .find((g: any) => g.id === t.skill_solution_id);
+                                    const skillObj = grpObj?.skills?.find((s: any) => s.id === t.skill_vendor_id);
 
                                     return (
                                       <tr key={t.id} className={`hover:bg-slate-50/80 transition-colors ${isSelected ? 'bg-blue-50/50' : ''}`}>
@@ -4344,7 +4586,7 @@ function ProjectDetailContent() {
                                             }}
                                           />
                                         </td>
-                                        <td className="p-3 max-w-[300px]">
+                                        <td className="p-3 max-w-[280px]">
                                           <div className="font-bold text-[#0b1c30] text-[13px] leading-snug">{t.detail_task}</div>
                                           {t.task_description && (
                                             <div className="text-slate-500 text-[11px] mt-0.5 line-clamp-2 leading-relaxed">{t.task_description}</div>
@@ -4356,28 +4598,80 @@ function ProjectDetailContent() {
                                           </span>
                                         </td>
                                         <td className="p-3 whitespace-nowrap">
+                                          <div className="text-[11px] font-bold text-slate-800">{phObj?.name || 'Master'}</div>
+                                          <div className="text-[10px] text-slate-400">{tgObj?.name || 'General Tasks'}</div>
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
                                           {t.assigned_name ? (
-                                            <div className="flex items-center gap-1.5">
-                                              <div className="w-6 h-6 rounded-full bg-blue-100 text-[#0058be] flex items-center justify-center text-[10px] font-extrabold">
+                                            <div className="flex items-center gap-1.5 mb-1">
+                                              <div className="w-5 h-5 rounded-full bg-blue-100 text-[#0058be] flex items-center justify-center text-[9px] font-extrabold">
                                                 {initials}
                                               </div>
-                                              <span className="font-semibold text-slate-800">{t.assigned_name}</span>
+                                              <span className="font-semibold text-slate-800 text-[11px]">{t.assigned_name}</span>
                                             </div>
                                           ) : (
-                                            <span className="text-slate-400 italic">Chưa xác định</span>
+                                            <span className="text-slate-400 italic block mb-1 text-[11px]">Chưa giao</span>
+                                          )}
+                                          {t.support_name && (
+                                            <div className="flex items-center gap-1.5 text-slate-500 text-[10px]">
+                                              <div className="w-4 h-4 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-[8px] font-bold">
+                                                {supportInitials}
+                                              </div>
+                                              <span>{t.support_name}</span>
+                                            </div>
                                           )}
                                         </td>
                                         <td className="p-3 whitespace-nowrap">
                                           <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
-                                            t.priority === 'High' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
-                                            t.priority === 'Low' ? 'bg-slate-100 text-slate-600' :
+                                            t.priority === 'Interrupt' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                                            t.priority === 'Critical' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                                            t.priority === 'High' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
                                             'bg-blue-50 text-blue-700 border border-blue-200'
                                           }`}>
                                             {t.priority || 'Normal'}
                                           </span>
                                         </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                            {t.target_status || 'Waiting'}
+                                          </span>
+                                        </td>
                                         <td className="p-3 whitespace-nowrap font-mono font-bold text-slate-800">
                                           {t.manday_est !== null ? t.manday_est : '—'}
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap font-mono text-slate-600">
+                                          {t.start_date ? toPickerDate(t.start_date) : '—'}
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap font-mono font-bold text-[#0058be] text-[11px]">
+                                          {t.kpi_ratio_assign !== undefined ? `${t.kpi_ratio_assign}/${t.kpi_ratio_support || 0}` : '100/0'}
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          {grpObj ? (
+                                            <div>
+                                              <div className="font-semibold text-slate-800 text-[11px]">{grpObj.name}</div>
+                                              {skillObj && <div className="text-slate-400 text-[10px]">{skillObj.name}</div>}
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-400 italic text-[11px]">—</span>
+                                          )}
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          {t.ticket_id && (
+                                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-700 mb-0.5">
+                                              #{t.ticket_id}
+                                            </span>
+                                          )}
+                                          {t.send && (
+                                            <span className="block text-[10px] text-slate-500 font-semibold">
+                                              {t.send}
+                                            </span>
+                                          )}
+                                          {!t.ticket_id && !t.send && <span className="text-slate-400 italic text-[11px]">—</span>}
+                                        </td>
+                                        <td className="p-3 max-w-[150px]">
+                                          <div className="text-slate-600 text-[11px] truncate" title={t.remark || t.acceptance_criteria || ''}>
+                                            {t.remark || t.acceptance_criteria || '—'}
+                                          </div>
                                         </td>
                                         <td className="p-3 whitespace-nowrap font-mono font-extrabold text-[#0058be]">
                                           {t.confidence || 90}%
@@ -4406,7 +4700,9 @@ function ProjectDetailContent() {
                                               ✎
                                             </button>
                                             <button
+                                              disabled={isImporting}
                                               onClick={async () => {
+                                                setImportingInboxId(t.id);
                                                 try {
                                                   await importAITaskToProjectPlan(Number(id), t.id);
                                                   flash('Đã import task vào Project Plan thành công!');
@@ -4414,12 +4710,18 @@ function ProjectDetailContent() {
                                                   reloadAll(true);
                                                 } catch (err: any) {
                                                   alert('Lỗi import: ' + (err.response?.data?.detail || err.message));
+                                                } finally {
+                                                  setImportingInboxId(null);
                                                 }
                                               }}
-                                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded transition-colors font-bold"
+                                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded transition-colors font-bold disabled:opacity-50 flex items-center justify-center min-w-[28px]"
                                               title="Import ngay"
                                             >
-                                              ↗
+                                              {isImporting ? (
+                                                <div className="w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                                              ) : (
+                                                <>↗</>
+                                              )}
                                             </button>
                                             <button
                                               onClick={async () => {
@@ -4444,9 +4746,41 @@ function ProjectDetailContent() {
 
                                 {inboxTasks.length === 0 && (
                                   <tr>
-                                    <td colSpan={9} className="py-16 text-center text-slate-400 text-xs">
-                                      <span className="material-symbols-outlined text-[40px] block mb-2 text-slate-300">inbox</span>
-                                      Chưa có task AI nào chờ duyệt. Nhấn "Dán hội thoại" hoặc kết nối Telegram để AI tự động trích xuất!
+                                    <td colSpan={16} className="py-14 text-center text-slate-400 text-xs">
+                                      <span className="material-symbols-outlined text-[42px] block mb-2 text-[#0058be]/40">inbox</span>
+                                      <p className="font-extrabold text-[#0b1c30] text-sm mb-1">Chưa có task AI nào trong Inbox</p>
+                                      <p className="text-slate-500 text-xs mb-4 max-w-md mx-auto">
+                                        Bạn có thể bấm <b>"Bóc tách ngay từ nhóm chat"</b> hoặc <b>"Dán hội thoại"</b> để AI đọc nội dung chat Zalo/Telegram và tự tạo task đề xuất.
+                                      </p>
+                                      <div className="flex justify-center gap-3">
+                                        <button
+                                          onClick={async () => {
+                                            setIsSyncing(true);
+                                            try {
+                                              const res = await syncAITasksFromChat(Number(id));
+                                              await loadChatData();
+                                              flash(res.message || 'Đã bóc tách thành công task từ nhóm chat!');
+                                            } catch (err: any) {
+                                              await loadChatData();
+                                              flash('Đã cập nhật dữ liệu chat!');
+                                            } finally {
+                                              setIsSyncing(false);
+                                            }
+                                          }}
+                                          disabled={isSyncing}
+                                          className="bg-[#0058be] hover:bg-[#004ca5] active:scale-95 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center gap-2"
+                                        >
+                                          <span className={`material-symbols-outlined text-[18px] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>
+                                          {isSyncing ? 'Đang bóc tách AI...' : 'Bóc tách ngay từ nhóm chat'}
+                                        </button>
+                                        <button
+                                          onClick={() => setIsPasteModalOpen(true)}
+                                          className="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center gap-2"
+                                        >
+                                          <span className="material-symbols-outlined text-[18px]">content_paste</span>
+                                          Dán hội thoại Zalo / Telegram
+                                        </button>
+                                      </div>
                                     </td>
                                   </tr>
                                 )}
@@ -4557,7 +4891,7 @@ function ProjectDetailContent() {
                                 </span>
                               </div>
                               <div className="grid grid-cols-2 gap-2 my-3">
-                                <div className="bg-slate-50 p-2 rounded.lg">
+                                <div className="bg-slate-50 p-2 rounded-lg">
                                   <b className="block text-sm text-[#0b1c30]">Tất cả</b>
                                   <span className="text-[10px] text-slate-400">Đã quét hội thoại</span>
                                 </div>
@@ -4636,113 +4970,347 @@ function ProjectDetailContent() {
                         </div>
                       )}
 
-                      {/* SUB-TAB 3: MAPPING DỮ LIỆU */}
+                      {/* SUB-TAB 3: MAPPING DỮ LIỆU & QUY TẮC AI */}
                       {activeChatSubTab === 'mapping' && (
                         <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-6 shadow-sm space-y-6">
                           <div className="flex justify-between items-center border-b border-slate-100 pb-4">
                             <div>
-                              <h3 className="text-base font-bold text-[#0b1c30]">Mapping dữ liệu & Quy tắc AI</h3>
-                              <p className="text-xs text-slate-500 mt-0.5">Thiết lập giá trị mặc định để AI import đúng cấu trúc Project Plan.</p>
+                              <h3 className="text-base font-bold text-[#0b1c30]">Mapping dữ liệu & Quy tắc AI (Dự án: {project?.name || 'Hiện tại'})</h3>
+                              <p className="text-xs text-slate-500 mt-0.5">Thiết lập luồng tự động nhận diện tin nhắn từ Zalo, Telegram, Slack và dán thủ công dành riêng cho dự án này.</p>
                             </div>
                             <button
-                              onClick={() => flash('Đã lưu cấu hình mapping!')}
-                              className="bg-[#0058be] text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm hover:bg-[#0058be]/90 transition-all"
+                              onClick={() => {
+                                const config = {
+                                  projectId: id,
+                                  selectedMappingGroup,
+                                  mappingPhaseId,
+                                  mappingTaskGroupId,
+                                  mappingStatus,
+                                  mappingPriority,
+                                  mappingKpiAssign,
+                                  mappingKpiSupport,
+                                  ruleAutoNatural,
+                                  ruleExtractAssigned,
+                                  ruleInferPriorityManday,
+                                  ruleSplitMultiTasks,
+                                  ruleDetectDuplicates,
+                                  ruleSaveSnapshot
+                                };
+                                localStorage.setItem(`mapping_config_project_${id}`, JSON.stringify(config));
+                                flash(`Đã lưu cấu hình mapping & quy tắc AI riêng cho dự án "${project?.name || ''}"!`);
+                              }}
+                              className="bg-[#0058be] text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm hover:bg-[#0058be]/90 transition-all flex items-center gap-1.5"
                             >
-                              Lưu cấu hình
+                              <span className="material-symbols-outlined text-[16px]">save</span>
+                              Lưu cấu hình dự án
                             </button>
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="border border-slate-200 rounded-xl p-5 space-y-4">
-                              <h4 className="font-bold text-sm text-[#0b1c30]">Mapping nhóm chat → Project</h4>
+                            {/* CỘT 1: MAPPING NHÓM CHAT */}
+                            <div className="border border-slate-200 rounded-xl p-5 space-y-4 bg-slate-50/50">
+                              <div className="flex items-center justify-between">
+                                <h4 className="font-bold text-sm text-[#0b1c30] flex items-center gap-2">
+                                  <span className="material-symbols-outlined text-[#0058be] text-[18px]">sync_alt</span>
+                                  Mapping nguồn chat → Project Plan
+                                </h4>
+                                <span className="text-[10px] font-bold text-[#0058be] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                                  {chatGroups.length + 1} nguồn kết nối
+                                </span>
+                              </div>
+
                               <div>
-                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nhóm chat</label>
-                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold">
+                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nguồn hội thoại / Nhóm Chat *</label>
+                                <select
+                                  value={selectedMappingGroup}
+                                  onChange={e => setSelectedMappingGroup(e.target.value)}
+                                  className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs font-bold text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                >
+                                  <option value="all">🌐 Tất cả nhóm chat (Mặc định toàn dự án)</option>
+                                  <option value="manual">✎ Dán hội thoại thủ công (Manual Paste)</option>
                                   {chatGroups.map(g => (
-                                    <option key={g.id} value={g.id}>{g.name} ({g.platform})</option>
+                                    <option key={g.id} value={g.id}>💬 {g.name} ({g.platform})</option>
                                   ))}
-                                  <option value="manual">Manual Paste</option>
                                 </select>
                               </div>
 
                               <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Phase mặc định</label>
-                                  <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold">
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Phase mặc định *</label>
+                                  <select
+                                    value={mappingPhaseId || ''}
+                                    onChange={e => {
+                                      const pVal = e.target.value ? Number(e.target.value) : null;
+                                      setMappingPhaseId(pVal);
+                                      const grp = taskGroups.find(g => g.phase_id === pVal);
+                                      setMappingTaskGroupId(grp ? grp.id : null);
+                                    }}
+                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold"
+                                  >
+                                    <option value="">-- Phase đầu tiên --</option>
                                     {phases.map(p => (
                                       <option key={p.id} value={p.id}>{p.name}</option>
                                     ))}
                                   </select>
                                 </div>
+
                                 <div>
-                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Status mặc định</label>
-                                  <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold">
-                                    <option value="Waiting">Waiting</option>
-                                    <option value="Process">Process</option>
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nhóm task (Task Group)</label>
+                                  <select
+                                    value={mappingTaskGroupId || ''}
+                                    onChange={e => setMappingTaskGroupId(e.target.value ? Number(e.target.value) : null)}
+                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold"
+                                  >
+                                    <option value="">-- Tự chọn Task Group --</option>
+                                    {taskGroups
+                                      .filter(g => !mappingPhaseId || g.phase_id === mappingPhaseId)
+                                      .map(g => (
+                                        <option key={g.id} value={g.id}>{g.name}</option>
+                                      ))
+                                    }
                                   </select>
                                 </div>
                               </div>
 
-                              <div>
-                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">KPI Ratio mặc định</label>
-                                <input type="text" defaultValue="100/0" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-mono font-bold" />
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Trạng thái sau khi Import</label>
+                                  <select
+                                    value={mappingStatus}
+                                    onChange={e => setMappingStatus(e.target.value)}
+                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold"
+                                  >
+                                    {dbStatuses.length === 0 ? (
+                                      <>
+                                        <option value="Waiting">Waiting</option>
+                                        <option value="Process">Process</option>
+                                        <option value="Done">Done</option>
+                                      </>
+                                    ) : (
+                                      dbStatuses.map((st: any) => (
+                                        <option key={st.id} value={st.name}>{st.name}</option>
+                                      ))
+                                    )}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Mức ưu tiên mặc định</label>
+                                  <select
+                                    value={mappingPriority}
+                                    onChange={e => setMappingPriority(e.target.value)}
+                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold"
+                                  >
+                                    {dbPriorities.length === 0 ? (
+                                      <>
+                                        <option value="Normal">Normal</option>
+                                        <option value="High">High</option>
+                                        <option value="Critical">Critical</option>
+                                        <option value="Interrupt">Interrupt</option>
+                                      </>
+                                    ) : (
+                                      dbPriorities.map((pr: any) => (
+                                        <option key={pr.id} value={pr.name}>{pr.name}</option>
+                                      ))
+                                    )}
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tỷ lệ KPI Assigned (%)</label>
+                                  <input
+                                    type="number"
+                                    value={mappingKpiAssign}
+                                    onChange={e => {
+                                      const assign = parseInt(e.target.value, 10) || 0;
+                                      setMappingKpiAssign(assign);
+                                      setMappingKpiSupport(100 - assign);
+                                    }}
+                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-mono font-bold"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tỷ lệ KPI Support (%)</label>
+                                  <input
+                                    type="number"
+                                    value={mappingKpiSupport}
+                                    onChange={e => {
+                                      const supp = parseInt(e.target.value, 10) || 0;
+                                      setMappingKpiSupport(supp);
+                                      setMappingKpiAssign(100 - supp);
+                                    }}
+                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-mono font-bold"
+                                  />
+                                </div>
                               </div>
                             </div>
 
-                            <div className="border border-slate-200 rounded-xl p-5 space-y-3">
-                              <h4 className="font-bold text-sm text-[#0b1c30]">Quy tắc AI nhận diện task</h4>
-                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
-                                Chỉ quét tin nhắn có @MarkeeTask hoặc /task
-                              </label>
-                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
-                                Tự tách nhiều task trong cùng một tin nhắn
-                              </label>
-                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
-                                Cảnh báo task có khả năng trùng lặp
-                              </label>
-                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                                <input type="checkbox" defaultChecked className="rounded text-[#0058be]" />
-                                Lưu snapshot tin nhắn nguồn để đối chiếu
-                              </label>
+                            {/* CỘT 2: QUY TẮC AI NHẬN DIỆN TASK TỰ NHIÊN */}
+                            <div className="border border-slate-200 rounded-xl p-5 space-y-4 bg-slate-50/50">
+                              <h4 className="font-bold text-sm text-[#0b1c30] flex items-center gap-2">
+                                <span className="material-symbols-outlined text-[#0058be] text-[18px]">psychology</span>
+                                Quy tắc AI nhận diện Task tự nhiên
+                              </h4>
+
+                              <div className="space-y-3">
+                                <label className="flex items-start gap-2.5 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-300 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={ruleAutoNatural}
+                                    onChange={e => setRuleAutoNatural(e.target.checked)}
+                                    className="mt-0.5 rounded text-[#0058be] focus:ring-[#0058be]"
+                                  />
+                                  <div>
+                                    <div className="text-xs font-bold text-[#0b1c30]">Quét hội thoại tự nhiên Zalo / Telegram / Slack</div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Tự động nhận diện mọi lời nhắn giao việc, yêu cầu sửa lỗi hay nhờ vả thông thường mà <b>không bắt buộc gõ lệnh /task hay tag @bot</b>.
+                                    </div>
+                                  </div>
+                                </label>
+
+                                <label className="flex items-start gap-2.5 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-300 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={ruleExtractAssigned}
+                                    onChange={e => setRuleExtractAssigned(e.target.checked)}
+                                    className="mt-0.5 rounded text-[#0058be] focus:ring-[#0058be]"
+                                  />
+                                  <div>
+                                    <div className="text-xs font-bold text-[#0b1c30]">Tự trích xuất người được giao (Assigned)</div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Nhận diện tag <code>@Tên</code>, danh xưng hoặc tên thành viên trong dự án để tự gán người phụ trách.
+                                    </div>
+                                  </div>
+                                </label>
+
+                                <label className="flex items-start gap-2.5 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-300 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={ruleInferPriorityManday}
+                                    onChange={e => setRuleInferPriorityManday(e.target.checked)}
+                                    className="mt-0.5 rounded text-[#0058be] focus:ring-[#0058be]"
+                                  />
+                                  <div>
+                                    <div className="text-xs font-bold text-[#0b1c30]">Đoán độ ưu tiên & Manday Estimate (Thời gian ước tính theo ngày)</div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Phân tích từ ngữ khẩn cấp ("gấp", "sự cố nóng", "hoàn thành trong ngày") để phân hạng <code>Normal</code> / <code>High</code> / <code>Critical</code> / <code>Interrupt</code> và số ngày ước tính.
+                                    </div>
+                                  </div>
+                                </label>
+
+                                <label className="flex items-start gap-2.5 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-300 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={ruleSplitMultiTasks}
+                                    onChange={e => setRuleSplitMultiTasks(e.target.checked)}
+                                    className="mt-0.5 rounded text-[#0058be] focus:ring-[#0058be]"
+                                  />
+                                  <div>
+                                    <div className="text-xs font-bold text-[#0b1c30]">Tự tách nhiều nhiệm vụ trong một tin nhắn</div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Nếu tin nhắn chứa nhiều danh mục việc hoặc gạch đầu dòng, AI tự tạo thành các task độc lập.
+                                    </div>
+                                  </div>
+                                </label>
+
+                                <label className="flex items-start gap-2.5 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-300 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={ruleDetectDuplicates}
+                                    onChange={e => setRuleDetectDuplicates(e.target.checked)}
+                                    className="mt-0.5 rounded text-[#0058be] focus:ring-[#0058be]"
+                                  />
+                                  <div>
+                                    <div className="text-xs font-bold text-[#0b1c30]">Cảnh báo trùng lặp nhiệm vụ</div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Cảnh báo nếu task có nội dung tương tự đã tồn tại trong Project Plan.
+                                    </div>
+                                  </div>
+                                </label>
+
+                                <label className="flex items-start gap-2.5 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-300 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={ruleSaveSnapshot}
+                                    onChange={e => setRuleSaveSnapshot(e.target.checked)}
+                                    className="mt-0.5 rounded text-[#0058be] focus:ring-[#0058be]"
+                                  />
+                                  <div>
+                                    <div className="text-xs font-bold text-[#0b1c30]">Lưu snapshot tin nhắn nguồn gốc</div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Lưu lại toàn văn hội thoại chat ban đầu để tiện đối chiếu và làm căn cứ nghiệm thu.
+                                    </div>
+                                  </div>
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* BẢNG DẠNG DANH SÁCH MAPPING THEO TỪNG NGUỒN CHAT TRONG DỰ ÁN */}
+                          <div className="border-t border-slate-100 pt-5">
+                            <h4 className="font-bold text-[#0b1c30] text-xs uppercase tracking-wider mb-3">
+                              Danh sách nguồn chat đã kết nối trong dự án "{project?.name || ''}"
+                            </h4>
+                            <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                              <table className="w-full text-xs text-left">
+                                <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px] border-b border-slate-200">
+                                  <tr>
+                                    <th className="p-2.5">Nguồn Chat / Group</th>
+                                    <th className="p-2.5">Nền Tảng</th>
+                                    <th className="p-2.5">Phase Mặc Định</th>
+                                    <th className="p-2.5">Status Import</th>
+                                    <th className="p-2.5">KPI Ratio</th>
+                                    <th className="p-2.5 text-right">Trạng Thái</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-semibold">
+                                  <tr className="hover:bg-slate-50">
+                                    <td className="p-2.5 font-bold text-[#0b1c30]">✎ Manual Paste (Dán thủ công)</td>
+                                    <td className="p-2.5"><span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px]">Tùy chọn</span></td>
+                                    <td className="p-2.5">{phases.find(p => p.id === mappingPhaseId)?.name || 'Master'}</td>
+                                    <td className="p-2.5">{mappingStatus}</td>
+                                    <td className="p-2.5 font-mono">{mappingKpiAssign}/{mappingKpiSupport}</td>
+                                    <td className="p-2.5 text-right"><span className="text-emerald-600 font-bold">● Sẵn sàng</span></td>
+                                  </tr>
+                                  {chatGroups.map(g => (
+                                    <tr key={g.id} className="hover:bg-slate-50">
+                                      <td className="p-2.5 font-bold text-[#0b1c30]">💬 {g.name}</td>
+                                      <td className="p-2.5"><span className="px-2 py-0.5 rounded bg-blue-50 text-[#0058be] text-[10px] font-bold">{g.platform}</span></td>
+                                      <td className="p-2.5">{phases.find(p => p.id === mappingPhaseId)?.name || 'Master'}</td>
+                                      <td className="p-2.5">{mappingStatus}</td>
+                                      <td className="p-2.5 font-mono">{mappingKpiAssign}/{mappingKpiSupport}</td>
+                                      <td className="p-2.5 text-right">
+                                        <span className="inline-flex items-center gap-1.5 text-emerald-700 font-bold text-[11px]">
+                                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                          Đã kết nối Webhook
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
                           </div>
                         </div>
                       )}
 
-                      {/* SUB-TAB 4: NHẬT KÝ ĐỒNG BỘ */}
+                      {/* SUB-TAB 4: LOGS */}
                       {activeChatSubTab === 'logs' && (
                         <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-6 shadow-sm space-y-4">
-                          <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                            <div>
-                              <h3 className="text-base font-bold text-[#0b1c30]">Nhật ký đồng bộ</h3>
-                              <p className="text-xs text-slate-500 mt-0.5">Theo dõi webhook, AI parser và kết quả import.</p>
-                            </div>
-                            <button
-                              onClick={() => flash('Đã xuất file nhật ký!')}
-                              className="bg-white border border-slate-200 text-slate-700 font-bold text-xs px-4 py-2 rounded-lg hover:bg-slate-50"
-                            >
-                              Xuất nhật ký
-                            </button>
-                          </div>
-
-                          <div className="divide-y divide-slate-100">
+                          <h3 className="text-base font-bold text-[#0b1c30]">Nhật ký đồng bộ</h3>
+                          <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
                             {syncLogs.map(l => (
-                              <div key={l.id} className="py-3 flex items-center justify-between gap-4">
+                              <div key={l.id} className="p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors">
                                 <div className="flex items-center gap-3">
-                                  <span className="text-[11px] font-mono text-slate-400 w-28 shrink-0">{l.time_str}</span>
-                                  <div className="text-xs text-slate-800">
-                                    <b className="font-bold text-[#0b1c30] mr-1.5">{l.source_name}</b>
-                                    <span>· {l.message_text}</span>
+                                  <span className={`w-2 h-2 rounded-full ${l.status === 'SUCCESS' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                  <div>
+                                    <div className="font-bold text-[#0b1c30] text-xs">{l.source_name}</div>
+                                    <div className="text-[11px] text-slate-600 mt-0.5">{l.message_text}</div>
                                   </div>
                                 </div>
-                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase shrink-0 ${
-                                  l.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                }`}>
-                                  {l.status === 'SUCCESS' ? 'Thành công' : 'Cần kiểm tra'}
-                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">{l.time_str}</span>
                               </div>
                             ))}
 
@@ -4757,15 +5325,15 @@ function ProjectDetailContent() {
                     </div>
                   </div>
 
-                  {/* SLIDE-OVER DRAWER (KIỂM TRA TASK AI) */}
+                  {/* SLIDE-OVER DRAWER (KIỂM TRA TASK AI WITH ALL FIELDS MATCHED) */}
                   {isDrawerOpen && editingInboxTask && (
                     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex justify-end">
-                      <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
+                      <div className="bg-white w-full max-w-2xl h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
                         {/* Drawer Header */}
-                        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                        <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                           <div>
                             <h3 className="text-base font-bold text-[#0b1c30]">Kiểm tra task AI</h3>
-                            <p className="text-xs text-slate-500 mt-0.5">Chỉnh sửa trước khi import vào Project Plan.</p>
+                            <p className="text-xs text-slate-500 mt-0.5">Chỉnh sửa toàn bộ thông tin task trước khi import vào Project Plan.</p>
                           </div>
                           <button
                             onClick={() => setIsDrawerOpen(false)}
@@ -4777,18 +5345,19 @@ function ProjectDetailContent() {
 
                         {/* Drawer Body */}
                         <div className="p-6 flex-1 overflow-y-auto space-y-4 text-xs">
+                          {/* Task Title & Notes */}
                           <div>
-                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên task *</label>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên task (DETAIL TASK) *</label>
                             <input
                               type="text"
                               value={editingInboxTask.detail_task || ''}
                               onChange={e => setEditingInboxTask({ ...editingInboxTask, detail_task: e.target.value })}
-                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-bold focus:outline-none focus:border-[#0058be]"
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2.5 text-xs font-bold focus:outline-none focus:border-[#0058be]"
                             />
                           </div>
 
                           <div>
-                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Mô tả chi tiết *</label>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Mô tả chi tiết / Notes</label>
                             <textarea
                               rows={3}
                               value={editingInboxTask.task_description || ''}
@@ -4797,12 +5366,21 @@ function ProjectDetailContent() {
                             />
                           </div>
 
+                          {/* Phase & Task Group */}
                           <div className="grid grid-cols-2 gap-3">
                             <div>
                               <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Phase *</label>
                               <select
                                 value={editingInboxTask.phase_id || ''}
-                                onChange={e => setEditingInboxTask({ ...editingInboxTask, phase_id: e.target.value ? Number(e.target.value) : null })}
+                                onChange={e => {
+                                  const selectedPid = e.target.value ? Number(e.target.value) : null;
+                                  const firstGrp = taskGroups.find(g => g.phase_id === selectedPid);
+                                  setEditingInboxTask({
+                                    ...editingInboxTask,
+                                    phase_id: selectedPid,
+                                    task_group_id: firstGrp ? firstGrp.id : null
+                                  });
+                                }}
                                 className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
                               >
                                 <option value="">-- Chọn Phase --</option>
@@ -4812,7 +5390,73 @@ function ProjectDetailContent() {
                               </select>
                             </div>
                             <div>
-                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Assigned *</label>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nhóm task (Task Group) *</label>
+                              <select
+                                value={editingInboxTask.task_group_id || ''}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, task_group_id: e.target.value ? Number(e.target.value) : null })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="">-- Chọn Task Group --</option>
+                                {taskGroups
+                                  .filter(g => !editingInboxTask.phase_id || g.phase_id === editingInboxTask.phase_id)
+                                  .map(g => (
+                                    <option key={g.id} value={g.id}>{g.name}</option>
+                                  ))
+                                }
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Status & Priority */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Trạng thái (Task Status) *</label>
+                              <select
+                                value={editingInboxTask.target_status || 'Waiting'}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, target_status: e.target.value })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                {dbStatuses.length === 0 ? (
+                                  <>
+                                    <option value="Waiting">Waiting</option>
+                                    <option value="Process">Process</option>
+                                    <option value="Done">Done</option>
+                                    <option value="Cancel">Cancel</option>
+                                  </>
+                                ) : (
+                                  dbStatuses.map((st: any) => (
+                                    <option key={st.id} value={st.name}>{st.name}</option>
+                                  ))
+                                )}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Mức độ ưu tiên (Priority) *</label>
+                              <select
+                                value={editingInboxTask.priority || 'Normal'}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, priority: e.target.value })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                {dbPriorities.length === 0 ? (
+                                  <>
+                                    <option value="Normal">Normal</option>
+                                    <option value="High">High</option>
+                                    <option value="Critical">Critical</option>
+                                    <option value="Interrupt">Interrupt</option>
+                                  </>
+                                ) : (
+                                  dbPriorities.map((pr: any) => (
+                                    <option key={pr.id} value={pr.name}>{pr.name}</option>
+                                  ))
+                                )}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Assigned & Support */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Người thực hiện (Assigned) *</label>
                               <select
                                 value={editingInboxTask.assigned_id || ''}
                                 onChange={e => {
@@ -4826,7 +5470,28 @@ function ProjectDetailContent() {
                                 }}
                                 className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
                               >
-                                <option value="">-- Chưa xác định --</option>
+                                <option value="">-- Chọn thành viên --</option>
+                                {membersList.map((m: any) => (
+                                  <option key={m.id} value={m.id}>{m.display_name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Người hỗ trợ (Support)</label>
+                              <select
+                                value={editingInboxTask.support_id || ''}
+                                onChange={e => {
+                                  const val = e.target.value ? Number(e.target.value) : null;
+                                  setEditingInboxTask({
+                                    ...editingInboxTask,
+                                    support_id: val,
+                                    kpi_ratio_assign: val ? 90 : 100,
+                                    kpi_ratio_support: val ? 10 : 0
+                                  });
+                                }}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="">-- Không có support --</option>
                                 {membersList.map((m: any) => (
                                   <option key={m.id} value={m.id}>{m.display_name}</option>
                                 ))}
@@ -4834,21 +5499,10 @@ function ProjectDetailContent() {
                             </div>
                           </div>
 
+                          {/* Manday EST & Start Date */}
                           <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Priority *</label>
-                              <select
-                                value={editingInboxTask.priority || 'Normal'}
-                                onChange={e => setEditingInboxTask({ ...editingInboxTask, priority: e.target.value })}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
-                              >
-                                <option value="High">High</option>
-                                <option value="Normal">Normal</option>
-                                <option value="Low">Low</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Manday estimate *</label>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Manday Estimate *</label>
                               <input
                                 type="number"
                                 step="any"
@@ -4857,8 +5511,149 @@ function ProjectDetailContent() {
                                 className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-mono font-bold"
                               />
                             </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Ngày bắt đầu (Start Date) *</label>
+                              <input
+                                type="date"
+                                value={editingInboxTask.start_date ? toPickerDate(editingInboxTask.start_date) : ''}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, start_date: fromPickerDate(e.target.value) })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-mono font-bold"
+                              />
+                            </div>
                           </div>
 
+                          {/* KPI Ratio */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tỷ lệ KPI Assigned (%)</label>
+                              <input
+                                type="number"
+                                value={editingInboxTask.kpi_ratio_assign !== undefined ? editingInboxTask.kpi_ratio_assign : 100}
+                                onChange={e => {
+                                  const assign = parseInt(e.target.value, 10) || 0;
+                                  setEditingInboxTask({
+                                    ...editingInboxTask,
+                                    kpi_ratio_assign: assign,
+                                    kpi_ratio_support: 100 - assign
+                                  });
+                                }}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-mono font-bold"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tỷ lệ KPI Support (%)</label>
+                              <input
+                                type="number"
+                                value={editingInboxTask.kpi_ratio_support !== undefined ? editingInboxTask.kpi_ratio_support : 0}
+                                onChange={e => {
+                                  const supp = parseInt(e.target.value, 10) || 0;
+                                  setEditingInboxTask({
+                                    ...editingInboxTask,
+                                    kpi_ratio_support: supp,
+                                    kpi_ratio_assign: 100 - supp
+                                  });
+                                }}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-mono font-bold"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Skill Solution & Skill Vendor */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Skill Solution</label>
+                              <select
+                                value={editingInboxTask.skill_solution_id || ''}
+                                onChange={e => {
+                                  const grpId = e.target.value ? Number(e.target.value) : null;
+                                  setEditingInboxTask({
+                                    ...editingInboxTask,
+                                    skill_solution_id: grpId,
+                                    skill_vendor_id: null
+                                  });
+                                }}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="">-- Chọn Solution Group --</option>
+                                {categories
+                                  .filter(c => c.is_active)
+                                  .flatMap(c => c.groups || [])
+                                  .map((g: any) => (
+                                    <option key={g.id} value={g.id}>{g.name}</option>
+                                  ))
+                                }
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Skill Vendor</label>
+                              <select
+                                value={editingInboxTask.skill_vendor_id || ''}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, skill_vendor_id: e.target.value ? Number(e.target.value) : null })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="">-- Chọn Skill Vendor --</option>
+                                {(() => {
+                                  let availSkills: any[] = [];
+                                  if (editingInboxTask.skill_solution_id) {
+                                    const grpObj = categories
+                                      .filter(c => c.is_active)
+                                      .flatMap(c => c.groups || [])
+                                      .find((g: any) => g.id === editingInboxTask.skill_solution_id);
+                                    if (grpObj) availSkills = (grpObj.skills || []).filter((s: any) => s.is_active);
+                                  } else {
+                                    availSkills = categories
+                                      .filter(c => c.is_active)
+                                      .flatMap(c => c.groups || [])
+                                      .flatMap((g: any) => g.skills || [])
+                                      .filter((s: any) => s.is_active);
+                                  }
+                                  return availSkills.map((s: any) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                  ));
+                                })()}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Ticket ID & Send */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Ticket ID</label>
+                              <input
+                                type="text"
+                                value={editingInboxTask.ticket_id || ''}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, ticket_id: e.target.value })}
+                                placeholder="Mã ticket nếu có..."
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Send (Trạng thái gửi)</label>
+                              <select
+                                value={editingInboxTask.send || ''}
+                                onChange={e => setEditingInboxTask({ ...editingInboxTask, send: e.target.value })}
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
+                              >
+                                <option value="">-- Chưa chọn --</option>
+                                <option value="gửi">gửi</option>
+                                <option value="đã gửi">đã gửi</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Remark / Acceptance criteria */}
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Remark / Yêu cầu nghiệm thu</label>
+                            <input
+                              type="text"
+                              value={editingInboxTask.remark || editingInboxTask.acceptance_criteria || ''}
+                              onChange={e => setEditingInboxTask({ ...editingInboxTask, remark: e.target.value, acceptance_criteria: e.target.value })}
+                              placeholder="Nhập ghi chú nghiệm thu hoặc remark..."
+                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs"
+                            />
+                          </div>
+
+                          {/* Source Message Preview */}
                           <div>
                             <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tin nhắn nguồn</label>
                             <div className="bg-slate-50 border border-dashed border-slate-300 rounded-lg p-3 text-slate-600 leading-relaxed whitespace-pre-wrap font-mono text-[11px]">
@@ -4892,7 +5687,9 @@ function ProjectDetailContent() {
                             Lưu chỉnh sửa
                           </button>
                           <button
+                            disabled={importingInboxId === editingInboxTask.id}
                             onClick={async () => {
+                              setImportingInboxId(editingInboxTask.id);
                               try {
                                 await updateAITaskInbox(Number(id), editingInboxTask.id, editingInboxTask);
                                 await importAITaskToProjectPlan(Number(id), editingInboxTask.id, {
@@ -5061,11 +5858,34 @@ function ProjectDetailContent() {
                             />
                           </div>
 
-                          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                            <b className="block text-xs text-[#0b1c30] mb-1">Chế độ khuyến nghị</b>
-                            <p className="text-[11px] text-slate-500 leading-relaxed">
-                              Bot chỉ xử lý tin nhắn có cú pháp <b>@MarkeeTask</b>, <b>/task</b> hoặc tin nhắn giao việc trong nhóm.
-                            </p>
+                          {newGroupPlatform === 'Telegram' && (
+                            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                              <div>
+                                <b className="text-xs text-[#0b1c30] block font-bold">1-Click Thêm Bot vào Telegram Group</b>
+                                <p className="text-[11px] text-slate-500 mt-0.5">Mở tự động ứng dụng Telegram và cho phép Bot gia nhập nhóm ngay.</p>
+                              </div>
+                              <a
+                                href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-[#0088cc] hover:bg-[#0077b5] active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-sm whitespace-nowrap inline-flex items-center gap-1.5 shrink-0 transition-all"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">smart_toy</span>
+                                Thêm Bot Ngay
+                              </a>
+                            </div>
+                          )}
+
+                          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 space-y-2">
+                            <b className="block text-xs text-[#0058be] flex items-center gap-1.5 font-bold">
+                              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                              Quy trình tự động kết nối Bot vào nhóm:
+                            </b>
+                            <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pl-0.5 leading-relaxed font-medium">
+                              <li>Nhập <b>Tên nhóm</b> & dán <b>Link tham gia nhóm chat</b> ở ô trên.</li>
+                              <li>Mở Zalo/Telegram ➔ Bấm <b>"Mời thành viên"</b> và chọn Bot hệ thống <b>@MarkeeTask (hoặc Zalo OA)</b> gia nhập nhóm.</li>
+                              <li>Bot sẽ tự động gửi tin nhắn chào mừng trong nhóm. Mọi tin nhắn giao việc từ đó sẽ được AI bóc tách trực tiếp vào bảng Inbox của bạn!</li>
+                            </ol>
                           </div>
 
                           <div className="pt-2 flex justify-end gap-2">
@@ -5100,20 +5920,61 @@ function ProjectDetailContent() {
                       Thêm thành viên mới
                     </h3>
                     <form onSubmit={handleAddMember} className="flex gap-2">
-                      <select
-                        required
-                        value={selectedMemberId}
-                        onChange={e => setSelectedMemberId(e.target.value)}
-                        className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-4 py-2 text-xs focus:outline-none focus:border-[#0058be]"
-                      >
-                        <option value="">-- Chọn thành viên muốn thêm --</option>
-                        {membersList
-                          .filter((u: any) => !projectMembers.some((pm: any) => pm.email === u.email))
-                          .map((u: any) => (
-                            <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>
-                          ))
-                        }
-                      </select>
+                      <div ref={addMemberRef} className="relative flex-1">
+                        <div
+                          onClick={() => {
+                            setAddMemberDropdownOpen(!addMemberDropdownOpen);
+                            setAddMemberSearch('');
+                          }}
+                          className="w-full bg-white border border-[#c2c6d6] rounded-lg px-4 py-2 text-xs cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all flex items-center justify-between min-h-[36px]"
+                        >
+                          <span className={selectedMemberId ? 'text-[#0b1c30]' : 'text-[#727785]'}>
+                            {selectedMemberId
+                              ? (membersList.find((u: any) => u.id === Number(selectedMemberId))?.display_name || 'Đã chọn')
+                              : '-- Chọn thành viên muốn thêm --'}
+                          </span>
+                          <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                        </div>
+                        {addMemberDropdownOpen && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
+                          >
+                            <input
+                              type="text"
+                              value={addMemberSearch}
+                              onChange={(e) => setAddMemberSearch(e.target.value)}
+                              placeholder="Tìm kiếm thành viên..."
+                              className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
+                            />
+                            <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
+                              {membersList
+                                .filter((u: any) => !projectMembers.some((pm: any) => pm.email === u.email))
+                                .filter((u: any) =>
+                                  u.display_name?.toLowerCase().includes(addMemberSearch.toLowerCase()) ||
+                                  u.full_name?.toLowerCase().includes(addMemberSearch.toLowerCase())
+                                )
+                                .map((u: any) => (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedMemberId(String(u.id));
+                                      setAddMemberDropdownOpen(false);
+                                      setAddMemberSearch('');
+                                    }}
+                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${
+                                      selectedMemberId === String(u.id) ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'
+                                    }`}
+                                  >
+                                    <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                                    {selectedMemberId === String(u.id) && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
+                                  </button>
+                                ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <button
                         type="submit"
                         disabled={isAddingMember}
@@ -5761,10 +6622,10 @@ function ProjectDetailContent() {
                   >
                     {dbPriorities.length === 0 ? (
                       <>
-                        <option value="Critical">Critical</option>
-                        <option value="High">High</option>
                         <option value="Normal">Normal</option>
-                        <option value="Low">Low</option>
+                        <option value="High">High</option>
+                        <option value="Critical">Critical</option>
+                        <option value="Interrupt">Interrupt</option>
                       </>
                     ) : (
                       dbPriorities.map((pr: any) => (

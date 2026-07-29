@@ -346,68 +346,72 @@ def recalculate_task(task, db):
     return task
 
 # ═══════════════════════════════════════════════════════════
-# BỔ SUNG: HÀM TÍNH TOÁN TASK CON & TASK GROUP (END_ACTUAL, MD_ACTUAL, DAYS_LATE)
+# END ACTUAL TỰ ĐỘNG TỪ TASK CON
+# - Khi task con có status = Done, lấy end_date_actual của task con đó
+# - Nếu nhiều task con Done, lấy ngày trễ nhất (MAX)
+# - Nếu task con chuyển từ Done sang khác, xóa end_date_actual của cha
+# - Đệ quy lên toàn bộ cây phân cấp (cháu → con → cha → ông)
 # ═══════════════════════════════════════════════════════════
-def calculate_task_actuals(task):
+def recalculate_parent_end_actual(task, db):
     """
-    Tính MD_ACTUAL và DAYS_LATE cho task con khi status chuyển thành Done:
-    - MD_ACTUAL = Ngày hoàn thành (end_date_actual) - Ngày bắt đầu (start_date) + 1
-    - DAYS_LATE = MD_ACTUAL - MANDAY_EST
+    Tự động cập nhật END ACTUAL của task cha dựa trên task con.
+    
+    Logic:
+    - END ACTUAL của cha = MAX(end_date_actual của các task con có status = "Done")
+    - Nếu không có task con nào Done → END ACTUAL của cha = None
+    - Đệ quy lên ông/bà (grandparent) để cập nhật toàn bộ chuỗi
+    
+    Gọi sau khi PATCH một task con (khi status thay đổi).
     """
-    if task.status and task.status.strip().lower() == "done":
-        # Nếu chưa có ngày kết thúc thực tế thì gán ngày hiện tại
-        if not task.end_date_actual:
-            task.end_date_actual = datetime.date.today()
-            
-        # MD_ACTUAL: Ngày kết thúc thực tế trừ ngày bắt đầu (+1 để tính trọn vẹn ngày)
-        if task.start_date and task.end_date_actual:
-            delta_days = (task.end_date_actual - task.start_date).days
-            task.manday_actual = Decimal(str(max(delta_days + 1, 1)))
-        
-        # DAYS_LATE = MD_ACTUAL - MANDAY_EST
-        if task.manday_actual is not None and task.manday_est is not None:
-            lateness = float(task.manday_actual) - float(task.manday_est)
-            task.days_late = int(lateness) if lateness > 0 else None
-        else:
-            task.days_late = None
-    else:
-        # Nếu chưa Done thì reset lại các giá trị thực tế
-        task.manday_actual = None
-        task.days_late = None
-
-
-def update_task_group_end_actual(task_group_id: int, db):
-    """
-    Khi tất cả task con chuyển trạng thái thành DONE:
-    - Đếm tổng số ngày (MD_ACTUAL) của các task con rồi hiển thị vào END_ACTUAL (manday_actual) của task lớn.
-    - Đồng thời chuyển trạng thái task lớn thành Done và kích hoạt KPI BASE / Recalculate nhảy số.
-    """
-    from ..models.project import TaskGroup, Task  # Import model tương ứng tại đây để tránh lỗi circular import
-
-    tg = db.query(TaskGroup).filter(TaskGroup.id == task_group_id).first()
-    if not tg:
+    from ..models.task import Task
+    
+    task_code = task.task_code
+    if not task_code or '.' not in task_code:
+        return  # Root task (e.g., "1") không có cha
+    
+    # Lấy mã cha: "1.1.1" → cha "1.1", "1.2" → cha "1"
+    parent_code = task_code.rsplit('.', 1)[0]
+    gid = task.task_group_id
+    
+    # Tìm task cha
+    parent_task = db.query(Task).filter(
+        Task.task_group_id == gid,
+        Task.task_code == parent_code
+    ).first()
+    
+    if not parent_task:
         return
-
-    tasks = db.query(Task).filter(Task.task_group_id == task_group_id).all()
-    if not tasks:
-        return
-
-    # Kiểm tra xem tất cả task con đã DONE hết chưa
-    all_done = all(t.status and t.status.strip().lower() == "done" for t in tasks)
-
-    if all_done:
-        # Tổng số ngày (MD_ACTUAL) của các task con
-        total_days = sum(float(t.manday_actual or t.manday_est or 0) for t in tasks)
-        
-        # Gán tổng số ngày vào END_ACTUAL (cột manday_actual của Task Group)
-        tg.manday_actual = Decimal(str(total_days))
-        
-        # Chuyển trạng thái task lớn thành Done
-        tg.status = "Done"
-
-        # KHI TASK LỚN DONE -> GỌI RECALCULATE ĐỂ KPI BASE NHẢY SỐ
-        for t in tasks:
-            recalculate_task(t, db)
+    
+    # Tìm tất cả task con TRỰC TIẾP (cùng group, code bắt đầu bằng prefix, không có dấu chấm thêm)
+    prefix = parent_code + "."
+    all_descendants = db.query(Task).filter(
+        Task.task_group_id == gid,
+        Task.task_code.like(f"{prefix}%")
+    ).all()
+    
+    # Lọc chỉ lấy task con trực tiếp (task_code = parent_code.X, không có dấu chấm thứ 2)
+    immediate_children = []
+    for child in all_descendants:
+        suffix = child.task_code[len(prefix):]
+        if '.' not in suffix:  # Chỉ con trực tiếp, không phải cháu/chắt
+            immediate_children.append(child)
+    
+    # Lấy tất cả end_date_actual của các task con có status = Done
+    done_dates = []
+    for child in immediate_children:
+        if child.status and child.status.strip().lower() == "done":
+            if child.end_date_actual:
+                done_dates.append(child.end_date_actual)
+    
+    # Cập nhật END ACTUAL của cha
+    if done_dates:
+        # Lấy ngày trễ nhất (MAX)
+        parent_task.end_date_actual = max(done_dates)
     else:
-        # Nếu chưa hoàn thành tất cả task con thì reset lại
-        tg.manday_actual = None
+        # Không có task con nào Done → xóa END ACTUAL
+        parent_task.end_date_actual = None
+    
+    db.flush()
+    
+    # Đệ quy lên task ông (grandparent) để cập nhật toàn bộ chuỗi
+    recalculate_parent_end_actual(parent_task, db)

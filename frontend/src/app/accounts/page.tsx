@@ -227,9 +227,9 @@ export default function AccountsPage() {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
+      <div className="flex-1 pl-[230px] flex flex-col min-h-screen pt-[112px]">
         {/* Header */}
-        <div className="h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-40 shadow-sm">
+        <div className="fixed left-[230px] right-0 top-0 z-40 h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm">
           <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Quản lý tài khoản</h2>
           {activeTab === 'accounts' && (
             <button
@@ -245,7 +245,7 @@ export default function AccountsPage() {
         </div>
 
         {/* Tabbar Navigation */}
-        <div className="bg-white border-b border-slate-200 px-8 flex gap-6 z-30">
+        <div className="fixed left-[230px] right-0 top-[56px] z-30 h-[56px] bg-white border-b border-slate-200 px-8 flex gap-6 shadow-sm">
           <button
             onClick={() => setActiveTab('accounts')}
             className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'accounts'
@@ -294,8 +294,7 @@ export default function AccountsPage() {
               <div className="text-2xl font-bold text-red-500 mt-1">{accounts.filter(a => !a.is_active).length}</div>
             </div>
           </div>
-
-
+              <div className="sticky top-[104px] z-20 bg-[#f8fafc]/95 backdrop-blur-sm">
               {/* Search & Filters */}
               <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
                 <div className="relative flex-1 min-w-[200px]">
@@ -344,24 +343,24 @@ export default function AccountsPage() {
 
                 <span className="ml-auto text-[11px] text-slate-400 font-medium">{filteredAccounts.length} tài khoản</span>
               </div>
+              </div>
 
               {/* Table */}
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
-                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
-                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
-                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
-                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Phạm vi dữ liệu</th>
-                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
-                    <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
-                    <th className="text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-auto" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+                <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200">
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Phạm vi dữ liệu</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
                   {loading ? (
                     <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
                   ) : filteredAccounts.length === 0 ? (
@@ -427,10 +426,9 @@ export default function AccountsPage() {
                       </tr>
                     ))
                   )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                    </tbody>
+                </table>
+              </div>
             </>
           )}
 

@@ -34,6 +34,7 @@ class TaskGroup(Base):
     end_date_est   = Column(Date, nullable=True)
     manday_actual  = Column(Numeric(5, 2), nullable=True)
     end_date_actual = Column(Date, nullable=True)
+    end_date_actual_override = Column(Date, nullable=True)
 
     sort_order    = Column(Integer, default=0)
     created_at    = Column(DateTime, server_default=func.now())

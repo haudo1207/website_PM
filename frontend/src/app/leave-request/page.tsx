@@ -21,6 +21,7 @@ interface TeamMember {
   telegram_username?: string;
   phone?: string;
   position?: string;
+  user_id?: number;         
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -36,6 +37,14 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
   const [monthlyMonth, setMonthlyMonth] = useState(new Date().getMonth() + 1);
   const [monthlyData, setMonthlyData] = useState<any>(null);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
+
+  const lunchMemberByUserId = useMemo(() => {
+    const map: Record<number, number> = {};
+    members.forEach((m) => {
+      if (m.user_id) map[m.user_id] = m.id;
+    });
+    return map;
+  }, [members]);
 
   useEffect(() => {
     const storedMemberId = localStorage.getItem('member_id');
@@ -87,7 +96,7 @@ function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { membe
     const e = new Date(req.end_date);
     if (s <= target && target <= e) {
       // Try member_id first, then user.member_id, then user_id (same as Calendar Team)
-      const mid = req.member_id || req.user?.member_id || req.user_id;
+      const mid = lunchMemberByUserId[req.user_id];
       if (mid) offMap[mid] = true;
     }
   });
@@ -487,6 +496,7 @@ export default function LeaveRequestPage() {
           telegram_username: m.telegram_username,
           phone: m.phone,
           position: m.position,
+          user_id: m.user_id,
         }));
         setTeamMembers(mapped);
 
@@ -566,23 +576,41 @@ export default function LeaveRequestPage() {
     };
   }, [requests]);
 
+  const memberByUserId = useMemo(() => {
+    const map: Record<number, number> = {};
+    teamMembers.forEach((m) => {
+      if (m.user_id) map[m.user_id] = m.id;
+    });
+    return map;
+  }, [teamMembers]);
+
   const calendarStatusByMember = useMemo(() => {
     const target = new Date(calendarDate);
     const map: Record<number, { off: boolean; leave?: any }> = {};
     teamMembers.forEach((m) => (map[m.id] = { off: false }));
 
     requests.forEach((req) => {
+      if (req.status !== "Approved") return;
+
       const s = new Date(req.start_date);
       const e = new Date(req.end_date);
+
       if (s <= target && target <= e) {
-        if (map[req.user_id]) {
-          map[req.user_id] = { off: true, leave: req };
+        const memberId =
+          req.member_id ??
+          memberByUserId[req.user_id];
+
+        if (memberId && map[memberId]) {
+          map[memberId] = {
+            off: true,
+            leave: req,
+          };
         }
       }
     });
 
     return map;
-  }, [calendarDate, requests, teamMembers]);
+  }, [calendarDate, requests, teamMembers, memberByUserId]);
 
   // Extract unique teams from DB for calendar filter
   const calendarTeams = useMemo(() => {
