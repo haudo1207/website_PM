@@ -1403,7 +1403,7 @@ function ProjectDetailContent() {
   };
 
   // --- Dynamic Stats calculation ---
-  const kpiTasks = getFilteredTasks();
+  const kpiTasks = activeMainTab === 'overview' ? items : getFilteredTasks();
   const kpiTotal = kpiTasks.length;
 
   // 1 & 2. Số task hoàn thành & % Tiến độ
