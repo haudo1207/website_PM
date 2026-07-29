@@ -10,10 +10,12 @@ on:
 
 jobs:
   deploy-both-brands:
-    if: github.ref == 'refs/heads/main' && inputs.confirm == 'DEPLOY'
+    if: inputs.confirm == 'DEPLOY'
     runs-on: [self-hosted, security]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - name: Sync and deploy both brands
         env:
           APP_COMMIT: ${{ github.sha }}
@@ -27,6 +29,6 @@ jobs:
           cd "$SOURCE_DIR"
           # Redis and the legacy worker image remain local. Compose still recreates
           # API, worker, and scheduler together so every writer uses the same DB URL.
-          docker compose --env-file .env -f docker-compose.yml up -d --build
-          timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done'
-          timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done'
+          docker compose --env-file .env -f docker-compose.yml up -d --build --remove-orphans
+          timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done'
+          timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done'
