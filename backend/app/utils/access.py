@@ -70,7 +70,12 @@ def can_access_project(db: Session, user, project: Project) -> bool:
         return True
 
     if role == ROLE_LEADER:
-        return (project.data_scope == scope) or (project.data_scope == ALL_SCOPE) or (project.business == "All")
+        return (
+            (project.data_scope == scope)
+            or (project.data_scope == ALL_SCOPE)
+            or (project.business == "All")
+            or _is_member_of_project(db, user, project.id)
+        )
 
     # member / viewer — must be an explicit project member.
     member_id = getattr(user, "member_id", None)
