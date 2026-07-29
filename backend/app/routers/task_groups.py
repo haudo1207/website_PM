@@ -399,20 +399,35 @@ def serialize_task(t, db):
     solution_name = None
     vendor_name = None
 
-    if t.assigned_id:
-        m = db.query(Member).filter(Member.id == t.assigned_id).first()
-        assigned_name = m.display_name if m else None
-    if t.support_id:
-        m = db.query(Member).filter(Member.id == t.support_id).first()
-        support_name = m.display_name if m else None
-    if t.skill_solution_id:
-        from ..models.skill_master import Group
-        g = db.query(Group).filter(Group.id == t.skill_solution_id).first()
-        solution_name = g.name if g else None
-    if t.skill_vendor_id:
-        from ..models.skill_master import Skill
-        s = db.query(Skill).filter(Skill.id == t.skill_vendor_id).first()
-        vendor_name = s.name if s else None
+    try:
+        if t.assigned_id:
+            m = db.query(Member).filter(Member.id == t.assigned_id).first()
+            assigned_name = m.display_name if m else None
+    except Exception:
+        pass
+
+    try:
+        if t.support_id:
+            m = db.query(Member).filter(Member.id == t.support_id).first()
+            support_name = m.display_name if m else None
+    except Exception:
+        pass
+
+    try:
+        if t.skill_solution_id:
+            from ..models.skill_master import Group
+            g = db.query(Group).filter(Group.id == t.skill_solution_id).first()
+            solution_name = g.name if g else None
+    except Exception:
+        pass
+
+    try:
+        if t.skill_vendor_id:
+            from ..models.skill_master import Skill
+            s = db.query(Skill).filter(Skill.id == t.skill_vendor_id).first()
+            vendor_name = s.name if s else None
+    except Exception:
+        pass
 
     return {
         "id": t.id,
@@ -420,7 +435,7 @@ def serialize_task(t, db):
         "task_code": t.task_code,
         "detail": t.detail,
         "priority": t.priority,
-        "manday_est": float(t.manday_est) if t.manday_est else None,
+        "manday_est": safe_float(t.manday_est),
         "status": t.status,
         "start_date": str(t.start_date) if t.start_date else None,
         "assigned_id": t.assigned_id,
@@ -439,15 +454,15 @@ def serialize_task(t, db):
         "sort_order": t.sort_order,
         # Computed
         "end_date_est": str(t.end_date_est) if t.end_date_est else None,
-        "manday_actual": float(t.manday_actual) if t.manday_actual else None,
+        "manday_actual": safe_float(t.manday_actual),
         "end_date_actual": str(t.end_date_actual) if t.end_date_actual else None,
         "days_late": t.days_late,
-        "kpi_base": float(t.kpi_base) if t.kpi_base is not None else None,
-        "kpi_perform": float(t.kpi_perform) if t.kpi_perform is not None else None,
-        "kpi_ot": float(t.kpi_ot) if t.kpi_ot is not None else None,
-        "kpi_final": float(t.kpi_final) if t.kpi_final is not None else None,
-        "kpi_assigned": float(t.kpi_assigned) if t.kpi_assigned is not None else None,
-        "kpi_support": float(t.kpi_support) if t.kpi_support is not None else None,
+        "kpi_base": safe_float(t.kpi_base),
+        "kpi_perform": safe_float(t.kpi_perform),
+        "kpi_ot": safe_float(t.kpi_ot),
+        "kpi_final": safe_float(t.kpi_final),
+        "kpi_assigned": safe_float(t.kpi_assigned),
+        "kpi_support": safe_float(t.kpi_support),
         "notes": t.notes,
         "solution": t.solution,
         "ai_status": t.ai_status,
@@ -481,12 +496,15 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
 
     output = []
     for task, tg, phase in results:
-        t_dict = serialize_task(task, db)
-        t_dict["task_group_name"] = tg.name
-        t_dict["task_group_status"] = tg.status
-        t_dict["phase_name"] = phase.name
-        t_dict["phase_id"] = phase.id
-        output.append(t_dict)
+        try:
+            t_dict = serialize_task(task, db)
+            t_dict["task_group_name"] = tg.name
+            t_dict["task_group_status"] = tg.status
+            t_dict["phase_name"] = phase.name
+            t_dict["phase_id"] = phase.id
+            output.append(t_dict)
+        except Exception as e:
+            print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
     return output
 
 
