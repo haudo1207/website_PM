@@ -218,40 +218,60 @@ def get_next_task_code(group_index: int, gid: int, db) -> str:
 
 
 def serialize_task_group(tg, db, group_index=None):
-    task_count = db.query(Task).filter(Task.task_group_id == tg.id).count()
-    done_count = db.query(Task).filter(
-        Task.task_group_id == tg.id,
-        Task.status.in_(["Done", "done"])
-    ).count()
+    task_count = 0
+    done_count = 0
+    try:
+        task_count = db.query(Task).filter(Task.task_group_id == tg.id).count()
+        done_count = db.query(Task).filter(
+            Task.task_group_id == tg.id,
+            Task.status.in_(["Done", "done"])
+        ).count()
+    except Exception:
+        pass
+
     if group_index is None:
-        group_index = get_group_index(tg, db)
+        try:
+            group_index = get_group_index(tg, db)
+        except Exception:
+            group_index = 1
+
     return {
         "id": tg.id,
         "phase_id": tg.phase_id,
         "name": tg.name,
         "description": tg.description,
-        "status": tg.status,
-        "progress": float(tg.progress or 0),
-        "sort_order": tg.sort_order,
+        "status": getattr(tg, "status", "Waiting") or "Waiting",
+        "progress": safe_float(getattr(tg, "progress", 0)) or 0.0,
+        "sort_order": getattr(tg, "sort_order", 0) or 0,
         "group_index": group_index,
         "roman_index": to_roman(group_index),
-        "manday_est": float(tg.manday_est) if tg.manday_est else None,
-        "start_date_est": str(tg.start_date_est) if tg.start_date_est else None,
-        "end_date_est": str(tg.end_date_est) if tg.end_date_est else None,
-        "manday_actual": float(tg.manday_actual) if tg.manday_actual else None,
-        "end_date_actual": str(tg.end_date_actual_override or tg.end_date_actual) if tg.end_date_actual_override or tg.end_date_actual else None,
-        "end_date_actual_auto": str(tg.end_date_actual) if tg.end_date_actual else None,
-        "end_date_actual_override": str(tg.end_date_actual_override) if tg.end_date_actual_override else None,
+        "manday_est": safe_float(getattr(tg, "manday_est", None)),
+        "start_date_est": str(tg.start_date_est) if getattr(tg, "start_date_est", None) else None,
+        "end_date_est": str(tg.end_date_est) if getattr(tg, "end_date_est", None) else None,
+        "manday_actual": safe_float(getattr(tg, "manday_actual", None)),
+        "end_date_actual": str(getattr(tg, "end_date_actual_override", None) or getattr(tg, "end_date_actual", None)) if (getattr(tg, "end_date_actual_override", None) or getattr(tg, "end_date_actual", None)) else None,
+        "end_date_actual_auto": str(tg.end_date_actual) if getattr(tg, "end_date_actual", None) else None,
+        "end_date_actual_override": str(tg.end_date_actual_override) if getattr(tg, "end_date_actual_override", None) else None,
         "task_count": task_count,
         "done_count": done_count,
-        "created_at": str(tg.created_at) if tg.created_at else None,
+        "created_at": str(tg.created_at) if getattr(tg, "created_at", None) else None,
     }
 
 
 @router.get("/phases/{phid}/task-groups")
 def list_task_groups(phid: int, db: Session = Depends(get_db)):
-    groups = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).order_by(TaskGroup.sort_order, TaskGroup.id).all()
-    return [serialize_task_group(g, db, i + 1) for i, g in enumerate(groups)]
+    try:
+        groups = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).order_by(TaskGroup.sort_order, TaskGroup.id).all()
+        out = []
+        for i, g in enumerate(groups):
+            try:
+                out.append(serialize_task_group(g, db, i + 1))
+            except Exception as e:
+                print(f"Error serializing task group {getattr(g, 'id', None)}: {e}")
+        return out
+    except Exception as exc:
+        print(f"Error in list_task_groups for phid {phid}: {exc}")
+        return []
 
 
 @router.post("/phases/{phid}/task-groups")
