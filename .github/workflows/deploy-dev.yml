@@ -30,4 +30,4 @@ jobs:
           set -euo pipefail
           docker compose --env-file .env -f compose.yml up -d --build --remove-orphans
           timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3100/api/health; do sleep 5; done'
-          docker image prune -f --filter 'until=168h'
+          docker system prune -af
