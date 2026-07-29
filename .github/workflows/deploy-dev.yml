@@ -14,6 +14,10 @@ jobs:
     runs-on: [self-hosted, kpi-dev]
     steps:
       - uses: actions/checkout@v4
+      - name: Prune old docker cache and system space
+        run: |
+          docker system prune -f || true
+          docker builder prune -f || true
       - name: Sync source and compose
         run: |
           set -euo pipefail
@@ -30,4 +34,6 @@ jobs:
           set -euo pipefail
           docker compose --env-file .env -f compose.yml up -d --build --remove-orphans
           timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3100/api/health; do sleep 5; done'
-          docker system prune -af
+          docker system prune -f || true
+          docker builder prune -f || true
+
