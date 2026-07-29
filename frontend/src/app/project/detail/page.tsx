@@ -515,8 +515,12 @@ function ProjectDetailContent() {
       const allGroups: any[] = [];
       if (phs && phs.length > 0) {
         for (const p of phs) {
-          const grps = await getTaskGroups(p.id);
-          allGroups.push(...grps);
+          try {
+            const grps = await getTaskGroups(p.id);
+            allGroups.push(...(grps || []));
+          } catch (e) {
+            console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
+          }
         }
       }
       setTaskGroups(allGroups);
@@ -524,9 +528,9 @@ function ProjectDetailContent() {
       const tsks = await getAllProjectTasks(Number(id));
       setItems(tsks || []);
       return { tasks: tsks || [], groups: allGroups };
-    } catch (err) {
+    } catch (err: any) {
       console.error('Lỗi khi tải dữ liệu dự án:', err);
-      flash('Không thể tải dữ liệu dự án', true);
+      flash('Không thể tải dữ liệu dự án: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
       return { tasks: [], groups: [] };
     } finally {
       if (!silent) {
