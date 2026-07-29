@@ -2975,15 +2975,17 @@ function ProjectDetailContent() {
       );
     }
 
-    const phasesToRender = activePhase === 'ALL'
-      ? phases.filter(p => p.name.trim().toLowerCase() !== 'master')
-      : phases.filter(p => p.name === activePhase);
+    const phasesToRender = (activePhase === 'ALL' || !phases || phases.length === 0)
+      ? phases
+      : phases.filter(p => p.name === activePhase || getRowPhase(p.name) === activePhase || p.name.trim().toLowerCase() === 'master');
 
-    if (phasesToRender.length === 0) {
+    const effectivePhases = phasesToRender.length > 0 ? phasesToRender : (phases.length > 0 ? phases : []);
+
+    if (effectivePhases.length === 0 && items.length === 0 && taskGroups.length === 0) {
       return (
         <tr>
           <td colSpan={getDynamicColumns().length + 1} className="text-center py-16 text-[#565e74] font-medium">
-            Chưa có Giai đoạn (Phase) nào. Hãy click "Thêm Phase" để bắt đầu.
+            Chưa có Giai đoạn (Phase) hoặc Nhiệm vụ nào. Hãy click "Thêm Phase" hoặc "Thêm Task" để bắt đầu.
           </td>
         </tr>
       );
@@ -3133,8 +3135,9 @@ function ProjectDetailContent() {
     };
 
     const result: React.ReactNode[] = [];
+    const renderedTaskIds = new Set<number>();
 
-    phasesToRender.forEach(phase => {
+    effectivePhases.forEach(phase => {
       const groupsInPhase = taskGroups.filter(g => g.phase_id === phase.id);
 
       // Phase header (Rendered only if the phase is not "Master")
@@ -3528,7 +3531,7 @@ function ProjectDetailContent() {
                     <input
                       type={colUpper.includes('MANDAY') ? 'number' : 'text'}
                       step={colUpper.includes('MANDAY') ? 'any' : undefined}
-                      value={editValue}
+value={editValue}
                       autoFocus
                       onChange={e => setEditValue(e.target.value)}
                       onBlur={() => handleGroupCellSave(group, col, editValue)}
@@ -3604,6 +3607,7 @@ function ProjectDetailContent() {
         const sortedTasks = buildTaskTree(filteredTasks);
 
         sortedTasks.forEach((task, tIdx) => {
+          renderedTaskIds.add(task.id);
           if (isAncestorCollapsed(task.task_code)) {
             return;
           }
@@ -3656,6 +3660,29 @@ function ProjectDetailContent() {
         }
       }
     });
+
+    // Catch-all: Ensure ANY task in items that was not rendered under a TaskGroup is still rendered!
+    const unrenderedTasks = items.filter(t => t && t.id && !renderedTaskIds.has(t.id));
+    if (unrenderedTasks.length > 0) {
+      const sortedUnrendered = buildTaskTree(unrenderedTasks);
+      result.push(
+        <tr key="unassigned-tasks-hdr" className="bg-indigo-950 text-white border-b-2 border-indigo-700">
+          <td className="px-2 py-2 text-center font-bold text-amber-400 text-xs">★</td>
+          <td colSpan={getDynamicColumns().length} className="px-4 py-2">
+            <span className="text-[12px] font-black text-amber-300 uppercase tracking-wider">
+              NHIỆM VỤ TỰ DO / CHƯA PHÂN NHÓM ({unrenderedTasks.length} tasks)
+            </span>
+          </td>
+        </tr>
+      );
+      sortedUnrendered.forEach((task, tIdx) => {
+        const hasChildren = sortedUnrendered.some(t => getParentCode(t.task_code) === task.task_code);
+        const isCollapsedParent = collapsedParents.has(task.task_code);
+        const dotCount = (task.task_code || '').split('.').length - 1;
+        const level = Math.max(0, dotCount);
+        result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent, tIdx, sortedUnrendered));
+      });
+    }
 
     return result;
   };
