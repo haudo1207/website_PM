@@ -659,9 +659,27 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
         status=body.get("status", "Waiting"),
     )
     db.add(ph)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, f"Phase with name '{name}' already exists in this project, or another integrity constraint was violated.") from exc
     db.refresh(ph)
-    return serialize_phase(ph, db)
+    return {
+        "id": ph.id,
+        "project_id": ph.project_id,
+        "name": ph.name,
+        "description": ph.description,
+        "sort_order": ph.sort_order,
+        "status": ph.status,
+        "task_group_count": 0,
+        "task_count": 0,
+        "ai_status": ph.ai_status,
+        "last_ai_check_at": str(ph.last_ai_check_at) if ph.last_ai_check_at else None,
+        "last_ai_score": ph.last_ai_score,
+        "last_review_id": ph.last_review_id,
+        "created_at": str(ph.created_at) if ph.created_at else None,
+    }
 
 
 @router.patch("/projects/{pid}/phases/{phid}")

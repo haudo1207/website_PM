@@ -53,7 +53,7 @@ class Task(Base):
     skill_vendor_id   = Column(Integer, ForeignKey("skills.id", ondelete="SET NULL"), nullable=True)
 
     # Ticket ID
-    ticket_id       = Column(String(500), nullable=True)
+    ticket_id       = Column(Text, nullable=True)
 
     # Remark
     remark          = Column(String(500), nullable=True)
