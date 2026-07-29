@@ -482,53 +482,59 @@ def list_tasks(gid: int, db: Session = Depends(get_db)):
 @router.get("/projects/{pid}/all-tasks")
 def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends(get_db)):
     """Get all tasks for a project, optionally filtered by phase. Used by Master view."""
-    query = (
-        db.query(Task, TaskGroup, Phase)
-        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
-        .join(Phase, TaskGroup.phase_id == Phase.id)
-        .filter(Phase.project_id == pid)
-    )
-    if phase_id:
-        query = query.filter(Phase.id == phase_id)
-
-    results = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id).all()
-
     output = []
     found_task_ids = set()
-    for task, tg, phase in results:
-        try:
-            t_dict = serialize_task(task, db)
-            t_dict["task_group_name"] = tg.name
-            t_dict["task_group_status"] = tg.status
-            t_dict["phase_name"] = phase.name
-            t_dict["phase_id"] = phase.id
-            output.append(t_dict)
-            found_task_ids.add(task.id)
-        except Exception as e:
-            print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
+
+    try:
+        query = (
+            db.query(Task, TaskGroup, Phase)
+            .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+            .join(Phase, TaskGroup.phase_id == Phase.id)
+            .filter(Phase.project_id == pid)
+        )
+        if phase_id:
+            query = query.filter(Phase.id == phase_id)
+
+        results = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id).all()
+        for task, tg, phase in results:
+            try:
+                t_dict = serialize_task(task, db)
+                t_dict["task_group_name"] = tg.name
+                t_dict["task_group_status"] = tg.status
+                t_dict["phase_name"] = phase.name
+                t_dict["phase_id"] = phase.id
+                output.append(t_dict)
+                found_task_ids.add(task.id)
+            except Exception as e:
+                print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
+    except Exception as exc:
+        print(f"Error in primary list_all_project_tasks query for pid {pid}: {exc}")
 
     # Fallback: catch any tasks belonging to task groups in project's phases that weren't captured by join
-    if not phase_id:
-        phases = db.query(Phase).filter(Phase.project_id == pid).all()
-        phase_map = {ph.id: ph for ph in phases}
-        if phases:
-            tgs = db.query(TaskGroup).filter(TaskGroup.phase_id.in_([ph.id for ph in phases])).all()
-            tg_map = {g.id: g for g in tgs}
-            if tgs:
-                all_tasks = db.query(Task).filter(Task.task_group_id.in_([g.id for g in tgs])).all()
-                for t in all_tasks:
-                    if t.id not in found_task_ids:
-                        try:
-                            tg = tg_map.get(t.task_group_id)
-                            ph = phase_map.get(tg.phase_id) if tg else None
-                            t_dict = serialize_task(t, db)
-                            t_dict["task_group_name"] = tg.name if tg else ""
-                            t_dict["task_group_status"] = tg.status if tg else "Waiting"
-                            t_dict["phase_name"] = ph.name if ph else ""
-                            t_dict["phase_id"] = ph.id if ph else None
-                            output.append(t_dict)
-                        except Exception as e:
-                            print(f"Error serializing fallback task {t.id}: {e}")
+    try:
+        if not phase_id:
+            phases = db.query(Phase).filter(Phase.project_id == pid).all()
+            phase_map = {ph.id: ph for ph in phases}
+            if phases:
+                tgs = db.query(TaskGroup).filter(TaskGroup.phase_id.in_([ph.id for ph in phases])).all()
+                tg_map = {g.id: g for g in tgs}
+                if tgs:
+                    all_tasks = db.query(Task).filter(Task.task_group_id.in_([g.id for g in tgs])).all()
+                    for t in all_tasks:
+                        if t.id not in found_task_ids:
+                            try:
+                                tg = tg_map.get(t.task_group_id)
+                                ph = phase_map.get(tg.phase_id) if tg else None
+                                t_dict = serialize_task(t, db)
+                                t_dict["task_group_name"] = tg.name if tg else ""
+                                t_dict["task_group_status"] = tg.status if tg else "Waiting"
+                                t_dict["phase_name"] = ph.name if ph else ""
+                                t_dict["phase_id"] = ph.id if ph else None
+                                output.append(t_dict)
+                            except Exception as e:
+                                print(f"Error serializing fallback task {t.id}: {e}")
+    except Exception as exc:
+        print(f"Error in fallback list_all_project_tasks query for pid {pid}: {exc}")
 
     return output
 
