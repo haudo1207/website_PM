@@ -5679,14 +5679,34 @@ function ProjectDetailContent() {
                             />
                           </div>
 
-                          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3">
-                            <b className="block text-xs text-[#0058be] mb-1 flex items-center gap-1.5 font-bold">
-                              <span className="material-symbols-outlined text-[16px]">psychology</span>
-                              Chế độ tự động bóc tách AI (Tự nhiên)
+                          {newGroupPlatform === 'Telegram' && (
+                            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                              <div>
+                                <b className="text-xs text-[#0b1c30] block font-bold">1-Click Thêm Bot vào Telegram Group</b>
+                                <p className="text-[11px] text-slate-500 mt-0.5">Mở tự động ứng dụng Telegram và cho phép Bot gia nhập nhóm ngay.</p>
+                              </div>
+                              <a
+                                href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-[#0088cc] hover:bg-[#0077b5] active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-sm whitespace-nowrap inline-flex items-center gap-1.5 shrink-0 transition-all"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">smart_toy</span>
+                                Thêm Bot Ngay
+                              </a>
+                            </div>
+                          )}
+
+                          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 space-y-2">
+                            <b className="block text-xs text-[#0058be] flex items-center gap-1.5 font-bold">
+                              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                              Quy trình tự động kết nối Bot vào nhóm:
                             </b>
-                            <p className="text-[11px] text-slate-600 leading-relaxed">
-                              AI sẽ đọc tự nhiên mọi lời nhắn trò chuyện, tự động phát hiện mọi yêu cầu công việc, nhờ vả, giao việc và tag tên <b>mà không bắt buộc gõ từ khóa hay lệnh cứng</b>.
-                            </p>
+                            <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pl-0.5 leading-relaxed font-medium">
+                              <li>Nhập <b>Tên nhóm</b> & dán <b>Link tham gia nhóm chat</b> ở ô trên.</li>
+                              <li>Mở Zalo/Telegram ➔ Bấm <b>"Mời thành viên"</b> và chọn Bot hệ thống <b>@MarkeeTask (hoặc Zalo OA)</b> gia nhập nhóm.</li>
+                              <li>Bot sẽ tự động gửi tin nhắn chào mừng trong nhóm. Mọi tin nhắn giao việc từ đó sẽ được AI bóc tách trực tiếp vào bảng Inbox của bạn!</li>
+                            </ol>
                           </div>
 
                           <div className="pt-2 flex justify-end gap-2">

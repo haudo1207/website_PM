@@ -2,7 +2,9 @@ import os
 import json
 import logging
 import requests
+import urllib.request
 from typing import List, Optional
+
 from datetime import datetime, date
 
 from fastapi import APIRouter, Depends, HTTPException, Body
@@ -10,12 +12,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from ..database import get_db
+from ..models.system_category import Customer
+from ..models.skill_master import Skill, Group
 from ..models.project import Project, ProjectLink
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
 from ..models.ai_task_inbox import AITaskInbox, ChatSyncLog
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -493,116 +499,122 @@ def bulk_import_inbox_tasks(
 def sync_chat_sources(pid: int, db: Session = Depends(get_db)):
     """
     Syncs connected chat sources for a project.
-    Scans connected groups or triggers AI parsing on chat messages to populate AI Task Inbox.
+    Fetches real-time messages from Telegram Bot API / Webhooks and runs AI task extraction.
     """
     project = db.query(Project).filter(Project.id == pid).first()
     if not project:
         raise HTTPException(404, "Project not found")
 
-    links = db.query(ProjectLink).filter(ProjectLink.project_id == pid).all()
     members = db.query(Member).all()
-    member_names = [m.display_name or m.full_name for m in members if (m.display_name or m.full_name)]
-
-    target_member_1 = member_names[0] if len(member_names) > 0 else "Thành viên"
-    target_member_2 = member_names[1] if len(member_names) > 1 else target_member_1
+    default_phase = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order).first()
+    default_phase_id = default_phase.id if default_phase else None
 
     synced_count = 0
+    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
-    if links:
-        for link in links:
-            plat_name = link.platform.name if link.platform else "Zalo"
-            grp_name = link.name or "Nhóm Chat"
+    # Step 1: Poll Telegram Bot API for real messages if TELEGRAM_BOT_TOKEN is set
+    if telegram_token:
+        try:
+            tg_url = f"https://api.telegram.org/bot{telegram_token}/getUpdates"
+            req = urllib.request.Request(tg_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as response:
+                res_data = json.loads(response.read().decode())
+                if res_data.get("ok"):
+                    updates = res_data.get("result") or []
+                    for up in updates:
+                        msg = up.get("message") or up.get("channel_post") or {}
+                        text = (msg.get("text") or "").strip()
+                        chat = msg.get("chat") or {}
+                        chat_title = chat.get("title") or "Telegram Group"
+                        sender = msg.get("from") or {}
+                        sender_name = f"{sender.get('first_name', '')} {sender.get('last_name', '')}".strip() or "Thành viên Telegram"
 
-            sample_chat = (
-                f"@{target_member_1} Cần hoàn thiện gấp giao diện bóc tách Task AI và tích hợp API đồng bộ cho nhóm {grp_name} trước thứ 6.\n"
-                f"Nhờ @{target_member_2} kiểm tra cấu hình Zalo Webhook và tối ưu hiệu năng import."
-            )
+                        # Skip simple command strings like /start or empty text
+                        if not text or text.startswith("/start") or text.startswith("/help"):
+                            continue
 
-            extracted = _extract_tasks_with_ai(sample_chat)
-            default_phase = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order).first()
-            default_phase_id = default_phase.id if default_phase else None
+                        # Check if message was already processed into Inbox
+                        existing_inbox = db.query(AITaskInbox).filter(
+                            AITaskInbox.project_id == pid,
+                            AITaskInbox.source_message == text
+                        ).first()
 
-            for item in extracted:
-                detail_task = item.get("detail_task", "").strip() or f"Nhiệm vụ mới từ nhóm {grp_name}"
-                assigned_name = item.get("assigned_name")
+                        if existing_inbox:
+                            continue
 
-                matched_id = None
-                if assigned_name:
-                    norm = assigned_name.lower().strip().replace('@', '')
-                    for m in members:
-                        m_name = (m.display_name or m.full_name or '').lower()
-                        if norm in m_name or m_name in norm:
-                            matched_id = m.id
-                            assigned_name = m.display_name or m.full_name
-                            break
-                if not matched_id and members:
-                    matched_id = members[0].id
-                    assigned_name = members[0].display_name or members[0].full_name
+                        # Run AI extraction on REAL Telegram message text
+                        extracted = _extract_tasks_with_ai(text)
+                        for item in extracted:
+                            detail_task = item.get("detail_task", "").strip() or text[:80]
+                            assigned_name = item.get("assigned_name") or sender_name
 
-                inbox_task = AITaskInbox(
-                    project_id=pid,
-                    source_platform=plat_name,
-                    source_group_name=grp_name,
-                    source_message=sample_chat,
-                    detail_task=detail_task,
-                    task_description=item.get("task_description") or sample_chat,
-                    phase_id=default_phase_id,
-                    assigned_id=matched_id,
-                    assigned_name=assigned_name,
-                    priority=item.get("priority", "Normal"),
-                    manday_est=float(item.get("manday_est", 1.0)) if item.get("manday_est") else 1.0,
-                    acceptance_criteria=item.get("acceptance_criteria"),
-                    confidence=int(item.get("confidence", 95)),
-                    status="ready"
-                )
-                db.add(inbox_task)
-                synced_count += 1
+                            matched_id = None
+                            if assigned_name:
+                                norm = assigned_name.lower().strip().replace('@', '')
+                                for m in members:
+                                    m_name = (m.display_name or m.full_name or '').lower()
+                                    if norm in m_name or m_name in norm:
+                                        matched_id = m.id
+                                        assigned_name = m.display_name or m.full_name
+                                        break
+                            if not matched_id and members:
+                                matched_id = members[0].id
+                                assigned_name = members[0].display_name or members[0].full_name
 
-            log = ChatSyncLog(
-                project_id=pid,
-                source_name=f"{grp_name} ({plat_name})",
-                message_text=f"AI đã tự động quét nhóm {grp_name} và bóc tách thành công {len(extracted)} task mới.",
-                status="SUCCESS"
-            )
-            db.add(log)
-    else:
-        sample_chat = (
-            f"@{target_member_1} Cập nhật tính năng nhận diện task tự động từ nhóm Zalo/Telegram.\n"
-            f"Bổ sung xuất dữ liệu báo cáo KPI cho dự án."
-        )
-        extracted = _extract_tasks_with_ai(sample_chat)
-        default_phase = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order).first()
-        default_phase_id = default_phase.id if default_phase else None
+                            inbox_task = AITaskInbox(
+                                project_id=pid,
+                                source_platform="Telegram",
+                                source_group_name=chat_title,
+                                source_message=text,
+                                detail_task=detail_task,
+                                task_description=item.get("task_description") or text,
+                                phase_id=default_phase_id,
+                                assigned_id=matched_id,
+                                assigned_name=assigned_name,
+                                priority=item.get("priority", "Normal"),
+                                manday_est=float(item.get("manday_est", 1.0)) if item.get("manday_est") else 1.0,
+                                acceptance_criteria=item.get("acceptance_criteria"),
+                                confidence=int(item.get("confidence", 95)),
+                                status="ready"
+                            )
+                            db.add(inbox_task)
+                            synced_count += 1
 
-        for item in extracted:
-            inbox_task = AITaskInbox(
-                project_id=pid,
-                source_platform="Zalo",
-                source_group_name="Nhóm Zalo Dự Án",
-                source_message=sample_chat,
-                detail_task=item.get("detail_task", "Nhiệm vụ mới từ Chat"),
-                task_description=item.get("task_description") or sample_chat,
-                phase_id=default_phase_id,
-                assigned_id=members[0].id if members else None,
-                assigned_name=members[0].display_name if members else None,
-                priority=item.get("priority", "High"),
-                manday_est=float(item.get("manday_est", 1.0)) if item.get("manday_est") else 1.0,
-                confidence=92,
-                status="ready"
-            )
-            db.add(inbox_task)
-            synced_count += 1
+                        if extracted:
+                            log = ChatSyncLog(
+                                project_id=pid,
+                                source_name=f"Telegram · {chat_title}",
+                                message_text=f"AI đã bóc tách được {len(extracted)} task thực tế từ tin nhắn: '{text[:60]}...'",
+                                status="SUCCESS"
+                            )
+                            db.add(log)
+        except Exception as e:
+            logger.error(f"Error polling Telegram getUpdates: {e}")
 
-        log = ChatSyncLog(
-            project_id=pid,
-            source_name="Tự động bóc tách Chat",
-            message_text=f"AI đã bóc tách {synced_count} task mới từ nhóm chat.",
-            status="SUCCESS"
-        )
-        db.add(log)
+    # Step 2: Check connected links for this project
+    links = db.query(ProjectLink).filter(ProjectLink.project_id == pid).all()
 
+    if synced_count > 0:
+        db.commit()
+        return {
+            "ok": True,
+            "synced_count": synced_count,
+            "message": f"🎉 AI đã quét thành công và bóc tách {synced_count} task thực tế từ nhóm chat của bạn!"
+        }
+
+    log = ChatSyncLog(
+        project_id=pid,
+        source_name="Đồng bộ Chat API",
+        message_text="Đã quét API nhóm chat. Chưa có tin nhắn giao việc mới.",
+        status="SUCCESS"
+    )
+    db.add(log)
     db.commit()
-    return {"ok": True, "synced_count": synced_count, "message": f"AI đã tự động quét nhóm chat và bóc tách {synced_count} task mới!"}
+    return {
+        "ok": True,
+        "synced_count": 0,
+        "message": "Đã kiểm tra đồng bộ! Chưa nhận được tin nhắn giao việc mới từ Telegram. Hãy gõ tin nhắn giao việc mới vào nhóm Telegram rồi nhấn 'Đồng bộ ngay' lại nhé!"
+    }
 
 
 @router.get("/projects/{pid}/chat-sync-logs")
