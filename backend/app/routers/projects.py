@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case
+from sqlalchemy import case, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
@@ -177,7 +177,14 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
         b_val = "Markee" if target_b == "markee" else "Infrastructure"
-        q = q.filter(Project.business.in_([b_val, "All"]))
+        q = q.filter(
+            or_(
+                Project.business == b_val,
+                Project.business == "All",
+                and_(Project.business.is_(None), Project.data_scope == target_b),
+                and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
+            )
+        )
     projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
