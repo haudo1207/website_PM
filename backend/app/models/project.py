@@ -5,6 +5,8 @@ Implements the new 4-level hierarchy: Project → Phase → TaskGroup → Task
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, func
 from sqlalchemy.orm import relationship
 from ..database import Base
+from .system_category import Customer
+
 
 
 # Junction table: which members belong to which project (with role)

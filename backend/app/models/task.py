@@ -10,6 +10,9 @@ Changes from v4:
 from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text, ForeignKey, func
 from sqlalchemy.orm import relationship
 from ..database import Base
+from .skill_master import Group, Skill
+
+
 
 
 class Task(Base):
