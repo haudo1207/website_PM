@@ -33,50 +33,54 @@ def _extract_tasks_with_ai(chat_text: str) -> List[dict]:
     Uses Gemini REST API or OpenAI-compatible API to parse raw chat messages into structured task objects.
     Parses natural, informal conversations from Zalo, Telegram, Slack, Teams, etc. without needing rigid commands.
     """
-    prompt = f"""Bạn là chuyên gia AI Quản Lý Dự Án (PM Assistant Pro).
-Nhiệm vụ của bạn là đọc toàn bộ đoạn hội thoại chat thực tế (Zalo, Telegram, Slack, Teams, Skype, v.v.) dưới đây và TỰ ĐỘNG BÓC TÁCH TẤT CẢ CÁC YÊU CẦU CÔNG VIỆC / NHIỆM VỤ ĐƯỢC GIAO.
+    if not chat_text or not chat_text.strip():
+        return []
 
-LƯU Ý QUAN TRỌNG:
-1. Tin nhắn trong nhóm chat thường tự nhiên, ngắn gọn, có thể dùng câu nói thông thường, tag tên (@Tên) hoặc nhờ vả (ví dụ: "@An làm giúp anh cái trang login trước thứ 6 nha", "cần fix gấp lỗi 500 khi import", "nhờ Kiều Anh check lại hợp đồng", "bổ sung thêm cột remark nhé").
-2. Hãy linh hoạt bóc tách MỌI ý định giao việc, sửa lỗi, nâng cấp, kiểm tra hoặc chuẩn bị tài liệu. Đừng bắt buộc phải có câu lệnh hay từ khóa cứng.
-3. Nếu tin nhắn có nhiều việc, hãy TÁCH THÀNH CÁC TASK RIÊNG BIỆT.
-4. Đoán độ ưu tiên (priority):
+    # Fast python filter for small-talk / simple acknowledgements
+    clean_lower = chat_text.strip().lower()
+    ack_words = ["oki a", "oki", "ok a", "ok anh", "ok em", "dạ vâng", "dạ anh", "đã nhận", "thanks", "cảm ơn", "dạ em nghe", "được rồi", "haha", "kkk"]
+    if clean_lower in ack_words or (len(clean_lower) <= 6 and clean_lower.startswith("ok")):
+        return []
+
+    prompt = f"""Bạn là chuyên gia AI Quản Lý Dự Án (PM Assistant Pro).
+Nhiệm vụ của bạn là đọc toàn bộ đoạn hội thoại chat thực tế (Zalo, Telegram, Slack, Teams, Skype, v.v.) dưới đây và TỰ ĐỘNG SÀNG LỌC BÓC TÁCH CÁC NHIỆM VỤ / YÊU CẦU CÔNG VIỆC ĐƯỢC GIAO.
+
+Quy tắc sàng lọc & chuẩn hóa cực kỳ quan trọng:
+1. CHỈ BÓC TÁCH CÔNG VIỆC THẬT:
+   - CHỈ trích xuất những câu có NỘI DUNG GIAO VIỆC HOẶC YÊU CẦU CÔNG VIỆC RÕ RÀNG.
+   - TUYỆT ĐỐI KHÔNG trích xuất các câu nhắn đáp lời, xác nhận, tán thưởng hoặc trò chuyện xã giao (ví dụ: "oki a", "ok anh", "dạ vâng", "đã nhận", "dạ em làm liền", "được rồi", "cảm ơn anh"). Với các câu này, TRẢ VỀ MẢNG RỖNG `[]`.
+
+2. CHUẨN HÓA TÊN TASK AI ĐỀ XUẤT (detail_task):
+   - ĐỪNG copy nguyên xi cả đoạn chat thô (ví dụ: "Bèng em làm cho xong cái giao diện báo giá để anh gửi cho bên đối tác xem nha, c").
+   - Hãy LOẠI BỎ các từ hô hào/xã giao ("bèng em làm cho xong", "nhờ em", "giúp anh nhé", "nha", "oki", tag @name).
+   - ĐÃU TÓM TẮT & TRAU CHUỐT THÀNH 1 TÊN TASK CHUYÊN NGHIỆP, RÕ RÀNG (ví dụ: "Hoàn thiện giao diện báo giá gửi đối tác", "Hoàn thiện giao diện báo cáo KPI và kiểm tra API Telegram").
+
+3. NHẬN DIỆN NGƯỜI ĐƯỢC GIAO (assigned_name):
+   - Tên người được tag (@Trang, @Bèng, An, Dũng...) phải tách riêng ra trường "assigned_name". TUYỆT ĐỐI KHÔNG để tên người được giao dính trong tên task `detail_task`.
+
+4. ĐOÁN ĐỘ ƯU TIÊN (priority):
    - "Interrupt": Cần làm gấp ngay lập tức, dừng việc khác lại, xử lý sự cố nóng
    - "Critical": Việc quan trọng, cực kỳ gấp, ảnh hưởng lớn
    - "High": Việc gấp, có deadline gần
    - "Normal": Việc thông thường (mặc định)
-5. Đoán công nhật (manday_est): từ 0.25 đến 3.0 manday tùy độ phức tạp của công việc.
 
-Nội dung đoạn hội thoại:
+Nội dung đoạn hội thoại chat:
 \"\"\"
 {chat_text}
 \"\"\"
 
 Yêu cầu đầu ra bắt buộc là một JSON Array hợp lệ (Không bao gồm markdown, không giải thích thêm), mỗi phần tử chứa các trường:
-- "detail_task": (string) Tên nhiệm vụ ngắn gọn, rõ ràng
+- "detail_task": (string) Tên nhiệm vụ đã được trau chuốt ngắn gọn, chuyên nghiệp (ví dụ: "Hoàn thiện giao diện báo giá gửi đối tác")
 - "task_description": (string) Mô tả chi tiết yêu cầu công việc
 - "priority": (string) "Interrupt", "Critical", "High", hoặc "Normal" (mặc định "Normal")
 - "manday_est": (float) Ước tính công nhật Manday (ví dụ: 0.5, 1.0, 1.5, 2.0).
-- "assigned_name": (string hoặc null) Tên người được giao công việc nếu có tag @ hoặc nhắc đến
+- "assigned_name": (string hoặc null) Tên người được giao công việc nếu có tag @ hoặc nhắc đến (ví dụ: "Trang", "Bèng", "Kiều Anh")
 - "acceptance_criteria": (string hoặc null) Tiêu chí hoàn thành / ghi chú nghiệm thu / remark nếu có
 - "ticket_id": (string hoặc null) Mã ticket nếu có nhắc đến (#INC123, #TK-88, v.v.)
 - "start_date": (string hoặc null) Ngày bắt đầu hoặc hạn chót nếu có nhắc đến trong chat (YYYY-MM-DD)
 - "confidence": (integer) Độ tin cậy của AI từ 75 đến 98 (%)
 
-Trả về DUY NHẤT một chuỗi JSON Array. Cấu trúc ví dụ:
-[
-  {{
-    "detail_task": "Bổ sung lý do khi ứng viên nghỉ hoặc từ chối",
-    "task_description": "Khi leader chuyển trạng thái Đã nghỉ hoặc Từ chối, hệ thống bắt buộc hiển thị ô nhập lý do.",
-    "priority": "High",
-    "manday_est": 1.0,
-    "assigned_name": "Tăng Nguyễn Kiều Anh",
-    "acceptance_criteria": "Không cho phép lưu nếu chưa nhập lý do.",
-    "ticket_id": "#INC-123",
-    "start_date": "2023-12-31",
-    "confidence": 96
-  }}
-]
+Nếu đoạn chat không chứa bất kỳ yêu cầu công việc nào (chỉ có câu đáp lời xã giao như "oki a"), hãy trả về `[]`.
 """
 
     gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -90,7 +94,7 @@ Trả về DUY NHẤT một chuỗi JSON Array. Cấu trúc ví dụ:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_api_key}"
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048}
+                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048}
             }
             res = requests.post(url, json=payload, timeout=30)
             if res.status_code == 200:
@@ -110,7 +114,7 @@ Trả về DUY NHẤT một chuỗi JSON Array. Cấu trúc ví dụ:
             payload = {
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2
+                "temperature": 0.1
             }
             res = requests.post(url, headers=headers, json=payload, timeout=30)
             if res.status_code == 200:
@@ -121,36 +125,58 @@ Trả về DUY NHẤT một chuỗi JSON Array. Cấu trúc ví dụ:
         except Exception as e:
             logger.warning(f"OpenAI-compatible API call failed for chat parser: {e}")
 
-    if not response_text:
-        # Fallback keyword parser if LLM API keys are not available
-        lines = [line.strip() for line in chat_text.split("\n") if line.strip()]
-        tasks = []
-        for line in lines:
-            if len(line) > 5 and any(kw in line.lower() for kw in ["cần", "giao", "làm", "fix", "sửa", "kiểm tra", "bổ sung", "tạo", "update", "hợp đồng"]):
-                assigned = None
-                if "@" in line:
-                    parts = line.split("@")
-                    if len(parts) > 1:
-                        assigned = parts[1].split()[0]
-                tasks.append({
-                    "detail_task": line[:80],
-                    "task_description": line,
-                    "priority": "High" if any(k in line.lower() for k in ["gấp", "ngay", "khẩn"]) else "Normal",
-                    "manday_est": 1.0,
-                    "assigned_name": assigned,
-                    "acceptance_criteria": None,
-                    "confidence": 85
-                })
-        if not tasks and lines:
+    # Fallback intelligent parser when LLM quota is reached
+    lines = [line.strip() for line in chat_text.split("\n") if line.strip()]
+    tasks = []
+    for line in lines:
+        clean_line = line.strip()
+        clean_lower = clean_line.lower()
+
+        # 1. Skip acknowledgements, confirmations & small talk
+        if clean_lower in ack_words or (len(clean_lower) <= 8 and ("ok" in clean_lower or "dạ" in clean_lower or "cảm ơn" in clean_lower)):
+            continue
+
+        # 2. Check for task request keywords
+        if len(clean_line) > 6 and any(kw in clean_lower for kw in ["cần", "giao", "làm", "fix", "sửa", "kiểm tra", "bổ sung", "tạo", "update", "hợp đồng", "hoàn thiện"]):
+            assigned = None
+            words = clean_line.split()
+
+            # Extract assigned name from @mention or "Bèng em", "An ơi"
+            for w in words:
+                if w.startswith("@") and len(w) > 1:
+                    assigned = w.replace("@", "").strip(" :,.-")
+                    break
+
+            if not assigned and len(words) >= 2 and words[1].lower() in ["em", "anh", "bạn", "ơi"]:
+                assigned = words[0].strip(" :,.-")
+
+            # Polish task title
+            polished = clean_line
+            if assigned:
+                polished = polished.replace("@" + assigned, "").replace(assigned, "")
+
+            fillers = [
+                "em làm cho xong cái", "em làm cho xong", "nhờ em", "giúp anh nhé", "giúp anh nha",
+                "giúp anh", "trước thứ 6 nhé", "trước thứ 6 nha", "trước thứ 6", "nha, c", "nha", "nhé",
+                "oki", "ơi", "để anh gửi cho bên đối tác xem"
+            ]
+            for f in fillers:
+                polished = polished.replace(f, "")
+
+            polished = polished.strip(" :,.-")
+            if polished:
+                polished = polished[0].upper() + polished[1:]
+
             tasks.append({
-                "detail_task": lines[0][:80],
-                "task_description": chat_text[:300],
-                "priority": "Normal",
+                "detail_task": polished[:200] if polished else clean_line[:100],
+                "task_description": clean_line,
+                "priority": "High" if any(k in clean_lower for k in ["gấp", "khẩn", "gấp ngay"]) else "Normal",
                 "manday_est": 1.0,
-                "assigned_name": None,
-                "confidence": 80
+                "assigned_name": assigned,
+                "confidence": 90
             })
-        return tasks
+
+    return tasks
 
     try:
         clean_json = response_text.strip()
@@ -546,20 +572,29 @@ def sync_chat_sources(pid: int, db: Session = Depends(get_db)):
                         extracted = _extract_tasks_with_ai(text)
                         for item in extracted:
                             detail_task = item.get("detail_task", "").strip() or text[:80]
-                            assigned_name = item.get("assigned_name") or sender_name
+                            raw_assigned = item.get("assigned_name")
 
                             matched_id = None
-                            if assigned_name:
-                                norm = assigned_name.lower().strip().replace('@', '')
+                            assigned_display_name = None
+
+                            if raw_assigned:
+                                norm = raw_assigned.lower().strip().replace('@', '')
                                 for m in members:
                                     m_name = (m.display_name or m.full_name or '').lower()
                                     if norm in m_name or m_name in norm:
                                         matched_id = m.id
-                                        assigned_name = m.display_name or m.full_name
+                                        assigned_display_name = m.display_name or m.full_name
                                         break
-                            if not matched_id and members:
-                                matched_id = members[0].id
-                                assigned_name = members[0].display_name or members[0].full_name
+                                if not matched_id:
+                                    assigned_display_name = raw_assigned.strip()
+                            elif sender_name:
+                                norm_sender = sender_name.lower().strip().replace('@', '')
+                                for m in members:
+                                    m_name = (m.display_name or m.full_name or '').lower()
+                                    if norm_sender in m_name or m_name in norm_sender:
+                                        matched_id = m.id
+                                        assigned_display_name = m.display_name or m.full_name
+                                        break
 
                             inbox_task = AITaskInbox(
                                 project_id=pid,
@@ -570,7 +605,7 @@ def sync_chat_sources(pid: int, db: Session = Depends(get_db)):
                                 task_description=item.get("task_description") or text,
                                 phase_id=default_phase_id,
                                 assigned_id=matched_id,
-                                assigned_name=assigned_name,
+                                assigned_name=assigned_display_name,
                                 priority=item.get("priority", "Normal"),
                                 manday_est=float(item.get("manday_est", 1.0)) if item.get("manday_est") else 1.0,
                                 acceptance_criteria=item.get("acceptance_criteria"),
@@ -719,16 +754,27 @@ def zalo_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
             priority = item.get("priority", "Normal")
             manday_est = float(item.get("manday_est", 1.0)) if item.get("manday_est") else 1.0
             confidence = int(item.get("confidence", 90))
-            assigned_name = item.get("assigned_name") or sender_name
-
+            raw_assigned = item.get("assigned_name")
             matched_id = None
-            if assigned_name:
-                norm_name = assigned_name.lower().strip().replace('@', '')
+            assigned_display_name = None
+
+            if raw_assigned:
+                norm_name = raw_assigned.lower().strip().replace('@', '')
                 for m in members:
                     m_name = (m.display_name or m.full_name or '').lower()
                     if norm_name in m_name or m_name in norm_name:
                         matched_id = m.id
-                        assigned_name = m.display_name or m.full_name
+                        assigned_display_name = m.display_name or m.full_name
+                        break
+                if not matched_id:
+                    assigned_display_name = raw_assigned.strip()
+            elif sender_name:
+                norm_sender = sender_name.lower().strip().replace('@', '')
+                for m in members:
+                    m_name = (m.display_name or m.full_name or '').lower()
+                    if norm_sender in m_name or m_name in norm_sender:
+                        matched_id = m.id
+                        assigned_display_name = m.display_name or m.full_name
                         break
 
             inbox = AITaskInbox(
@@ -741,7 +787,7 @@ def zalo_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
                 priority=priority,
                 manday_est=manday_est,
                 assigned_id=matched_id,
-                assigned_name=assigned_name,
+                assigned_name=assigned_display_name,
                 confidence=confidence,
                 status="ready" if (detail_task and manday_est) else "missing"
             )
