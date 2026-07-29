@@ -1,5 +1,6 @@
 import re
 from fastapi import Depends, HTTPException, Request
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -8,6 +9,70 @@ from ..models.phase import Phase
 from ..models.project import Project, project_members
 from ..models.task import Task
 from ..models.task_group import TaskGroup
+
+ALL_SCOPE = "all"
+DEFAULT_SCOPE = "infrastructure"
+VALID_DATA_SCOPES = {ALL_SCOPE, DEFAULT_SCOPE, "markee"}
+
+# ── Role constants ──────────────────────────────────────────
+ROLE_SUPER_ADMIN = "super_admin"
+ROLE_LEADER = "leader"
+ROLE_MEMBER = "member"
+ROLE_VIEWER = "viewer"
+VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER, "admin"}
+WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, "admin"}
+# Teams a Leader may be assigned to (Leader cannot use "all").
+LEADER_ALLOWED_SCOPES = {DEFAULT_SCOPE, "markee"}
+
+
+def user_scope(user) -> str:
+    return (getattr(user, "data_scope", None) or DEFAULT_SCOPE).strip().lower()
+
+
+def project_query_for_user(db: Session, user):
+    """Return a Project query filtered by the caller's role and scope.
+
+    - super_admin (scope=all): every project.
+    - leader: projects matching data_scope, business==All/scope, or explicitly assigned.
+    - member / viewer: projects where the user's linked member_id is in project_members.
+    """
+    query = db.query(Project)
+    scope = user_scope(user)
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    if role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE:
+        return query
+
+    if role == ROLE_LEADER:
+        member_id = getattr(user, "member_id", None)
+        b_val = "Markee" if scope == "markee" else "Infrastructure"
+        filters = [
+            Project.data_scope == scope,
+            Project.data_scope == ALL_SCOPE,
+            Project.business == "All",
+            Project.business == b_val,
+        ]
+        if member_id:
+            assigned_project_ids = (
+                db.query(project_members.c.project_id)
+                .filter(project_members.c.member_id == member_id)
+                .subquery()
+            )
+            filters.append(Project.id.in_(assigned_project_ids))
+        return query.filter(or_(*filters))
+
+    # member / viewer — restrict to assigned projects only.
+    member_id = getattr(user, "member_id", None)
+    if not member_id:
+        # User has no linked member → they can see nothing.
+        return query.filter(Project.id == -1)
+
+    assigned_project_ids = (
+        db.query(project_members.c.project_id)
+        .filter(project_members.c.member_id == member_id)
+        .subquery()
+    )
+    return query.filter(Project.id.in_(assigned_project_ids))
 from .auth import get_current_user
 
 ALL_SCOPE = "all"
