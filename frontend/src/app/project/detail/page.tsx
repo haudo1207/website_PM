@@ -1561,7 +1561,7 @@ function ProjectDetailContent() {
     // Editable columns
     const REQUIRED_COLS = [
       'DETAIL TASK', 'PRIORITY', 'MANDAY EST', 'STATUS',
-      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO'
+      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR'
     ];
     const isRequired = REQUIRED_COLS.includes(colUpper);
 
@@ -1798,6 +1798,10 @@ function ProjectDetailContent() {
     const mandayEstVal = parseFloat(newForm['MANDAY EST'] || '0');
     const statusVal = newForm['STATUS'] || 'Waiting';
     const startDateVal = newForm['START DATE'] || null;
+    const assignedVal = newForm['ASSIGNED'] || null;
+    const supportVal = newForm['SUPPORT'] || null;
+    const skillSolutionVal = newForm['SKILL SOLUTION'] || null;
+    const skillVendorVal = newForm['SKILL VENDOR'] || null;
 
     if (!detailVal) {
       alert('Tên nhiệm vụ (DETAIL TASK) không được để trống!');
@@ -1809,6 +1813,22 @@ function ProjectDetailContent() {
     }
     if (!startDateVal) {
       alert('Ngày bắt đầu (START DATE) không được để trống!');
+      return;
+    }
+    if (!assignedVal) {
+      alert('Cột ASSIGNED là bắt buộc.');
+      return;
+    }
+    if (!supportVal) {
+      alert('Cột SUPPORT là bắt buộc.');
+      return;
+    }
+    if (!skillSolutionVal) {
+      alert('Cột SKILL SOLUTION là bắt buộc.');
+      return;
+    }
+    if (!skillVendorVal) {
+      alert('Cột SKILL VENDOR là bắt buộc.');
       return;
     }
 

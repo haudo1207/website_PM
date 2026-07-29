@@ -25,32 +25,32 @@ class Task(Base):
     detail          = Column(String(500), nullable=False)
 
     # Priority (FK conceptual to system_categories.task_priorities)
-    priority        = Column(String(50), default="Normal")
+    priority        = Column(String(50), default="Normal", nullable=False)
 
     # Manday EST
-    manday_est      = Column(Numeric(5, 2), nullable=True)
+    manday_est      = Column(Numeric(5, 2), nullable=False)
 
     # Status
-    status          = Column(String(50), default="Waiting")
+    status          = Column(String(50), default="Waiting", nullable=False)
 
     # Start Date
-    start_date      = Column(Date, nullable=True)
+    start_date      = Column(Date, nullable=False)
 
     # Assigned (FK → members)
-    assigned_id     = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
+    assigned_id     = Column(Integer, ForeignKey("members.id", ondelete="RESTRICT"), nullable=False)
 
     # Support (FK → members)
-    support_id      = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
+    support_id      = Column(Integer, ForeignKey("members.id", ondelete="RESTRICT"), nullable=False)
 
     # KPI Ratio
-    kpi_ratio_assign  = Column(Integer, default=90)
-    kpi_ratio_support = Column(Integer, default=10)
+    kpi_ratio_assign  = Column(Integer, default=90, nullable=False)
+    kpi_ratio_support = Column(Integer, default=10, nullable=False)
 
     # Skill Solution (Group level)
-    skill_solution_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
+    skill_solution_id = Column(Integer, ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False)
 
     # Skill Vendor (Skill level)
-    skill_vendor_id   = Column(Integer, ForeignKey("skills.id", ondelete="SET NULL"), nullable=True)
+    skill_vendor_id   = Column(Integer, ForeignKey("skills.id", ondelete="RESTRICT"), nullable=False)
 
     # Ticket ID
     ticket_id       = Column(Text, nullable=True)
