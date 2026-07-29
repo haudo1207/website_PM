@@ -508,11 +508,12 @@ function ProjectDetailContent() {
     if (!silent) {
       setLoadingTasks(true);
     }
+    let loadedTasks: any[] = [];
+    let allGroups: any[] = [];
     try {
       const phs = await getPhases(Number(id));
       setPhases(phs || []);
 
-      const allGroups: any[] = [];
       if (phs && phs.length > 0) {
         for (const p of phs) {
           try {
@@ -524,19 +525,24 @@ function ProjectDetailContent() {
         }
       }
       setTaskGroups(allGroups);
-
-      const tsks = await getAllProjectTasks(Number(id));
-      setItems(tsks || []);
-      return { tasks: tsks || [], groups: allGroups };
     } catch (err: any) {
-      console.error('Lỗi khi tải dữ liệu dự án:', err);
-      flash('Không thể tải dữ liệu dự án: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
-      return { tasks: [], groups: [] };
-    } finally {
-      if (!silent) {
-        setLoadingTasks(false);
-      }
+      console.error('Lỗi khi tải danh sách Phase dự án:', err);
+      flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
     }
+
+    try {
+      const tsks = await getAllProjectTasks(Number(id));
+      loadedTasks = tsks || [];
+      setItems(loadedTasks);
+    } catch (err: any) {
+      console.error('Lỗi khi tải danh sách Task dự án:', err);
+      flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+    }
+
+    if (!silent) {
+      setLoadingTasks(false);
+    }
+    return { tasks: loadedTasks, groups: allGroups };
   }, [id]);
 
   const loadChatData = useCallback(async () => {
