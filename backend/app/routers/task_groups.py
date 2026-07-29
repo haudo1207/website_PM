@@ -491,10 +491,10 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
     if phase_id:
         query = query.filter(Phase.id == phase_id)
 
-    query = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id)
-    results = query.all()
+    results = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id).all()
 
     output = []
+    found_task_ids = set()
     for task, tg, phase in results:
         try:
             t_dict = serialize_task(task, db)
@@ -503,8 +503,33 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
             t_dict["phase_name"] = phase.name
             t_dict["phase_id"] = phase.id
             output.append(t_dict)
+            found_task_ids.add(task.id)
         except Exception as e:
             print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
+
+    # Fallback: catch any tasks belonging to task groups in project's phases that weren't captured by join
+    if not phase_id:
+        phases = db.query(Phase).filter(Phase.project_id == pid).all()
+        phase_map = {ph.id: ph for ph in phases}
+        if phases:
+            tgs = db.query(TaskGroup).filter(TaskGroup.phase_id.in_([ph.id for ph in phases])).all()
+            tg_map = {g.id: g for g in tgs}
+            if tgs:
+                all_tasks = db.query(Task).filter(Task.task_group_id.in_([g.id for g in tgs])).all()
+                for t in all_tasks:
+                    if t.id not in found_task_ids:
+                        try:
+                            tg = tg_map.get(t.task_group_id)
+                            ph = phase_map.get(tg.phase_id) if tg else None
+                            t_dict = serialize_task(t, db)
+                            t_dict["task_group_name"] = tg.name if tg else ""
+                            t_dict["task_group_status"] = tg.status if tg else "Waiting"
+                            t_dict["phase_name"] = ph.name if ph else ""
+                            t_dict["phase_id"] = ph.id if ph else None
+                            output.append(t_dict)
+                        except Exception as e:
+                            print(f"Error serializing fallback task {t.id}: {e}")
+
     return output
 
 
