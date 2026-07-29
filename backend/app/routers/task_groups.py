@@ -393,6 +393,15 @@ def move_task_group_to_phase(phid: int, gid: int, body: dict, db: Session = Depe
 # TASK CRUD
 # ═══════════════════════════════════════════════════════════
 
+def safe_float(val):
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def serialize_task(t, db):
     assigned_name = None
     support_name = None
