@@ -329,7 +329,7 @@ function ProjectDetailContent() {
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
-      case 'LINK': return task.ticket_id || '';
+      case 'LINK': return task.link || task.ticket_id || '';
       case 'SKILL SOLUTION': return task.skill_solution_name || '';
       case 'SKILL VENDOR': return task.skill_vendor_name || '';
 
@@ -508,31 +508,41 @@ function ProjectDetailContent() {
     if (!silent) {
       setLoadingTasks(true);
     }
+    let loadedTasks: any[] = [];
+    let allGroups: any[] = [];
     try {
       const phs = await getPhases(Number(id));
       setPhases(phs || []);
 
-      const allGroups: any[] = [];
       if (phs && phs.length > 0) {
         for (const p of phs) {
-          const grps = await getTaskGroups(p.id);
-          allGroups.push(...grps);
+          try {
+            const grps = await getTaskGroups(p.id);
+            allGroups.push(...(grps || []));
+          } catch (e) {
+            console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
+          }
         }
       }
       setTaskGroups(allGroups);
-
-      const tsks = await getAllProjectTasks(Number(id));
-      setItems(tsks || []);
-      return { tasks: tsks || [], groups: allGroups };
-    } catch (err) {
-      console.error('Lỗi khi tải dữ liệu dự án:', err);
-      flash('Không thể tải dữ liệu dự án', true);
-      return { tasks: [], groups: [] };
-    } finally {
-      if (!silent) {
-        setLoadingTasks(false);
-      }
+    } catch (err: any) {
+      console.error('Lỗi khi tải danh sách Phase dự án:', err);
+      flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
     }
+
+    try {
+      const tsks = await getAllProjectTasks(Number(id));
+      loadedTasks = tsks || [];
+      setItems(loadedTasks);
+    } catch (err: any) {
+      console.error('Lỗi khi tải danh sách Task dự án:', err);
+      flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+    }
+
+    if (!silent) {
+      setLoadingTasks(false);
+    }
+    return { tasks: loadedTasks, groups: allGroups };
   }, [id]);
 
   const loadChatData = useCallback(async () => {
@@ -1056,6 +1066,7 @@ function ProjectDetailContent() {
         payload.skill_vendor_id = value ? parseInt(value, 10) : null;
         break;
       case 'TICKET ID':
+      case 'LINK':
         payload.ticket_id = value;
         break;
       case 'REMARK':
@@ -1403,7 +1414,7 @@ function ProjectDetailContent() {
   };
 
   // --- Dynamic Stats calculation ---
-  const kpiTasks = getFilteredTasks();
+  const kpiTasks = activeMainTab === 'overview' ? items : getFilteredTasks();
   const kpiTotal = kpiTasks.length;
 
   // 1 & 2. Số task hoàn thành & % Tiến độ
@@ -2868,11 +2879,12 @@ function ProjectDetailContent() {
               );
             }
           } else if (colUpper === 'LINK') {
-            const links = (val || '').split('\n').filter(Boolean);
+            const linkValue = task.link || task.ticket_id || '';
+            const links = (linkValue || '').split('\n').filter(Boolean);
             if (links.length > 0) {
               cellContent = (
                 <div className="flex flex-wrap gap-1.5">
-                  {links.map((link, index) => {
+                  {links.map((link: string, index: number) => {
                     const isUrl = /^https?:\/\//i.test(link);
                     let label = link;
                     if (isUrl) {
@@ -2902,7 +2914,7 @@ function ProjectDetailContent() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            const newLinks = links.filter((_, i) => i !== index);
+                            const newLinks = links.filter((_: string, i: number) => i !== index);
                             const newValue = newLinks.join('\n');
                             handleCellSave(task.id, col, newValue);
                           }}
@@ -3518,7 +3530,7 @@ function ProjectDetailContent() {
                     <input
                       type={colUpper.includes('MANDAY') ? 'number' : 'text'}
                       step={colUpper.includes('MANDAY') ? 'any' : undefined}
-                      value={editValue}
+value={editValue}
                       autoFocus
                       onChange={e => setEditValue(e.target.value)}
                       onBlur={() => handleGroupCellSave(group, col, editValue)}
@@ -5858,14 +5870,34 @@ function ProjectDetailContent() {
                             />
                           </div>
 
-                          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3">
-                            <b className="block text-xs text-[#0058be] mb-1 flex items-center gap-1.5 font-bold">
-                              <span className="material-symbols-outlined text-[16px]">psychology</span>
-                              Chế độ tự động bóc tách AI (Tự nhiên)
+                          {newGroupPlatform === 'Telegram' && (
+                            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                              <div>
+                                <b className="text-xs text-[#0b1c30] block font-bold">1-Click Thêm Bot vào Telegram Group</b>
+                                <p className="text-[11px] text-slate-500 mt-0.5">Mở tự động ứng dụng Telegram và cho phép Bot gia nhập nhóm ngay.</p>
+                              </div>
+                              <a
+                                href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-[#0088cc] hover:bg-[#0077b5] active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-sm whitespace-nowrap inline-flex items-center gap-1.5 shrink-0 transition-all"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">smart_toy</span>
+                                Thêm Bot Ngay
+                              </a>
+                            </div>
+                          )}
+
+                          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 space-y-2">
+                            <b className="block text-xs text-[#0058be] flex items-center gap-1.5 font-bold">
+                              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                              Quy trình tự động kết nối Bot vào nhóm:
                             </b>
-                            <p className="text-[11px] text-slate-600 leading-relaxed">
-                              AI sẽ đọc tự nhiên mọi lời nhắn trò chuyện, tự động phát hiện mọi yêu cầu công việc, nhờ vả, giao việc và tag tên <b>mà không bắt buộc gõ từ khóa hay lệnh cứng</b>.
-                            </p>
+                            <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pl-0.5 leading-relaxed font-medium">
+                              <li>Nhập <b>Tên nhóm</b> & dán <b>Link tham gia nhóm chat</b> ở ô trên.</li>
+                              <li>Mở Zalo/Telegram ➔ Bấm <b>"Mời thành viên"</b> và chọn Bot hệ thống <b>@MarkeeTask (hoặc Zalo OA)</b> gia nhập nhóm.</li>
+                              <li>Bot sẽ tự động gửi tin nhắn chào mừng trong nhóm. Mọi tin nhắn giao việc từ đó sẽ được AI bóc tách trực tiếp vào bảng Inbox của bạn!</li>
+                            </ol>
                           </div>
 
                           <div className="pt-2 flex justify-end gap-2">
@@ -6393,87 +6425,7 @@ function ProjectDetailContent() {
                 )}
               </div>
 
-              {/* Members Selection */}
-              <div ref={memberRef} className="space-y-1 relative">
-                <label className="text-[11px] font-semibold text-[#565e74] block">
-                  Danh sách thành viên dự án
-                </label>
-                <div
-                  onClick={() => {
-                    setMemberDropdownOpen(!memberDropdownOpen);
-                    setPmDropdownOpen(false);
-                    setLeaderDropdownOpen(false);
-                    setCustomerDropdownOpen(false);
-                    setPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
-                >
-                  <div className="flex flex-wrap gap-1.5 flex-1">
-                    {selectedMembers.length === 0 ? (
-                      <span className="text-[#727785] px-2 py-0.5">Chọn thành viên tham gia...</span>
-                    ) : (
-                      selectedMembers.map(id => {
-                        const m = membersList.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedMembers(selectedMembers.filter(x => x !== id));
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                </div>
 
-                {memberDropdownOpen && (
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
-                  >
-                    <input
-                      type="text"
-                      value={memberSearch}
-                      onChange={(e) => setMemberSearch(e.target.value)}
-                      placeholder="Tìm kiếm thành viên..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
-                    />
-                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
-                      {membersList
-                        .filter(u => u.display_name?.toLowerCase().includes(memberSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(memberSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = selectedMembers.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  setSelectedMembers(selectedMembers.filter(id => id !== u.id));
-                                } else {
-                                  setSelectedMembers([...selectedMembers, u.id]);
-                                }
-                              }}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                            >
-                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Modal Footer */}
