@@ -164,7 +164,10 @@ def apply_schema_updates():
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Critical', 20, '🔴 Đỏ') ON CONFLICT (name) DO NOTHING"))
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Interrupt', 25, '🟣 Tím') ON CONFLICT (name) DO NOTHING"))
 
-apply_schema_updates()
+try:
+    apply_schema_updates()
+except Exception as e:
+    print(f"[!] Schema updates notice: {e}")
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -638,8 +641,11 @@ def init_db_defaults():
     finally:
         db.close()
 
-# Run database auto-seeding
-init_db_defaults()
+# Run database auto-seeding safely
+try:
+    init_db_defaults()
+except Exception as e:
+    print(f"[!] Database defaults notice: {e}")
 
 
 app = FastAPI(

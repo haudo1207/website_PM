@@ -6,10 +6,10 @@ db_url = settings.DATABASE_URL
 engine = create_engine(
     db_url,
     pool_pre_ping=True,
-    pool_size=3,
-    max_overflow=5,
-    pool_recycle=180,
-    pool_timeout=10,
+    pool_size=5,
+    max_overflow=10,
+    pool_recycle=300,
+    pool_timeout=30,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
