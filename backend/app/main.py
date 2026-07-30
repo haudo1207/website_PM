@@ -692,12 +692,13 @@ async def start_auto_sync_loop():
         from .database import SessionLocal
         from .services.meeting_sync import auto_sync_all_ended_meetings
         while True:
+            db = SessionLocal()
             try:
-                db = SessionLocal()
                 auto_sync_all_ended_meetings(db)
-                db.close()
             except Exception as e:
                 pass
+            finally:
+                db.close()
             await asyncio.sleep(60)
 
     asyncio.create_task(_loop())
