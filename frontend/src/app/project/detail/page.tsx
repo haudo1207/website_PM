@@ -872,7 +872,7 @@ function ProjectDetailContent() {
   const getOrderedRows = () => {
     const rows: { type: 'group' | 'task'; id: number; task?: any; group?: any }[] = [];
     const phasesToRender = activePhase === 'ALL'
-      ? phases
+      ? phases.filter(p => p.name.trim().toLowerCase() !== 'master')
       : phases.filter(p => p.name === activePhase);
 
     for (const p of phasesToRender) {
@@ -2978,7 +2978,7 @@ function ProjectDetailContent() {
     }
 
     const phasesToRender = activePhase === 'ALL'
-      ? phases
+      ? phases.filter(p => p.name.trim().toLowerCase() !== 'master')
       : phases.filter(p => p.name === activePhase);
 
     if (phasesToRender.length === 0) {
