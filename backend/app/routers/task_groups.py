@@ -218,40 +218,60 @@ def get_next_task_code(group_index: int, gid: int, db) -> str:
 
 
 def serialize_task_group(tg, db, group_index=None):
-    task_count = db.query(Task).filter(Task.task_group_id == tg.id).count()
-    done_count = db.query(Task).filter(
-        Task.task_group_id == tg.id,
-        Task.status.in_(["Done", "done"])
-    ).count()
+    task_count = 0
+    done_count = 0
+    try:
+        task_count = db.query(Task).filter(Task.task_group_id == tg.id).count()
+        done_count = db.query(Task).filter(
+            Task.task_group_id == tg.id,
+            Task.status.in_(["Done", "done"])
+        ).count()
+    except Exception:
+        pass
+
     if group_index is None:
-        group_index = get_group_index(tg, db)
+        try:
+            group_index = get_group_index(tg, db)
+        except Exception:
+            group_index = 1
+
     return {
         "id": tg.id,
         "phase_id": tg.phase_id,
         "name": tg.name,
         "description": tg.description,
-        "status": tg.status,
-        "progress": float(tg.progress or 0),
-        "sort_order": tg.sort_order,
+        "status": getattr(tg, "status", "Waiting") or "Waiting",
+        "progress": safe_float(getattr(tg, "progress", 0)) or 0.0,
+        "sort_order": getattr(tg, "sort_order", 0) or 0,
         "group_index": group_index,
         "roman_index": to_roman(group_index),
-        "manday_est": float(tg.manday_est) if tg.manday_est else None,
-        "start_date_est": str(tg.start_date_est) if tg.start_date_est else None,
-        "end_date_est": str(tg.end_date_est) if tg.end_date_est else None,
-        "manday_actual": float(tg.manday_actual) if tg.manday_actual else None,
-        "end_date_actual": str(tg.end_date_actual_override or tg.end_date_actual) if tg.end_date_actual_override or tg.end_date_actual else None,
-        "end_date_actual_auto": str(tg.end_date_actual) if tg.end_date_actual else None,
-        "end_date_actual_override": str(tg.end_date_actual_override) if tg.end_date_actual_override else None,
+        "manday_est": safe_float(getattr(tg, "manday_est", None)),
+        "start_date_est": str(tg.start_date_est) if getattr(tg, "start_date_est", None) else None,
+        "end_date_est": str(tg.end_date_est) if getattr(tg, "end_date_est", None) else None,
+        "manday_actual": safe_float(getattr(tg, "manday_actual", None)),
+        "end_date_actual": str(getattr(tg, "end_date_actual_override", None) or getattr(tg, "end_date_actual", None)) if (getattr(tg, "end_date_actual_override", None) or getattr(tg, "end_date_actual", None)) else None,
+        "end_date_actual_auto": str(tg.end_date_actual) if getattr(tg, "end_date_actual", None) else None,
+        "end_date_actual_override": str(tg.end_date_actual_override) if getattr(tg, "end_date_actual_override", None) else None,
         "task_count": task_count,
         "done_count": done_count,
-        "created_at": str(tg.created_at) if tg.created_at else None,
+        "created_at": str(tg.created_at) if getattr(tg, "created_at", None) else None,
     }
 
 
 @router.get("/phases/{phid}/task-groups")
 def list_task_groups(phid: int, db: Session = Depends(get_db)):
-    groups = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).order_by(TaskGroup.sort_order, TaskGroup.id).all()
-    return [serialize_task_group(g, db, i + 1) for i, g in enumerate(groups)]
+    try:
+        groups = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).order_by(TaskGroup.sort_order, TaskGroup.id).all()
+        out = []
+        for i, g in enumerate(groups):
+            try:
+                out.append(serialize_task_group(g, db, i + 1))
+            except Exception as e:
+                print(f"Error serializing task group {getattr(g, 'id', None)}: {e}")
+        return out
+    except Exception as exc:
+        print(f"Error in list_task_groups for phid {phid}: {exc}")
+        return []
 
 
 @router.post("/phases/{phid}/task-groups")
@@ -393,100 +413,168 @@ def move_task_group_to_phase(phid: int, gid: int, body: dict, db: Session = Depe
 # TASK CRUD
 # ═══════════════════════════════════════════════════════════
 
+def safe_float(val):
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def serialize_task(t, db):
     assigned_name = None
     support_name = None
     solution_name = None
     vendor_name = None
 
-    if t.assigned_id:
-        m = db.query(Member).filter(Member.id == t.assigned_id).first()
-        assigned_name = m.display_name if m else None
-    if t.support_id:
-        m = db.query(Member).filter(Member.id == t.support_id).first()
-        support_name = m.display_name if m else None
-    if t.skill_solution_id:
-        from ..models.skill_master import Group
-        g = db.query(Group).filter(Group.id == t.skill_solution_id).first()
-        solution_name = g.name if g else None
-    if t.skill_vendor_id:
-        from ..models.skill_master import Skill
-        s = db.query(Skill).filter(Skill.id == t.skill_vendor_id).first()
-        vendor_name = s.name if s else None
+    try:
+        if t.assigned_id:
+            m = db.query(Member).filter(Member.id == t.assigned_id).first()
+            assigned_name = m.display_name if m else None
+    except Exception:
+        pass
+
+    try:
+        if t.support_id:
+            m = db.query(Member).filter(Member.id == t.support_id).first()
+            support_name = m.display_name if m else None
+    except Exception:
+        pass
+
+    try:
+        if t.skill_solution_id:
+            from ..models.skill_master import Group
+            g = db.query(Group).filter(Group.id == t.skill_solution_id).first()
+            solution_name = g.name if g else None
+    except Exception:
+        pass
+
+    try:
+        if t.skill_vendor_id:
+            from ..models.skill_master import Skill
+            s = db.query(Skill).filter(Skill.id == t.skill_vendor_id).first()
+            vendor_name = s.name if s else None
+    except Exception:
+        pass
 
     return {
         "id": t.id,
         "task_group_id": t.task_group_id,
-        "task_code": t.task_code,
+        "task_code": getattr(t, "task_code", None),
         "detail": t.detail,
-        "priority": t.priority,
-        "manday_est": float(t.manday_est) if t.manday_est else None,
-        "status": t.status,
-        "start_date": str(t.start_date) if t.start_date else None,
-        "assigned_id": t.assigned_id,
+        "priority": getattr(t, "priority", "Normal") or "Normal",
+        "manday_est": safe_float(getattr(t, "manday_est", None)),
+        "status": getattr(t, "status", "Waiting") or "Waiting",
+        "start_date": str(t.start_date) if getattr(t, "start_date", None) else None,
+        "assigned_id": getattr(t, "assigned_id", None),
         "assigned_name": assigned_name,
-        "support_id": t.support_id,
+        "support_id": getattr(t, "support_id", None),
         "support_name": support_name,
-        "kpi_ratio_assign": t.kpi_ratio_assign,
-        "kpi_ratio_support": t.kpi_ratio_support,
-        "skill_solution_id": t.skill_solution_id,
+        "kpi_ratio_assign": getattr(t, "kpi_ratio_assign", 90),
+        "kpi_ratio_support": getattr(t, "kpi_ratio_support", 10),
+        "skill_solution_id": getattr(t, "skill_solution_id", None),
         "skill_solution_name": solution_name,
-        "skill_vendor_id": t.skill_vendor_id,
+        "skill_vendor_id": getattr(t, "skill_vendor_id", None),
         "skill_vendor_name": vendor_name,
-        "ticket_id": t.ticket_id,
-        "remark": t.remark,
-        "send": t.send,
-        "sort_order": t.sort_order,
+        "ticket_id": getattr(t, "ticket_id", None),
+        "remark": getattr(t, "remark", None),
+        "send": getattr(t, "send", None),
+        "sort_order": getattr(t, "sort_order", 0) or 0,
         # Computed
-        "end_date_est": str(t.end_date_est) if t.end_date_est else None,
-        "manday_actual": float(t.manday_actual) if t.manday_actual else None,
-        "end_date_actual": str(t.end_date_actual) if t.end_date_actual else None,
-        "days_late": t.days_late,
-        "kpi_base": float(t.kpi_base) if t.kpi_base is not None else None,
-        "kpi_perform": float(t.kpi_perform) if t.kpi_perform is not None else None,
-        "kpi_ot": float(t.kpi_ot) if t.kpi_ot is not None else None,
-        "kpi_final": float(t.kpi_final) if t.kpi_final is not None else None,
-        "kpi_assigned": float(t.kpi_assigned) if t.kpi_assigned is not None else None,
-        "kpi_support": float(t.kpi_support) if t.kpi_support is not None else None,
-        "notes": t.notes,
-        "solution": t.solution,
-        "ai_status": t.ai_status,
-        "last_ai_check_at": str(t.last_ai_check_at) if t.last_ai_check_at else None,
-        "last_ai_score": t.last_ai_score,
-        "last_review_id": t.last_review_id,
-        "created_at": str(t.created_at) if t.created_at else None,
+        "end_date_est": str(t.end_date_est) if getattr(t, "end_date_est", None) else None,
+        "manday_actual": safe_float(getattr(t, "manday_actual", None)),
+        "end_date_actual": str(t.end_date_actual) if getattr(t, "end_date_actual", None) else None,
+        "days_late": getattr(t, "days_late", None),
+        "kpi_base": safe_float(getattr(t, "kpi_base", 0)),
+        "kpi_perform": safe_float(getattr(t, "kpi_perform", 0)),
+        "kpi_ot": safe_float(getattr(t, "kpi_ot", 0)),
+        "kpi_final": safe_float(getattr(t, "kpi_final", 0)),
+        "kpi_assigned": safe_float(getattr(t, "kpi_assigned", 0)),
+        "kpi_support": safe_float(getattr(t, "kpi_support", 0)),
+        "notes": getattr(t, "notes", None),
+        "solution": getattr(t, "solution", None),
+        "ai_status": getattr(t, "ai_status", "NOT_CHECKED") or "NOT_CHECKED",
+        "last_ai_check_at": str(t.last_ai_check_at) if getattr(t, "last_ai_check_at", None) else None,
+        "last_ai_score": getattr(t, "last_ai_score", None),
+        "last_review_id": getattr(t, "last_review_id", None),
+        "created_at": str(t.created_at) if getattr(t, "created_at", None) else None,
     }
 
 
 @router.get("/task-groups/{gid}/tasks")
 def list_tasks(gid: int, db: Session = Depends(get_db)):
-    tasks = db.query(Task).filter(Task.task_group_id == gid).order_by(Task.sort_order, Task.id).all()
-    return [serialize_task(t, db) for t in tasks]
+    try:
+        tasks = db.query(Task).filter(Task.task_group_id == gid).order_by(Task.sort_order, Task.id).all()
+        out = []
+        for t in tasks:
+            try:
+                out.append(serialize_task(t, db))
+            except Exception as e:
+                print(f"Error serializing task {getattr(t, 'id', None)} in list_tasks: {e}")
+        return out
+    except Exception as exc:
+        print(f"Error in list_tasks for gid {gid}: {exc}")
+        return []
 
 
 @router.get("/projects/{pid}/all-tasks")
 def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends(get_db)):
     """Get all tasks for a project, optionally filtered by phase. Used by Master view."""
-    query = (
-        db.query(Task, TaskGroup, Phase)
-        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
-        .join(Phase, TaskGroup.phase_id == Phase.id)
-        .filter(Phase.project_id == pid)
-    )
-    if phase_id:
-        query = query.filter(Phase.id == phase_id)
-
-    query = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id)
-    results = query.all()
-
     output = []
-    for task, tg, phase in results:
-        t_dict = serialize_task(task, db)
-        t_dict["task_group_name"] = tg.name
-        t_dict["task_group_status"] = tg.status
-        t_dict["phase_name"] = phase.name
-        t_dict["phase_id"] = phase.id
-        output.append(t_dict)
+    found_task_ids = set()
+
+    try:
+        query = (
+            db.query(Task, TaskGroup, Phase)
+            .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+            .join(Phase, TaskGroup.phase_id == Phase.id)
+            .filter(Phase.project_id == pid)
+        )
+        if phase_id:
+            query = query.filter(Phase.id == phase_id)
+
+        results = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id).all()
+        for task, tg, phase in results:
+            try:
+                t_dict = serialize_task(task, db)
+                t_dict["task_group_name"] = tg.name
+                t_dict["task_group_status"] = tg.status
+                t_dict["phase_name"] = phase.name
+                t_dict["phase_id"] = phase.id
+                output.append(t_dict)
+                found_task_ids.add(task.id)
+            except Exception as e:
+                print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
+    except Exception as exc:
+        print(f"Error in primary list_all_project_tasks query for pid {pid}: {exc}")
+
+    # Fallback: catch any tasks belonging to task groups in project's phases that weren't captured by join
+    try:
+        if not phase_id:
+            phases = db.query(Phase).filter(Phase.project_id == pid).all()
+            phase_map = {ph.id: ph for ph in phases}
+            if phases:
+                tgs = db.query(TaskGroup).filter(TaskGroup.phase_id.in_([ph.id for ph in phases])).all()
+                tg_map = {g.id: g for g in tgs}
+                if tgs:
+                    all_tasks = db.query(Task).filter(Task.task_group_id.in_([g.id for g in tgs])).all()
+                    for t in all_tasks:
+                        if t.id not in found_task_ids:
+                            try:
+                                tg = tg_map.get(t.task_group_id)
+                                ph = phase_map.get(tg.phase_id) if tg else None
+                                t_dict = serialize_task(t, db)
+                                t_dict["task_group_name"] = tg.name if tg else ""
+                                t_dict["task_group_status"] = tg.status if tg else "Waiting"
+                                t_dict["phase_name"] = ph.name if ph else ""
+                                t_dict["phase_id"] = ph.id if ph else None
+                                output.append(t_dict)
+                            except Exception as e:
+                                print(f"Error serializing fallback task {t.id}: {e}")
+    except Exception as exc:
+        print(f"Error in fallback list_all_project_tasks query for pid {pid}: {exc}")
+
     return output
 
 

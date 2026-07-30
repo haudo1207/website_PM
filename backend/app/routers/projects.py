@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case
+from sqlalchemy import case, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
@@ -19,6 +19,10 @@ from sqlalchemy import func as sql_func
 from ..utils.access import (
     ALL_SCOPE,
     VALID_DATA_SCOPES,
+    ROLE_SUPER_ADMIN,
+    ROLE_LEADER,
+    ROLE_MEMBER,
+    can_access_project,
     project_query_for_user,
     require_route_project_access,
     user_scope,
@@ -173,7 +177,14 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
         b_val = "Markee" if target_b == "markee" else "Infrastructure"
-        q = q.filter(Project.business.in_([b_val, "All"]))
+        q = q.filter(
+            or_(
+                Project.business == b_val,
+                Project.business == "All",
+                and_(Project.business.is_(None), Project.data_scope == target_b),
+                and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
+            )
+        )
     projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
@@ -302,24 +313,13 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         db.rollback()
         raise HTTPException(409, f"Project code '{project_code}' already exists.") from exc
 
-    # 1. Populate initial project phases from MasterPhase settings
-    from app.models.master_phase import MasterPhase
-    master_phases = db.query(MasterPhase).filter(MasterPhase.is_active == True).order_by(MasterPhase.sort_order.asc()).all()
-    if master_phases:
-        for idx, mp in enumerate(master_phases):
-            db.add(Phase(
-                project_id=p.id,
-                name=mp.name,
-                sort_order=mp.sort_order or (idx + 1),
-                status="Waiting"
-            ))
-    else:
-        db.add(Phase(
-            project_id=p.id,
-            name="Master",
-            sort_order=0,
-            status="Waiting"
-        ))
+    # 1. Create default "Master" phase for new project
+    db.add(Phase(
+        project_id=p.id,
+        name="Master",
+        sort_order=1,
+        status="Waiting"
+    ))
 
     # 2. Add initial links/channels (Legacy cleanup - only if they exist)
     links_to_create = []
@@ -439,7 +439,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         requested_scope = str(body["data_scope"]).strip().lower()
         if requested_scope not in VALID_DATA_SCOPES:
             raise HTTPException(400, "Invalid data scope.")
-        if user_scope(current_user) != ALL_SCOPE:
+        if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) != ROLE_SUPER_ADMIN:
             raise HTTPException(403, "Only full-scope users can change project scope.")
         p.data_scope = requested_scope
 
@@ -614,35 +614,48 @@ def remove_project_member(pid: int, mid: int, db: Session = Depends(get_db)):
 
 def serialize_phase(ph, db):
     # Count task groups
-    tg_count = db.query(TaskGroup).filter(TaskGroup.phase_id == ph.id).count()
-    # Count total tasks
-    task_count = (
-        db.query(Task)
-        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
-        .filter(TaskGroup.phase_id == ph.id)
-        .count()
-    )
+    tg_count = 0
+    task_count = 0
+    try:
+        tg_count = db.query(TaskGroup).filter(TaskGroup.phase_id == ph.id).count()
+    except Exception:
+        pass
+
+    try:
+        task_count = (
+            db.query(Task)
+            .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+            .filter(TaskGroup.phase_id == ph.id)
+            .count()
+        )
+    except Exception:
+        pass
+
     return {
         "id": ph.id,
         "project_id": ph.project_id,
         "name": ph.name,
         "description": ph.description,
-        "sort_order": ph.sort_order,
-        "status": ph.status,
+        "sort_order": getattr(ph, "sort_order", 0) or 0,
+        "status": getattr(ph, "status", "Waiting") or "Waiting",
         "task_group_count": tg_count,
         "task_count": task_count,
-        "ai_status": ph.ai_status,
-        "last_ai_check_at": str(ph.last_ai_check_at) if ph.last_ai_check_at else None,
-        "last_ai_score": ph.last_ai_score,
-        "last_review_id": ph.last_review_id,
-        "created_at": str(ph.created_at) if ph.created_at else None,
+        "ai_status": getattr(ph, "ai_status", "NOT_CHECKED") or "NOT_CHECKED",
+        "last_ai_check_at": str(ph.last_ai_check_at) if getattr(ph, "last_ai_check_at", None) else None,
+        "last_ai_score": getattr(ph, "last_ai_score", None),
+        "last_review_id": getattr(ph, "last_review_id", None),
+        "created_at": str(ph.created_at) if getattr(ph, "created_at", None) else None,
     }
 
 
 @router.get("/projects/{pid}/phases")
 def list_phases(pid: int, db: Session = Depends(get_db)):
-    phases = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order, Phase.id).all()
-    return [serialize_phase(ph, db) for ph in phases]
+    try:
+        phases = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order, Phase.id).all()
+        return [serialize_phase(ph, db) for ph in phases]
+    except Exception as exc:
+        print(f"Error in list_phases for pid {pid}: {exc}")
+        return []
 
 
 @router.post("/projects/{pid}/phases")

@@ -1,5 +1,6 @@
 import re
 from fastapi import Depends, HTTPException, Request
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -33,9 +34,8 @@ def project_query_for_user(db: Session, user):
     """Return a Project query filtered by the caller's role and scope.
 
     - super_admin (scope=all): every project.
-    - leader: projects whose data_scope matches the leader's team.
-    - member / viewer: only projects the user is explicitly assigned to
-      via the project_members_v2 junction table.
+    - leader: projects matching data_scope, business==All/scope, or explicitly assigned.
+    - member / viewer: projects where the user's linked member_id is in project_members.
     """
     query = db.query(Project)
     scope = user_scope(user)
@@ -45,7 +45,22 @@ def project_query_for_user(db: Session, user):
         return query
 
     if role == ROLE_LEADER:
-        return query.filter((Project.data_scope == scope) | (Project.data_scope == ALL_SCOPE) | (Project.business == "All"))
+        member_id = getattr(user, "member_id", None)
+        b_val = "Markee" if scope == "markee" else "Infrastructure"
+        filters = [
+            Project.data_scope == scope,
+            Project.data_scope == ALL_SCOPE,
+            Project.business == "All",
+            Project.business == b_val,
+        ]
+        if member_id:
+            assigned_project_ids = (
+                db.query(project_members.c.project_id)
+                .filter(project_members.c.member_id == member_id)
+                .subquery()
+            )
+            filters.append(Project.id.in_(assigned_project_ids))
+        return query.filter(or_(*filters))
 
     # member / viewer — restrict to assigned projects only.
     member_id = getattr(user, "member_id", None)
@@ -70,7 +85,12 @@ def can_access_project(db: Session, user, project: Project) -> bool:
         return True
 
     if role == ROLE_LEADER:
-        return (project.data_scope == scope) or (project.data_scope == ALL_SCOPE) or (project.business == "All")
+        return (
+            (project.data_scope == scope)
+            or (project.data_scope == ALL_SCOPE)
+            or (project.business == "All")
+            or _is_member_of_project(db, user, project.id)
+        )
 
     # member / viewer — must be an explicit project member.
     member_id = getattr(user, "member_id", None)
