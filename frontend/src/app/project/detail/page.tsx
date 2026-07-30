@@ -3750,6 +3750,11 @@ value={editValue}
               <div>
                 <div className="flex items-center gap-3">
                   <h2 className="text-xl font-bold text-[#0b1c30] tracking-tight">{project.name}</h2>
+                  {project.customer_name && (
+                    <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-[11px] font-bold border border-slate-200 flex items-center gap-1.5 shadow-xs">
+                      🏢 {project.customer_name}
+                    </span>
+                  )}
                   <span className="px-3 py-1 rounded-full bg-[#eff4ff] text-[#1d4ed8] text-[10px] font-bold uppercase border border-[#0058be]/10">
                     Phase {project.current_phase || '1. Tư vấn'}
                   </span>

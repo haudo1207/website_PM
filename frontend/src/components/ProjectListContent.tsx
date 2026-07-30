@@ -315,7 +315,7 @@ export default function ProjectListContent() {
                       <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
                     </div>
                     <h3 className="text-base font-bold text-slate-800 mb-0.5 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
-                    <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic">{p.customer_name || 'Chưa có khách hàng'}</p>
+                    <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic flex items-center gap-1.5"><span className="not-italic text-sm">🏢</span> {p.customer_name || 'Chưa có khách hàng'}</p>
                     
                     <div className="grid grid-cols-2 gap-y-4 mb-6">
                       <div>
