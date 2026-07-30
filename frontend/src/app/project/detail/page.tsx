@@ -329,7 +329,7 @@ function ProjectDetailContent() {
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
-      case 'LINK': return task.ticket_id || '';
+      case 'LINK': return task.link || task.ticket_id || '';
       case 'SKILL SOLUTION': return task.skill_solution_name || '';
       case 'SKILL VENDOR': return task.skill_vendor_name || '';
 
@@ -1066,6 +1066,7 @@ function ProjectDetailContent() {
         payload.skill_vendor_id = value ? parseInt(value, 10) : null;
         break;
       case 'TICKET ID':
+      case 'LINK':
         payload.ticket_id = value;
         break;
       case 'REMARK':
@@ -2878,11 +2879,12 @@ function ProjectDetailContent() {
               );
             }
           } else if (colUpper === 'LINK') {
-            const links = (val || '').split('\n').filter(Boolean);
+            const linkValue = task.link || task.ticket_id || '';
+            const links = (linkValue || '').split('\n').filter(Boolean);
             if (links.length > 0) {
               cellContent = (
                 <div className="flex flex-wrap gap-1.5">
-                  {links.map((link, index) => {
+                  {links.map((link: string, index: number) => {
                     const isUrl = /^https?:\/\//i.test(link);
                     let label = link;
                     if (isUrl) {
@@ -2912,7 +2914,7 @@ function ProjectDetailContent() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            const newLinks = links.filter((_, i) => i !== index);
+                            const newLinks = links.filter((_: string, i: number) => i !== index);
                             const newValue = newLinks.join('\n');
                             handleCellSave(task.id, col, newValue);
                           }}
@@ -6423,87 +6425,7 @@ value={editValue}
                 )}
               </div>
 
-              {/* Members Selection */}
-              <div ref={memberRef} className="space-y-1 relative">
-                <label className="text-[11px] font-semibold text-[#565e74] block">
-                  Danh sách thành viên dự án
-                </label>
-                <div
-                  onClick={() => {
-                    setMemberDropdownOpen(!memberDropdownOpen);
-                    setPmDropdownOpen(false);
-                    setLeaderDropdownOpen(false);
-                    setCustomerDropdownOpen(false);
-                    setPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
-                >
-                  <div className="flex flex-wrap gap-1.5 flex-1">
-                    {selectedMembers.length === 0 ? (
-                      <span className="text-[#727785] px-2 py-0.5">Chọn thành viên tham gia...</span>
-                    ) : (
-                      selectedMembers.map(id => {
-                        const m = membersList.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedMembers(selectedMembers.filter(x => x !== id));
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                </div>
 
-                {memberDropdownOpen && (
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
-                  >
-                    <input
-                      type="text"
-                      value={memberSearch}
-                      onChange={(e) => setMemberSearch(e.target.value)}
-                      placeholder="Tìm kiếm thành viên..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
-                    />
-                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
-                      {membersList
-                        .filter(u => u.display_name?.toLowerCase().includes(memberSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(memberSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = selectedMembers.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  setSelectedMembers(selectedMembers.filter(id => id !== u.id));
-                                } else {
-                                  setSelectedMembers([...selectedMembers, u.id]);
-                                }
-                              }}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                            >
-                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Modal Footer */}
