@@ -329,7 +329,7 @@ function ProjectDetailContent() {
       case 'ASSIGNED': return task.assigned_name || '';
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
-      case 'LINK': return task.ticket_id || '';
+      case 'LINK': return task.link || task.ticket_id || '';
       case 'SKILL SOLUTION': return task.skill_solution_name || '';
       case 'SKILL VENDOR': return task.skill_vendor_name || '';
 
@@ -1066,6 +1066,7 @@ function ProjectDetailContent() {
         payload.skill_vendor_id = value ? parseInt(value, 10) : null;
         break;
       case 'TICKET ID':
+      case 'LINK':
         payload.ticket_id = value;
         break;
       case 'REMARK':
@@ -2878,11 +2879,12 @@ function ProjectDetailContent() {
               );
             }
           } else if (colUpper === 'LINK') {
-            const links = (val || '').split('\n').filter(Boolean);
+            const linkValue = task.link || task.ticket_id || '';
+            const links = (linkValue || '').split('\n').filter(Boolean);
             if (links.length > 0) {
               cellContent = (
                 <div className="flex flex-wrap gap-1.5">
-                  {links.map((link, index) => {
+                  {links.map((link: string, index: number) => {
                     const isUrl = /^https?:\/\//i.test(link);
                     let label = link;
                     if (isUrl) {
@@ -2912,7 +2914,7 @@ function ProjectDetailContent() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            const newLinks = links.filter((_, i) => i !== index);
+                            const newLinks = links.filter((_: string, i: number) => i !== index);
                             const newValue = newLinks.join('\n');
                             handleCellSave(task.id, col, newValue);
                           }}
