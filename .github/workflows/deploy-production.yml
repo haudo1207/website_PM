@@ -10,7 +10,7 @@ on:
 
 jobs:
   deploy-both-brands:
-    if: inputs.confirm == 'DEPLOY'
+    if: ${{ inputs.confirm == 'DEPLOY' || inputs.confirm == 'deploy' || inputs.confirm == 'Deploy' }}
     runs-on: [self-hosted, security]
     steps:
       - uses: actions/checkout@v4
@@ -30,5 +30,8 @@ jobs:
           # Redis and the legacy worker image remain local. Compose still recreates
           # API, worker, and scheduler together so every writer uses the same DB URL.
           docker compose --env-file .env -f docker-compose.yml up -d --build --remove-orphans
-          timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done'
-          timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done'
+          echo "Waiting for SecurityZone frontend (port 3000)..."
+          timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done' || (docker compose logs --tail=50 && exit 1)
+          echo "Waiting for Markee frontend (port 3300)..."
+          timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done' || (docker compose logs --tail=50 && exit 1)
+
