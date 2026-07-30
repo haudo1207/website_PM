@@ -2,7 +2,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   getMembers, createMember, updateMember, deleteMember,
-  getTeams, getPositions, getDepartments, getCategories
+  getTeams, getPositions, getDepartments, getCategories,
+  syncFromRecruitment
 } from '@/lib/api';
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -54,6 +55,22 @@ export default function MembersView({ onFlash }: Props) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncRecruitment = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const res = await syncFromRecruitment();
+      onFlash(res.message || `Đồng bộ thành công ${res.count} ứng viên.`);
+      loadMembers();
+    } catch (err: any) {
+      const errMsg = err.response?.data?.detail || err.message || 'Lỗi kết nối đồng bộ';
+      onFlash(`Lỗi đồng bộ: ${errMsg}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // ─── Data loading ─────────────────────────────────────────────────
   const loadMembers = useCallback(() => {
@@ -169,15 +186,27 @@ export default function MembersView({ onFlash }: Props) {
               <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Quản Lý Thành Viên</h1>
               <p className="text-sm text-slate-500 mt-0.5">Quản lý danh sách thành viên, kỹ năng và thông tin tổ chức</p>
             </div>
-            <button
-              onClick={openAdd}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              Thêm thành viên
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSyncRecruitment}
+                disabled={syncing}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
+              >
+                <svg className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89H18.24" />
+                </svg>
+                {syncing ? 'Đang đồng bộ...' : 'Đồng bộ Tuyển dụng'}
+              </button>
+              <button
+                onClick={openAdd}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Thêm thành viên
+              </button>
+            </div>
           </div>
 
           {/* Search & Filters */}
