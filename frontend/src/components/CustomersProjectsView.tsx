@@ -51,6 +51,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const [newCustomerName, setNewCustomerName] = useState('');
   const [editingCustomerId, setEditingCustomerId] = useState<number | null>(null);
   const [editingCustomerName, setEditingCustomerName] = useState('');
+  const [showCustomerDeleteModal, setShowCustomerDeleteModal] = useState(false);
+  const [deletingCustomer, setDeletingCustomer] = useState<{ id: number; name: string; linkedProjects: any[] } | null>(null);
 
   // Project Modal state
   const [showProjectModal, setShowProjectModal] = useState(false);
@@ -271,34 +273,31 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     }
   };
 
-  const handleDeleteCustomerClick = async (id: number, name: string) => {
-    if (!isSuperAdmin()) {
-      alert('Chỉ Super Admin mới có quyền xóa khách hàng!');
+  const handleDeleteCustomerClick = (id: number, name: string) => {
+    if (!isAdmin()) {
+      alert('Bạn không có quyền thực hiện thao tác xóa khách hàng!');
       return;
     }
-    // Check if customer has projects
-    const hasProjects = projects.some(p => 
+    const linkedProjects = projects.filter(p => 
       p.customer_id === id || 
-      (p.customer_name && p.customer_name.toLowerCase() === name.toLowerCase())
+      (p.customer_name && p.customer_name.trim().toLowerCase() === name.trim().toLowerCase())
     );
-    if (hasProjects) {
-      alert(`Không thể xóa khách hàng "${name}" vì đang có dự án liên kết. Hãy xóa hoặc chuyển dự án trước.`);
-      return;
-    }
+    setDeletingCustomer({ id, name, linkedProjects });
+    setShowCustomerDeleteModal(true);
+  };
 
-    if (!confirm(`Bạn có chắc chắn muốn xóa khách hàng "${name}"?`)) return;
+  const confirmDeleteCustomer = async (cascade: boolean) => {
+    if (!deletingCustomer) return;
+    const { id, name } = deletingCustomer;
     setActionLoading(true);
     try {
-      await deleteCustomer(id);
-      onFlash('Đã xóa khách hàng thành công');
-      
-      const updatedCusts = await getCustomers();
-      setCustomers(updatedCusts || []);
-      if (selectedCustomerId === id) {
-        setSelectedCustomerId(updatedCusts.length > 0 ? updatedCusts[0].id : null);
-      }
+      await deleteCustomer(id, cascade);
+      onFlash(cascade ? `Đã xóa khách hàng "${name}" cùng toàn bộ dự án liên quan` : `Đã xóa khách hàng "${name}" thành công`);
+      setShowCustomerDeleteModal(false);
+      setDeletingCustomer(null);
+      await loadData();
     } catch (err: any) {
-      onFlash(err.response?.data?.detail || 'Lỗi xóa khách hàng', true);
+      onFlash(err.response?.data?.detail || err.message || 'Lỗi xóa khách hàng', true);
     } finally {
       setActionLoading(false);
     }
@@ -1341,6 +1340,94 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* CUSTOMER DELETE CONFIRMATION MODAL */}
+      {/* ============================================================== */}
+      {showCustomerDeleteModal && deletingCustomer && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 text-red-600 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center font-bold text-lg">🗑️</div>
+              <div>
+                <h3 className="text-base font-bold text-[#0f172a]">Xác nhận xóa Khách hàng</h3>
+                <p className="text-xs text-slate-500 font-semibold">{deletingCustomer.name}</p>
+              </div>
+            </div>
+
+            {deletingCustomer.linkedProjects.length > 0 ? (
+              <div className="space-y-3 my-4">
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <span>⚠️</span> Đang có {deletingCustomer.linkedProjects.length} dự án liên kết với khách hàng này:
+                  </p>
+                  <ul className="mt-1.5 ml-4 list-disc space-y-0.5 max-h-28 overflow-y-auto font-medium">
+                    {deletingCustomer.linkedProjects.map(p => (
+                      <li key={p.id}>{p.name} ({p.year || '—'})</li>
+                    ))}
+                  </ul>
+                </div>
+                <p className="text-xs text-slate-600 font-medium">Vui lòng chọn hình thức xử lý khi xóa:</p>
+
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => confirmDeleteCustomer(false)}
+                    className="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 transition-all group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-[#0f172a] group-hover:text-blue-700">1. Gỡ liên kết & Giữ lại dự án</span>
+                      <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-semibold">An toàn (Khuyên dùng)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Xóa khách hàng, giữ lại các dự án và đặt thông tin khách hàng của dự án về trống.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => confirmDeleteCustomer(true)}
+                    className="w-full text-left p-3 rounded-xl border border-red-200 hover:border-red-500 hover:bg-red-50/50 transition-all group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-red-700">2. Xóa sạch khách hàng & Tất cả dự án</span>
+                      <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-semibold">Xóa triệt để</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Xóa vĩnh viễn khách hàng cùng toàn bộ {deletingCustomer.linkedProjects.length} dự án và task con bên trong.</p>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="my-4 text-xs text-slate-600 leading-relaxed">
+                Bạn có chắc chắn muốn xóa khách hàng <span className="font-bold text-[#0f172a]">"{deletingCustomer.name}"</span>? Hành động này không thể hoàn tác.
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCustomerDeleteModal(false);
+                  setDeletingCustomer(null);
+                }}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold transition-all"
+              >
+                Hủy
+              </button>
+              {deletingCustomer.linkedProjects.length === 0 && (
+                <button
+                  type="button"
+                  disabled={actionLoading}
+                  onClick={() => confirmDeleteCustomer(false)}
+                  className="bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50"
+                >
+                  Xóa khách hàng
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

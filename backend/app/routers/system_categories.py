@@ -385,10 +385,43 @@ def update_customer(id: int, body: dict, db: Session = Depends(get_db), _=Depend
     return c
 
 @router.delete("/customers/{id}")
-def delete_customer(id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+def delete_customer(id: int, cascade_projects: bool = False, db: Session = Depends(get_db), _=Depends(require_admin)):
+    from sqlalchemy import or_
+    from ..models.project import Project, project_members, ProjectLink
+    from ..models.phase import Phase
+    from ..models.task_group import TaskGroup
+
     c = db.query(Customer).filter(Customer.id == id).first()
     if not c:
         raise HTTPException(404, "Không tìm thấy khách hàng")
+
+    # Find associated projects
+    linked_projects = db.query(Project).filter(
+        or_(
+            Project.customer_id == id,
+            (Project.customer_name == c.name if c.name else False)
+        )
+    ).all()
+
+    if cascade_projects:
+        for p in linked_projects:
+            phases = db.query(Phase).filter(Phase.project_id == p.id).all()
+            phase_ids = [ph.id for ph in phases]
+            if phase_ids:
+                task_groups = db.query(TaskGroup).filter(TaskGroup.phase_id.in_(phase_ids)).all()
+                tg_ids = [tg.id for tg in task_groups]
+                if tg_ids:
+                    db.query(Task).filter(Task.task_group_id.in_(tg_ids)).delete(synchronize_session=False)
+                    db.query(TaskGroup).filter(TaskGroup.id.in_(tg_ids)).delete(synchronize_session=False)
+                db.query(Phase).filter(Phase.id.in_(phase_ids)).delete(synchronize_session=False)
+            db.query(ProjectLink).filter(ProjectLink.project_id == p.id).delete(synchronize_session=False)
+            db.execute(project_members.delete().where(project_members.c.project_id == p.id))
+            db.delete(p)
+    else:
+        for p in linked_projects:
+            p.customer_id = None
+            p.customer_name = None
+
     db.delete(c)
     db.commit()
     return {"message": "Đã xóa khách hàng thành công"}
