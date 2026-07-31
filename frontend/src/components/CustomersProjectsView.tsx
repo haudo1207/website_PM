@@ -63,6 +63,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     business: 'Infrastructure',
     pmIds: [] as number[],
     leaderIds: [] as number[],
+    salesIds: [] as number[],
     memberIds: [] as number[],
     currentPhase: '1. Tư vấn',
     status: 'Planning',
@@ -72,16 +73,19 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   // Modal searchable dropdown states
   const [modalPmDropdownOpen, setModalPmDropdownOpen] = useState(false);
   const [modalLeaderDropdownOpen, setModalLeaderDropdownOpen] = useState(false);
+  const [modalSalesDropdownOpen, setModalSalesDropdownOpen] = useState(false);
   const [modalMemberDropdownOpen, setModalMemberDropdownOpen] = useState(false);
   const [modalPhaseDropdownOpen, setModalPhaseDropdownOpen] = useState(false);
 
   const [modalPmSearch, setModalPmSearch] = useState('');
   const [modalLeaderSearch, setModalLeaderSearch] = useState('');
+  const [modalSalesSearch, setModalSalesSearch] = useState('');
   const [modalMemberSearch, setModalMemberSearch] = useState('');
 
   // Refs for clicking outside in modal
   const modalPmRef = React.useRef<HTMLDivElement>(null);
   const modalLeaderRef = React.useRef<HTMLDivElement>(null);
+  const modalSalesRef = React.useRef<HTMLDivElement>(null);
   const modalMemberRef = React.useRef<HTMLDivElement>(null);
   const modalPhaseRef = React.useRef<HTMLDivElement>(null);
 
@@ -97,6 +101,10 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         setModalLeaderDropdownOpen(false);
         setModalLeaderSearch('');
       }
+      if (modalSalesDropdownOpen && modalSalesRef.current && !modalSalesRef.current.contains(target)) {
+        setModalSalesDropdownOpen(false);
+        setModalSalesSearch('');
+      }
       if (modalMemberDropdownOpen && modalMemberRef.current && !modalMemberRef.current.contains(target)) {
         setModalMemberDropdownOpen(false);
         setModalMemberSearch('');
@@ -107,7 +115,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [modalPmDropdownOpen, modalLeaderDropdownOpen, modalMemberDropdownOpen, modalPhaseDropdownOpen]);
+  }, [modalPmDropdownOpen, modalLeaderDropdownOpen, modalSalesDropdownOpen, modalMemberDropdownOpen, modalPhaseDropdownOpen]);
 
   // Master phases state from settings
   const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
@@ -307,6 +315,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       business: activeBU === 'markee' ? 'Markee' : 'Infrastructure',
       pmIds: [],
       leaderIds: [],
+      salesIds: [],
       memberIds: [],
       currentPhase: '1. Tư vấn',
       status: 'Planning',
@@ -322,6 +331,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     // Safely extract multiple stakeholder IDs
     const pmIds = proj.pm_ids || (proj.pm_id ? [proj.pm_id] : []);
     const leaderIds = proj.technical_leader_ids || (proj.technical_leader_id ? [proj.technical_leader_id] : []);
+    const salesIds = proj.sales_ids || (proj.sales_id ? [proj.sales_id] : []);
     const memberIds = proj.member_ids || proj.members?.map((m: any) => m.id) || [];
 
     setProjectForm({
@@ -331,6 +341,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       business: proj.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure'),
       pmIds: pmIds.map(Number),
       leaderIds: leaderIds.map(Number),
+      salesIds: salesIds.map(Number),
       memberIds: memberIds.map(Number),
       currentPhase: proj.current_phase || '1. Tư vấn',
       status: proj.status || 'Planning',
@@ -366,6 +377,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         current_phase: projectForm.currentPhase,
         pm_ids: projectForm.pmIds,
         technical_leader_ids: projectForm.leaderIds,
+        sales_ids: projectForm.salesIds,
         member_ids: projectForm.memberIds
       };
 
@@ -917,6 +929,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                     setModalPhaseDropdownOpen(!modalPhaseDropdownOpen);
                     setModalPmDropdownOpen(false);
                     setModalLeaderDropdownOpen(false);
+                    setModalSalesDropdownOpen(false);
                     setModalMemberDropdownOpen(false);
                   }}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] flex items-center justify-between outline-none focus:border-blue-500 transition-all cursor-pointer text-left"
@@ -957,6 +970,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                   onClick={() => {
                     setModalPmDropdownOpen(!modalPmDropdownOpen);
                     setModalLeaderDropdownOpen(false);
+                    setModalSalesDropdownOpen(false);
                     setModalMemberDropdownOpen(false);
                     setModalPhaseDropdownOpen(false);
                   }}
@@ -1043,6 +1057,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                   onClick={() => {
                     setModalLeaderDropdownOpen(!modalLeaderDropdownOpen);
                     setModalPmDropdownOpen(false);
+                    setModalSalesDropdownOpen(false);
                     setModalMemberDropdownOpen(false);
                     setModalPhaseDropdownOpen(false);
                   }}
@@ -1120,6 +1135,93 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                 )}
               </div>
 
+              {/* Sales Multi-select */}
+              <div ref={modalSalesRef} className="space-y-1 relative">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  Sales
+                </label>
+                <div
+                  onClick={() => {
+                    setModalSalesDropdownOpen(!modalSalesDropdownOpen);
+                    setModalPmDropdownOpen(false);
+                    setModalLeaderDropdownOpen(false);
+                    setModalMemberDropdownOpen(false);
+                    setModalPhaseDropdownOpen(false);
+                  }}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
+                >
+                  <div className="flex flex-wrap gap-1 flex-1">
+                    {projectForm.salesIds.length === 0 ? (
+                      <span className="text-slate-400 px-1 py-0.5">Chọn Sales...</span>
+                    ) : (
+                      projectForm.salesIds.map(id => {
+                        const m = members.find(x => x.id === id);
+                        return (
+                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
+                            {m?.display_name || id}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setProjectForm({
+                                  ...projectForm,
+                                  salesIds: projectForm.salesIds.filter(x => x !== id)
+                                });
+                              }}
+                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+
+                {modalSalesDropdownOpen && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[220px] flex flex-col">
+                    <input
+                      type="text"
+                      value={modalSalesSearch}
+                      onChange={(e) => setModalSalesSearch(e.target.value)}
+                      placeholder="Tìm kiếm Sales..."
+                      className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
+                    />
+                    <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[140px]">
+                      {members
+                        .filter(u => u.display_name?.toLowerCase().includes(modalSalesSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalSalesSearch.toLowerCase()))
+                        .map((u) => {
+                          const isSelected = projectForm.salesIds.includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                setProjectForm({
+                                  ...projectForm,
+                                  salesIds: isSelected
+                                    ? projectForm.salesIds.filter(id => id !== u.id)
+                                    : [...projectForm.salesIds, u.id]
+                                });
+                              }}
+                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
+                                isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
+                              }`}
+                            >
+                              <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                              {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Members Multi-select */}
               <div ref={modalMemberRef} className="space-y-1 relative">
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1130,6 +1232,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                     setModalMemberDropdownOpen(!modalMemberDropdownOpen);
                     setModalPmDropdownOpen(false);
                     setModalLeaderDropdownOpen(false);
+                    setModalSalesDropdownOpen(false);
                     setModalPhaseDropdownOpen(false);
                   }}
                   className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
