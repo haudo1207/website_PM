@@ -56,6 +56,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
   // Project Modal state
   const [showProjectModal, setShowProjectModal] = useState(false);
+  const [showProjectDeleteModal, setShowProjectDeleteModal] = useState(false);
+  const [deletingProject, setDeletingProject] = useState<any | null>(null);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
   const [projectForm, setProjectForm] = useState({
@@ -419,25 +421,24 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     }
   };
 
-  const handleDeleteProjectClick = async (proj: any) => {
-    if (!isSuperAdmin()) {
-      alert('Chỉ Super Admin mới có quyền xóa dự án!');
+  const handleDeleteProjectClick = (proj: any) => {
+    if (!isAdmin()) {
+      alert('Bạn không có quyền thực hiện thao tác xóa dự án!');
       return;
     }
-    if (proj.phase_count > 0 || proj.task_count > 0) {
-      alert(`Không thể xóa dự án "${proj.name}" vì vẫn còn các phase hoặc task bên trong. Hãy dọn dẹp dự án trước.`);
-      return;
-    }
+    setDeletingProject(proj);
+    setShowProjectDeleteModal(true);
+  };
 
-    if (!confirm(`Bạn có chắc chắn muốn xóa dự án "${proj.name}"? Hành động này không thể hoàn tác.`)) {
-      return;
-    }
-
+  const confirmDeleteProject = async () => {
+    if (!deletingProject) return;
     setActionLoading(true);
     try {
-      await deleteProject(proj.id);
-      onFlash('Đã xóa dự án thành công');
-      reloadProjects();
+      await deleteProject(deletingProject.id);
+      onFlash(`Đã xóa dự án "${deletingProject.name}" thành công`);
+      setShowProjectDeleteModal(false);
+      setDeletingProject(null);
+      await loadData();
     } catch (err: any) {
       onFlash('Lỗi xóa dự án: ' + (err.response?.data?.detail || err.message), true);
     } finally {
@@ -792,7 +793,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                         >
                           {isArchived ? 'Mở lại' : 'Archive'}
                         </button>
-                        {isSuperAdmin() && (
+                        {isAdmin() && (
                           <button
                             onClick={() => handleDeleteProjectClick(proj)}
                             className="text-[10px] text-red-600 hover:underline font-semibold"
@@ -1427,6 +1428,68 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                   Xóa khách hàng
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* PROJECT DELETE CONFIRMATION MODAL */}
+      {/* ============================================================== */}
+      {showProjectDeleteModal && deletingProject && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 text-red-600 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center font-bold text-lg">🗑️</div>
+              <div>
+                <h3 className="text-base font-bold text-[#0f172a]">Xác nhận xóa Dự án</h3>
+                <p className="text-xs text-slate-500 font-semibold">{deletingProject.name}</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 my-4">
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 leading-relaxed">
+                <p className="font-bold flex items-center gap-1.5 mb-1 text-red-700">
+                  <span>⚠️</span> Cảnh báo hành động không thể hoàn tác!
+                </p>
+                Xóa dự án này sẽ tự động xóa triệt để toàn bộ các Phase, Nhóm nhiệm vụ, Task con, Thành viên liên kết và Lịch họp bên trong dự án.
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                <div>
+                  <span className="block text-[10px] uppercase font-bold text-slate-400">Phase</span>
+                  <span className="text-xs font-bold text-slate-700">{deletingProject.phase_count || 0}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase font-bold text-slate-400">Tasks</span>
+                  <span className="text-xs font-bold text-slate-700">{deletingProject.task_count || 0}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase font-bold text-slate-400">Thành viên</span>
+                  <span className="text-xs font-bold text-slate-700">{deletingProject.members?.length || 0}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProjectDeleteModal(false);
+                  setDeletingProject(null);
+                }}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold transition-all"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={confirmDeleteProject}
+                className="bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50"
+              >
+                Xóa vĩnh viễn dự án
+              </button>
             </div>
           </div>
         </div>
