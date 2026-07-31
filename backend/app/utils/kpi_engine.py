@@ -118,6 +118,7 @@ def calc_kpi_base(priority_kpi: int, manday_est) -> Decimal:
         return Decimal("0")
 
 
+
 def calc_kpi_perform(days_late, kpi_base, manday_est, manday_actual, priority_name: str, remark: str = None):
     """
     5.20: KPI Perform — depends on Days Late.
