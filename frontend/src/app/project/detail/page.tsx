@@ -1885,17 +1885,10 @@ function ProjectDetailContent() {
       }
 
       // KPI ratio
-      // KPI Ratio: default 90/10, auto 100/0 if no support
-      const hasSupport = !!payload.support_id;
-      const kpiRatio = newForm['KPI RATIO'] || (hasSupport ? '90/10' : '100/0');
+      const kpiRatio = newForm['KPI RATIO'] || '90/10';
       const parts = kpiRatio.split('/');
-      if (!hasSupport) {
-        payload.kpi_ratio_assign = 100;
-        payload.kpi_ratio_support = 0;
-      } else {
-        payload.kpi_ratio_assign = parseInt(parts[0], 10) || 90;
-        payload.kpi_ratio_support = parseInt(parts[1], 10) || 10;
-      }
+      payload.kpi_ratio_assign = parseInt(parts[0], 10) || 90;
+      payload.kpi_ratio_support = parseInt(parts[1], 10) || 10;
 
       await createTask(addingTaskGroupId, payload);
       setAddingTaskGroupId(null);
@@ -2181,7 +2174,7 @@ function ProjectDetailContent() {
       const parentCode = afterCode ? (getParentCode(afterCode) || null) : null;
       setAddingTaskParentCode(parentCode);
       setAddingTaskAfterCode(afterCode);
-      const todayStr = fromPickerDate(new Date().toISOString().split('T')[0]);
+      const todayStr = toPickerDate(new Date().toISOString());
       const initialForm: Record<string, string> = {};
       dynamicCols.forEach(col => {
         const colUpper = col.toUpperCase().trim();
@@ -2189,10 +2182,10 @@ function ProjectDetailContent() {
           initialForm[col] = 'Waiting';
         } else if (colUpper === 'PRIORITY') {
           initialForm[col] = 'Normal';
-        } else if (colUpper === 'START DATE') {
+        } else if (colUpper.includes('START DATE') || colUpper === 'START') {
           initialForm[col] = todayStr;
         } else if (colUpper === 'KPI RATIO') {
-          initialForm[col] = '100/0';
+          initialForm[col] = '90/10';
         } else if (colUpper === 'MANDAY EST') {
           initialForm[col] = '1.0';
         } else {
@@ -2248,6 +2241,8 @@ function ProjectDetailContent() {
         setEditValue(task.skill_solution_id ? String(task.skill_solution_id) : '');
       } else if (colUpper === 'SKILL VENDOR') {
         setEditValue(task.skill_vendor_id ? String(task.skill_vendor_id) : '');
+      } else if (colUpper === 'LINK') {
+        setEditValue('');
       } else {
         setEditValue(currentVal);
       }
@@ -2350,7 +2345,7 @@ function ProjectDetailContent() {
                 const dynamicCols = getDynamicColumns();
                 const initialForm: Record<string, string> = {};
                 dynamicCols.forEach(col => { initialForm[col] = ''; });
-                const todayStr = fromPickerDate(new Date().toISOString().split('T')[0]);
+                const todayStr = toPickerDate(new Date().toISOString());
                 const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
                 if (statusCol) initialForm[statusCol] = 'Waiting';
                 const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
@@ -2358,9 +2353,11 @@ function ProjectDetailContent() {
                 const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
                 if (startDateCol) initialForm[startDateCol] = todayStr;
                 const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
-                if (kpiRatioCol) initialForm[kpiRatioCol] = '100/0';
+                if (kpiRatioCol) initialForm[kpiRatioCol] = '90/10';
                 const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
                 if (mandayCol) initialForm[mandayCol] = '1.0';
+                console.log('Today string:', todayStr);
+                console.log('Initial form START DATE:', startDateCol ? initialForm[startDateCol] : undefined);
                 setNewForm(initialForm);
               }}
               className="flex items-center justify-center w-5 h-5 hover:bg-blue-100 rounded text-blue-500 font-bold text-[12px]"
@@ -2380,7 +2377,7 @@ function ProjectDetailContent() {
                 const dynamicCols = getDynamicColumns();
                 const initialForm: Record<string, string> = {};
                 dynamicCols.forEach(col => { initialForm[col] = ''; });
-                const todayStr = fromPickerDate(new Date().toISOString().split('T')[0]);
+                const todayStr = toPickerDate(new Date().toISOString());
                 const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
                 if (statusCol) initialForm[statusCol] = 'Waiting';
                 const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
@@ -2388,9 +2385,11 @@ function ProjectDetailContent() {
                 const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
                 if (startDateCol) initialForm[startDateCol] = todayStr;
                 const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
-                if (kpiRatioCol) initialForm[kpiRatioCol] = '100/0';
+                if (kpiRatioCol) initialForm[kpiRatioCol] = '90/10';
                 const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
                 if (mandayCol) initialForm[mandayCol] = '1.0';
+                console.log('Today string:', todayStr);
+                console.log('Initial form START DATE:', startDateCol ? initialForm[startDateCol] : undefined);
                 setNewForm(initialForm);
               }}
               className="flex items-center justify-center w-5 h-5 hover:bg-emerald-100 rounded text-emerald-600 font-bold text-[12px]"
@@ -2570,32 +2569,15 @@ function ProjectDetailContent() {
                 .flatMap(c => c.groups || []);
 
               return (
-                <td key={col} className="px-2 py-1 min-w-[150px]">
-                  <select
-                    value={editValue}
-                    autoFocus
-                    onChange={e => setEditValue(e.target.value)}
-                    onBlur={e => handleCellSave(task.id, col, e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleCellSave(task.id, col, e.currentTarget.value);
-                      } else if (e.key === 'Tab') {
-                        e.preventDefault();
-                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
-                        handleCellSave(task.id, col, e.currentTarget.value, act);
-                      } else if (e.key === 'Escape') {
-                        setEditingCell(null);
-                      }
-                    }}
-                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
-                  >
-                    <option value="">-- Chọn Group --</option>
-                    {activeGroups.map((g: any) => (
-                      <option key={g.id} value={g.id}>{g.name}</option>
-                    ))}
-                  </select>
-                </td>
+                <CategorySearchCell
+                  key={col}
+                  col={col}
+                  items={activeGroups}
+                  editValue={editValue}
+                  placeholder="Tìm Group..."
+                  onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
+                  onCancel={() => setEditingCell(null)}
+                />
               );
             }
 
@@ -2619,32 +2601,15 @@ function ProjectDetailContent() {
               }
 
               return (
-                <td key={col} className="px-2 py-1 min-w-[150px]">
-                  <select
-                    value={editValue}
-                    autoFocus
-                    onChange={e => setEditValue(e.target.value)}
-                    onBlur={e => handleCellSave(task.id, col, e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleCellSave(task.id, col, e.currentTarget.value);
-                      } else if (e.key === 'Tab') {
-                        e.preventDefault();
-                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
-                        handleCellSave(task.id, col, e.currentTarget.value, act);
-                      } else if (e.key === 'Escape') {
-                        setEditingCell(null);
-                      }
-                    }}
-                    className="w-full bg-white border border-[#0058be] rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-semibold"
-                  >
-                    <option value="">-- Chọn Skill --</option>
-                    {availableSkills.map((s: any) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </td>
+                <CategorySearchCell
+                  key={col}
+                  col={col}
+                  items={availableSkills}
+                  editValue={editValue}
+                  placeholder="Tìm Skill..."
+                  onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
+                  onCancel={() => setEditingCell(null)}
+                />
               );
             }
 
@@ -2683,34 +2648,84 @@ function ProjectDetailContent() {
             }
 
             if (colUpper === 'LINK') {
+              const currentLinks = (task.link || task.ticket_id || '').split('\n').filter(Boolean);
+              
               return (
                 <td key={col} className="px-2 py-1 min-w-[320px]">
-                  <textarea
-                    value={editValue}
-                    autoFocus
-                    onChange={e => setEditValue(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleCellSave(task.id, col, editValue);
-                      } else if (e.key === 'Tab') {
-                        e.preventDefault();
-                        const act = e.shiftKey ? 'ShiftTab' : 'Tab';
-                        handleCellSave(task.id, col, editValue, act);
-                      } else if (e.key === 'Escape') {
-                        setEditingCell(null);
-                      }
-                    }}
-                    onBlur={() => handleCellSave(task.id, col, editValue)}
-                    ref={el => {
-                      if (el) {
-                        el.style.height = 'auto';
-                        el.style.height = el.scrollHeight + 'px';
-                      }
-                    }}
-                    className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none resize-none overflow-hidden min-h-[60px] h-auto whitespace-pre-wrap break-words leading-relaxed"
-                    placeholder="Dán các link vào đây, mỗi link một dòng..."
-                  />
+                  <div className="flex flex-col gap-1.5">
+                    {currentLinks.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        {currentLinks.map((link: string, idx: number) => {
+                          const isUrl = /^https?:\/\//i.test(link);
+                          let label = link;
+                          if (isUrl) {
+                              try {
+                                  const u = new URL(link);
+                                  const host = u.hostname.replace('www.', '');
+                                  if (host.includes('docs.google.com')) label = 'Google Docs';
+                                  else if (host.includes('figma.com')) label = 'Figma Design';
+                                  else if (host.includes('drive.google.com')) label = 'Google Drive';
+                                  else if (host.includes('github.com')) label = 'GitHub';
+                                  else if (host.includes('jira')) label = 'Jira Ticket';
+                                  else if (host.includes('notion')) label = 'Notion Page';
+                                  else if (host.includes('confluence')) label = 'Confluence';
+                                  else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
+                              } catch {}
+                          }
+                          return (
+                            <div key={idx} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden opacity-75">
+                              <span className="px-2 py-0.5 max-w-[160px] truncate" title={link}>
+                                🔗 {label}
+                              </span>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const newLinks = currentLinks.filter((_: string, i: number) => i !== idx);
+                                  handleCellSave(task.id, col, newLinks.join('\n'));
+                                }}
+                                className="px-1 py-0.5 hover:bg-blue-200 text-blue-500 transition-colors"
+                                title="Xóa link"
+                              >
+                                &times;
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <input
+                      type="text"
+                      value={editValue}
+                      autoFocus
+                      onChange={e => setEditValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const newLink = editValue.trim();
+                          if (newLink) {
+                            const newLinks = [...currentLinks, newLink];
+                            handleCellSave(task.id, col, newLinks.join('\n'));
+                          } else {
+                            setEditingCell(null);
+                          }
+                        } else if (e.key === 'Escape') {
+                          setEditingCell(null);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (editValue.trim()) {
+                           const newLinks = [...currentLinks, editValue.trim()];
+                           handleCellSave(task.id, col, newLinks.join('\n'));
+                        } else {
+                           setEditingCell(null);
+                        }
+                      }}
+                      className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none"
+                      placeholder="Dán link mới và nhấn Enter..."
+                    />
+                  </div>
                 </td>
               );
             }
@@ -7147,6 +7162,110 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
                 >
                   <span>{m.display_name}</span>
                   <span className="text-[10px] text-slate-400 font-mono font-normal">{m.email?.split('@')[0]}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </td>
+  );
+}
+
+interface CategorySearchCellProps {
+  col: string;
+  items: any[];
+  editValue: string;
+  placeholder: string;
+  onSaveWithAction: (val: string, action?: 'Enter' | 'Tab' | 'ShiftTab') => void;
+  onCancel: () => void;
+}
+
+function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithAction, onCancel }: CategorySearchCellProps) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isOpen, setIsOpen] = useState(true);
+  const containerRef = useRef<HTMLTableDataCellElement>(null);
+
+  useEffect(() => {
+    const currentItem = items.find(m => String(m.id) === String(editValue));
+    if (currentItem) {
+      setSearchTerm(currentItem.name || '');
+    }
+  }, [editValue, items]);
+
+  const filteredItems = items.filter(m => {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return true;
+    return (m.name || '').toLowerCase().includes(term);
+  });
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        onCancel();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [onCancel]);
+
+  const handleSelect = (itemId: number, action?: 'Enter' | 'Tab' | 'ShiftTab') => {
+    onSaveWithAction(String(itemId), action);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredItems.length > 0) {
+        handleSelect(filteredItems[0].id);
+      } else {
+        onSaveWithAction('');
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const action = e.shiftKey ? 'ShiftTab' : 'Tab';
+      if (filteredItems.length > 0) {
+        handleSelect(filteredItems[0].id, action);
+      } else {
+        onSaveWithAction('', action);
+      }
+    } else if (e.key === 'Escape') {
+      onCancel();
+    }
+  };
+
+  return (
+    <td key={col} className="px-2 py-1 min-w-[150px] relative" ref={containerRef}>
+      <div className="relative">
+        <input
+          type="text"
+          value={searchTerm}
+          placeholder={placeholder}
+          autoFocus
+          onChange={e => setSearchTerm(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="w-full bg-white border border-[#0058be] rounded px-2 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
+        />
+        {isOpen && (
+          <div className="absolute left-0 right-0 mt-1 max-h-[160px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
+            <div
+              onClick={() => onSaveWithAction('')}
+              className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
+            >
+              -- Không gán --
+            </div>
+            {filteredItems.length === 0 ? (
+              <div className="px-2.5 py-1.5 text-xs text-slate-400 italic">Không tìm thấy</div>
+            ) : (
+              filteredItems.map((m: any) => (
+                <div
+                  key={m.id}
+                  onClick={() => handleSelect(m.id)}
+                  className="px-2.5 py-1.5 text-xs text-slate-700 hover:bg-[#eff4ff] hover:text-[#0058be] cursor-pointer font-semibold transition-colors flex items-center justify-between"
+                >
+                  <span>{m.name}</span>
                 </div>
               ))
             )}
