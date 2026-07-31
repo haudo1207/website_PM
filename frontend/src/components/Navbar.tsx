@@ -270,8 +270,8 @@ function NavbarContent() {
         {/* Projects Tree Section */}
         <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <Link href="/customers" className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors" title="Mở trang Quản lý Khách hàng">
-              CUSTOMERS
+            <Link href="/customers" className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors flex items-center gap-1.5" title="Mở trang Quản lý Khách hàng">
+              <span>🏢</span> CUSTOMERS
             </Link>
           </div>
 
@@ -384,8 +384,8 @@ function NavbarContent() {
         {/* Mobile Projects Tree Section */}
         <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
           <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <Link href="/customers" onClick={() => setMobileMenuOpen(false)} className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors" title="Mở trang Quản lý Khách hàng">
-              CUSTOMERS
+            <Link href="/customers" onClick={() => setMobileMenuOpen(false)} className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors flex items-center gap-1.5" title="Mở trang Quản lý Khách hàng">
+              <span>🏢</span> CUSTOMERS
             </Link>
           </div>
 

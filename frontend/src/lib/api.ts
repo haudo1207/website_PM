@@ -177,6 +177,7 @@ export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.d
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
 export const updateMember = (id: number, data: object) => api.put(`/members/${id}`, data).then(r => r.data);
 export const deleteMember = (id: number) => api.delete(`/members/${id}`).then(r => r.data);
+export const syncFromRecruitment = () => api.post('/members/sync-from-recruitment').then(r => r.data);
 
 // Customers
 export const getCustomers = (businessUnit?: string) =>
@@ -185,7 +186,8 @@ export const createCustomer = (data: { name: string; description?: string; busin
   api.post('/system-categories/customers', data).then(r => r.data);
 export const updateCustomer = (id: number, data: { name: string; description?: string; business_unit?: string }) =>
   api.put(`/system-categories/customers/${id}`, data).then(r => r.data);
-export const deleteCustomer = (id: number) => api.delete(`/system-categories/customers/${id}`).then(r => r.data);
+export const deleteCustomer = (id: number, cascadeProjects: boolean = false) => 
+  api.delete(`/system-categories/customers/${id}`, { params: { cascade_projects: cascadeProjects } }).then(r => r.data);
 
 // Lunch Records
 export const getLunchRecords = (params?: { date?: string; member_id?: number }) =>

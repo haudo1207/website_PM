@@ -142,6 +142,26 @@ def apply_schema_updates():
             WHERE customer_id IN (SELECT id FROM customers WHERE LOWER(business_unit) = 'markee')
         """))
 
+        # Add sales_id to projects
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS sales_id INTEGER"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'projects_sales_id_fkey'
+                      AND conrelid = 'projects'::regclass
+                ) THEN
+                    ALTER TABLE projects
+                    ADD CONSTRAINT projects_sales_id_fkey
+                    FOREIGN KEY (sales_id) REFERENCES members(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_sales_id ON projects (sales_id)"))
+
         # Add remark_type and description to performance_settings
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))
@@ -164,7 +184,10 @@ def apply_schema_updates():
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Critical', 20, '🔴 Đỏ') ON CONFLICT (name) DO NOTHING"))
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Interrupt', 25, '🟣 Tím') ON CONFLICT (name) DO NOTHING"))
 
-apply_schema_updates()
+try:
+    apply_schema_updates()
+except Exception as e:
+    print(f"[!] Schema updates notice: {e}")
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -638,8 +661,11 @@ def init_db_defaults():
     finally:
         db.close()
 
-# Run database auto-seeding
-init_db_defaults()
+# Run database auto-seeding safely
+try:
+    init_db_defaults()
+except Exception as e:
+    print(f"[!] Database defaults notice: {e}")
 
 
 app = FastAPI(
@@ -692,12 +718,13 @@ async def start_auto_sync_loop():
         from .database import SessionLocal
         from .services.meeting_sync import auto_sync_all_ended_meetings
         while True:
+            db = SessionLocal()
             try:
-                db = SessionLocal()
-                auto_sync_all_ended_meetings(db)
-                db.close()
+                await asyncio.to_thread(auto_sync_all_ended_meetings, db)
             except Exception as e:
                 pass
+            finally:
+                db.close()
             await asyncio.sleep(60)
 
     asyncio.create_task(_loop())
