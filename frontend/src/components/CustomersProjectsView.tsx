@@ -182,7 +182,11 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   // All projects belonging to the selected customer
   const customerProjects = useMemo(() => {
     if (!selectedCustomerId || !selectedCustomer) return [];
-    return projects.filter(p => p.customer_id === selectedCustomerId);
+    const custName = (selectedCustomer.name || '').trim().toLowerCase();
+    return projects.filter(p => 
+      p.customer_id === selectedCustomerId ||
+      (p.customer_name && p.customer_name.trim().toLowerCase() === custName)
+    );
   }, [projects, selectedCustomerId, selectedCustomer]);
 
   // Computed distinct years for selected customer

@@ -285,6 +285,22 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == cust_id).first()
         if c_obj:
             cust_name = c_obj.name
+            # If business == "All", ensure customer exists in both Business Units
+            if biz_val == "All" and c_obj.name:
+                curr_bu = (c_obj.business_unit or "infrastructure").lower()
+                other_bu = "markee" if curr_bu == "infrastructure" else "infrastructure"
+                other_c = db.query(DB_Customer).filter(
+                    DB_Customer.name.ilike(c_obj.name.strip()),
+                    DB_Customer.business_unit == other_bu
+                ).first()
+                if not other_c:
+                    other_c = DB_Customer(
+                        name=c_obj.name.strip(),
+                        description=c_obj.description,
+                        business_unit=other_bu
+                    )
+                    db.add(other_c)
+                    db.flush()
 
     p = Project(
         name=body.get("name", "").strip(),
@@ -457,6 +473,26 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()
         if c_obj:
             p.customer_name = c_obj.name
+
+    # If project business is "All", ensure customer is synced across both Business Units
+    if p.business == "All" and p.customer_name:
+        from ..models.system_category import Customer as DB_Customer
+        c_obj = db.query(DB_Customer).filter(DB_Customer.name.ilike(p.customer_name.strip())).first()
+        if c_obj:
+            curr_bu = (c_obj.business_unit or "infrastructure").lower()
+            other_bu = "markee" if curr_bu == "infrastructure" else "infrastructure"
+            other_c = db.query(DB_Customer).filter(
+                DB_Customer.name.ilike(p.customer_name.strip()),
+                DB_Customer.business_unit == other_bu
+            ).first()
+            if not other_c:
+                other_c = DB_Customer(
+                    name=p.customer_name.strip(),
+                    description=c_obj.description,
+                    business_unit=other_bu
+                )
+                db.add(other_c)
+                db.flush()
     if "data_scope" in body:
         requested_scope = str(body["data_scope"]).strip().lower()
         if requested_scope not in VALID_DATA_SCOPES:
