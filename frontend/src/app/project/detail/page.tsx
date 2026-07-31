@@ -431,6 +431,7 @@ function ProjectDetailContent() {
 
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
+  const [selectedSales, setSelectedSales] = useState<number[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
   const [savingProject, setSavingProject] = useState(false);
 
@@ -448,17 +449,20 @@ function ProjectDetailContent() {
   const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
   const [pmDropdownOpen, setPmDropdownOpen] = useState(false);
   const [leaderDropdownOpen, setLeaderDropdownOpen] = useState(false);
+  const [salesDropdownOpen, setSalesDropdownOpen] = useState(false);
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
 
   const [customerSearch, setCustomerSearch] = useState('');
   const [pmSearch, setPmSearch] = useState('');
   const [leaderSearch, setLeaderSearch] = useState('');
+  const [salesSearch, setSalesSearch] = useState('');
   const [memberSearch, setMemberSearch] = useState('');
 
   const customerRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<HTMLDivElement>(null);
   const pmRef = useRef<HTMLDivElement>(null);
   const leaderRef = useRef<HTMLDivElement>(null);
+  const salesRef = useRef<HTMLDivElement>(null);
   const memberRef = useRef<HTMLDivElement>(null);
   const [addMemberDropdownOpen, setAddMemberDropdownOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState('');
@@ -689,6 +693,10 @@ function ProjectDetailContent() {
         setLeaderDropdownOpen(false);
         setLeaderSearch('');
       }
+      if (salesDropdownOpen && salesRef.current && !salesRef.current.contains(target)) {
+        setSalesDropdownOpen(false);
+        setSalesSearch('');
+      }
       if (memberDropdownOpen && memberRef.current && !memberRef.current.contains(target)) {
         setMemberDropdownOpen(false);
         setMemberSearch('');
@@ -700,7 +708,7 @@ function ProjectDetailContent() {
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, memberDropdownOpen, addMemberDropdownOpen]);
+  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, salesDropdownOpen, memberDropdownOpen, addMemberDropdownOpen]);
 
   const handleUpdateProject = async () => {
     if (!editProjectName.trim()) {
@@ -719,6 +727,7 @@ function ProjectDetailContent() {
         current_phase: editCurrentPhase.trim(),
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
+        sales_ids: selectedSales,
         member_ids: selectedMembers
       });
       setProject(updated);
@@ -3776,6 +3785,7 @@ value={editValue}
 
                         setSelectedPms(project.pm_ids || (project.pm_id ? [project.pm_id] : []));
                         setSelectedLeaders(project.technical_leader_ids || (project.technical_leader_id ? [project.technical_leader_id] : []));
+                        setSelectedSales(project.sales_ids || (project.sales_id ? [project.sales_id] : []));
                         setSelectedMembers(project.member_ids || []);
 
                         setShowEditProjectModal(true);
@@ -6158,6 +6168,7 @@ value={editValue}
                       setCustomerDropdownOpen(!customerDropdownOpen);
                       setPmDropdownOpen(false);
                       setLeaderDropdownOpen(false);
+                      setSalesDropdownOpen(false);
                       setMemberDropdownOpen(false);
                       setPhaseDropdownOpen(false);
                     }}
@@ -6229,6 +6240,7 @@ value={editValue}
                       setCustomerDropdownOpen(false);
                       setPmDropdownOpen(false);
                       setLeaderDropdownOpen(false);
+                      setSalesDropdownOpen(false);
                       setMemberDropdownOpen(false);
                     }}
                     className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left font-semibold"
@@ -6275,6 +6287,7 @@ value={editValue}
                   onClick={() => {
                     setPmDropdownOpen(!pmDropdownOpen);
                     setLeaderDropdownOpen(false);
+                    setSalesDropdownOpen(false);
                     setMemberDropdownOpen(false);
                     setCustomerDropdownOpen(false);
                     setPhaseDropdownOpen(false);
@@ -6357,6 +6370,7 @@ value={editValue}
                   onClick={() => {
                     setLeaderDropdownOpen(!leaderDropdownOpen);
                     setPmDropdownOpen(false);
+                    setSalesDropdownOpen(false);
                     setMemberDropdownOpen(false);
                     setCustomerDropdownOpen(false);
                     setPhaseDropdownOpen(false);
@@ -6416,6 +6430,89 @@ value={editValue}
                                   setSelectedLeaders(selectedLeaders.filter(id => id !== u.id));
                                 } else {
                                   setSelectedLeaders([...selectedLeaders, u.id]);
+                                }
+                              }}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
+                            >
+                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Sales Selection */}
+              <div ref={salesRef} className="space-y-1 relative">
+                <label className="text-[11px] font-semibold text-[#565e74] block">
+                  Sales
+                </label>
+                <div
+                  onClick={() => {
+                    setSalesDropdownOpen(!salesDropdownOpen);
+                    setPmDropdownOpen(false);
+                    setLeaderDropdownOpen(false);
+                    setMemberDropdownOpen(false);
+                    setCustomerDropdownOpen(false);
+                    setPhaseDropdownOpen(false);
+                  }}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
+                >
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {selectedSales.length === 0 ? (
+                      <span className="text-[#727785] px-2 py-0.5">Chọn Sales...</span>
+                    ) : (
+                      selectedSales.map(id => {
+                        const m = membersList.find(x => x.id === id);
+                        return (
+                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
+                            {m?.display_name || id}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedSales(selectedSales.filter(x => x !== id));
+                              }}
+                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
+                </div>
+
+                {salesDropdownOpen && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
+                  >
+                    <input
+                      type="text"
+                      value={salesSearch}
+                      onChange={(e) => setSalesSearch(e.target.value)}
+                      placeholder="Tìm kiếm Sales..."
+                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
+                    />
+                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
+                      {membersList
+                        .filter(u => u.display_name?.toLowerCase().includes(salesSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(salesSearch.toLowerCase()))
+                        .map((u) => {
+                          const isSelected = selectedSales.includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedSales(selectedSales.filter(id => id !== u.id));
+                                } else {
+                                  setSelectedSales([...selectedSales, u.id]);
                                 }
                               }}
                               className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
