@@ -272,7 +272,9 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     requested_scope = str(body.get("data_scope") or default_scope).strip().lower()
     if requested_scope not in VALID_DATA_SCOPES:
         raise HTTPException(400, "Invalid data scope.")
-    if user_scope(current_user) != ALL_SCOPE:
+    if biz_val == "All":
+        requested_scope = "all"
+    elif user_scope(current_user) != ALL_SCOPE:
         requested_scope = user_scope(current_user)
     project_code = body.get("project_code") or body.get("code")
     if project_code and db.query(Project.id).filter(Project.code == project_code).first():
@@ -497,7 +499,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         requested_scope = str(body["data_scope"]).strip().lower()
         if requested_scope not in VALID_DATA_SCOPES:
             raise HTTPException(400, "Invalid data scope.")
-        if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) != ROLE_SUPER_ADMIN:
+        if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) not in {"super_admin", "admin", "leader"}:
             raise HTTPException(403, "Only full-scope users can change project scope.")
         p.data_scope = requested_scope
 
