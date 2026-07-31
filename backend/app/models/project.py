@@ -16,7 +16,7 @@ project_members = Table(
     Column('id', Integer, primary_key=True, autoincrement=True),
     Column('project_id', Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False, index=True),
     Column('member_id', Integer, ForeignKey('members.id', ondelete='CASCADE'), nullable=False, index=True),
-    Column('role', String(50), default='Member'),  # PM / Leader / Member
+    Column('role', String(50), default='Member'),  # PM / Leader / Member / Sales
 )
 
 
@@ -46,6 +46,7 @@ class Project(Base):
     year                  = Column(Integer, nullable=True, index=True)
     pm_id                 = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, index=True)
     technical_leader_id   = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, index=True)
+    sales_id              = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, index=True)
     description           = Column(Text, nullable=True)
     status                = Column(String(50), default="Planning")  # Planning / Developing / Completed / Archived
     current_phase         = Column(String(100), nullable=True, default="1. Tư vấn")
@@ -64,6 +65,7 @@ class Project(Base):
     # Relationships
     pm_member             = relationship("Member", foreign_keys=[pm_id], lazy="select")
     technical_leader      = relationship("Member", foreign_keys=[technical_leader_id], lazy="select")
+    sales_member          = relationship("Member", foreign_keys=[sales_id], lazy="select")
     customer              = relationship("Customer", foreign_keys=[customer_id], lazy="select")
     phases                = relationship("Phase", back_populates="project", lazy="select", order_by="Phase.sort_order")
     links                 = relationship("ProjectLink", back_populates="project", lazy="select", order_by="ProjectLink.sort_order")

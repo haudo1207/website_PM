@@ -78,6 +78,11 @@ def serialize_project(p, db):
     leader_ids = [m.id for m in leaders]
     leader_names = ", ".join([m.display_name for m in leaders])
 
+    # Fetch Sales
+    sales = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Sales").all()
+    sales_ids = [m.id for m in sales]
+    sales_names = ", ".join([m.display_name for m in sales])
+
     # Fetch Members
     members = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Member").all()
     member_ids = [m.id for m in members]
@@ -108,6 +113,9 @@ def serialize_project(p, db):
         "technical_leader_id": p.technical_leader_id,
         "technical_leader_name": leader_names if leader_names else None,
         "technical_leader_ids": leader_ids,
+        "sales_id": p.sales_id,
+        "sales_name": sales_names if sales_names else None,
+        "sales_ids": sales_ids,
         "member_ids": member_ids,
         "member_names": member_names,
         "description": p.description,
@@ -132,6 +140,7 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
     """Serialize a project using list-level data loaded in a few batch queries."""
     pms = role_members.get("PM", [])
     leaders = role_members.get("Leader", [])
+    sales = role_members.get("Sales", [])
     members = role_members.get("Member", [])
     task_count, completed_task_count, warning_task_count = task_stats
 
@@ -151,6 +160,9 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "technical_leader_id": p.technical_leader_id,
         "technical_leader_name": ", ".join(m[1] for m in leaders) or None,
         "technical_leader_ids": [m[0] for m in leaders],
+        "sales_id": p.sales_id,
+        "sales_name": ", ".join(m[1] for m in sales) or None,
+        "sales_ids": [m[0] for m in sales],
         "member_ids": [m[0] for m in members],
         "member_names": ", ".join(m[1] for m in members),
         "description": p.description,
@@ -298,6 +310,10 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     if body.get("technical_leader_id") and not technical_leader_ids:
         technical_leader_ids = [body.get("technical_leader_id")]
 
+    sales_ids = body.get("sales_ids", [])
+    if body.get("sales_id") and not sales_ids:
+        sales_ids = [body.get("sales_id")]
+
     member_ids = body.get("member_ids", [])
 
     # Set single fallback values for backward compatibility
@@ -305,6 +321,8 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         p.pm_id = pm_ids[0]
     if technical_leader_ids:
         p.technical_leader_id = technical_leader_ids[0]
+    if sales_ids:
+        p.sales_id = sales_ids[0]
 
     db.add(p)
     try:
@@ -352,6 +370,10 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         if m_id and (m_id, "Leader") not in inserted:
             db.execute(project_members.insert().values(project_id=p.id, member_id=m_id, role="Leader"))
             inserted.add((m_id, "Leader"))
+    for m_id in sales_ids:
+        if m_id and (m_id, "Sales") not in inserted:
+            db.execute(project_members.insert().values(project_id=p.id, member_id=m_id, role="Sales"))
+            inserted.add((m_id, "Sales"))
     for m_id in member_ids:
         if m_id and (m_id, "Member") not in inserted:
             db.execute(project_members.insert().values(project_id=p.id, member_id=m_id, role="Member"))
@@ -471,6 +493,19 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             p.technical_leader_id = body["technical_leader_id"]
             tl_ids = [body["technical_leader_id"]] if body["technical_leader_id"] else []
 
+    sales_ids = body.get("sales_ids")
+    if sales_ids is not None:
+        sync_members = True
+        if sales_ids:
+            p.sales_id = sales_ids[0]
+        else:
+            p.sales_id = None
+    else:
+        if "sales_id" in body:
+            sync_members = True
+            p.sales_id = body["sales_id"]
+            sales_ids = [body["sales_id"]] if body["sales_id"] else []
+
     member_ids = body.get("member_ids")
     if member_ids is not None:
         sync_members = True
@@ -480,6 +515,8 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             pm_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "PM").all()]
         if tl_ids is None:
             tl_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "Leader").all()]
+        if sales_ids is None:
+            sales_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "Sales").all()]
         if member_ids is None:
             member_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "Member").all()]
 
@@ -495,6 +532,10 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             if m_id and (m_id, "Leader") not in inserted:
                 db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Leader"))
                 inserted.add((m_id, "Leader"))
+        for m_id in sales_ids:
+            if m_id and (m_id, "Sales") not in inserted:
+                db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Sales"))
+                inserted.add((m_id, "Sales"))
         for m_id in member_ids:
             if m_id and (m_id, "Member") not in inserted:
                 db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Member"))
