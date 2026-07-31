@@ -133,10 +133,10 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     setLoading(true);
     try {
       const [custs, projs, mems, mPhases] = await Promise.all([
-        getCustomers(activeBU),
-        getProjects(activeBU),
-        getMembers(),
-        getMasterPhases().catch(() => [])
+        getCustomers(activeBU).catch(e => { console.error('getCustomers error:', e); return []; }),
+        getProjects(activeBU).catch(e => { console.error('getProjects error:', e); return []; }),
+        getMembers().catch(e => { console.error('getMembers error:', e); return []; }),
+        getMasterPhases().catch(e => { console.error('getMasterPhases error:', e); return []; })
       ]);
       setCustomers(custs || []);
       setProjects(projs || []);
@@ -149,9 +149,9 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       } else {
         setSelectedCustomerId(null);
       }
-    } catch (err) {
-      console.error(err);
-      onFlash('Lỗi tải dữ liệu cấu hình hệ thống', true);
+    } catch (err: any) {
+      console.error('loadData error:', err);
+      onFlash(err.response?.data?.detail || err.message || 'Lỗi tải dữ liệu cấu hình hệ thống', true);
     } finally {
       setLoading(false);
     }
