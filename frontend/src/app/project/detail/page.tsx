@@ -3980,15 +3980,16 @@ value={editValue}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
-              <span className="material-symbols-outlined mr-2 text-[18px]">folder</span>
-              Files
+              <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
+              Chats
             </button>
             <button
-              onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all border-transparent text-[#565e74] hover:text-[#0b1c30]`}
+              onClick={() => setActiveMainTab('members')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
             >
-              <span className="material-symbols-outlined mr-2 text-[18px]">psychology</span>
-              AI Check
+              <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
+              Members
             </button>
             <button
               onClick={() => setActiveMainTab('audit_logs')}
