@@ -14,6 +14,7 @@ from ..models.meeting import Meeting
 from ..models.ai_review import AIPrompt, AIReviewLog
 from ..models.user import User
 from ..utils.auth import get_current_user, require_admin_write
+from ..utils.audit_service import AuditService
 from ..config import settings
 
 router = APIRouter(tags=["ai-review"], dependencies=[Depends(require_admin_write)])
@@ -480,6 +481,20 @@ Dữ liệu thực thể gửi lên:
         db.commit()
         db.refresh(entity_obj)
         db.refresh(log)
+
+        AuditService.record(
+            db=db,
+            user_id=current_user.id,
+            module="AI Check",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action="CHECK",
+            project_id=project_id,
+            old_value=f"Ai Status: {old_status}",
+            new_value=f"Score: {score}/100, Status: {final_status}",
+            description=f"Chạy AI Check cho {entity_type} #{entity_id} - Điểm: {score}/100 ({len(issues)} rủi ro, {len(suggestions)} đề xuất)"
+        )
+        db.commit()
 
         return {
             "success": True,

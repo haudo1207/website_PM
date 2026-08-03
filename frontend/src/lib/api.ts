@@ -270,3 +270,37 @@ export const getAIReviewLog = (logId: number) =>
 export const syncAITasksFromChat = (projectId: number) =>
   api.post(`/projects/${projectId}/ai-task-inbox/sync`).then(r => r.data);
 
+// Audit Logs
+export interface AuditLogItem {
+  id: number;
+  project_id: number;
+  module: string;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  field_name?: string;
+  old_value?: string;
+  new_value?: string;
+  description?: string;
+  user_id?: number;
+  user_name: string;
+  created_at: string;
+}
+
+export const getProjectAuditLogs = (
+  projectId: number,
+  params?: {
+    module?: string;
+    action?: string;
+    user_id?: number;
+    search?: string;
+    start_date?: string;
+    end_date?: string;
+    page?: number;
+    page_size?: number;
+  }
+) => api.get<{ total: number; page: number; page_size: number; total_pages: number; items: AuditLogItem[] }>(`/projects/${projectId}/audit-logs`, { params }).then(r => r.data);
+
+export const exportProjectAuditLogs = (projectId: number, params?: { module?: string; action?: string; user_id?: number; search?: string }) =>
+  api.get(`/projects/${projectId}/audit-logs/export`, { params, responseType: 'blob' }).then(r => r.data);
+

@@ -25,6 +25,7 @@ from ..models.project import Project, project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
 from ..utils.access import require_project, require_route_project_access
 from ..utils.auth import get_current_user
+from ..utils.audit_service import AuditService
 # Đảm bảo có import date/datetime để tính ngày
 from datetime import date, datetime
 from decimal import Decimal
@@ -579,7 +580,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
 
 
 @router.post("/task-groups/{gid}/tasks")
-def create_task(gid: int, body: dict, db: Session = Depends(get_db)):
+def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     if not tg:
         raise HTTPException(404, "Task Group not found.")
@@ -677,11 +678,22 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(task)
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task",
+        entity_type="Task",
+        entity_id=task.id,
+        action="CREATE",
+        project_id=project_id,
+        description=f"Tạo nhiệm vụ mới '{task.detail}' (Mã: {task.task_code})"
+    )
+    db.commit()
     return serialize_task(task, db)
 
 
 @router.patch("/task-groups/{gid}/tasks/{tid}")
-def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
+def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
     if not task:
         raise HTTPException(404, "Task not found.")
@@ -690,6 +702,23 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
     project_id = phase.project_id if phase else None
+
+    # Snapshot old values for Audit Logs
+    old_dict = {
+        "detail": task.detail,
+        "priority": task.priority,
+        "status": task.status,
+        "manday_est": task.manday_est,
+        "start_date": task.start_date.isoformat() if task.start_date else None,
+        "end_date_actual": task.end_date_actual.isoformat() if task.end_date_actual else None,
+        "assigned_id": task.assigned_id,
+        "support_id": task.support_id,
+        "kpi_ratio_assign": task.kpi_ratio_assign,
+        "kpi_ratio_support": task.kpi_ratio_support,
+        "ticket": getattr(task, "ticket", None),
+        "remark": getattr(task, "remark", None),
+        "notes": getattr(task, "notes", None),
+    }
 
     # Detail validation
     if "detail" in body:
@@ -824,23 +853,81 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(task)
+
+    new_dict = {
+        "detail": task.detail,
+        "priority": task.priority,
+        "status": task.status,
+        "manday_est": task.manday_est,
+        "start_date": task.start_date.isoformat() if task.start_date else None,
+        "end_date_actual": task.end_date_actual.isoformat() if task.end_date_actual else None,
+        "assigned_id": task.assigned_id,
+        "support_id": task.support_id,
+        "kpi_ratio_assign": task.kpi_ratio_assign,
+        "kpi_ratio_support": task.kpi_ratio_support,
+        "ticket": getattr(task, "ticket", None),
+        "remark": getattr(task, "remark", None),
+        "notes": getattr(task, "notes", None),
+    }
+    AuditService.record_diff(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task",
+        entity_type="Task",
+        entity_id=task.id,
+        old_dict=old_dict,
+        new_dict=new_dict,
+        project_id=project_id,
+        field_labels={
+            "detail": "Nội dung Task",
+            "priority": "Độ ưu tiên",
+            "status": "Trạng thái",
+            "manday_est": "Manday EST",
+            "assigned_id": "Người thực hiện",
+            "support_id": "Người hỗ trợ",
+            "start_date": "Ngày bắt đầu",
+            "end_date_actual": "Ngày hoàn thành",
+            "kpi_ratio_assign": "Tỷ lệ KPI Assign",
+            "kpi_ratio_support": "Tỷ lệ KPI Support",
+            "ticket": "Mã Ticket",
+            "remark": "Ghi chú Remark",
+            "notes": "Ghi chú Note"
+        }
+    )
+    db.commit()
     return serialize_task(task, db)
 
 
 @router.delete("/task-groups/{gid}/tasks/{tid}")
-def delete_task(gid: int, tid: int, db: Session = Depends(get_db)):
+def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
     if not task:
         raise HTTPException(404, "Task not found.")
+
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+
+    task_desc = f"Xóa nhiệm vụ [{task.task_code}] '{task.detail}'"
     db.delete(task)
 
     # Update group progress and sync start_date
-    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     if tg:
         tg.progress = Decimal(str(calc_group_progress(gid, db)))
         tg = sync_group_dates(tg, db)
         tg = sync_group_actual_dates(tg, db)
 
+    db.commit()
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task",
+        entity_type="Task",
+        entity_id=tid,
+        action="DELETE",
+        project_id=project_id,
+        description=task_desc
+    )
     db.commit()
     return {"ok": True}
 

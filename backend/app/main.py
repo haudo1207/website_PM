@@ -162,6 +162,30 @@ def apply_schema_updates():
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_sales_id ON projects (sales_id)"))
 
+        # Create audit_logs table and indices if not exists
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                module VARCHAR(50) NOT NULL,
+                entity_type VARCHAR(50) NOT NULL,
+                entity_id VARCHAR(100),
+                action VARCHAR(30) NOT NULL,
+                field_name VARCHAR(100),
+                old_value TEXT,
+                new_value TEXT,
+                description TEXT,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_project_id ON audit_logs (project_id);
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_module ON audit_logs (module);
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_entity_type ON audit_logs (entity_type);
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action);
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs (user_id);
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at);
+        """))
+
         # Add remark_type and description to performance_settings
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))

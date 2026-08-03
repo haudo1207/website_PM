@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import case, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -15,6 +16,8 @@ from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
+from ..models.audit_log import AuditLog
+from ..utils.audit_service import AuditService
 from sqlalchemy import func as sql_func
 from ..utils.access import (
     ALL_SCOPE,
@@ -24,6 +27,7 @@ from ..utils.access import (
     ROLE_MEMBER,
     can_access_project,
     project_query_for_user,
+    require_project,
     require_route_project_access,
     user_scope,
 )
@@ -399,6 +403,17 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
 
     db.commit()
     db.refresh(p)
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Project",
+        entity_type="Project",
+        entity_id=p.id,
+        action="CREATE",
+        project_id=p.id,
+        description=f"Khởi tạo dự án '{p.name}' (Mã: {p.code or 'N/A'}, BU: {p.business or 'Infrastructure'})"
+    )
+    db.commit()
     return serialize_project(p, db)
 
 
@@ -935,3 +950,117 @@ def create_platform(body: dict, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(p)
     return {"id": p.id, "name": p.name, "icon": p.icon, "color": p.color, "is_active": p.is_active}
+
+
+# ═══════════════════════════════════════════════════════════
+# AUDIT LOGS
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/projects/{pid}/audit-logs")
+def list_project_audit_logs(
+    pid: int,
+    module: Optional[str] = None,
+    action: Optional[str] = None,
+    user_id: Optional[int] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    require_project(db, current_user, pid)
+    q = db.query(AuditLog).filter(AuditLog.project_id == pid)
+
+    if module and module.strip().lower() != "all":
+        q = q.filter(AuditLog.module.ilike(module.strip()))
+    if action and action.strip().lower() != "all":
+        q = q.filter(AuditLog.action.ilike(action.strip()))
+    if user_id:
+        q = q.filter(AuditLog.user_id == user_id)
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(
+            or_(
+                AuditLog.description.ilike(s),
+                AuditLog.field_name.ilike(s),
+                AuditLog.entity_type.ilike(s),
+                AuditLog.old_value.ilike(s),
+                AuditLog.new_value.ilike(s)
+            )
+        )
+    if start_date:
+        q = q.filter(AuditLog.created_at >= start_date)
+    if end_date:
+        q = q.filter(AuditLog.created_at <= end_date + " 23:59:59")
+
+    total = q.count()
+    logs = q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size if total > 0 else 1,
+        "items": [log.to_dict() for log in logs]
+    }
+
+
+@router.get("/projects/{pid}/audit-logs/export")
+def export_project_audit_logs(
+    pid: int,
+    module: Optional[str] = None,
+    action: Optional[str] = None,
+    user_id: Optional[int] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    import csv
+    import io
+    require_project(db, current_user, pid)
+    q = db.query(AuditLog).filter(AuditLog.project_id == pid)
+
+    if module and module.strip().lower() != "all":
+        q = q.filter(AuditLog.module.ilike(module.strip()))
+    if action and action.strip().lower() != "all":
+        q = q.filter(AuditLog.action.ilike(action.strip()))
+    if user_id:
+        q = q.filter(AuditLog.user_id == user_id)
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(
+            or_(
+                AuditLog.description.ilike(s),
+                AuditLog.field_name.ilike(s)
+            )
+        )
+
+    logs = q.order_by(AuditLog.created_at.desc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Thời gian", "Người thực hiện", "Module", "Hành động", "Trường thay đổi", "Giá trị cũ", "Giá trị mới", "Mô tả"])
+
+    for log in logs:
+        user_name = log.user.full_name or log.user.display_name or log.user.email if log.user else "System"
+        created_str = log.created_at.strftime("%d/%m/%Y %H:%M:%S") if log.created_at else ""
+        writer.writerow([
+            log.id,
+            created_str,
+            user_name,
+            log.module,
+            log.action,
+            log.field_name or "",
+            log.old_value or "",
+            log.new_value or "",
+            log.description or ""
+        ])
+
+    csv_data = "\ufeff" + output.getvalue()  # Add UTF-8 BOM for Excel
+    return Response(
+        content=csv_data,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=audit_logs_project_{pid}.csv"}
+    )

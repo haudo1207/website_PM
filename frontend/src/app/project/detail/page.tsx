@@ -6,6 +6,7 @@ import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
+import AuditLogsTab from '@/components/AuditLogsTab';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
@@ -128,8 +129,8 @@ function ProjectDetailContent() {
     setIsAIDrawerOpen(true);
   };
 
-  // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members'
-  const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members'>('overview');
+  // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'
+  const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'>('overview');
   const [activePhase, setActivePhase] = useState<string>('ALL');
   const [phases, setPhases] = useState<any[]>([]);
   const [showPhaseModal, setShowPhaseModal] = useState(false);
@@ -3990,6 +3991,14 @@ value={editValue}
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
               Members
             </button>
+            <button
+              onClick={() => setActiveMainTab('audit_logs')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
+              Audit Logs
+            </button>
           </div>
 
           {/* MAIN TABS CONTENT AREA */}
@@ -6338,6 +6347,9 @@ value={editValue}
                 </div>
               )}
 
+              {activeMainTab === 'audit_logs' && (
+                <AuditLogsTab projectId={Number(id)} />
+              )}
             </div>
 
           </div>
