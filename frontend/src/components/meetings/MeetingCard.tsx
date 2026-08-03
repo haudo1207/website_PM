@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Video, Users, Sparkles, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { Video, Users, Sparkles, ChevronDown, ChevronUp, RefreshCw, Share2, Check, Copy } from 'lucide-react';
 
 interface MeetingCardProps {
   meeting: {
@@ -23,21 +23,67 @@ interface MeetingCardProps {
 }
 
 export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, onSync }: MeetingCardProps) {
-  const [isExpanded, setIsExpanded] = useState(meeting.status === 'ĐÃ DIỄN RA');
+  const [isExpanded, setIsExpanded] = useState(meeting?.status === 'ĐÃ DIỄN RA');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  if (!meeting) return null;
 
   const isUpcoming = meeting.status === 'SẮP TỚI';
+  const platformStr = String(meeting.platform || '');
   const canSync = (meeting.status === 'SẮP TỚI' || meeting.status === 'ĐANG XỬ LÝ AI') &&
     meeting.link &&
-    (meeting.platform?.toLowerCase().includes('zoom') || meeting.platform?.toLowerCase().includes('google') || meeting.platform?.toLowerCase().includes('meet'));
+    (platformStr.toLowerCase().includes('zoom') || platformStr.toLowerCase().includes('google') || platformStr.toLowerCase().includes('meet'));
   
-  const Icon = meeting.platform.toLowerCase().includes('zoom') ? Video : Users;
+  const Icon = platformStr.toLowerCase().includes('zoom') ? Video : Users;
   const borderColor = isUpcoming ? 'border-l-[#0058be]' : 'border-l-emerald-500';
   const badgeBg = isUpcoming 
     ? 'bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20' 
     : meeting.status === 'ĐANG XỬ LÝ AI'
       ? 'bg-amber-50 text-amber-700 border border-amber-200'
       : 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+
+  const handleShare = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const link = meeting.link;
+    const title = meeting.title || 'Cuộc họp';
+    const date = meeting.date || '';
+    const time = meeting.time || '';
+    const duration = meeting.duration ? ` (${meeting.duration} phút)` : '';
+    const platform = meeting.platform || '';
+    const project = meeting.project ? `\nDự án: ${meeting.project}` : '';
+
+    const textToCopy = link 
+      ? link 
+      : `Cuộc họp: ${title}\nThời gian: ${date} ${time}${duration}\nNền tảng: ${platform}${project}`;
+    
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {
+        fallbackCopy(textToCopy);
+      });
+    } else {
+      fallbackCopy(textToCopy);
+    }
+  };
+
+  const fallbackCopy = (text: string) => {
+    if (typeof document === 'undefined') return;
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Fallback copy failed', err);
+    }
+    document.body.removeChild(textArea);
+  };
 
   const handleSync = async () => {
     if (!onSync || isSyncing) return;
@@ -64,13 +110,21 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
         <div className="flex-1 min-w-0">
           <div className="flex justify-between items-start">
             <div>
-              <h3 className="font-bold text-[#0b1c30] text-[14px]">{meeting.title}</h3>
+              <h3 className="font-bold text-[#0b1c30] text-[14px]">{meeting.title || 'Cuộc họp chưa có tên'}</h3>
               <p className="text-[#565e74] text-[12px] mt-1 flex items-center gap-1.5">
-                <span>{meeting.platform}</span>
-                <span className="text-[#c2c6d6]">•</span>
-                <span>{meeting.date}</span>
-                <span className="text-[#c2c6d6]">•</span>
-                <span>{meeting.time}</span>
+                <span>{meeting.platform || 'Trực tiếp'}</span>
+                {meeting.date && (
+                  <>
+                    <span className="text-[#c2c6d6]">•</span>
+                    <span>{meeting.date}</span>
+                  </>
+                )}
+                {meeting.time && (
+                  <>
+                    <span className="text-[#c2c6d6]">•</span>
+                    <span>{meeting.time}</span>
+                  </>
+                )}
                 {meeting.duration && (
                   <>
                     <span className="text-[#c2c6d6]">•</span>
@@ -81,14 +135,14 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
               {meeting.project && (
                 <p className="text-[#727785] text-[11px] mt-0.5 flex items-center gap-1">
                   <span className="material-symbols-outlined text-[14px] text-amber-500">folder</span>
-                  {meeting.project}
+                  {typeof meeting.project === 'string' ? meeting.project : (meeting.project as any)?.name || ''}
                 </p>
               )}
             </div>
             
             <div className="flex flex-col items-end gap-2">
               <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider ${badgeBg}`}>
-                {meeting.status}
+                {meeting.status || 'CHƯA DIỄN RA'}
               </span>
               <div className="flex items-center gap-2.5">
                 {meeting.link && (
@@ -96,6 +150,24 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
                      Tham gia
                    </a>
                 )}
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className="text-[11px] font-semibold flex items-center gap-1 text-[#0058be] hover:text-[#004297] transition-colors"
+                  title={meeting.link ? "Sao chép link cuộc họp" : "Sao chép thông tin cuộc họp"}
+                >
+                  {copied ? (
+                    <>
+                      <Check size={11} className="text-emerald-600" />
+                      <span className="text-emerald-600 font-bold">Đã sao chép!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 size={11} />
+                      <span>Chia sẻ link</span>
+                    </>
+                  )}
+                </button>
                 {onSync && canSync && (
                   <button
                     onClick={handleSync}
@@ -122,7 +194,7 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
           </div>
           
           {/* AI Summary toggle */}
-          {meeting.summary && meeting.summary.length > 0 && (
+          {meeting.summary && Array.isArray(meeting.summary) && meeting.summary.length > 0 && (
             <div className="mt-4">
               <button 
                 onClick={() => setIsExpanded(!isExpanded)}
@@ -136,7 +208,7 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
               {isExpanded && (
                 <div className="mt-3 bg-[#f8f9fe] border border-[#0058be]/10 rounded-lg p-4 space-y-1 text-[12px] text-[#565e74] leading-relaxed">
                   {meeting.summary.map((item, idx) => {
-                    const trimmed = item.trim();
+                    const trimmed = String(item || '').trim();
                     const isBullet = trimmed.startsWith('•') || trimmed.startsWith('*') || trimmed.startsWith('-');
                     const isNumbered = /^\d+\./.test(trimmed);
                     const isTitle = trimmed.startsWith('MEETING SUMMARY') || 
@@ -155,7 +227,7 @@ export default function MeetingCard({ meeting, onEdit, onDelete, onSummarize, on
 
                     return (
                       <div key={idx} className={className}>
-                        {item}
+                        {trimmed}
                       </div>
                     );
                   })}
