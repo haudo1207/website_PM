@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback, useRef, Fragment, Suspense } from 'react';
+import { useEffect, useState, useCallback, useRef, Fragment, Suspense, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
@@ -85,6 +85,18 @@ function ProjectDetailContent() {
 
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [taskSearch, setTaskSearch] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('All');
+  const [priorityDropdownOpen, setPriorityDropdownOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const [assignedFilter, setAssignedFilter] = useState('All');
+  const [assignedDropdownOpen, setAssignedDropdownOpen] = useState(false);
+  const [supportFilter, setSupportFilter] = useState('All');
+  const [supportDropdownOpen, setSupportDropdownOpen] = useState(false);
+  const [skillSolutionFilter, setSkillSolutionFilter] = useState('All');
+  const [skillSolutionDropdownOpen, setSkillSolutionDropdownOpen] = useState(false);
+  const [skillVendorFilter, setSkillVendorFilter] = useState('All');
+  const [skillVendorDropdownOpen, setSkillVendorDropdownOpen] = useState(false);
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
@@ -464,6 +476,12 @@ function ProjectDetailContent() {
   const leaderRef = useRef<HTMLDivElement>(null);
   const salesRef = useRef<HTMLDivElement>(null);
   const memberRef = useRef<HTMLDivElement>(null);
+  const priorityFilterRef = useRef<HTMLDivElement>(null);
+  const statusFilterRef = useRef<HTMLDivElement>(null);
+  const assignedFilterRef = useRef<HTMLDivElement>(null);
+  const supportFilterRef = useRef<HTMLDivElement>(null);
+  const skillSolutionFilterRef = useRef<HTMLDivElement>(null);
+  const skillVendorFilterRef = useRef<HTMLDivElement>(null);
   const [addMemberDropdownOpen, setAddMemberDropdownOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState('');
   const addMemberRef = useRef<HTMLDivElement>(null);
@@ -705,10 +723,28 @@ function ProjectDetailContent() {
         setAddMemberDropdownOpen(false);
         setAddMemberSearch('');
       }
+      if (priorityDropdownOpen && priorityFilterRef.current && !priorityFilterRef.current.contains(target)) {
+        setPriorityDropdownOpen(false);
+      }
+      if (statusDropdownOpen && statusFilterRef.current && !statusFilterRef.current.contains(target)) {
+        setStatusDropdownOpen(false);
+      }
+      if (assignedDropdownOpen && assignedFilterRef.current && !assignedFilterRef.current.contains(target)) {
+        setAssignedDropdownOpen(false);
+      }
+      if (supportDropdownOpen && supportFilterRef.current && !supportFilterRef.current.contains(target)) {
+        setSupportDropdownOpen(false);
+      }
+      if (skillSolutionDropdownOpen && skillSolutionFilterRef.current && !skillSolutionFilterRef.current.contains(target)) {
+        setSkillSolutionDropdownOpen(false);
+      }
+      if (skillVendorDropdownOpen && skillVendorFilterRef.current && !skillVendorFilterRef.current.contains(target)) {
+        setSkillVendorDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, salesDropdownOpen, memberDropdownOpen, addMemberDropdownOpen]);
+  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, salesDropdownOpen, memberDropdownOpen, addMemberDropdownOpen, priorityDropdownOpen, statusDropdownOpen, assignedDropdownOpen, supportDropdownOpen, skillSolutionDropdownOpen, skillVendorDropdownOpen]);
 
   const handleUpdateProject = async () => {
     if (!editProjectName.trim()) {
@@ -837,13 +873,79 @@ function ProjectDetailContent() {
     return group ? group.phase_id : null;
   };
 
+  const filteredItems = useMemo(() => {
+    const searchLower = taskSearch.toLowerCase();
+    const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
+      || assignedFilter !== 'All' || supportFilter !== 'All'
+      || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
+      || !!searchLower;
+    if (!hasActiveFilter) {
+      return items;
+    }
+
+    // 1. Find tasks that match ALL active filters directly
+    const matchingTasks = items.filter(item => {
+      const matchSearch = !searchLower || (item.detail || '').toLowerCase().includes(searchLower) || (item.task_code || '').toLowerCase().includes(searchLower);
+      const matchPriority = priorityFilter === 'All' || item.priority === priorityFilter;
+      const matchStatus = statusFilter === 'All' || item.status === statusFilter;
+      const matchAssigned = assignedFilter === 'All' || (item.assigned_name || '') === assignedFilter;
+      const matchSupport = supportFilter === 'All' || (item.support_name || '') === supportFilter;
+      const matchSkillSolution = skillSolutionFilter === 'All' || (item.skill_solution_name || '') === skillSolutionFilter;
+      const matchSkillVendor = skillVendorFilter === 'All' || (item.skill_vendor_name || '') === skillVendorFilter;
+      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor;
+    });
+
+    const onlySearch = !priorityFilter.match(/^All$/) === false && !statusFilter.match(/^All$/) === false
+      && assignedFilter === 'All' && supportFilter === 'All'
+      && skillSolutionFilter === 'All' && skillVendorFilter === 'All'
+      && priorityFilter === 'All' && statusFilter === 'All';
+    if (onlySearch) {
+      return matchingTasks;
+    }
+
+    // Build lookup maps using task_code (hierarchy defined by task_code, NOT parent_id)
+    const itemsByCode = new Map(items.map(item => [item.task_code, item]));
+    const matchingCodes = new Set(matchingTasks.map(t => t.task_code));
+
+    const allTasksToShow = new Set(matchingTasks);
+
+    // 2. For each matching task, walk up ancestors via task_code to preserve hierarchy
+    matchingTasks.forEach(task => {
+      let code = task.task_code || '';
+      while (code) {
+        const parentCode = getParentCode(code);
+        if (!parentCode) break;
+        const parent = itemsByCode.get(parentCode);
+        if (parent && !allTasksToShow.has(parent)) {
+          allTasksToShow.add(parent);
+        }
+        code = parentCode;
+      }
+    });
+
+    // 3. Also include all descendant tasks of matching tasks (subtree expansion)
+    items.forEach(item => {
+      const code = item.task_code || '';
+      if (!code) return;
+      for (const matchCode of Array.from(matchingCodes)) {
+        if (matchCode && code.startsWith(matchCode + '.')) {
+          allTasksToShow.add(item);
+          break;
+        }
+      }
+    });
+
+    // 4. Return in original order
+    return items.filter(item => allTasksToShow.has(item));
+  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter]);
+
   const getFilteredTasks = () => {
     if (activePhase === 'ALL') {
-      return items;
+      return filteredItems;
     }
     const currentPhaseObj = phases.find(p => p.name === activePhase);
     if (!currentPhaseObj) return [];
-    return items.filter(t => getTaskPhaseId(t) === currentPhaseObj.id);
+    return filteredItems.filter(t => getTaskPhaseId(t) === currentPhaseObj.id);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, taskId: number, colName: string, isDateOrDropdown = false) => {
@@ -890,16 +992,19 @@ function ProjectDetailContent() {
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
       for (const g of groups) {
-        rows.push({ type: 'group', id: -g.id, group: g });
+        const groupTasks = filteredItems.filter(t => t.task_group_id === g.id);
 
-        const isCollapsed = collapsedGroups.has(g.id);
-        if (!isCollapsed) {
-          const groupTasks = items.filter(t => t.task_group_id === g.id);
-          const sortedTasks = buildTaskTree(groupTasks);
+        if (groupTasks.length > 0 || (priorityFilter === 'All' && taskSearch === '')) {
+          rows.push({ type: 'group', id: -g.id, group: g });
 
-          for (const task of sortedTasks) {
-            if (!isAncestorCollapsed(task.task_code)) {
-              rows.push({ type: 'task', id: task.id, task });
+          const isCollapsed = collapsedGroups.has(g.id);
+          if (!isCollapsed) {
+            const sortedTasks = buildTaskTree(groupTasks);
+
+            for (const task of sortedTasks) {
+              if (!isAncestorCollapsed(task.task_code)) {
+                rows.push({ type: 'task', id: task.id, task });
+              }
             }
           }
         }
@@ -1423,7 +1528,7 @@ function ProjectDetailContent() {
   };
 
   // --- Dynamic Stats calculation ---
-  const kpiTasks = activeMainTab === 'overview' ? items : getFilteredTasks();
+  const kpiTasks = activeMainTab === 'overview' ? filteredItems : getFilteredTasks();
   const kpiTotal = kpiTasks.length;
 
   // 1 & 2. Số task hoàn thành & % Tiến độ
@@ -1469,7 +1574,7 @@ function ProjectDetailContent() {
     const doneCounts: Record<string, number> = {};
     let unassignedTotal = 0;
     let unassignedDone = 0;
-    items.forEach(t => {
+    filteredItems.forEach(t => {
       const s = (t.status || '').toLowerCase();
       const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
       const name = (t.assigned_name || '').trim();
@@ -1495,7 +1600,7 @@ function ProjectDetailContent() {
   // --- KPI FINAL Leaderboard ---
   const kpiLeaderboardStats = (() => {
     const kpiSums: Record<string, number> = {};
-    items.forEach(t => {
+    filteredItems.forEach(t => {
       const name = (t.assigned_name || '').trim();
       const val = parseFloat(t.kpi_final);
       if (name !== '' && !isNaN(val) && val > 0) {
@@ -3214,9 +3319,9 @@ function ProjectDetailContent() {
 
       groupsInPhase.forEach((group, gIdx) => {
         const isCollapsed = collapsedGroups.has(group.id);
-        const groupTasks = items.filter(t => t.task_group_id === group.id);
+        const groupTasks = filteredItems.filter(t => t.task_group_id === group.id);
         const filteredTasks = taskSearch
-          ? groupTasks.filter(t => (t.detail || '').toLowerCase().includes(taskSearch.toLowerCase()))
+          ? groupTasks.filter(t => (t.detail || '').toLowerCase().includes(taskSearch.toLowerCase()) || (t.task_code || '').toLowerCase().includes(taskSearch.toLowerCase()))
           : groupTasks;
         const dynamicCols = getDynamicColumns();
 
@@ -4261,7 +4366,135 @@ value={editValue}
                                   className="text-left px-4 py-3.5 text-[11px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]"
                                   style={widthStyle}
                                 >
-                                  {col}
+                                  <div className="flex items-center gap-2">
+                                    <span>{col}</span>
+                                    {colUpper === 'PRIORITY' && (
+                                                      <div className="relative" ref={priorityFilterRef}>
+                                                        <button
+                                                          onClick={() => setPriorityDropdownOpen(!priorityDropdownOpen)}
+                                                          className={`p-1 rounded-md hover:bg-slate-200 ${priorityFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
+                                                        >
+                                                          <span className="material-symbols-outlined text-base">filter_list</span>
+                                                        </button>
+                                                        {priorityDropdownOpen && (
+                                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 w-32">
+                                                            {['All', 'Normal', 'High', 'Critical', 'Interrupt'].map(opt => (
+                                                              <button
+                                                                key={opt}
+                                                                onClick={() => { setPriorityFilter(opt); setPriorityDropdownOpen(false); }}
+                                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${priorityFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
+                                                              >
+                                                                {opt}
+                                                              </button>
+                                                            ))}
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                    )}
+                                    {colUpper === 'STATUS' && (
+                                                      <div className="relative" ref={statusFilterRef}>
+                                                        <button
+                                                          onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                                                          className={`p-1 rounded-md hover:bg-slate-200 ${statusFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
+                                                        >
+                                                          <span className="material-symbols-outlined text-base">filter_list</span>
+                                                        </button>
+                                                        {statusDropdownOpen && (
+                                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-32">
+                                                            {['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'].map(opt => (
+                                                              <button
+                                                                key={opt}
+                                                                onClick={() => { setStatusFilter(opt); setStatusDropdownOpen(false); }}
+                                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${statusFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
+                                                              >
+                                                                {opt}
+                                                              </button>
+                                                            ))}
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                    )}
+                                    {colUpper === 'ASSIGNED' && (() => {
+                                      const opts = ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()];
+                                      return (
+                                        <div className="relative" ref={assignedFilterRef}>
+                                          <button onClick={() => setAssignedDropdownOpen(!assignedDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${assignedFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
+                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          </button>
+                                          {assignedDropdownOpen && (
+                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-44 max-h-60 overflow-y-auto">
+                                              {opts.map(opt => (
+                                                <button key={opt} onClick={() => { setAssignedFilter(opt); setAssignedDropdownOpen(false); }}
+                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${assignedFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                  {opt}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+                                    {colUpper === 'SUPPORT' && (() => {
+                                      const opts = ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()];
+                                      return (
+                                        <div className="relative" ref={supportFilterRef}>
+                                          <button onClick={() => setSupportDropdownOpen(!supportDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${supportFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
+                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          </button>
+                                          {supportDropdownOpen && (
+                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-44 max-h-60 overflow-y-auto">
+                                              {opts.map(opt => (
+                                                <button key={opt} onClick={() => { setSupportFilter(opt); setSupportDropdownOpen(false); }}
+                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${supportFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                  {opt}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+                                    {colUpper === 'SKILL SOLUTION' && (() => {
+                                      const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()];
+                                      return (
+                                        <div className="relative" ref={skillSolutionFilterRef}>
+                                          <button onClick={() => setSkillSolutionDropdownOpen(!skillSolutionDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${skillSolutionFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
+                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          </button>
+                                          {skillSolutionDropdownOpen && (
+                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-48 max-h-60 overflow-y-auto">
+                                              {opts.map(opt => (
+                                                <button key={opt} onClick={() => { setSkillSolutionFilter(opt); setSkillSolutionDropdownOpen(false); }}
+                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillSolutionFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                  {opt}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+                                    {colUpper === 'SKILL VENDOR' && (() => {
+                                      const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()];
+                                      return (
+                                        <div className="relative" ref={skillVendorFilterRef}>
+                                          <button onClick={() => setSkillVendorDropdownOpen(!skillVendorDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${skillVendorFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
+                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          </button>
+                                          {skillVendorDropdownOpen && (
+                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-48 max-h-60 overflow-y-auto">
+                                              {opts.map(opt => (
+                                                <button key={opt} onClick={() => { setSkillVendorFilter(opt); setSkillVendorDropdownOpen(false); }}
+                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillVendorFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                  {opt}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
                                 </th>
                               );
                             })}
