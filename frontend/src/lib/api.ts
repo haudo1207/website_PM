@@ -304,3 +304,53 @@ export const getProjectAuditLogs = (
 export const exportProjectAuditLogs = (projectId: number, params?: { module?: string; action?: string; user_id?: number; search?: string }) =>
   api.get(`/projects/${projectId}/audit-logs/export`, { params, responseType: 'blob' }).then(r => r.data);
 
+// System Audit (Global Admin)
+export interface SystemAuditItem extends AuditLogItem {
+  business_unit?: string;
+  customer_id?: number;
+  project_name?: string;
+  ip_address?: string;
+  user_agent?: string;
+  request_url?: string;
+}
+
+export interface SystemAuditStats {
+  period: string;
+  create_count: number;
+  update_count: number;
+  delete_count: number;
+  ai_check_count: number;
+  login_count: number;
+  failed_login_count: number;
+}
+
+export const getSystemAuditStats = (params?: { period?: string; start_date?: string; end_date?: string }) =>
+  api.get<SystemAuditStats>('/system-audit/stats', { params }).then(r => r.data);
+
+export const getSystemAuditLogs = (params?: {
+  business_unit?: string;
+  project_id?: number;
+  module?: string;
+  action?: string;
+  user_id?: number;
+  search?: string;
+  start_date?: string;
+  end_date?: string;
+  page?: number;
+  page_size?: number;
+}) => api.get<{ total: number; page: number; page_size: number; total_pages: number; items: SystemAuditItem[] }>('/system-audit/logs', { params }).then(r => r.data);
+
+export const exportSystemAuditLogs = (params?: {
+  business_unit?: string;
+  project_id?: number;
+  module?: string;
+  action?: string;
+  user_id?: number;
+  search?: string;
+  start_date?: string;
+  end_date?: string;
+}) => api.get('/system-audit/export', { params, responseType: 'blob' }).then(r => r.data);
+
+export const getSystemAuditAnalytics = () =>
+  api.get('/system-audit/analytics').then(r => r.data);
+

@@ -2,10 +2,13 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
+import SystemAuditView from '@/components/SystemAuditView';
 import { getProjects, getPriorities, getStatuses } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 
 function DashboardContent() {
   const router = useRouter();
+  const [activeTab, setActiveTab] = useState<'overview' | 'system_audit'>('overview');
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [priorities, setPriorities] = useState<any[]>([]);
@@ -26,16 +29,47 @@ function DashboardContent() {
   const developingCount = projects.filter(p => p.status === 'Developing').length;
   const completedCount = projects.filter(p => p.status === 'Completed').length;
 
+  const showAdminAuditTab = isAdmin();
+
   return (
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
       <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
         {/* Top Bar */}
         <div className="h-14 bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
-          <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-[#0058be] animate-pulse" />
-            <h2 className="text-sm font-bold text-[#0b1c30]">Dashboard Tổng Quan</h2>
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-[#0058be] animate-pulse" />
+              <h2 className="text-sm font-bold text-[#0b1c30]">Dashboard</h2>
+            </div>
+
+            {/* Admin Sub-Tabs Navigation */}
+            {showAdminAuditTab && (
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  onClick={() => setActiveTab('overview')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    activeTab === 'overview'
+                      ? 'bg-white text-[#0058be] shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  📊 Overview
+                </button>
+                <button
+                  onClick={() => setActiveTab('system_audit')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    activeTab === 'system_audit'
+                      ? 'bg-slate-900 text-amber-400 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  🛡️ System Audit
+                </button>
+              </div>
+            )}
           </div>
+
           <div className="flex items-center gap-4 shrink-0">
             <button
               onClick={() => {
@@ -50,9 +84,12 @@ function DashboardContent() {
           </div>
         </div>
 
-        {/* Main Content */}
+        {/* Main Content Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Stat Cards */}
+          {activeTab === 'system_audit' && showAdminAuditTab ? (
+            <SystemAuditView />
+          ) : (
+            <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
               { label: 'Tổng số dự án', value: totalProjects, icon: '📋', border: 'border-l-[#0058be]', text: 'text-[#0058be]' },
@@ -163,7 +200,8 @@ function DashboardContent() {
                 </div>
               </div>
             </div>
-          </div>
+          </>
+          )}
         </div>
       </div>
     </div>

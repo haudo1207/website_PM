@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
@@ -186,6 +186,13 @@ def apply_schema_updates():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs (user_id);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS customer_id INTEGER;"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS request_url VARCHAR(255);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_business_unit ON audit_logs (business_unit);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_customer_id ON audit_logs (customer_id);"))
 
         # Add remark_type and description to performance_settings
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
@@ -721,6 +728,7 @@ app.include_router(accounts.router,            prefix="/api/accounts")
 app.include_router(ai_review.router,            prefix="/api")
 app.include_router(lunch_router.router,         prefix="/api/lunch")
 app.include_router(chat_ai.router,              prefix="/api")
+app.include_router(system_audit.router,         prefix="/api")
 
 @app.get("/health")
 @app.get("/api/health")
