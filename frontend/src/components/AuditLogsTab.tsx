@@ -58,20 +58,21 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
       setTotal(res.total || 0);
       setTotalPages(res.total_pages || 1);
 
-      // Collect unique users for filter dropdown
-      const usersMap = new Map<number, string>();
-      res.items.forEach(item => {
-        if (item.user_id && item.user_name) {
-          usersMap.set(item.user_id, item.user_name);
-        }
-      });
-      setUniqueUsers(prev => {
-        const merged = new Map(prev.map(u => [u.id, u.name]));
-        usersMap.forEach((name, id) => merged.set(id, name));
-        return Array.from(merged.entries()).map(([id, name]) => ({ id, name }));
-      });
+      // Collect unique users for filter list
+      if (res.items) {
+        setUniqueUsers(prev => {
+          const map = new Map<number, string>();
+          prev.forEach(u => map.set(u.id, u.name));
+          res.items.forEach(item => {
+            if (item.user_id) {
+              map.set(item.user_id, item.user_name);
+            }
+          });
+          return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+        });
+      }
     } catch (err) {
-      console.error('Failed to load audit logs:', err);
+      console.error('Failed to load project audit logs:', err);
     } finally {
       setLoading(false);
     }
@@ -81,12 +82,12 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
     fetchLogs();
   }, [fetchLogs]);
 
-  // Reset page when filter changes
+  // Reset to page 1 on filter changes
   useEffect(() => {
     setPage(1);
   }, [search, moduleFilter, actionFilter, userFilter, dateFilter]);
 
-  // Handle Export CSV
+  // Export CSV Handler
   const handleExportCSV = async () => {
     try {
       setExporting(true);
@@ -100,7 +101,7 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
       const url = window.URL.createObjectURL(new Blob([data], { type: 'text/csv;charset=utf-8;' }));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `Audit_Logs_Project_${projectId}.csv`);
+      link.setAttribute('download', `Audit_Logs_Project_${projectId}_${new Date().toISOString().split('T')[0]}.csv`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -117,15 +118,19 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
     const act = (action || '').toUpperCase();
     switch (act) {
       case 'CREATE':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">🟢 CREATE</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">CREATE</span>;
       case 'UPDATE':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">🟡 UPDATE</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200/60">UPDATE</span>;
       case 'DELETE':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">🔴 DELETE</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200/60">DELETE</span>;
       case 'CHECK':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">🟣 AI CHECK</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200/60">AI CHECK</span>;
+      case 'LOGIN':
+        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-[#0058be] border border-blue-200/60">LOGIN</span>;
+      case 'FAILED_LOGIN':
+        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300 font-bold animate-pulse">FAILED LOGIN</span>;
       default:
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">🔵 SYSTEM</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200/60">SYSTEM</span>;
     }
   };
 
@@ -145,32 +150,32 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
   };
 
   return (
-    <div className="space-y-4 text-slate-100">
-      {/* TOOLBAR */}
-      <div className="bg-slate-900/80 backdrop-blur-md p-4 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-        {/* Left Filters */}
-        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
-          {/* Search */}
-          <div className="relative flex-1 min-w-[180px] max-w-xs">
-            <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 text-sm">
-              🔍
+    <div className="space-y-4">
+      {/* TOOLBAR & FILTERS */}
+      <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        {/* Left Filter Controls */}
+        <div className="flex flex-wrap items-center gap-3 flex-1">
+          {/* Search Input */}
+          <div className="relative min-w-[200px] flex-1 max-w-xs">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">
+              search
             </span>
             <input
               type="text"
-              placeholder="Search..."
+              placeholder="Search description, field..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-sm bg-slate-800/90 text-slate-200 border border-slate-700 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white text-[#0b1c30] border border-[#c2c6d6]/60 rounded-lg focus:outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be] font-medium"
             />
           </div>
 
           {/* Module Filter */}
-          <div className="flex items-center gap-1 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
             <span>Module:</span>
             <select
               value={moduleFilter}
               onChange={e => setModuleFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+              className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
             >
               <option value="all">All Modules</option>
               <option value="Project">Project</option>
@@ -178,18 +183,17 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
               <option value="Task Group">Task Group</option>
               <option value="Task">Task</option>
               <option value="Meeting">Meeting</option>
-              <option value="File">File</option>
               <option value="AI Check">AI Check</option>
             </select>
           </div>
 
           {/* Action Filter */}
-          <div className="flex items-center gap-1 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
             <span>Action:</span>
             <select
               value={actionFilter}
               onChange={e => setActionFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+              className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
             >
               <option value="all">All Actions</option>
               <option value="CREATE">CREATE</option>
@@ -200,12 +204,12 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
           </div>
 
           {/* User Filter */}
-          <div className="flex items-center gap-1 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
             <span>User:</span>
             <select
               value={userFilter}
               onChange={e => setUserFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+              className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be] max-w-[140px] truncate"
             >
               <option value="all">All Users</option>
               {uniqueUsers.map(u => (
@@ -215,12 +219,12 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
           </div>
 
           {/* Date Filter */}
-          <div className="flex items-center gap-1 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
             <span>Date:</span>
             <select
               value={dateFilter}
               onChange={e => setDateFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+              className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
             >
               <option value="30">Last 30 days</option>
               <option value="7">Last 7 days</option>
@@ -229,65 +233,63 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
           </div>
         </div>
 
-        {/* Right Export Button */}
-        <div>
-          <button
-            onClick={handleExportCSV}
-            disabled={exporting}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors shadow disabled:opacity-50"
-          >
-            <span>📥</span>
-            <span>{exporting ? 'Exporting...' : 'Export CSV'}</span>
-          </button>
-        </div>
+        {/* Right Actions: Export CSV */}
+        <button
+          onClick={handleExportCSV}
+          disabled={exporting}
+          className="flex items-center gap-1.5 bg-[#eff4ff] hover:bg-[#0058be]/10 text-[#0058be] border border-[#c2c6d6]/60 font-bold text-xs px-3.5 py-1.5 rounded-lg transition-all shadow-sm disabled:opacity-50"
+        >
+          <span className="material-symbols-outlined text-[16px]">download</span>
+          <span>{exporting ? 'Exporting...' : 'Export CSV'}</span>
+        </button>
       </div>
 
       {/* AUDIT LOGS TABLE */}
-      <div className="bg-slate-900/80 backdrop-blur-md rounded-xl border border-slate-800 overflow-hidden shadow-lg">
+      <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-slate-400">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mb-2"></div>
+          <div className="p-8 text-center text-xs text-[#565e74]">
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-[#0058be] mb-2"></div>
             <p>Đang tải nhật ký Audit Logs...</p>
           </div>
         ) : logs.length === 0 ? (
-          <div className="p-12 text-center text-slate-500">
-            <span className="text-4xl block mb-2">📜</span>
-            <p className="text-base font-medium">Chưa có nhật ký ghi nhận nào</p>
-            <p className="text-xs text-slate-600 mt-1">Các thao tác chỉnh sửa dự án, task, meeting và AI check sẽ tự động hiển thị ở đây.</p>
+          <div className="p-12 text-center text-[#565e74]">
+            <span className="material-symbols-outlined text-4xl text-slate-300 mb-2 block">history</span>
+            <p className="text-sm font-bold text-[#0b1c30]">Không tìm thấy nhật ký thỏa mãn bộ lọc</p>
+            <p className="text-xs text-[#565e74] mt-1">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-300">
-              <thead className="bg-slate-800/90 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <table className="w-full text-left text-xs text-[#0b1c30]">
+              <thead className="bg-[#eff4ff]/60 text-[#565e74] font-bold text-[11px] uppercase tracking-wider border-b border-[#c2c6d6]/60">
                 <tr>
                   <th className="px-4 py-3 w-32">Time</th>
-                  <th className="px-4 py-3 w-40">User</th>
+                  <th className="px-4 py-3 w-36">User</th>
                   <th className="px-4 py-3 w-28">Module</th>
                   <th className="px-4 py-3 w-32">Action</th>
                   <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3 w-20 text-center">Detail</th>
+                  <th className="px-4 py-3 w-16 text-center">Detail</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
+              <tbody className="divide-y divide-slate-100">
                 {logs.map(log => (
                   <tr
                     key={log.id}
                     onClick={() => setSelectedLog(log)}
-                    className="hover:bg-slate-800/50 cursor-pointer transition-colors"
+                    className="hover:bg-[#eff4ff]/40 cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 text-xs font-mono text-slate-400 whitespace-nowrap">
+                    <td className="px-4 py-3 font-mono text-[#565e74] whitespace-nowrap">
                       {formatDate(log.created_at)}
                     </td>
-                    <td className="px-4 py-3 font-medium text-slate-200 whitespace-nowrap">
+                    <td className="px-4 py-3 font-bold text-[#0b1c30] whitespace-nowrap">
                       {log.user_name}
                     </td>
-                    <td className="px-4 py-3 text-xs font-semibold text-slate-300">
+                    <td className="px-4 py-3 font-semibold text-[#565e74]">
                       {log.module}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {getActionBadge(log.action)}
                     </td>
-                    <td className="px-4 py-3 text-slate-300 text-sm max-w-md truncate">
+                    <td className="px-4 py-3 text-[#0b1c30] max-w-md truncate font-medium">
                       {log.description}
                     </td>
                     <td className="px-4 py-3 text-center">
@@ -296,9 +298,9 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
                           e.stopPropagation();
                           setSelectedLog(log);
                         }}
-                        className="px-2 py-1 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-indigo-400 hover:text-indigo-300 rounded border border-slate-700 transition-colors"
+                        className="p-1 text-[#0058be] hover:bg-[#eff4ff] rounded transition-colors"
                       >
-                        👁️ Xem
+                        <span className="material-symbols-outlined text-[18px]">visibility</span>
                       </button>
                     </td>
                   </tr>
@@ -310,15 +312,15 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
 
         {/* PAGINATION */}
         {totalPages > 1 && (
-          <div className="bg-slate-900 px-4 py-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <div className="bg-[#f8fafc] px-4 py-3 border-t border-[#c2c6d6]/60 flex items-center justify-between text-xs text-[#565e74]">
             <div>
-              Hiển thị <span className="font-semibold text-slate-200">{logs.length}</span> / <span className="font-semibold text-slate-200">{total}</span> nhật ký
+              Hiển thị <span className="font-bold text-[#0b1c30]">{logs.length}</span> / <span className="font-bold text-[#0b1c30]">{total}</span> nhật ký
             </div>
             <div className="flex items-center gap-2">
               <button
                 disabled={page <= 1}
                 onClick={() => setPage(p => Math.max(1, p - 1))}
-                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded border border-slate-700 transition-colors"
+                className="px-3 py-1 bg-white hover:bg-slate-50 disabled:opacity-40 text-[#0b1c30] font-semibold rounded border border-[#c2c6d6]/60 transition-colors shadow-sm"
               >
                 Trước
               </button>
@@ -326,7 +328,7 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
               <button
                 disabled={page >= totalPages}
                 onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded border border-slate-700 transition-colors"
+                className="px-3 py-1 bg-white hover:bg-slate-50 disabled:opacity-40 text-[#0b1c30] font-semibold rounded border border-[#c2c6d6]/60 transition-colors shadow-sm"
               >
                 Sau
               </button>
@@ -337,55 +339,50 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
 
       {/* DETAIL MODAL */}
       {selectedLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl space-y-0">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Header */}
-            <div className="bg-slate-800/80 px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <span className="text-xl">📜</span>
-                <div>
-                  <h3 className="font-bold text-slate-100 text-lg">
-                    Chi tiết Audit Log #{selectedLog.id}
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Module: <span className="text-indigo-400 font-semibold">{selectedLog.module}</span> | Entity: {selectedLog.entity_type} #{selectedLog.entity_id || 'N/A'}
-                  </p>
-                </div>
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-[#0058be]">
+                <span className="material-symbols-outlined text-[24px]">history</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">Chi tiết Audit Log #{selectedLog.id}</h3>
               </div>
               <button
                 onClick={() => setSelectedLog(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors text-xl"
+                className="text-slate-400 hover:text-slate-600 transition-colors"
               >
-                ✕
+                <span className="material-symbols-outlined">close</span>
               </button>
             </div>
 
             {/* Content Body */}
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto text-sm">
-              {/* Meta Rows */}
-              <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto text-xs">
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 gap-3 bg-[#eff4ff]/60 p-3.5 rounded-xl border border-[#0058be]/10">
                 <div>
-                  <span className="text-xs text-slate-400 block">Hành động (Action)</span>
-                  <div className="mt-1">{getActionBadge(selectedLog.action)}</div>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Thời gian</span>
+                  <span className="font-mono text-[#0b1c30] font-bold">
+                    {selectedLog.created_at ? new Date(selectedLog.created_at).toLocaleString('vi-VN') : '--'}
+                  </span>
                 </div>
                 <div>
-                  <span className="text-xs text-slate-400 block">Người thực hiện (Updated By)</span>
-                  <span className="font-semibold text-slate-200">{selectedLog.user_name}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Người thực hiện</span>
+                  <span className="font-bold text-[#0b1c30]">{selectedLog.user_name}</span>
                 </div>
                 <div>
-                  <span className="text-xs text-slate-400 block">Thời gian (Time)</span>
-                  <span className="font-mono text-slate-300 text-xs">{selectedLog.created_at ? new Date(selectedLog.created_at).toLocaleString('vi-VN') : '--'}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Module</span>
+                  <span className="font-bold text-[#0058be]">{selectedLog.module} ({selectedLog.entity_type})</span>
                 </div>
                 <div>
-                  <span className="text-xs text-slate-400 block">Trường thay đổi (Field)</span>
-                  <span className="font-semibold text-amber-400">{selectedLog.field_name || 'Tất cả / Tổng thể'}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Hành động</span>
+                  <div className="mt-0.5">{getActionBadge(selectedLog.action)}</div>
                 </div>
               </div>
 
               {/* Description */}
               <div>
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1">Mô tả chi tiết (Description)</span>
-                <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-slate-200 leading-relaxed font-medium">
+                <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block mb-1">Mô tả</span>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-[#0b1c30] font-medium">
                   {selectedLog.description}
                 </div>
               </div>
@@ -393,25 +390,22 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
               {/* Diff Values Comparison */}
               {(selectedLog.old_value || selectedLog.new_value) && (
                 <div className="space-y-2">
-                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">So sánh Giá trị (Old vs New Diff)</span>
+                  <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block">So sánh Thay đổi (Old vs New)</span>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {/* Old Value */}
-                    <div className="bg-rose-950/20 border border-rose-900/40 rounded-xl p-3">
-                      <span className="text-xs font-bold text-rose-400 uppercase block mb-1.5 flex items-center gap-1">
-                        <span>-</span> Giá trị cũ (Old Value)
+                    <div className="bg-rose-50 border border-rose-200/60 rounded-xl p-3">
+                      <span className="font-bold text-rose-700 text-[11px] uppercase block mb-1">
+                        - Giá trị cũ (Old Value)
                       </span>
-                      <pre className="text-xs text-rose-200 whitespace-pre-wrap font-mono bg-rose-950/40 p-2.5 rounded-lg border border-rose-900/30 max-h-48 overflow-y-auto">
-                        {selectedLog.old_value || '(Trống / NULL)'}
+                      <pre className="text-rose-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2 rounded-lg border border-rose-100 max-h-36 overflow-y-auto">
+                        {selectedLog.old_value || '(NULL)'}
                       </pre>
                     </div>
-
-                    {/* New Value */}
-                    <div className="bg-emerald-950/20 border border-emerald-900/40 rounded-xl p-3">
-                      <span className="text-xs font-bold text-emerald-400 uppercase block mb-1.5 flex items-center gap-1">
-                        <span>+</span> Giá trị mới (New Value)
+                    <div className="bg-emerald-50 border border-emerald-200/60 rounded-xl p-3">
+                      <span className="font-bold text-emerald-700 text-[11px] uppercase block mb-1">
+                        + Giá trị mới (New Value)
                       </span>
-                      <pre className="text-xs text-emerald-200 whitespace-pre-wrap font-mono bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-900/30 max-h-48 overflow-y-auto">
-                        {selectedLog.new_value || '(Trống / NULL)'}
+                      <pre className="text-emerald-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2 rounded-lg border border-emerald-100 max-h-36 overflow-y-auto">
+                        {selectedLog.new_value || '(NULL)'}
                       </pre>
                     </div>
                   </div>
@@ -420,10 +414,10 @@ export default function AuditLogsTab({ projectId }: AuditLogsTabProps) {
             </div>
 
             {/* Footer */}
-            <div className="bg-slate-800/80 px-6 py-3 border-t border-slate-800 text-right">
+            <div className="p-4 border-t border-slate-100 flex justify-end bg-slate-50/50">
               <button
                 onClick={() => setSelectedLog(null)}
-                className="px-4 py-2 text-sm font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all"
               >
                 Đóng
               </button>

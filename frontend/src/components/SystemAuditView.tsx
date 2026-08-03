@@ -43,7 +43,7 @@ export default function SystemAuditView() {
   const [projectsList, setProjectsList] = useState<{ id: number; name: string }[]>([]);
   const [usersList, setUsersList] = useState<{ id: number; name: string }[]>([]);
 
-  // Selected Log for Detail Drawer
+  // Selected Log for Detail Modal
   const [selectedLog, setSelectedLog] = useState<SystemAuditItem | null>(null);
 
   // Load dropdown metadata
@@ -173,19 +173,19 @@ export default function SystemAuditView() {
     const act = (action || '').toUpperCase();
     switch (act) {
       case 'CREATE':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">🟢 CREATE</span>;
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">CREATE</span>;
       case 'UPDATE':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">🟡 UPDATE</span>;
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200/60">UPDATE</span>;
       case 'DELETE':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">🔴 DELETE</span>;
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200/60">DELETE</span>;
       case 'CHECK':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">🟣 AI CHECK</span>;
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200/60">AI CHECK</span>;
       case 'LOGIN':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">🔑 LOGIN</span>;
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-[#0058be] border border-blue-200/60">LOGIN</span>;
       case 'FAILED_LOGIN':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-600/20 text-red-400 border border-red-500/40 animate-pulse">⚠️ FAILED LOGIN</span>;
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300 font-bold animate-pulse">FAILED LOGIN</span>;
       default:
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">🔵 SYSTEM</span>;
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200/60">SYSTEM</span>;
     }
   };
 
@@ -204,25 +204,28 @@ export default function SystemAuditView() {
   };
 
   return (
-    <div className="space-y-6 text-slate-100">
+    <div className="space-y-6 text-[#0b1c30]">
       {/* 1. SYSTEM AUDIT SUMMARY STATS HEADER */}
-      <div className="bg-slate-900/90 backdrop-blur-md p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
-          <div>
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <span className="text-xl">🛡️</span> SYSTEM AUDIT LOGS DASHBOARD
-            </h2>
-            <p className="text-xs text-slate-400">Theo dõi toàn bộ nhật ký thay đổi, AI Check và bảo mật hệ thống toàn cục.</p>
+      <div className="bg-white p-5 rounded-xl border border-[#c2c6d6]/60 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <span className="material-symbols-outlined text-[#0058be] text-[24px]">shield</span>
+            <div>
+              <h2 className="text-base font-bold text-[#0b1c30]">
+                System Audit Logs Dashboard
+              </h2>
+              <p className="text-xs text-[#565e74]">Theo dõi nhật ký thay đổi, AI Check và bảo mật hệ thống toàn cục dành cho Admin.</p>
+            </div>
           </div>
 
           {/* Stats Time Range Selector */}
-          <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+          <div className="flex items-center gap-1 bg-[#eff4ff] p-1 rounded-xl border border-[#c2c6d6]/60 text-xs">
             {['today', '7days', '30days', 'custom'].map(pKey => (
               <button
                 key={pKey}
                 onClick={() => setPeriod(pKey)}
-                className={`px-3 py-1.5 rounded-lg font-semibold capitalize transition-all ${
-                  period === pKey ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                className={`px-3 py-1 rounded-lg font-bold capitalize transition-all ${
+                  period === pKey ? 'bg-[#0058be] text-white shadow-sm' : 'text-[#565e74] hover:text-[#0b1c30]'
                 }`}
               >
                 {pKey === 'today' ? 'Today' : pKey === '7days' ? '7 Days' : pKey === '30days' ? '30 Days' : 'Custom'}
@@ -233,20 +236,20 @@ export default function SystemAuditView() {
 
         {/* Custom Range Inputs */}
         {period === 'custom' && (
-          <div className="flex items-center gap-3 text-xs bg-slate-950 p-2.5 rounded-xl border border-slate-800 w-fit">
-            <span>Từ:</span>
+          <div className="flex items-center gap-3 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-200 w-fit">
+            <span className="font-semibold text-[#565e74]">Từ:</span>
             <input
               type="date"
               value={customStart}
               onChange={e => setCustomStart(e.target.value)}
-              className="bg-slate-900 text-slate-200 border border-slate-700 px-2 py-1 rounded focus:outline-none"
+              className="bg-white text-[#0b1c30] border border-[#c2c6d6]/60 px-2 py-1 rounded focus:outline-none focus:border-[#0058be]"
             />
-            <span>Đến:</span>
+            <span className="font-semibold text-[#565e74]">Đến:</span>
             <input
               type="date"
               value={customEnd}
               onChange={e => setCustomEnd(e.target.value)}
-              className="bg-slate-900 text-slate-200 border border-slate-700 px-2 py-1 rounded focus:outline-none"
+              className="bg-white text-[#0b1c30] border border-[#c2c6d6]/60 px-2 py-1 rounded focus:outline-none focus:border-[#0058be]"
             />
           </div>
         )}
@@ -254,51 +257,51 @@ export default function SystemAuditView() {
         {/* Summary Stat Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {/* Update */}
-          <div className="bg-amber-950/20 border border-amber-900/40 p-3.5 rounded-xl">
-            <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">Update</span>
-            <span className="text-2xl font-black text-amber-300 mt-1 block">
+          <div className="bg-amber-50/70 border border-amber-200/80 p-3.5 rounded-xl">
+            <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Update</span>
+            <span className="text-2xl font-black text-amber-800 mt-1 block">
               {statsLoading ? '--' : stats?.update_count || 0}
             </span>
           </div>
 
           {/* Create */}
-          <div className="bg-emerald-950/20 border border-emerald-900/40 p-3.5 rounded-xl">
-            <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider block">Create</span>
-            <span className="text-2xl font-black text-emerald-300 mt-1 block">
+          <div className="bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-xl">
+            <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Create</span>
+            <span className="text-2xl font-black text-emerald-800 mt-1 block">
               {statsLoading ? '--' : stats?.create_count || 0}
             </span>
           </div>
 
           {/* Delete */}
-          <div className="bg-rose-950/20 border border-rose-900/40 p-3.5 rounded-xl">
-            <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider block">Delete</span>
-            <span className="text-2xl font-black text-rose-300 mt-1 block">
+          <div className="bg-rose-50/70 border border-rose-200/80 p-3.5 rounded-xl">
+            <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Delete</span>
+            <span className="text-2xl font-black text-rose-800 mt-1 block">
               {statsLoading ? '--' : stats?.delete_count || 0}
             </span>
           </div>
 
           {/* AI Check */}
-          <div className="bg-purple-950/20 border border-purple-900/40 p-3.5 rounded-xl">
-            <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider block">AI Check</span>
-            <span className="text-2xl font-black text-purple-300 mt-1 block">
+          <div className="bg-purple-50/70 border border-purple-200/80 p-3.5 rounded-xl">
+            <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">AI Check</span>
+            <span className="text-2xl font-black text-purple-800 mt-1 block">
               {statsLoading ? '--' : stats?.ai_check_count || 0}
             </span>
           </div>
 
           {/* Login */}
-          <div className="bg-sky-950/20 border border-sky-900/40 p-3.5 rounded-xl">
-            <span className="text-[11px] font-bold text-sky-400 uppercase tracking-wider block">Login</span>
-            <span className="text-2xl font-black text-sky-300 mt-1 block">
+          <div className="bg-blue-50/70 border border-blue-200/80 p-3.5 rounded-xl">
+            <span className="text-[10px] font-bold text-[#0058be] uppercase tracking-wider block">Login</span>
+            <span className="text-2xl font-black text-[#0058be] mt-1 block">
               {statsLoading ? '--' : stats?.login_count || 0}
             </span>
           </div>
 
           {/* Failed Login */}
-          <div className="bg-red-950/30 border border-red-800/60 p-3.5 rounded-xl">
-            <span className="text-[11px] font-bold text-red-400 uppercase tracking-wider block flex items-center gap-1">
+          <div className="bg-rose-100/80 border border-rose-300 p-3.5 rounded-xl">
+            <span className="text-[10px] font-bold text-rose-800 uppercase tracking-wider block flex items-center gap-1">
               <span>⚠️</span> Failed Login
             </span>
-            <span className="text-2xl font-black text-red-400 mt-1 block">
+            <span className="text-2xl font-black text-rose-900 mt-1 block">
               {statsLoading ? '--' : stats?.failed_login_count || 0}
             </span>
           </div>
@@ -306,30 +309,30 @@ export default function SystemAuditView() {
       </div>
 
       {/* 2. RICH FILTER BAR */}
-      <div className="bg-slate-900/90 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-xl space-y-3">
+      <div className="bg-white p-4 rounded-xl border border-[#c2c6d6]/60 shadow-sm space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3 flex-1">
             {/* Search */}
             <div className="relative flex-1 min-w-[200px] max-w-xs">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 text-xs">
-                🔍
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">
+                search
               </span>
               <input
                 type="text"
                 placeholder="Search description, IP..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-800/90 text-slate-200 border border-slate-700 rounded-lg focus:outline-none focus:border-indigo-500"
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-white text-[#0b1c30] border border-[#c2c6d6]/60 rounded-lg focus:outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be] font-medium"
               />
             </div>
 
             {/* Business Filter */}
-            <div className="flex items-center gap-1 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>BU:</span>
               <select
                 value={businessFilter}
                 onChange={e => setBusinessFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none"
+                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
                 <option value="all">All BU</option>
                 <option value="Infrastructure">Infrastructure</option>
@@ -338,12 +341,12 @@ export default function SystemAuditView() {
             </div>
 
             {/* Project Filter */}
-            <div className="flex items-center gap-1 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>Project:</span>
               <select
                 value={projectFilter}
                 onChange={e => setProjectFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none max-w-[160px] truncate"
+                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be] max-w-[160px] truncate"
               >
                 <option value="all">All Projects</option>
                 {projectsList.map(p => (
@@ -353,12 +356,12 @@ export default function SystemAuditView() {
             </div>
 
             {/* Module Filter */}
-            <div className="flex items-center gap-1 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>Module:</span>
               <select
                 value={moduleFilter}
                 onChange={e => setModuleFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none"
+                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
                 <option value="all">All Modules</option>
                 <option value="Customer">Customer</option>
@@ -377,12 +380,12 @@ export default function SystemAuditView() {
             </div>
 
             {/* Action Filter */}
-            <div className="flex items-center gap-1 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>Action:</span>
               <select
                 value={actionFilter}
                 onChange={e => setActionFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none"
+                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
                 <option value="all">All Actions</option>
                 <option value="CREATE">CREATE</option>
@@ -395,12 +398,12 @@ export default function SystemAuditView() {
             </div>
 
             {/* User Filter */}
-            <div className="flex items-center gap-1 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>User:</span>
               <select
                 value={userFilter}
                 onChange={e => setUserFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none max-w-[140px] truncate"
+                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be] max-w-[140px] truncate"
               >
                 <option value="all">All Users</option>
                 {usersList.map(u => (
@@ -410,12 +413,12 @@ export default function SystemAuditView() {
             </div>
 
             {/* Date Filter */}
-            <div className="flex items-center gap-1 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>Date:</span>
               <select
                 value={dateFilter}
                 onChange={e => setDateFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none"
+                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
                 <option value="30">Last 30 days</option>
                 <option value="7">Last 7 days</option>
@@ -430,31 +433,31 @@ export default function SystemAuditView() {
           <button
             onClick={handleExportCSV}
             disabled={exporting}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors shadow disabled:opacity-50"
+            className="flex items-center gap-1.5 bg-[#eff4ff] hover:bg-[#0058be]/10 text-[#0058be] border border-[#c2c6d6]/60 font-bold text-xs px-3.5 py-1.5 rounded-lg transition-all shadow-sm disabled:opacity-50"
           >
-            <span>📥</span>
+            <span className="material-symbols-outlined text-[16px]">download</span>
             <span>{exporting ? 'Exporting...' : 'Export CSV'}</span>
           </button>
         </div>
       </div>
 
       {/* 3. SYSTEM AUDIT TABLE */}
-      <div className="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
+      <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm overflow-hidden">
         {loading ? (
-          <div className="p-10 text-center text-slate-400">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mb-2"></div>
+          <div className="p-8 text-center text-xs text-[#565e74]">
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-[#0058be] mb-2"></div>
             <p>Đang tải nhật ký System Audit Logs...</p>
           </div>
         ) : logs.length === 0 ? (
-          <div className="p-12 text-center text-slate-500">
-            <span className="text-4xl block mb-2">🛡️</span>
-            <p className="text-base font-semibold">Không tìm thấy nhật ký thỏa mãn bộ lọc</p>
-            <p className="text-xs text-slate-600 mt-1">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm.</p>
+          <div className="p-12 text-center text-[#565e74]">
+            <span className="material-symbols-outlined text-4xl text-slate-300 mb-2 block">history</span>
+            <p className="text-sm font-bold text-[#0b1c30]">Không tìm thấy nhật ký thỏa mãn bộ lọc</p>
+            <p className="text-xs text-[#565e74] mt-1">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-slate-800/90 font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <table className="w-full text-left text-xs text-[#0b1c30]">
+              <thead className="bg-[#eff4ff]/60 text-[#565e74] font-bold text-[11px] uppercase tracking-wider border-b border-[#c2c6d6]/60">
                 <tr>
                   <th className="px-4 py-3 w-28">Time</th>
                   <th className="px-4 py-3 w-36">User</th>
@@ -466,38 +469,38 @@ export default function SystemAuditView() {
                   <th className="px-4 py-3 w-16 text-center">Detail</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
+              <tbody className="divide-y divide-slate-100">
                 {logs.map(log => (
                   <tr
                     key={log.id}
                     onClick={() => setSelectedLog(log)}
-                    className="hover:bg-slate-800/50 cursor-pointer transition-colors"
+                    className="hover:bg-[#eff4ff]/40 cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 font-mono text-slate-400 whitespace-nowrap">
+                    <td className="px-4 py-3 font-mono text-[#565e74] whitespace-nowrap">
                       {formatDate(log.created_at)}
                     </td>
-                    <td className="px-4 py-3 font-semibold text-slate-200 whitespace-nowrap">
+                    <td className="px-4 py-3 font-bold text-[#0b1c30] whitespace-nowrap">
                       {log.user_name}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
                         log.business_unit === 'Markee'
-                          ? 'bg-purple-950/60 text-purple-300 border border-purple-800/50'
-                          : 'bg-blue-950/60 text-blue-300 border border-blue-800/50'
+                          ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
+                          : 'bg-blue-50 text-[#0058be] border border-blue-200/60'
                       }`}>
                         {log.business_unit || 'All'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-300 truncate max-w-[140px]" title={log.project_name || '--'}>
+                    <td className="px-4 py-3 text-[#565e74] truncate max-w-[140px]" title={log.project_name || '--'}>
                       {log.project_name || '--'}
                     </td>
-                    <td className="px-4 py-3 font-semibold text-slate-300">
+                    <td className="px-4 py-3 font-semibold text-[#565e74]">
                       {log.module}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {getActionBadge(log.action)}
                     </td>
-                    <td className="px-4 py-3 text-slate-300 max-w-xs truncate" title={log.description || ''}>
+                    <td className="px-4 py-3 text-[#0b1c30] max-w-xs truncate font-medium" title={log.description || ''}>
                       {log.description}
                     </td>
                     <td className="px-4 py-3 text-center">
@@ -506,9 +509,9 @@ export default function SystemAuditView() {
                           e.stopPropagation();
                           setSelectedLog(log);
                         }}
-                        className="px-2 py-1 font-medium bg-slate-800 hover:bg-slate-700 text-indigo-400 rounded border border-slate-700 transition-colors"
+                        className="p-1 text-[#0058be] hover:bg-[#eff4ff] rounded transition-colors"
                       >
-                        👁️
+                        <span className="material-symbols-outlined text-[18px]">visibility</span>
                       </button>
                     </td>
                   </tr>
@@ -520,15 +523,15 @@ export default function SystemAuditView() {
 
         {/* PAGINATION */}
         {totalPages > 1 && (
-          <div className="bg-slate-900 px-4 py-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <div className="bg-[#f8fafc] px-4 py-3 border-t border-[#c2c6d6]/60 flex items-center justify-between text-xs text-[#565e74]">
             <div>
-              Hiển thị <span className="font-semibold text-slate-200">{logs.length}</span> / <span className="font-semibold text-slate-200">{total}</span> nhật ký
+              Hiển thị <span className="font-bold text-[#0b1c30]">{logs.length}</span> / <span className="font-bold text-[#0b1c30]">{total}</span> nhật ký
             </div>
             <div className="flex items-center gap-2">
               <button
                 disabled={page <= 1}
                 onClick={() => setPage(p => Math.max(1, p - 1))}
-                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded border border-slate-700 transition-colors"
+                className="px-3 py-1 bg-white hover:bg-slate-50 disabled:opacity-40 text-[#0b1c30] font-semibold rounded border border-[#c2c6d6]/60 transition-colors shadow-sm"
               >
                 Trước
               </button>
@@ -536,7 +539,7 @@ export default function SystemAuditView() {
               <button
                 disabled={page >= totalPages}
                 onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded border border-slate-700 transition-colors"
+                className="px-3 py-1 bg-white hover:bg-slate-50 disabled:opacity-40 text-[#0b1c30] font-semibold rounded border border-[#c2c6d6]/60 transition-colors shadow-sm"
               >
                 Sau
               </button>
@@ -549,129 +552,129 @@ export default function SystemAuditView() {
       {analytics && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Top Active Users */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <span>🏆</span> Top Active Users
+          <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm space-y-3">
+            <h3 className="text-xs font-bold text-[#565e74] uppercase tracking-wider flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-[#0058be]">leaderboard</span> Top Active Users
             </h3>
             <div className="space-y-2 text-xs">
               {analytics.top_active_users?.map((u: any, idx: number) => (
-                <div key={u.user_id} className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
-                  <span className="font-semibold text-slate-200 truncate">{idx + 1}. {u.name}</span>
-                  <span className="font-bold text-indigo-400 font-mono">{u.total_actions} tác vụ</span>
+                <div key={u.user_id} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100">
+                  <span className="font-bold text-[#0b1c30] truncate">{idx + 1}. {u.name}</span>
+                  <span className="font-extrabold text-[#0058be] font-mono">{u.total_actions} tác vụ</span>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Top Updated Projects */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <span>📁</span> Top Updated Projects
+          <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm space-y-3">
+            <h3 className="text-xs font-bold text-[#565e74] uppercase tracking-wider flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-amber-600">folder_open</span> Top Updated Projects
             </h3>
             <div className="space-y-2 text-xs">
               {analytics.top_updated_projects?.map((p: any, idx: number) => (
-                <div key={p.project_id} className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
-                  <span className="font-semibold text-slate-200 truncate">{idx + 1}. {p.name}</span>
-                  <span className="font-bold text-amber-400 font-mono">{p.total_updates} lượt sửa</span>
+                <div key={p.project_id} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100">
+                  <span className="font-bold text-[#0b1c30] truncate">{idx + 1}. {p.name}</span>
+                  <span className="font-extrabold text-amber-700 font-mono">{p.total_updates} lượt sửa</span>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Top AI Users */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <span>🤖</span> Top AI Users
+          <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm space-y-3">
+            <h3 className="text-xs font-bold text-[#565e74] uppercase tracking-wider flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-purple-600">psychology</span> Top AI Users
             </h3>
             <div className="space-y-2 text-xs">
               {analytics.top_ai_users?.map((u: any, idx: number) => (
-                <div key={u.user_id} className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
-                  <span className="font-semibold text-slate-200 truncate">{idx + 1}. {u.name}</span>
-                  <span className="font-bold text-purple-400 font-mono">{u.total_checks} AI Check</span>
+                <div key={u.user_id} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100">
+                  <span className="font-bold text-[#0b1c30] truncate">{idx + 1}. {u.name}</span>
+                  <span className="font-extrabold text-purple-700 font-mono">{u.total_checks} AI Check</span>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Top Login Failures */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 text-red-400">
-              <span>⚠️</span> Top Failed Logins (IPs)
+          <div className="bg-white border border-rose-200/80 rounded-xl p-4 shadow-sm space-y-3">
+            <h3 className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-rose-600">warning</span> Top Failed Logins (IPs)
             </h3>
             <div className="space-y-2 text-xs">
               {analytics.top_login_failures?.map((f: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
-                  <span className="font-mono text-slate-300 truncate">{f.ip_address}</span>
-                  <span className="font-bold text-red-400 font-mono">{f.total_failures} thất bại</span>
+                <div key={idx} className="flex items-center justify-between bg-rose-50/50 p-2 rounded-lg border border-rose-100">
+                  <span className="font-mono font-bold text-rose-900 truncate">{f.ip_address}</span>
+                  <span className="font-black text-rose-700 font-mono">{f.total_failures} thất bại</span>
                 </div>
               ))}
               {(!analytics.top_login_failures || analytics.top_login_failures.length === 0) && (
-                <p className="text-slate-500 italic text-center py-2">Không có cảnh báo thất bại.</p>
+                <p className="text-slate-400 italic text-center py-2">Không có cảnh báo thất bại.</p>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 5. DETAIL DRAWER / MODAL */}
+      {/* 5. DETAIL MODAL */}
       {selectedLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl space-y-0">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Header */}
-            <div className="bg-slate-800/90 px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <span className="text-xl">🛡️</span>
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-[#0058be]">
+                <span className="material-symbols-outlined text-[24px]">shield</span>
                 <div>
-                  <h3 className="font-bold text-slate-100 text-base">
+                  <h3 className="text-base font-bold text-[#0b1c30]">
                     System Audit Detail #{selectedLog.id}
                   </h3>
-                  <p className="text-xs text-slate-400">
-                    Module: <span className="text-indigo-400 font-semibold">{selectedLog.module}</span> | Entity: {selectedLog.entity_type} #{selectedLog.entity_id || 'N/A'}
+                  <p className="text-xs text-[#565e74]">
+                    Module: <span className="text-[#0058be] font-bold">{selectedLog.module}</span> | Entity: {selectedLog.entity_type} #{selectedLog.entity_id || 'N/A'}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setSelectedLog(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors text-xl"
+                className="text-slate-400 hover:text-slate-600 transition-colors"
               >
-                ✕
+                <span className="material-symbols-outlined">close</span>
               </button>
             </div>
 
             {/* Content Body */}
             <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
               {/* Meta Rows */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-[#eff4ff]/60 p-3.5 rounded-xl border border-[#0058be]/10">
                 <div>
-                  <span className="text-slate-500 block text-[10px]">Hành động</span>
-                  <div className="mt-1">{getActionBadge(selectedLog.action)}</div>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Hành động</span>
+                  <div className="mt-0.5">{getActionBadge(selectedLog.action)}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px]">Người thực hiện</span>
-                  <span className="font-bold text-slate-200">{selectedLog.user_name}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Người thực hiện</span>
+                  <span className="font-bold text-[#0b1c30]">{selectedLog.user_name}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px]">Business Unit</span>
-                  <span className="font-bold text-slate-200">{selectedLog.business_unit || 'All'}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Business Unit</span>
+                  <span className="font-bold text-[#0b1c30]">{selectedLog.business_unit || 'All'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px]">Dự án</span>
-                  <span className="font-bold text-slate-200">{selectedLog.project_name || '--'}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Dự án</span>
+                  <span className="font-bold text-[#0b1c30]">{selectedLog.project_name || '--'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px]">Thời gian</span>
-                  <span className="font-mono text-slate-300">{selectedLog.created_at ? new Date(selectedLog.created_at).toLocaleString('vi-VN') : '--'}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Thời gian</span>
+                  <span className="font-mono text-[#0b1c30] font-bold">{selectedLog.created_at ? new Date(selectedLog.created_at).toLocaleString('vi-VN') : '--'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px]">Trường thay đổi</span>
-                  <span className="font-bold text-amber-400">{selectedLog.field_name || 'Tất cả'}</span>
+                  <span className="text-[#565e74] text-[10px] block font-semibold">Trường thay đổi</span>
+                  <span className="font-bold text-amber-700">{selectedLog.field_name || 'Tất cả'}</span>
                 </div>
               </div>
 
               {/* Description */}
               <div>
-                <span className="font-semibold text-slate-400 uppercase tracking-wider block mb-1">Mô tả diễn giải</span>
-                <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-slate-200 font-medium">
+                <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block mb-1">Mô tả diễn giải</span>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-[#0b1c30] font-medium">
                   {selectedLog.description}
                 </div>
               </div>
@@ -679,21 +682,21 @@ export default function SystemAuditView() {
               {/* Diff Values Comparison */}
               {(selectedLog.old_value || selectedLog.new_value) && (
                 <div className="space-y-2">
-                  <span className="font-semibold text-slate-400 uppercase tracking-wider block">So sánh Giá trị (Old vs New Diff)</span>
+                  <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block">So sánh Giá trị (Old vs New Diff)</span>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="bg-rose-950/20 border border-rose-900/40 rounded-xl p-3">
-                      <span className="font-bold text-rose-400 uppercase block mb-1">
+                    <div className="bg-rose-50 border border-rose-200/60 rounded-xl p-3">
+                      <span className="font-bold text-rose-700 text-[11px] uppercase block mb-1">
                         - Giá trị cũ (Old Value)
                       </span>
-                      <pre className="text-rose-200 whitespace-pre-wrap font-mono bg-rose-950/40 p-2.5 rounded-lg border border-rose-900/30 max-h-48 overflow-y-auto">
+                      <pre className="text-rose-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2 rounded-lg border border-rose-100 max-h-44 overflow-y-auto">
                         {selectedLog.old_value || '(Trống / NULL)'}
                       </pre>
                     </div>
-                    <div className="bg-emerald-950/20 border border-emerald-900/40 rounded-xl p-3">
-                      <span className="font-bold text-emerald-400 uppercase block mb-1">
+                    <div className="bg-emerald-50 border border-emerald-200/60 rounded-xl p-3">
+                      <span className="font-bold text-emerald-700 text-[11px] uppercase block mb-1">
                         + Giá trị mới (New Value)
                       </span>
-                      <pre className="text-emerald-200 whitespace-pre-wrap font-mono bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-900/30 max-h-48 overflow-y-auto">
+                      <pre className="text-emerald-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2 rounded-lg border border-emerald-100 max-h-44 overflow-y-auto">
                         {selectedLog.new_value || '(Trống / NULL)'}
                       </pre>
                     </div>
@@ -702,26 +705,26 @@ export default function SystemAuditView() {
               )}
 
               {/* Network / Client Metadata */}
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
-                <span className="font-semibold text-slate-400 uppercase tracking-wider block">Thông tin Kỹ thuật & Request</span>
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block">Thông tin Kỹ thuật & Request</span>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px]">
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Client IP</span>
-                    <span className="text-sky-300 font-bold">{selectedLog.ip_address || 'N/A'}</span>
+                    <span className="text-[#565e74] text-[10px] block font-semibold">Client IP</span>
+                    <span className="text-[#0058be] font-bold">{selectedLog.ip_address || 'N/A'}</span>
                   </div>
                   <div className="sm:col-span-2">
-                    <span className="text-slate-500 block text-[10px]">Browser / User Agent</span>
-                    <span className="text-slate-300 truncate block" title={selectedLog.user_agent || 'N/A'}>{selectedLog.user_agent || 'N/A'}</span>
+                    <span className="text-[#565e74] text-[10px] block font-semibold">Browser / User Agent</span>
+                    <span className="text-[#0b1c30] truncate block" title={selectedLog.user_agent || 'N/A'}>{selectedLog.user_agent || 'N/A'}</span>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Footer */}
-            <div className="bg-slate-800/80 px-6 py-3 border-t border-slate-800 text-right">
+            <div className="p-4 border-t border-slate-100 flex justify-end bg-slate-50/50">
               <button
                 onClick={() => setSelectedLog(null)}
-                className="px-4 py-1.5 text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all"
               >
                 Đóng
               </button>
