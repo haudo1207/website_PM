@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar as CalendarIcon, Sparkles, RefreshCw } from 'lucide-react';
+import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Share2 } from 'lucide-react';
 import { generateMeetingLink } from '@/lib/api';
 
 interface CreateMeetingModalProps {
@@ -20,6 +20,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -234,17 +235,33 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Link meeting (tùy chọn)</label>
-                {(formData.platform === 'Zoom' || formData.platform === 'Google Meet') && (
-                  <button
-                    type="button"
-                    onClick={handleGenerateLink}
-                    disabled={isGeneratingLink}
-                    className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline disabled:opacity-50"
-                  >
-                    <Sparkles size={13} className={isGeneratingLink ? 'animate-spin text-amber-500' : 'text-[#0058be]'} />
-                    {isGeneratingLink ? 'Đang tạo link...' : `⚡ Tạo link ${formData.platform}`}
-                  </button>
-                )}
+                <div className="flex items-center gap-3">
+                  {formData.link && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(formData.link);
+                        setCopiedLink(true);
+                        setTimeout(() => setCopiedLink(false), 2000);
+                      }}
+                      className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 hover:underline"
+                    >
+                      {copiedLink ? <Check size={13} /> : <Copy size={13} />}
+                      {copiedLink ? 'Đã sao chép!' : 'Sao chép link'}
+                    </button>
+                  )}
+                  {(formData.platform === 'Zoom' || formData.platform === 'Google Meet') && (
+                    <button
+                      type="button"
+                      onClick={handleGenerateLink}
+                      disabled={isGeneratingLink}
+                      className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline disabled:opacity-50"
+                    >
+                      <Sparkles size={13} className={isGeneratingLink ? 'animate-spin text-amber-500' : 'text-[#0058be]'} />
+                      {isGeneratingLink ? 'Đang tạo link...' : `⚡ Tạo link ${formData.platform}`}
+                    </button>
+                  )}
+                </div>
               </div>
               <input 
                 type="text" 
