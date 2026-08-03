@@ -35,6 +35,18 @@ services:
       backend:
         condition: service_healthy
 
+  zalo-crawler:
+    build:
+      context: ./services/zalo-crawler
+    restart: unless-stopped
+    environment:
+      WEBHOOK_URL: http://backend:8000/api/chat/zalo-webhook
+    depends_on:
+      backend:
+        condition: service_healthy
+    profiles:
+      - crawler
+
 networks:
   default:
     driver: bridge
