@@ -226,19 +226,13 @@ export default function MembersView({ onFlash }: Props) {
 
             <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
               className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-              <option value="">Tất cả Team</option>
+              <option value="">Tất cả Level</option>
               {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-            </select>
-
-            <select value={filterPosition} onChange={e => setFilterPosition(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-              <option value="">Tất cả Chức vụ</option>
-              {positions.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
             </select>
 
             <select value={filterDepartment} onChange={e => setFilterDepartment(e.target.value)}
               className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-              <option value="">Tất cả Phòng ban</option>
+              <option value="">Tất cả Team</option>
               {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
             </select>
 
@@ -262,9 +256,8 @@ export default function MembersView({ onFlash }: Props) {
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-10">STT</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Họ tên</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Level</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Team</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Chức vụ</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phòng ban</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
@@ -284,7 +277,6 @@ export default function MembersView({ onFlash }: Props) {
                       <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full text-[10px] font-semibold">{m.team}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{m.position || <span className="text-slate-300">–</span>}</td>
                   <td className="px-4 py-3 text-slate-600">{m.department || <span className="text-slate-300">–</span>}</td>
                   <td className="px-4 py-3">
                     {m.skills.length > 0 ? (
@@ -320,7 +312,7 @@ export default function MembersView({ onFlash }: Props) {
               ))}
               {members.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center py-16 text-slate-400 font-medium">
+                  <td colSpan={9} className="text-center py-16 text-slate-400 font-medium">
                     Không tìm thấy thành viên nào
                   </td>
                 </tr>
@@ -411,26 +403,18 @@ export default function MembersView({ onFlash }: Props) {
                 </h3>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Team *</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Level *</label>
                     <select required value={form.team} onChange={e => setForm({ ...form, team: e.target.value })}
                       className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all">
-                      <option value="">-- Chọn Team --</option>
+                      <option value="">-- Chọn Level --</option>
                       {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                     </select>
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Chức vụ</label>
-                    <select value={form.position} onChange={e => setForm({ ...form, position: e.target.value })}
-                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all">
-                      <option value="">-- Chọn chức vụ --</option>
-                      {positions.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Phòng ban</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Team</label>
                     <select value={form.department} onChange={e => setForm({ ...form, department: e.target.value })}
                       className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all">
-                      <option value="">-- Chọn phòng ban --</option>
+                      <option value="">-- Chọn Team --</option>
                       {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
                     </select>
                   </div>

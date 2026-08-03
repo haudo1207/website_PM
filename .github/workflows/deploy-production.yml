@@ -10,12 +10,16 @@ on:
 
 jobs:
   deploy-both-brands:
-    if: inputs.confirm == 'DEPLOY'
+    if: inputs.confirm == 'DEPLOY' || inputs.confirm == 'deploy' || inputs.confirm == 'Deploy'
     runs-on: [self-hosted, security]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
+      - name: Prune docker cache
+        run: |
+          docker system prune -f || true
+          docker builder prune -f || true
       - name: Sync and deploy both brands
         env:
           APP_COMMIT: ${{ github.sha }}

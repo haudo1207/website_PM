@@ -437,7 +437,8 @@ function ProjectDetailContent() {
   const [editProjectName, setEditProjectName] = useState('');
   const [editProjectYear, setEditProjectYear] = useState<number>(new Date().getFullYear());
   const [editCustomerName, setEditCustomerName] = useState('');
-  const [editBusiness, setEditBusiness] = useState<'Infrastructure' | 'Markee'>('Infrastructure');
+  const [editCustomerId, setEditCustomerId] = useState<number | null>(null);
+  const [editBusiness, setEditBusiness] = useState<'Infrastructure' | 'Markee' | 'All'>('Infrastructure');
   const [editCurrentPhase, setEditCurrentPhase] = useState('');
   const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
 
@@ -456,6 +457,16 @@ function ProjectDetailContent() {
 
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
+
+  const editBusinessCustomers = editBusiness === 'All'
+    ? dbCustomers
+    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editBusiness.toLowerCase());
+  const selectedCustomerBu = (dbCustomers.find((c) => c.name === editCustomerName)?.business_unit || '').toLowerCase();
+  const editCustomerMismatch = !!editCustomerName && (
+    editBusiness === 'All'
+      ? !!selectedCustomerBu && selectedCustomerBu !== 'infrastructure' && selectedCustomerBu !== 'markee'
+      : selectedCustomerBu !== editBusiness.toLowerCase()
+  );
 
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
@@ -758,6 +769,7 @@ function ProjectDetailContent() {
         code: `${editProjectName.trim()}-${editProjectYear}`,
         year: editProjectYear,
         customer_name: editCustomerName.trim(),
+        customer_id: editCustomerId,
         business: editBusiness,
         data_scope: editBusiness.toLowerCase(),
         current_phase: editCurrentPhase.trim(),
@@ -3900,6 +3912,7 @@ value={editValue}
                         setEditProjectName(project.name || '');
                         setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
                         setEditCustomerName(project.customer_name || '');
+                        setEditCustomerId(project.customer_id ?? null);
                         setEditBusiness(project.business || 'Infrastructure');
                         setEditCurrentPhase(project.current_phase || '');
 
@@ -6378,11 +6391,12 @@ value={editValue}
                   <select
                     required
                     value={editBusiness}
-                    onChange={(e) => setEditBusiness(e.target.value as 'Infrastructure' | 'Markee')}
+                    onChange={(e) => setEditBusiness(e.target.value as 'Infrastructure' | 'Markee' | 'All')}
                     className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
                   >
                     <option value="Infrastructure">Infrastructure</option>
                     <option value="Markee">Markee</option>
+                    <option value="All">All (Cả 2 team)</option>
                   </select>
                 </div>
 
@@ -6428,6 +6442,13 @@ value={editValue}
                     <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                   </button>
 
+                  {editCustomerMismatch && (
+                    <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
+                      <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>
+                      Khách hàng hiện tại không thuộc Business đã chọn. Vui lòng chọn khách hàng khác.
+                    </p>
+                  )}
+
                   {customerDropdownOpen && (
                     <div
                       onClick={(e) => e.stopPropagation()}
@@ -6446,6 +6467,7 @@ value={editValue}
                           type="button"
                           onClick={() => {
                             setEditCustomerName('');
+                            setEditCustomerId(null);
                             setCustomerSearch('');
                             setCustomerDropdownOpen(false);
                           }}
@@ -6454,7 +6476,7 @@ value={editValue}
                           Chọn khách hàng (Để trống nếu là dự án nội bộ)
                         </button>
 
-                        {dbCustomers
+                        {editBusinessCustomers
                           .filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()))
                           .map((c) => (
                             <button
@@ -6462,6 +6484,7 @@ value={editValue}
                               type="button"
                               onClick={() => {
                                 setEditCustomerName(c.name);
+                                setEditCustomerId(c.id);
                                 setCustomerSearch('');
                                 setCustomerDropdownOpen(false);
                               }}
