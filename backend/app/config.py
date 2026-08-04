@@ -4,8 +4,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    DATABASE_URL: str = "postgresql://postgres.asvtfrbkvgllqsksuyxp:Poptech%40123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
-    SECRET_KEY: str = "8b7e289c09fe542f8c5b5257ef671d49e108cf1c944733e8a4d46c82302f23b2"
+    DATABASE_URL: str = "sqlite:///./app.db"
+    SECRET_KEY: str = "default-development-secret-key-change-in-env"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     INTERNAL_SYNC_TOKEN: str = ""
