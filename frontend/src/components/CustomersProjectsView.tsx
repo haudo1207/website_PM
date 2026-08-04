@@ -34,6 +34,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
   // Data states
   const [customers, setCustomers] = useState<any[]>([]);
+  const [allCustomers, setAllCustomers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   
@@ -136,13 +137,15 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const loadData = async () => {
     setLoading(true);
     try {
-      const [custs, projs, mems, mPhases] = await Promise.all([
+      const [custs, projs, mems, mPhases, allCusts] = await Promise.all([
         getCustomers(activeBU).catch(e => { console.error('getCustomers error:', e); return []; }),
         getProjects(activeBU).catch(e => { console.error('getProjects error:', e); return []; }),
         getMembers().catch(e => { console.error('getMembers error:', e); return []; }),
-        getMasterPhases().catch(e => { console.error('getMasterPhases error:', e); return []; })
+        getMasterPhases().catch(e => { console.error('getMasterPhases error:', e); return []; }),
+        getCustomers().catch(e => { console.error('getCustomers all error:', e); return []; })
       ]);
       setCustomers(custs || []);
+      setAllCustomers(allCusts || []);
       setProjects(projs || []);
       setMembers(mems || []);
       setDbMasterPhases(mPhases || []);
@@ -177,6 +180,31 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       c.name.toLowerCase().includes(customerSearch.toLowerCase())
     );
   }, [customers, customerSearch]);
+
+  // Business-filtered customers for the Project modal (mirrors Project Detail -> Edit Project)
+  const modalBusinessCustomers = useMemo(() => {
+    return projectForm.business === 'All'
+      ? allCustomers
+      : allCustomers.filter((c) => (c.business_unit || '').toLowerCase() === projectForm.business.toLowerCase());
+  }, [allCustomers, projectForm.business]);
+
+  const modalSelectedCustomerBu = (allCustomers.find((c) => c.id === Number(projectForm.customerId))?.business_unit || '').toLowerCase();
+  const modalCustomerMismatch = !!projectForm.customerId && (
+    projectForm.business === 'All'
+      ? !!modalSelectedCustomerBu && modalSelectedCustomerBu !== 'infrastructure' && modalSelectedCustomerBu !== 'markee'
+      : modalSelectedCustomerBu !== projectForm.business.toLowerCase()
+  );
+
+  // Keep the currently-selected customer visible in the modal even if it does not belong to the chosen Business
+  const modalCustomerOptions = useMemo(() => {
+    const opts = [...modalBusinessCustomers];
+    const selectedId = Number(projectForm.customerId);
+    if (selectedId && !opts.some(c => c.id === selectedId)) {
+      const current = allCustomers.find(c => c.id === selectedId);
+      if (current) opts.unshift(current);
+    }
+    return opts;
+  }, [modalBusinessCustomers, allCustomers, projectForm.customerId]);
 
   // Selected Customer details
   const selectedCustomer = useMemo(() => {
@@ -380,7 +408,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
     setActionLoading(true);
     try {
-      const selectedCust = customers.find(c => c.id === Number(projectForm.customerId));
+      const selectedCust = allCustomers.find(c => c.id === Number(projectForm.customerId));
       const payload = {
         name: projectForm.name.trim(),
         code: `${projectForm.name.trim().replace(/\s+/g, '-')}-${projectForm.year}`,
@@ -921,10 +949,15 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                     className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer"
                   >
                     <option value="">-- Chọn khách hàng --</option>
-                    {customers.map(c => (
+                    {modalCustomerOptions.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
+                  {modalCustomerMismatch && (
+                    <p className="text-[10px] font-semibold text-amber-600 flex items-start gap-1">
+                      ⚠ Khách hàng hiện tại không thuộc Business đã chọn. Vui lòng chọn khách hàng khác.
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-1">

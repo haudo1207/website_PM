@@ -92,11 +92,6 @@ function NavbarContent() {
   };
 
   const nav = [
-    { href: '/dashboard', label: 'Dashboard', icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-      </svg>
-    )},
     { href: '/projects', label: 'Projects', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -251,6 +246,23 @@ function NavbarContent() {
 
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
+
+          {/* Dashboard single link */}
+          {(() => {
+            const active = path.startsWith('/dashboard');
+            return (
+              <Link href="/dashboard"
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+                  active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                Dashboard
+              </Link>
+            );
+          })()}
+
           {nav.map(n => {
             const active = path === n.href || (n.href === '/customers' && path.startsWith('/customers')) || (n.href === '/projects' && (path === '/projects' || path === '/project')) || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (

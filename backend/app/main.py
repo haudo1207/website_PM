@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
@@ -85,6 +85,19 @@ def apply_schema_updates():
             "GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1), true)"
         ))
 
+        # Auto-link unlinked users to members by matching Email, Full Name or Display Name
+        conn.execute(text("""
+            UPDATE users u
+            SET member_id = m.id
+            FROM members m
+            WHERE u.member_id IS NULL
+              AND m.id NOT IN (SELECT member_id FROM users WHERE member_id IS NOT NULL)
+              AND (
+                (u.email IS NOT NULL AND u.email != '' AND LOWER(u.email) = LOWER(m.email))
+                OR (u.full_name IS NOT NULL AND u.full_name != '' AND (LOWER(u.full_name) = LOWER(m.full_name) OR LOWER(u.full_name) = LOWER(m.display_name)))
+              )
+        """))
+
         # Add AI Review columns to projects
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
@@ -163,6 +176,37 @@ def apply_schema_updates():
             END $$
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_sales_id ON projects (sales_id)"))
+
+        # Create audit_logs table and indices if not exists
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                module VARCHAR(50) NOT NULL,
+                entity_type VARCHAR(50) NOT NULL,
+                entity_id VARCHAR(100),
+                action VARCHAR(30) NOT NULL,
+                field_name VARCHAR(100),
+                old_value TEXT,
+                new_value TEXT,
+                description TEXT,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_project_id ON audit_logs (project_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_module ON audit_logs (module);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_entity_type ON audit_logs (entity_type);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs (user_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS customer_id INTEGER;"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS request_url VARCHAR(255);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_business_unit ON audit_logs (business_unit);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_customer_id ON audit_logs (customer_id);"))
 
         # Add remark_type and description to performance_settings
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))

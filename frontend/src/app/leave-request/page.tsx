@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import SummaryCard from '@/components/leave-request/SummaryCard';
-import StatusBadge from '@/components/leave-request/StatusBadge';
+import StatusBadge, { LeaveTypeBadge } from '@/components/leave-request/StatusBadge';
 import LeaveRequestForm from '@/components/leave-request/LeaveRequestForm';
 import Portal from '@/components/Portal';
 import { formatDateLabel, LeaveRequest, LeaveRequestFormValues, getStorageKey, mockLeaveRequests } from '@/lib/leave-request';
@@ -848,9 +848,17 @@ export default function LeaveRequestPage() {
                               {(currentPage - 1) * ITEMS_PER_PAGE + index + 1}
                             </td>
                             <td className="px-3 py-3 text-[#565e74]">
-                              {item.user?.full_name || `User ${item.user_id}`}
+                              {item.member ? (
+                                <span className="font-semibold text-[#0b1c30]">{item.member.full_name}</span>
+                              ) : item.user?.full_name ? (
+                                <span>{item.user.full_name}</span>
+                              ) : (
+                                `User ${item.user_id}`
+                              )}
                             </td>
-                            <td className="px-3 py-3 text-[#565e74]">{item.leave_type}</td>
+                            <td className="px-3 py-3">
+                              <LeaveTypeBadge type={item.leave_type} />
+                            </td>
                             <td className="px-3 py-3 text-[#565e74]">{formatDateLabel(item.start_date)}</td>
                             <td className="px-3 py-3 text-[#565e74]">{formatDateLabel(item.end_date)}</td>
                             <td className="px-3 py-3 text-[#565e74]">
@@ -1228,7 +1236,7 @@ export default function LeaveRequestPage() {
               <div className="space-y-3 text-sm text-[#0b1c30]">
                 <div className="flex justify-between">
                   <span className="text-[#565e74]">Leave Type</span>
-                  <span className="font-semibold">{viewingRequest.leave_type}</span>
+                  <LeaveTypeBadge type={viewingRequest.leave_type} />
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[#565e74]">Date Range</span>
@@ -1247,6 +1255,16 @@ export default function LeaveRequestPage() {
                     {viewingRequest.ward}, {viewingRequest.province}
                   </span>
                 </div>
+                {viewingRequest.member && (
+                  <div className="flex justify-between">
+                    <span className="text-[#565e74]">Member</span>
+                    <span className="font-semibold">
+                      {viewingRequest.member.full_name}
+                      {viewingRequest.member.member_id && ` (ID: ${viewingRequest.member.member_id})`}
+                      {viewingRequest.member.team && ` • ${viewingRequest.member.team}`}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-[#565e74]">Reason</span>
                   <span className="font-semibold">{viewingRequest.reason}</span>

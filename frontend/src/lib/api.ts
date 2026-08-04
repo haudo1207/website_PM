@@ -233,11 +233,14 @@ export const getGoogleStatus = () => api.get('/meetings/google/status').then(r =
 export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
 
 
+
 // Performance Settings CRUD
 export const getPerformanceSettings = () => api.get('/performance-settings').then(r => r.data);
-export const createPerformanceSetting = (data: { performance: string; kpi: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.post('/performance-settings', data).then(r => r.data);
-export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
+export const getParentRemarks = () => api.get('/performance-settings/parents').then(r => r.data);
+export const createPerformanceSetting = (data: { performance: string; kpi: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean; is_parent?: boolean; parent_id?: number | null }) => api.post('/performance-settings', data).then(r => r.data);
+export const updatePerformanceSetting = (id: number, data: { performance?: string; kpi?: number; remark_type?: string; description?: string; sort_order?: number; is_active?: boolean; is_parent?: boolean; parent_id?: number | null }) => api.put(`/performance-settings/${id}`, data).then(r => r.data);
 export const deletePerformanceSetting = (id: number) => api.delete(`/performance-settings/${id}`).then(r => r.data);
+
 
 // Master Phases CRUD
 export const getMasterPhases = () => api.get('/system-categories/master-phases').then(r => r.data);
@@ -276,4 +279,88 @@ export const getAIReviewLog = (logId: number) =>
 
 export const syncAITasksFromChat = (projectId: number) =>
   api.post(`/projects/${projectId}/ai-task-inbox/sync`).then(r => r.data);
+
+// Audit Logs
+export interface AuditLogItem {
+  id: number;
+  project_id: number;
+  module: string;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  field_name?: string;
+  old_value?: string;
+  new_value?: string;
+  description?: string;
+  user_id?: number;
+  user_name: string;
+  created_at: string;
+}
+
+export const getProjectAuditLogs = (
+  projectId: number,
+  params?: {
+    module?: string;
+    action?: string;
+    user_id?: number;
+    search?: string;
+    start_date?: string;
+    end_date?: string;
+    page?: number;
+    page_size?: number;
+  }
+) => api.get<{ total: number; page: number; page_size: number; total_pages: number; items: AuditLogItem[] }>(`/projects/${projectId}/audit-logs`, { params }).then(r => r.data);
+
+export const exportProjectAuditLogs = (projectId: number, params?: { module?: string; action?: string; user_id?: number; search?: string }) =>
+  api.get(`/projects/${projectId}/audit-logs/export`, { params, responseType: 'blob' }).then(r => r.data);
+
+// System Audit (Global Admin)
+export interface SystemAuditItem extends AuditLogItem {
+  business_unit?: string;
+  customer_id?: number;
+  project_name?: string;
+  ip_address?: string;
+  user_agent?: string;
+  request_url?: string;
+}
+
+export interface SystemAuditStats {
+  period: string;
+  create_count: number;
+  update_count: number;
+  delete_count: number;
+  ai_check_count: number;
+  login_count: number;
+  failed_login_count: number;
+}
+
+export const getSystemAuditStats = (params?: { period?: string; start_date?: string; end_date?: string }) =>
+  api.get<SystemAuditStats>('/system-audit/stats', { params }).then(r => r.data);
+
+export const getSystemAuditLogs = (params?: {
+  business_unit?: string;
+  project_id?: number;
+  module?: string;
+  action?: string;
+  user_id?: number;
+  search?: string;
+  start_date?: string;
+  end_date?: string;
+  page?: number;
+  page_size?: number;
+}) => api.get<{ total: number; page: number; page_size: number; total_pages: number; items: SystemAuditItem[] }>('/system-audit/logs', { params }).then(r => r.data);
+
+export const exportSystemAuditLogs = (params?: {
+  business_unit?: string;
+  project_id?: number;
+  module?: string;
+  action?: string;
+  user_id?: number;
+  search?: string;
+  start_date?: string;
+  end_date?: string;
+}) => api.get('/system-audit/export', { params, responseType: 'blob' }).then(r => r.data);
+
+export const getSystemAuditAnalytics = () =>
+  api.get('/system-audit/analytics').then(r => r.data);
 

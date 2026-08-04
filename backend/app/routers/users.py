@@ -126,4 +126,4 @@ def delete_user(uid: int, db: Session = Depends(get_db), admin=Depends(require_a
 
 @router.get("/me")
 def me(user=Depends(get_current_user)):
-    return {"id":user.id,"email":user.email,"full_name":user.full_name,"role":user.role,"data_scope":user.data_scope}
+    return {"id":user.id,"email":user.email,"full_name":user.full_name,"role":user.role,"data_scope":user.data_scope,"member_id":user.member_id}
