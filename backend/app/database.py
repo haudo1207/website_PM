@@ -4,7 +4,7 @@ from .config import settings
 
 db_url = settings.DATABASE_URL
 if not db_url or not db_url.strip():
-    raise ValueError("DATABASE_URL is missing or empty. Please set DATABASE_URL in .env on the server.")
+    db_url = "postgresql://postgres.asvtfrbkvgllqsksuyxp:Poptech%40123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
 
 engine = create_engine(
     db_url,
