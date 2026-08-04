@@ -671,47 +671,107 @@ def get_chat_sync_logs(pid: int, db: Session = Depends(get_db)):
 def telegram_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     """
     Receives incoming Telegram messages from a Telegram Bot.
+    Supports Telegram Supergroup Forum Topics (message_thread_id)!
     """
     message = payload.get("message") or payload.get("channel_post") or {}
     text = message.get("text", "").strip()
     chat = message.get("chat", {})
-    chat_id = chat.get("id")
+    chat_id = str(chat.get("id", "")) if chat.get("id") is not None else ""
     chat_title = chat.get("title", "Telegram Group")
+    sender = message.get("from") or {}
+    sender_name = f"{sender.get('first_name', '')} {sender.get('last_name', '')}".strip() or "Thành viên Telegram"
+    
+    # Telegram Topic / Subgroup ID
+    message_thread_id = message.get("message_thread_id")
 
     if not text:
         return {"ok": True, "ignored": "No text"}
 
-    # Find project link matching this Telegram chat
-    # Try finding link with chat_id or name matching
-    link = db.query(ProjectLink).filter(ProjectLink.url.contains(str(chat_id))).first()
+    # Find project link matching this Telegram chat (and specific Topic if available)
+    link = None
+    if chat_id or chat_title:
+        # Query all Telegram links
+        tg_links = db.query(ProjectLink).filter(
+            (ProjectLink.url.ilike(f"%{chat_id}%")) | (ProjectLink.name.ilike(f"%{chat_title}%"))
+        ).all()
+
+        if message_thread_id and tg_links:
+            thread_str = str(message_thread_id)
+            for l in tg_links:
+                url_str = str(l.url or '')
+                desc_str = str(l.description or '')
+                name_str = str(l.name or '')
+                if thread_str in url_str or thread_str in desc_str or thread_str in name_str:
+                    link = l
+                    break
+
+        if not link and tg_links:
+            link = tg_links[0]
+
     pid = link.project_id if link else None
 
     if not pid:
-        # Fallback to the first active project if unmatched
         p = db.query(Project).first()
         if p:
             pid = p.id
 
     if pid:
-        # Save task to AI task inbox if message contains task directive or keywords
-        if any(kw in text.lower() for kw in ["/task", "@markeetask", "giao việc", "cần làm", "high priority", "manday"]):
+        # Save task to AI task inbox
+        if any(kw in text.lower() for kw in ["/task", "@markeetask", "giao việc", "cần làm", "high priority", "manday", "làm", "sửa", "fix", "update", "bổ sung", "hợp đồng"]):
             extracted = _extract_tasks_with_ai(text)
+            members = db.query(Member).all()
+            created_count = 0
+
             for item in extracted:
                 detail_task = item.get("detail_task", "").strip() or text[:80]
+                raw_assigned = item.get("assigned_name")
+                matched_id = None
+                assigned_display_name = None
+
+                if raw_assigned:
+                    norm = raw_assigned.lower().strip().replace('@', '')
+                    for m in members:
+                        m_name = (m.display_name or m.full_name or '').lower()
+                        if norm in m_name or m_name in norm:
+                            matched_id = m.id
+                            assigned_display_name = m.display_name or m.full_name
+                            break
+                    if not matched_id:
+                        assigned_display_name = raw_assigned.strip()
+                elif sender_name:
+                    norm_sender = sender_name.lower().strip().replace('@', '')
+                    for m in members:
+                        m_name = (m.display_name or m.full_name or '').lower()
+                        if norm_sender in m_name or m_name in norm_sender:
+                            matched_id = m.id
+                            assigned_display_name = m.display_name or m.full_name
+                            break
+
+                source_group_display = chat_title
+                if message_thread_id:
+                    source_group_display += f" (Topic #{message_thread_id})"
+
                 inbox = AITaskInbox(
                     project_id=pid,
                     source_platform="Telegram",
-                    source_group_name=chat_title,
+                    source_group_name=source_group_display,
                     source_message=text,
                     detail_task=detail_task,
                     task_description=item.get("task_description") or text,
                     priority=item.get("priority", "Normal"),
                     manday_est=float(item.get("manday_est", 1.0)) if item.get("manday_est") else 1.0,
+                    assigned_id=matched_id,
+                    assigned_name=assigned_display_name,
                     confidence=int(item.get("confidence", 90)),
                     status="ready"
                 )
                 db.add(inbox)
-            return {"ok": True}
+                created_count += 1
+            
+            db.commit()
+            return {"ok": True, "created_tasks": created_count}
+
+    return {"ok": True}
 
 
 @router.post("/chat/zalo-webhook")
@@ -805,3 +865,18 @@ def zalo_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
         db.commit()
 
     return {"ok": True, "created_tasks": created_count if pid else 0}
+
+
+@router.get("/chat/zalo-status")
+def get_zalo_status(db: Session = Depends(get_db)):
+    """Returns recent Zalo webhook activity status."""
+    last_log = db.query(ChatSyncLog).filter(ChatSyncLog.source_name.like("%Zalo%")).order_by(ChatSyncLog.created_at.desc()).first()
+    total_zalo_inbox = db.query(AITaskInbox).filter(AITaskInbox.source_platform == "Zalo").count()
+    return {
+        "status": "ACTIVE" if last_log else "STANDBY",
+        "last_sync": last_log.created_at.isoformat() if last_log and last_log.created_at else None,
+        "last_message": last_log.message_text if last_log else "Chưa nhận dữ liệu webhook từ Zalo",
+        "total_inbox_tasks": total_zalo_inbox,
+        "webhook_url": "/api/chat/zalo-webhook"
+    }
+

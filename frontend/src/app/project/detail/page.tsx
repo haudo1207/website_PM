@@ -171,6 +171,7 @@ function ProjectDetailContent() {
   const [ruleSplitMultiTasks, setRuleSplitMultiTasks] = useState<boolean>(true);
   const [ruleDetectDuplicates, setRuleDetectDuplicates] = useState<boolean>(true);
   const [ruleSaveSnapshot, setRuleSaveSnapshot] = useState<boolean>(true);
+  const [isTopicOnly, setIsTopicOnly] = useState<boolean>(false);
 
   const toggleParentCollapse = (parentTaskId: string) => {
     setCollapsedParents(prev => {
@@ -6078,18 +6079,20 @@ value={editValue}
 
                   {/* MODAL KẾT NỐI NHÓM CHAT */}
                   {isConnectModalOpen && (
-                    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-                      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
-                        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
+                        {/* FIXED HEADER */}
+                        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white z-10">
                           <div>
                             <h3 className="text-base font-bold text-[#0b1c30]">Kết nối nhóm chat</h3>
                             <p className="text-xs text-slate-500 mt-0.5">Thêm nguồn dữ liệu mới cho AI Task Parser.</p>
                           </div>
-                          <button onClick={() => setIsConnectModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                          <button type="button" onClick={() => setIsConnectModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
                             <span className="material-symbols-outlined">close</span>
                           </button>
                         </div>
 
+                        {/* FORM WITH FLEX COL TO SEPARATE SCROLLABLE CONTENT FROM FIXED FOOTER */}
                         <form
                           onSubmit={async e => {
                             e.preventDefault();
@@ -6111,81 +6114,177 @@ value={editValue}
                               alert('Lỗi kết nối group: ' + (err.response?.data?.detail || err.message));
                             }
                           }}
-                          className="p-5 space-y-4 text-xs"
+                          className="flex flex-col flex-1 min-h-0 overflow-hidden"
                         >
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nền tảng *</label>
-                              <select
-                                value={newGroupPlatform}
-                                onChange={e => setNewGroupPlatform(e.target.value)}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
-                              >
-                                <option value="Telegram">Telegram</option>
-                                <option value="Zalo">Zalo</option>
-                                <option value="Slack">Slack</option>
-                                <option value="Teams">Microsoft Teams</option>
-                                <option value="Discord">Discord</option>
-                                <option value="WhatsApp">WhatsApp</option>
-                                <option value="Khác">Khác</option>
-                              </select>
+                          {/* SCROLLABLE INPUTS AREA */}
+                          <div className="p-4 sm:p-5 space-y-4 text-xs overflow-y-auto flex-1">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nền tảng *</label>
+                                <select
+                                  value={newGroupPlatform}
+                                  onChange={e => {
+                                    setNewGroupPlatform(e.target.value);
+                                    setIsTopicOnly(false);
+                                    setNewGroupDesc('');
+                                  }}
+                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
+                                >
+                                  <option value="Telegram">Telegram</option>
+                                  <option value="Zalo">Zalo</option>
+                                  <option value="Slack">Slack</option>
+                                  <option value="Teams">Microsoft Teams</option>
+                                  <option value="Discord">Discord</option>
+                                  <option value="WhatsApp">WhatsApp</option>
+                                  <option value="Khác">Khác</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên nhóm *</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={newGroupName}
+                                  onChange={e => setNewGroupName(e.target.value)}
+                                  placeholder="VD: Markee Team"
+                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
+                                />
+                              </div>
                             </div>
+
                             <div>
-                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên nhóm *</label>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Link nhóm / ID nhóm *</label>
                               <input
-                                type="text"
+                                type="url"
                                 required
-                                value={newGroupName}
-                                onChange={e => setNewGroupName(e.target.value)}
-                                placeholder="VD: HR Product Team"
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
+                                value={newGroupLink}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setNewGroupLink(val);
+                                  const match = val.match(/t\.me\/[^\/]+\/(\d+)/) || val.match(/\/(\d+)$/);
+                                  if (match) {
+                                    setIsTopicOnly(true);
+                                    if (!newGroupDesc) {
+                                      setNewGroupDesc(`Topic #${match[1]}`);
+                                    }
+                                  }
+                                }}
+                                placeholder="https://t.me/..."
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2"
                               />
                             </div>
-                          </div>
 
-                          <div>
-                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Link nhóm / ID nhóm *</label>
-                            <input
-                              type="url"
-                              required
-                              value={newGroupLink}
-                              onChange={e => setNewGroupLink(e.target.value)}
-                              placeholder="https://t.me/..."
-                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2"
-                            />
-                          </div>
+                            {newGroupPlatform === 'Telegram' && (
+                              <div className="space-y-3 bg-slate-50 border border-slate-200/80 rounded-xl p-3.5">
+                                <label className="text-[11px] font-bold text-slate-600 uppercase block">
+                                  Phạm vi kết nối trong Telegram *
+                                </label>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsTopicOnly(false);
+                                      setNewGroupDesc('');
+                                    }}
+                                    className={`p-2.5 rounded-lg border text-left flex items-start gap-2 transition-all ${
+                                      !isTopicOnly
+                                        ? 'bg-blue-50 border-blue-500 text-blue-900 shadow-sm font-semibold'
+                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100/60'
+                                    }`}
+                                  >
+                                    <span className="material-symbols-outlined text-[18px] text-blue-600 shrink-0 mt-0.5">groups</span>
+                                    <div>
+                                      <b className="text-xs block font-bold">Toàn bộ nhóm lớn</b>
+                                      <p className="text-[10px] opacity-75 mt-0.5">Bóc tách task từ tất cả tin nhắn trong nhóm (VD: Markee Team).</p>
+                                    </div>
+                                  </button>
 
-                          {newGroupPlatform === 'Telegram' && (
-                            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between gap-3">
-                              <div>
-                                <b className="text-xs text-[#0b1c30] block font-bold">1-Click Thêm Bot vào Telegram Group</b>
-                                <p className="text-[11px] text-slate-500 mt-0.5">Mở tự động ứng dụng Telegram và cho phép Bot gia nhập nhóm ngay.</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsTopicOnly(true)}
+                                    className={`p-2.5 rounded-lg border text-left flex items-start gap-2 transition-all ${
+                                      isTopicOnly
+                                        ? 'bg-amber-50 border-amber-500 text-amber-950 shadow-sm font-semibold'
+                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100/60'
+                                    }`}
+                                  >
+                                    <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">topic</span>
+                                    <div>
+                                      <b className="text-xs block font-bold">Chỉ 1 nhóm nhỏ (Topic)</b>
+                                      <p className="text-[10px] opacity-75 mt-0.5">Chỉ kết nối đúng 1 topic nhỏ (VD: 5. Thông báo Summary meeting).</p>
+                                    </div>
+                                  </button>
+                                </div>
+
+                                {/* SMART AUTO-DETECTION OR MANUAL TOPIC INPUT */}
+                                {isTopicOnly && (
+                                  <div className="pt-1 animate-in fade-in zoom-in-95 duration-150 space-y-1.5">
+                                    <label className="text-[11px] font-bold text-slate-600 block">
+                                      Tên Nhóm Nhỏ / Topic ID *
+                                    </label>
+                                    <div className="relative flex items-center">
+                                      <span className="material-symbols-outlined text-[18px] text-amber-500 absolute left-2.5 pointer-events-none">tag</span>
+                                      <input
+                                        type="text"
+                                        required
+                                        value={newGroupDesc}
+                                        onChange={e => setNewGroupDesc(e.target.value)}
+                                        placeholder="VD: 5. Thông báo Summary meeting (hoặc ID #5)"
+                                        className="w-full bg-white border border-[#c2c6d6] rounded-lg py-2 pr-3 pl-8 text-xs font-medium"
+                                      />
+                                    </div>
+                                    <div className="bg-amber-50/70 border border-amber-200/60 rounded-lg p-2 text-[11px] text-amber-900 flex items-start gap-1.5">
+                                      <span className="material-symbols-outlined text-[15px] text-amber-600 shrink-0 mt-0.5">lightbulb</span>
+                                      <span>
+                                        <b>Mẹo Telegram:</b> Chuột phải vào tên Nhóm nhỏ (Topic) trong Telegram ➔ Chọn <b>"Copy Topic Link"</b> rồi dán vào ô Link ở trên. Hệ thống sẽ tự nhận diện chính xác 100%!
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* SMART BADGE IF DETECTED IN LINK */}
+                                {newGroupLink && (newGroupLink.match(/t\.me\/[^\/]+\/(\d+)/) || newGroupLink.match(/\/(\d+)$/)) && (
+                                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-[11px] text-emerald-800 font-medium flex items-center gap-2">
+                                    <span className="material-symbols-outlined text-[16px] text-emerald-600 shrink-0">check_circle</span>
+                                    <span>
+                                      Tự động nhận diện Link Nhóm nhỏ (Topic ID: <b>#{newGroupLink.match(/(\d+)$/)?.[1]}</b>). AI sẽ chỉ lọc tin nhắn từ nhóm nhỏ này!
+                                    </span>
+                                  </div>
+                                )}
+
+                                <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                                  <div>
+                                    <b className="text-xs text-[#0b1c30] block font-bold">1-Click Thêm Bot vào Telegram Group</b>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">Mở tự động ứng dụng Telegram và cho phép Bot gia nhập nhóm ngay.</p>
+                                  </div>
+                                  <a
+                                    href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="bg-[#0088cc] hover:bg-[#0077b5] active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-sm whitespace-nowrap inline-flex items-center gap-1.5 shrink-0 transition-all"
+                                  >
+                                    <span className="material-symbols-outlined text-[16px]">smart_toy</span>
+                                    Thêm Bot Ngay
+                                  </a>
+                                </div>
                               </div>
-                              <a
-                                href="https://t.me/cloudgate_pm_bot?startgroup=true"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="bg-[#0088cc] hover:bg-[#0077b5] active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-sm whitespace-nowrap inline-flex items-center gap-1.5 shrink-0 transition-all"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">smart_toy</span>
-                                Thêm Bot Ngay
-                              </a>
-                            </div>
-                          )}
+                            )}
 
-                          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 space-y-2">
-                            <b className="block text-xs text-[#0058be] flex items-center gap-1.5 font-bold">
-                              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-                              Quy trình tự động kết nối Bot vào nhóm:
-                            </b>
-                            <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pl-0.5 leading-relaxed font-medium">
-                              <li>Nhập <b>Tên nhóm</b> & dán <b>Link tham gia nhóm chat</b> ở ô trên.</li>
-                              <li>Mở Zalo/Telegram ➔ Bấm <b>"Mời thành viên"</b> và chọn Bot hệ thống <b>@MarkeeTask (hoặc Zalo OA)</b> gia nhập nhóm.</li>
-                              <li>Bot sẽ tự động gửi tin nhắn chào mừng trong nhóm. Mọi tin nhắn giao việc từ đó sẽ được AI bóc tách trực tiếp vào bảng Inbox của bạn!</li>
-                            </ol>
+                            <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 space-y-2">
+                              <b className="block text-xs text-[#0058be] flex items-center gap-1.5 font-bold">
+                                <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                                Quy trình tự động kết nối Bot vào nhóm:
+                              </b>
+                              <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pl-0.5 leading-relaxed font-medium">
+                                <li>Nhập <b>Tên nhóm</b> & dán <b>Link tham gia nhóm chat</b> ở ô trên.</li>
+                                <li>Mở Zalo/Telegram ➔ Bấm <b>"Mời thành viên"</b> và chọn Bot hệ thống <b>@MarkeeTask (hoặc Zalo OA)</b> gia nhập nhóm.</li>
+                                <li>Bot sẽ tự động gửi tin nhắn chào mừng trong nhóm. Mọi tin nhắn giao việc từ đó sẽ được AI bóc tách trực tiếp vào bảng Inbox của bạn!</li>
+                              </ol>
+                            </div>
                           </div>
 
-                          <div className="pt-2 flex justify-end gap-2">
+                          {/* FIXED FOOTER BUTTONS */}
+                          <div className="p-4 border-t border-slate-200 flex justify-end gap-2 shrink-0 bg-white z-20 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
                             <button
                               type="button"
                               onClick={() => setIsConnectModalOpen(false)}

@@ -33,11 +33,13 @@ docker-compose.override.yml
 Thumbs.db
 desktop.ini
 
-# Databases
+# Databases & SQL Dumps
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+real_data_infra_markee.sql
+*.sql.bak
 
 # Agent Artifacts
 artifacts/
@@ -55,4 +57,12 @@ prompts/
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Local Specs & Spec Kit (Do not commit to Git)
+specs/
+specs-*
+.specify/
+.github/agents/
+.github/prompts/
+.agents/
 
