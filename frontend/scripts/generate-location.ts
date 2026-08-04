@@ -32,11 +32,11 @@ fs.createReadStream(INPUT)
     provinces.get(province)!.add(ward);
   })
   .on("end", () => {
-    const locations: ProvinceOption[] = [...provinces.entries()]
+    const locations: ProvinceOption[] = Array.from(provinces.entries())
       .sort((a, b) => a[0].localeCompare(b[0], "vi"))
       .map(([province, wards]) => ({
         province,
-        wards: [...wards].sort((a, b) => a.localeCompare(b, "vi")),
+        wards: Array.from(wards).sort((a, b) => a.localeCompare(b, "vi")),
       }));
 
     const content = `export interface ProvinceOption {
