@@ -11,6 +11,7 @@ import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
   getAITaskInbox, analyzeChatLogs, updateAITaskInbox, rejectAITaskInbox, importAITaskToProjectPlan, bulkImportAITasks, getChatSyncLogs, syncAITasksFromChat,
+  getProjectTemplates, applyProjectTemplate,
   getPhases, createPhase, updatePhase, deletePhase,
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
@@ -101,6 +102,11 @@ function ProjectDetailContent() {
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [applyingTemplateId, setApplyingTemplateId] = useState<number | null>(null);
+  const [confirmApplyTemplateId, setConfirmApplyTemplateId] = useState<number | null>(null);
 
   // AI Review Drawer states
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
@@ -507,6 +513,40 @@ function ProjectDetailContent() {
   const flash = (t: string, e = false) => {
     setMsg({ t, e });
     setTimeout(() => setMsg(null), 4000);
+  };
+
+  const loadTemplates = useCallback(async () => {
+    try {
+      setLoadingTemplates(true);
+      const data = await getProjectTemplates();
+      setTemplates(data || []);
+    } catch (err: any) {
+      console.error('Không thể tải danh sách template:', err);
+      flash('Không thể tải danh sách template', true);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }, []);
+
+  const handleOpenTemplateModal = async () => {
+    setShowTemplateModal(true);
+    await loadTemplates();
+  };
+
+  const handleApplyTemplate = async (templateId: number) => {
+    if (!id) return;
+    setApplyingTemplateId(templateId);
+    try {
+      await applyProjectTemplate(templateId, Number(id));
+      flash('Áp dụng template thành công!');
+      setShowTemplateModal(false);
+      setConfirmApplyTemplateId(null);
+      reloadAll();
+    } catch (err: any) {
+      flash('Áp dụng template thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+    } finally {
+      setApplyingTemplateId(null);
+    }
   };
 
   const handleDeleteSheet = async () => {
@@ -4349,6 +4389,13 @@ value={editValue}
                         </button>
                       ))}
                       <button
+                        onClick={handleOpenTemplateModal}
+                        className="flex items-center justify-center w-8 h-8 rounded-lg text-[#0058be] hover:bg-white hover:shadow-sm transition-all shrink-0"
+                        title="Áp dụng template"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">schema</span>
+                      </button>
+                      <button
                         onClick={() => {
                           setNewPhaseName('');
                           setShowPhaseModal(true);
@@ -6634,6 +6681,141 @@ value={editValue}
         </div>
 
       </div>
+
+      {/* Project Template Modal */}
+      {showTemplateModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[85vh]">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3 text-[#0058be]">
+                <span className="material-symbols-outlined text-[28px]">schema</span>
+                <div>
+                  <h3 className="text-base font-bold text-[#0b1c30]">Áp dụng Project Template</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Chọn template để tạo nhanh các phase và task cha cho dự án này.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTemplateModal(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Cảnh báo ghi đè */}
+            <div className="px-6 pt-4">
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 flex items-start gap-2">
+                <span className="text-red-500 text-[14px] shrink-0 mt-0.5">⚠️</span>
+                <p className="text-[11px] text-red-700 leading-relaxed font-medium">
+                  <strong>Lưu ý:</strong> Áp dụng template sẽ <strong>XÓA TOÀN BỘ Phase và Task hiện tại</strong> của dự án này, sau đó thay bằng cấu trúc của template được chọn. Hành động này <strong>không thể hoàn tác</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-3 flex-1">
+              {loadingTemplates ? (
+                <div className="flex items-center justify-center py-10 text-sm text-slate-500">Đang tải template...</div>
+              ) : templates.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                  Chưa có template nào. Hãy tạo template từ trang Cấu hình hệ thống trước.
+                </div>
+              ) : (
+                templates.map((template: any) => (
+                  <div key={template.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="p-4 flex items-start justify-between gap-4 bg-slate-50/50">
+                      <div>
+                        <div className="font-semibold text-sm text-[#0b1c30]">{template.name}</div>
+                        <div className="text-xs text-slate-500 mt-1">{template.description || 'Không có mô tả'}</div>
+                        <div className="text-[11px] text-slate-400 mt-2">
+                          {template.phases?.length || 0} phases •{' '}
+                          {template.phases?.reduce((acc: number, p: any) => acc + (p.task_groups?.length || 0), 0) || 0} task cha
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setConfirmApplyTemplateId(template.id)}
+                        disabled={applyingTemplateId === template.id}
+                        className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors disabled:opacity-60 shrink-0"
+                      >
+                        {applyingTemplateId === template.id ? 'Đang áp dụng...' : 'Áp dụng'}
+                      </button>
+                    </div>
+
+                    {/* Template Structure Preview */}
+                    <div className="border-t border-slate-100 p-3 space-y-2 bg-white">
+                      {(template.phases || []).map((phase: any, pIdx: number) => (
+                        <div key={phase.id || pIdx} className="flex items-start gap-2">
+                          <span className="text-[10px] font-bold text-[#0058be] bg-[#eff4ff] border border-[#0058be]/20 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                            {pIdx + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold text-[#0b1c30]">{phase.name}</div>
+                            {(phase.task_groups || []).length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {(phase.task_groups || []).map((group: any, gIdx: number) => (
+                                  <span key={group.id || gIdx} className="text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
+                                    {group.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {phase.name.toLowerCase().includes('lab') || phase.name.toLowerCase().includes('poc') ? (
+                              <div className="text-[10px] text-slate-400 italic mt-0.5">Phase trống — người dùng tự thêm task khi cần</div>
+                            ) : (phase.task_groups || []).length === 0 ? (
+                              <div className="text-[10px] text-slate-400 italic mt-0.5">Chưa có task cha</div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="bg-slate-50 px-6 py-4 flex justify-end border-t border-slate-100 shrink-0">
+              <button
+                onClick={() => setShowTemplateModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xác Nhận Áp Dụng Template (GHI ĐÈ) */}
+      {confirmApplyTemplateId !== null && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-amber-600 mb-3">
+                <span className="material-symbols-outlined text-[28px]">warning</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">Xác nhận áp dụng template</h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Áp dụng template này sẽ <strong className="text-red-600">XÓA TOÀN BỘ Phase và Task hiện tại</strong> của dự án, sau đó tạo mới theo cấu trúc template được chọn.
+              </p>
+              <p className="text-xs text-slate-500 mt-2">Hành động này <strong>không thể hoàn tác</strong>. Bạn có chắc chắn muốn tiếp tục?</p>
+            </div>
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setConfirmApplyTemplateId(null)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => handleApplyTemplate(confirmApplyTemplateId)}
+                disabled={applyingTemplateId === confirmApplyTemplateId}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {applyingTemplateId === confirmApplyTemplateId ? 'Đang áp dụng...' : 'Xác nhận áp dụng'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Chỉnh Sửa Dự Án */}
       {showEditProjectModal && (

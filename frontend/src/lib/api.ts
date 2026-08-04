@@ -212,6 +212,13 @@ export const approveLeaveRequest = (id: number, status: 'Approved' | 'Rejected')
 // Meetings
 export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string }) =>
   api.get('/meetings', { params }).then(r => r.data);
+
+// Project Templates
+export const getProjectTemplates = () => api.get('/project-templates').then(r => r.data);
+export const createProjectTemplate = (data: object) => api.post('/project-templates', data).then(r => r.data);
+export const updateProjectTemplate = (id: number, data: object) => api.put(`/project-templates/${id}`, data).then(r => r.data);
+export const deleteProjectTemplate = (id: number) => api.delete(`/project-templates/${id}`).then(r => r.data);
+export const applyProjectTemplate = (templateId: number, projectId: number) => api.post(`/project-templates/${templateId}/apply/${projectId}`).then(r => r.data);
 export const getMeeting = (id: number) => api.get(`/meetings/${id}`).then(r => r.data);
 export const createMeeting = (data: object) => api.post('/meetings', data).then(r => r.data);
 export const updateMeeting = (id: number, data: object) => api.put(`/meetings/${id}`, data).then(r => r.data);
