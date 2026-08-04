@@ -10,24 +10,46 @@ from ..utils.auth import get_current_user, require_admin_write
 router = APIRouter(dependencies=[Depends(require_admin_write)])
 
 
-@router.get("")
-def get_performance_settings(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Retrieve all active performance settings ordered by sort_order and id."""
-    settings = db.query(PerformanceSetting).order_by(PerformanceSetting.sort_order.asc(), PerformanceSetting.id.asc()).all()
-    return [{
+def _serialize(s: PerformanceSetting) -> dict:
+    return {
         "id": s.id,
         "performance": s.performance,
         "kpi": float(s.kpi),
         "remark_type": getattr(s, 'remark_type', 'Bonus') or 'Bonus',
         "description": getattr(s, 'description', None),
         "sort_order": s.sort_order,
-        "is_active": s.is_active
-    } for s in settings]
+        "is_active": s.is_active,
+        "is_parent": bool(getattr(s, 'is_parent', False)),
+        "parent_id": getattr(s, 'parent_id', None),
+    }
+
+
+@router.get("")
+def get_performance_settings(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Retrieve all active performance settings ordered by sort_order and id."""
+    settings = (
+        db.query(PerformanceSetting)
+        .order_by(PerformanceSetting.sort_order.asc(), PerformanceSetting.id.asc())
+        .all()
+    )
+    return [_serialize(s) for s in settings]
+
+
+@router.get("/parents")
+def get_parent_remarks(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Retrieve only Remark Cha (is_parent=True) entries."""
+    settings = (
+        db.query(PerformanceSetting)
+        .filter(PerformanceSetting.is_parent == True)
+        .order_by(PerformanceSetting.sort_order.asc(), PerformanceSetting.id.asc())
+        .all()
+    )
+    return [_serialize(s) for s in settings]
 
 
 @router.post("")
-def create_performance_setting(body: dict, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Create a new KPI performance rule."""
+def create_performance_setting(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Create a new KPI performance rule (or Remark Cha if is_parent=True)."""
     performance = str(body.get("performance", "")).strip()
     if not performance:
         raise HTTPException(400, "Nội dung performance không được để trống")
@@ -36,6 +58,18 @@ def create_performance_setting(body: dict, db: Session = Depends(get_db), curren
         kpi_val = Decimal(str(body.get("kpi", 0)))
     except Exception:
         raise HTTPException(400, "Giá trị KPI không hợp lệ")
+
+    is_parent = bool(body.get("is_parent", False))
+    parent_id = body.get("parent_id", None)
+
+    # Validate parent_id if provided
+    if parent_id is not None:
+        parent = db.query(PerformanceSetting).filter(
+            PerformanceSetting.id == int(parent_id),
+            PerformanceSetting.is_parent == True
+        ).first()
+        if not parent:
+            raise HTTPException(400, "Remark cha không tồn tại hoặc không phải Remark Cha")
 
     # Find max sort_order to append at the end
     max_sort = db.query(PerformanceSetting).order_by(PerformanceSetting.sort_order.desc()).first()
@@ -47,28 +81,19 @@ def create_performance_setting(body: dict, db: Session = Depends(get_db), curren
         remark_type=body.get("remark_type", "Bonus"),
         description=body.get("description"),
         sort_order=body.get("sort_order", next_sort),
-        is_active=body.get("is_active", True)
+        is_active=body.get("is_active", True),
+        is_parent=is_parent,
+        parent_id=parent_id,
     )
     db.add(rule)
     db.commit()
     db.refresh(rule)
 
-    return {
-        "success": True,
-        "data": {
-            "id": rule.id,
-            "performance": rule.performance,
-            "kpi": float(rule.kpi),
-            "remark_type": rule.remark_type,
-            "description": rule.description,
-            "sort_order": rule.sort_order,
-            "is_active": rule.is_active
-        }
-    }
+    return {"success": True, "data": _serialize(rule)}
 
 
 @router.put("/{id}")
-def update_performance_setting(id: int, body: dict, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+def update_performance_setting(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Update an existing KPI performance rule."""
     rule = db.query(PerformanceSetting).filter(PerformanceSetting.id == id).first()
     if not rule:
@@ -98,25 +123,28 @@ def update_performance_setting(id: int, body: dict, db: Session = Depends(get_db
     if "is_active" in body:
         rule.is_active = bool(body["is_active"])
 
+    if "is_parent" in body:
+        rule.is_parent = bool(body["is_parent"])
+
+    if "parent_id" in body:
+        pid = body["parent_id"]
+        if pid is not None:
+            parent = db.query(PerformanceSetting).filter(
+                PerformanceSetting.id == int(pid),
+                PerformanceSetting.is_parent == True
+            ).first()
+            if not parent:
+                raise HTTPException(400, "Remark cha không tồn tại hoặc không phải Remark Cha")
+        rule.parent_id = pid
+
     db.commit()
     db.refresh(rule)
 
-    return {
-        "success": True,
-        "data": {
-            "id": rule.id,
-            "performance": rule.performance,
-            "kpi": float(rule.kpi),
-            "remark_type": rule.remark_type,
-            "description": rule.description,
-            "sort_order": rule.sort_order,
-            "is_active": rule.is_active
-        }
-    }
+    return {"success": True, "data": _serialize(rule)}
 
 
 @router.delete("/{id}")
-def delete_performance_setting(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+def delete_performance_setting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Delete a KPI performance rule."""
     rule = db.query(PerformanceSetting).filter(PerformanceSetting.id == id).first()
     if not rule:

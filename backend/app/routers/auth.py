@@ -26,6 +26,7 @@ def token_response(user: User) -> dict:
         "role": user.role,
         "full_name": user.full_name,
         "avatar_url": user.avatar_url,
+        "email": user.email,
     }
 
 

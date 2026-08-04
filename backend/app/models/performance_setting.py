@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, DateTime, ForeignKey, func
 from ..database import Base
 
 
@@ -12,5 +12,7 @@ class PerformanceSetting(Base):
     description = Column(String, nullable=True)
     sort_order  = Column(Integer, default=0)
     is_active   = Column(Boolean, default=True)
+    is_parent   = Column(Boolean, default=False, server_default="false")  # True = Remark Cha
+    parent_id   = Column(Integer, ForeignKey("performance_settings.id", ondelete="SET NULL"), nullable=True)
     created_at  = Column(DateTime, server_default=func.now())
     updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())
