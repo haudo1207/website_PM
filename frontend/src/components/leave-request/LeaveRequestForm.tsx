@@ -113,7 +113,7 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
             onChange={(event) => setFormValues({ ...formValues, leaveType: event.target.value as LeaveType })}
             className="w-full rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#0058be]"
           >
-            {leaveTypes.map((type) => (
+            {Object.values(leaveTypes).map((type) => (
               <option key={type} value={type}>
                 {type}
               </option>

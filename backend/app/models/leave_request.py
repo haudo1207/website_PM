@@ -8,7 +8,7 @@ class LeaveRequest(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
-    leave_type = Column(String(50), nullable=False)  # 'Work Remotely', 'Offline', 'Go on Business', 'Workshop', 'Work Weekend'
+    leave_type = Column(String(50), nullable=False)  # 'Annual Leave', 'Sick Leave', 'Remote Work', 'WFH', 'Business Trip', 'Offline', 'Half Day', 'Unpaid Leave', 'Other'
     start_date = Column(String(20), nullable=False)
     end_date = Column(String(20), nullable=False)
     man_day = Column(Integer, nullable=False)
