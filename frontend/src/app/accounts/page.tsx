@@ -22,6 +22,8 @@ interface MemberInfo {
   team?: string;
   position?: string;
   department?: string;
+  leader_name?: string;
+  leader_email?: string;
 }
 
 interface Account {
