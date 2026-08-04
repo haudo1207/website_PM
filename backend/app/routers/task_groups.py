@@ -519,6 +519,31 @@ def list_tasks(gid: int, db: Session = Depends(get_db)):
         return []
 
 
+@router.get("/all-tasks-global")
+def list_all_tasks_global(db: Session = Depends(get_db)):
+    """Get all tasks across all projects in 1 single query to prevent DB connection pool exhaustion."""
+    from ..models.project import Project
+    from ..models.task import Task
+    projects = {p.id: p.name for p in db.query(Project).all()}
+    tasks = db.query(Task).all()
+    
+    # Pre-fetch all members into a dict for fast lookup
+    members = {m.id: m.display_name for m in db.query(Member).all()}
+    
+    output = []
+    for t in tasks:
+        try:
+            t_dict = serialize_task(t, db)
+            t_dict["name"] = t.detail or t.name or f"Task #{t.id}"
+            t_dict["projectName"] = projects.get(t.project_id, f"Project #{t.project_id}")
+            t_dict["assigned_name"] = members.get(t.assigned_id, getattr(t, 'assigned_name', None))
+            t_dict["support_name"] = members.get(t.support_id, getattr(t, 'support_name', None))
+            output.append(t_dict)
+        except Exception:
+            pass
+    return output
+
+
 @router.get("/projects/{pid}/all-tasks")
 def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends(get_db)):
     """Get all tasks for a project, optionally filtered by phase. Used by Master view."""

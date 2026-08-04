@@ -1,15 +1,18 @@
-export const saveToken = (t: string, r: string, n: string, avatar?: string | null) => {
+export const saveToken = (t: string, r: string, n: string, avatar?: string | null, email?: string | null) => {
   if (typeof window === 'undefined') return;
   localStorage.setItem('token', t);
   localStorage.setItem('role', r);
   localStorage.setItem('name', n);
   if (avatar) localStorage.setItem('avatar', avatar);
   else localStorage.removeItem('avatar');
+  if (email) localStorage.setItem('email', email);
+  else localStorage.removeItem('email');
 };
 
 export const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 export const getRole = () => typeof window !== 'undefined' ? localStorage.getItem('role') : null;
 export const getName = () => typeof window !== 'undefined' ? localStorage.getItem('name') : null;
+export const getEmail = () => typeof window !== 'undefined' ? localStorage.getItem('email') : null;
 export const getAvatar = () => typeof window !== 'undefined' ? localStorage.getItem('avatar') : null;
 // ── 4-role model helpers ──
 export const isSuperAdmin = () => {
