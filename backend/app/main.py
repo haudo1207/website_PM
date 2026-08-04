@@ -84,6 +84,19 @@ def apply_schema_updates():
             "GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1), true)"
         ))
 
+        # Auto-link unlinked users to members by matching Email, Full Name or Display Name
+        conn.execute(text("""
+            UPDATE users u
+            SET member_id = m.id
+            FROM members m
+            WHERE u.member_id IS NULL
+              AND m.id NOT IN (SELECT member_id FROM users WHERE member_id IS NOT NULL)
+              AND (
+                (u.email IS NOT NULL AND u.email != '' AND LOWER(u.email) = LOWER(m.email))
+                OR (u.full_name IS NOT NULL AND u.full_name != '' AND (LOWER(u.full_name) = LOWER(m.full_name) OR LOWER(u.full_name) = LOWER(m.display_name)))
+              )
+        """))
+
         # Add AI Review columns to projects
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))

@@ -519,6 +519,67 @@ def list_tasks(gid: int, db: Session = Depends(get_db)):
         return []
 
 
+@router.get("/all-tasks-global")
+def list_all_tasks_global(db: Session = Depends(get_db)):
+    """Get all tasks across all projects in 1 single query to prevent DB connection pool exhaustion."""
+    from ..models.project import Project
+    from ..models.phase import Phase
+    from ..models.task_group import TaskGroup
+    from ..models.task import Task
+
+    results = (
+        db.query(Task, TaskGroup, Phase, Project)
+        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+        .join(Phase, TaskGroup.phase_id == Phase.id)
+        .join(Project, Phase.project_id == Project.id)
+        .all()
+    )
+
+    members = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+
+    output = []
+    found_task_ids = set()
+
+    today = date.today()
+    for task, tg, phase, project in results:
+        try:
+            t_dict = serialize_task(task, db)
+            t_dict["name"] = task.detail or f"Task #{task.id}"
+            t_dict["project_id"] = project.id
+            t_dict["projectName"] = project.name
+            t_dict["task_group_name"] = tg.name
+            t_dict["phase_name"] = phase.name
+            t_dict["assigned_name"] = members.get(task.assigned_id, t_dict.get("assigned_name"))
+            t_dict["support_name"] = members.get(task.support_id, t_dict.get("support_name"))
+            
+            # Compute days_late
+            days_late = 0
+            if task.status not in ["Done", "done", "Cancel", "cancel"] and task.end_date_est:
+                if task.end_date_est < today:
+                    days_late = (today - task.end_date_est).days
+            t_dict["days_late"] = days_late
+            
+            output.append(t_dict)
+            found_task_ids.add(task.id)
+        except Exception as e:
+            print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
+
+    # Fallback for any standalone tasks
+    all_tasks = db.query(Task).all()
+    for task in all_tasks:
+        if task.id not in found_task_ids:
+            try:
+                t_dict = serialize_task(task, db)
+                t_dict["name"] = task.detail or f"Task #{task.id}"
+                t_dict["assigned_name"] = members.get(task.assigned_id, t_dict.get("assigned_name"))
+                t_dict["support_name"] = members.get(task.support_id, t_dict.get("support_name"))
+                output.append(t_dict)
+            except Exception:
+                pass
+
+    return output
+
+
 @router.get("/projects/{pid}/all-tasks")
 def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends(get_db)):
     """Get all tasks for a project, optionally filtered by phase. Used by Master view."""
