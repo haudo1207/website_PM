@@ -10,7 +10,7 @@ import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting }
 import { isAdmin } from '@/lib/auth';
 
 export default function MeetingsPage() {
-  const canManage = isAdmin();
+  const [canManage, setCanManage] = useState(false);
   const [meetings, setMeetings] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,11 +23,19 @@ export default function MeetingsPage() {
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
+  useEffect(() => {
+    setCanManage(isAdmin());
+  }, []);
+
   const fetchMeetings = async () => {
     setIsLoading(true);
     try {
       const data = await getMeetings();
-      if (data.success) setMeetings(data.data);
+      if (data && data.success && Array.isArray(data.data)) {
+        setMeetings(data.data);
+      } else if (Array.isArray(data)) {
+        setMeetings(data);
+      }
     } catch (error) { console.error("Failed to fetch meetings", error); }
     finally { setIsLoading(false); }
   };
@@ -35,11 +43,14 @@ export default function MeetingsPage() {
   useEffect(() => { fetchMeetings(); }, []);
 
   const filteredMeetings = useMemo(() => {
-    return meetings.filter(m => {
-      const matchesSearch = m.title.toLowerCase().includes(searchTerm.toLowerCase()) || (m.project && m.project.toLowerCase().includes(searchTerm.toLowerCase()));
+    return (meetings || []).filter(m => {
+      if (!m) return false;
+      const title = String(m.title || '');
+      const project = typeof m.project === 'string' ? m.project : (m.project?.name || '');
+      const matchesSearch = title.toLowerCase().includes(searchTerm.toLowerCase()) || project.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesPlatform = platformFilter === 'All' || m.platform === platformFilter;
       let matchesMonth = true;
-      if (monthFilter !== 'All' && monthFilter !== '') matchesMonth = m.date && m.date.startsWith(monthFilter);
+      if (monthFilter !== 'All' && monthFilter !== '') matchesMonth = Boolean(m.date && String(m.date).startsWith(monthFilter));
       return matchesSearch && matchesPlatform && matchesMonth;
     });
   }, [meetings, searchTerm, platformFilter, monthFilter]);

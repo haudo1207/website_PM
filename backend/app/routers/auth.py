@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
@@ -8,6 +8,7 @@ from ..config import settings
 from ..database import get_db
 from ..models.user import User
 from ..utils.auth import verify_password, create_access_token
+from ..utils.audit_service import AuditService
 
 router = APIRouter()
 
@@ -38,15 +39,38 @@ def auth_config():
     }
 
 @router.post("/login")
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     if not settings.PASSWORD_LOGIN_ENABLED:
         raise HTTPException(403, "Password login is disabled. Use Google instead.")
     email = form.username.strip().lower()
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(form.password, user.hashed_pw):
+        AuditService.record(
+            db=db,
+            user_id=user.id if user else None,
+            module="Authentication",
+            entity_type="User",
+            entity_id=user.id if user else email,
+            action="FAILED_LOGIN",
+            description=f"Đăng nhập thất bại cho tài khoản '{email}'",
+            request=request
+        )
+        db.commit()
         raise HTTPException(401, "Invalid email or password")
     if not user.is_active:
         raise HTTPException(403, "Account disabled")
+
+    AuditService.record(
+        db=db,
+        user_id=user.id,
+        module="Authentication",
+        entity_type="User",
+        entity_id=user.id,
+        action="LOGIN",
+        description=f"Đăng nhập hệ thống thành công (User: {user.email})",
+        request=request
+    )
+    db.commit()
     return token_response(user)
 
 

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models.setting import Setting, AuditLog
+from ..models.setting import Setting
+from ..utils.audit_service import AuditService
 from ..utils.auth import require_admin, get_current_user
 from ..config import settings as app_settings
 import json, requests as http
@@ -19,7 +20,15 @@ def save_setting(key, value, db, user_email="system"):
         old.value = new_val
     else:
         db.add(Setting(key=key, value=new_val))
-    db.add(AuditLog(user_email=user_email, action=f"update_{key}", detail=new_val[:300]))
+    AuditService.record(
+        db=db,
+        user_id=None,
+        module="Settings",
+        entity_type="Setting",
+        entity_id=key,
+        action="UPDATE",
+        description=f"Cập nhật cấu hình '{key}': {new_val[:300]}"
+    )
     db.commit()
 
 @router.get("/column-config")

@@ -10,6 +10,7 @@ from ..models.project import Project
 from ..models.member import Member
 from ..utils.auth import get_current_user
 from ..utils.access import ALL_SCOPE, project_query_for_user, require_project, require_route_project_access, user_scope
+from ..utils.audit_service import AuditService
 
 logger = logging.getLogger("meetings")
 router = APIRouter(dependencies=[Depends(require_route_project_access)])
@@ -337,6 +338,18 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     db.add(m)
     db.commit()
     db.refresh(m)
+
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Meeting",
+        entity_type="Meeting",
+        entity_id=m.id,
+        action="CREATE",
+        project_id=m.project_id,
+        description=f"Tạo cuộc họp '{m.title}' (Ngày: {m.meeting_date})"
+    )
+    db.commit()
 
     # Re-fetch with relationships
     m = db.query(Meeting).options(

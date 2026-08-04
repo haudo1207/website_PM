@@ -6,6 +6,7 @@ import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
+import AuditLogsTab from '@/components/AuditLogsTab';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
@@ -110,7 +111,7 @@ function ProjectDetailContent() {
   const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK', entityId: number, name = '') => {
     setAiDrawerEntityType(entityType);
     setAiDrawerEntityId(entityId);
-    
+
     let resolvedName = name;
     if (!resolvedName) {
       if (entityType === 'PROJECT') {
@@ -123,13 +124,13 @@ function ProjectDetailContent() {
         resolvedName = foundTask ? foundTask.detail : 'Task';
       }
     }
-    
+
     setAiDrawerEntityName(resolvedName);
     setIsAIDrawerOpen(true);
   };
 
-  // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members'
-  const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members'>('overview');
+  // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'
+  const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'>('overview');
   const [activePhase, setActivePhase] = useState<string>('ALL');
   const [phases, setPhases] = useState<any[]>([]);
   const [showPhaseModal, setShowPhaseModal] = useState(false);
@@ -171,6 +172,7 @@ function ProjectDetailContent() {
   const [ruleSplitMultiTasks, setRuleSplitMultiTasks] = useState<boolean>(true);
   const [ruleDetectDuplicates, setRuleDetectDuplicates] = useState<boolean>(true);
   const [ruleSaveSnapshot, setRuleSaveSnapshot] = useState<boolean>(true);
+  const [isTopicOnly, setIsTopicOnly] = useState<boolean>(false);
 
   const toggleParentCollapse = (parentTaskId: string) => {
     setCollapsedParents(prev => {
@@ -419,6 +421,7 @@ function ProjectDetailContent() {
   const [isAnalyzingPaste, setIsAnalyzingPaste] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncLogs, setSyncLogs] = useState<any[]>([]);
+  const [hasClickedAddBot, setHasClickedAddBot] = useState(false);
 
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [isAddingMember, setIsAddingMember] = useState(false);
@@ -584,27 +587,32 @@ function ProjectDetailContent() {
     if (!id) return;
     try {
       const data = await getChatGroups(Number(id));
-      setChatGroups(data || []);
+      setChatGroups(data ? [...data] : []);
 
       const inboxRes = await getAITaskInbox(Number(id));
       if (inboxRes && inboxRes.items) {
-        setInboxTasks(inboxRes.items);
+        setInboxTasks([...inboxRes.items]);
         if (inboxRes.stats) {
-          setInboxStats(inboxRes.stats);
+          setInboxStats({ ...inboxRes.stats });
         }
       }
 
       const logs = await getChatSyncLogs(Number(id));
       if (logs) {
-        setSyncLogs(logs);
+        setSyncLogs([...logs]);
       }
     } catch {
-      flash('Không thể tải dữ liệu chat & AI Task Inbox', true);
+      // Silent catch on background polling
     }
   }, [id]);
 
   useEffect(() => {
     loadChatData();
+    // Real-time auto-sync: Poll AI Task Inbox every 5 seconds so new messages automatically display without refreshing!
+    const timer = setInterval(() => {
+      loadChatData();
+    }, 5000);
+    return () => clearInterval(timer);
   }, [id, loadChatData]);
 
   const loadMeetings = useCallback(async () => {
@@ -1911,9 +1919,8 @@ function ProjectDetailContent() {
             value={newForm[col] || ''}
             onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
             onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${
-              isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-            }`}
+            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
           >
             <option value="">-- Chọn --</option>
             <option value="gửi">gửi</option>
@@ -2998,15 +3005,14 @@ function ProjectDetailContent() {
                 </span>
                 {task.ai_status && (
                   <span
-                    className={`w-2.5 h-2.5 rounded-full cursor-pointer shrink-0 border border-white shadow-sm transition-transform hover:scale-125 ${
-                      task.ai_status === 'NEED_RECHECK'
-                        ? 'bg-amber-400 animate-pulse'
-                        : task.ai_status === 'HAS_ISSUE'
+                    className={`w-2.5 h-2.5 rounded-full cursor-pointer shrink-0 border border-white shadow-sm transition-transform hover:scale-125 ${task.ai_status === 'NEED_RECHECK'
+                      ? 'bg-amber-400 animate-pulse'
+                      : task.ai_status === 'HAS_ISSUE'
                         ? 'bg-rose-500'
                         : task.ai_status === 'GOOD'
-                        ? 'bg-emerald-500'
-                        : 'bg-slate-300'
-                    }`}
+                          ? 'bg-emerald-500'
+                          : 'bg-slate-300'
+                      }`}
                     title={`AI Status: ${task.ai_status}${task.last_ai_score !== null ? ` (Score: ${task.last_ai_score}/100)` : ''} - Click to view detail`}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -3049,8 +3055,8 @@ function ProjectDetailContent() {
                 </span>
               );
             }
-          } else if (colUpper === 'LINK') {
-            const linkValue = task.link || task.ticket_id || '';
+          } else if (colUpper === 'LINK' || colUpper === 'TICKET ID') {
+            const linkValue = task.link || task.ticket_id || val || '';
             const links = (linkValue || '').split('\n').filter(Boolean);
             if (links.length > 0) {
               cellContent = (
@@ -3313,8 +3319,8 @@ function ProjectDetailContent() {
       // Phase header (Rendered only if the phase is not "Master")
       if (phase.name.trim().toLowerCase() !== 'master') {
         result.push(
-          <tr 
-            key={`phase-hdr-${phase.id}`} 
+          <tr
+            key={`phase-hdr-${phase.id}`}
             className="bg-[#e2e8f0] border-l-[6px] border-l-[#475569] border-b border-[#c2c6d6]/40 transition-colors duration-150"
             onDragOver={(e) => {
               e.preventDefault();
@@ -3894,17 +3900,16 @@ value={editValue}
           <div className="flex items-center gap-3">
             {project && (
               <div className="flex items-center gap-2">
-                <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${
-                  project.ai_status === 'NEED_RECHECK'
-                    ? 'bg-amber-50 text-amber-700 border-amber-200'
-                    : project.ai_status === 'CHECKING'
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${project.ai_status === 'NEED_RECHECK'
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : project.ai_status === 'CHECKING'
                     ? 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse'
                     : project.ai_status === 'HAS_ISSUE'
-                    ? 'bg-rose-50 text-rose-700 border-rose-200'
-                    : project.ai_status === 'GOOD'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-slate-50 text-slate-600 border-slate-200'
-                }`}>
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : project.ai_status === 'GOOD'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-50 text-slate-600 border-slate-200'
+                  }`}>
                   AI: {project.ai_status || 'UNKNOWN'}
                 </span>
                 {project.last_ai_score !== null && (
@@ -3914,7 +3919,7 @@ value={editValue}
                 )}
               </div>
             )}
-            
+
             <button
               onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
               className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
@@ -4046,6 +4051,14 @@ value={editValue}
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
               Members
             </button>
+            <button
+              onClick={() => setActiveMainTab('audit_logs')}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
+              Audit Logs
+            </button>
           </div>
 
           {/* MAIN TABS CONTENT AREA */}
@@ -4058,227 +4071,227 @@ value={editValue}
               {activeMainTab === 'overview' && (
                 <div className="space-y-6">
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            {/* Thẻ 1: Tổng số task hoàn thành / tổng task */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Hoàn thành / Tổng số</p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-[#0b1c30]">{kpiDone} / {kpiTotal}</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                <div className="bg-[#0058be] h-full" style={{ width: '100%' }}></div>
-              </div>
-            </div>
-
-            {/* Thẻ 2: % Tiến độ (Tính dựa trên thẻ 1) */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tiến độ dự án</p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-indigo-600">{devProgressPercent}%</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                <div className="bg-indigo-500 h-full" style={{ width: `${devProgressPercent}%` }}></div>
-              </div>
-            </div>
-
-            {/* Thẻ 3: Tổng Manday */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tổng Manday</p>
-              <div className="flex items-baseline justify-between mt-1">
-                <span className="text-2xl font-bold text-blue-600">{kpiTotalManday}</span>
-                <span className="material-symbols-outlined text-blue-400 text-[18px]">calendar_month</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                <div className="bg-blue-500 h-full" style={{ width: '100%' }}></div>
-              </div>
-            </div>
-
-            {/* Thẻ 4: Trễ deadline */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
-              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Trễ deadline</p>
-              <div className="flex items-baseline justify-between mt-1">
-                <span className="text-2xl font-bold text-red-600">{kpiWarning}</span>
-                <span className="material-symbols-outlined text-red-500 text-[18px]">warning</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                <div className="bg-red-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiWarning / kpiTotal) * 100 : 0}%` }}></div>
-              </div>
-            </div>
-
-            {/* Thẻ 5: Critical tuần này */}
-            <div className="bg-white p-5 rounded-xl border border-emerald-200 border-2 shadow-sm transition-transform hover:-translate-y-0.5">
-              <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Critical Tuần Này</p>
-              <div className="flex items-baseline justify-between mt-1">
-                <span className="text-2xl font-bold text-emerald-600">{kpiCriticalThisWeek}</span>
-                <span className="material-symbols-outlined text-emerald-500 text-[18px]">priority_high</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
-                <div className="bg-emerald-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiCriticalThisWeek / kpiTotal) * 100 : 0}%` }}></div>
-              </div>
-            </div>
-          </div>
-
-          {/* CHARTS ROW: 2 columns */}
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-
-            {/* WORKLOAD CHART */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[310px] flex flex-col">
-              <div className="flex items-center justify-between mb-1">
-                <div>
-                  <h3 className="text-sm font-bold text-[#0b1c30]">Khối lượng theo người phụ trách</h3>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Số task đã nhận theo trạng thái</p>
-                </div>
-                {workloadStats.length > 3 && (
-                  <button
-                    onClick={() => setShowAllLeaderboard(!showAllLeaderboard)}
-                    className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
-                  >
-                    {showAllLeaderboard ? 'Thu gọn' : 'Xem thêm'}
-                  </button>
-                )}
-              </div>
-
-              {workloadStats.length === 0 ? (
-                <p className="text-xs text-slate-500 italic text-center py-4 flex-1 flex items-center justify-center">Chưa có dữ liệu để hiển thị.</p>
-              ) : (() => {
-                const displayRows = showAllLeaderboard ? workloadStats : workloadStats.slice(0, 3);
-                const maxTotal = Math.max(...workloadStats.map(r => r.total), 1);
-                const xTicks = Array.from({ length: 6 }, (_, i) => Math.round((maxTotal / 5) * i));
-                return (
-                  <div className="mt-4 flex-1 flex flex-col justify-end">
-                    <div className="space-y-3">
-                      {displayRows.map((row) => {
-                        const isUnassigned = row.name === 'Chưa gắn';
-                        const barColor = isUnassigned ? '#c8c8c8' : '#22c55e';
-                        const doneBarColor = isUnassigned ? '#9ca3af' : '#16a34a';
-                        const totalWidth = (row.total / maxTotal) * 100;
-                        const doneWidth = (row.done / maxTotal) * 100;
-                        return (
-                          <div key={row.name} className="flex items-center gap-3">
-                            <span className="text-[11px] text-slate-600 w-24 shrink-0 text-right truncate" title={row.name}>{row.name}</span>
-                            <div className="flex-1 relative h-7 bg-slate-100 rounded overflow-hidden">
-                              <div className="absolute inset-y-0 left-0 rounded transition-all duration-500" style={{ width: `${totalWidth}%`, backgroundColor: barColor }} />
-                              {row.done > 0 && (
-                                <div className="absolute inset-y-0 left-0 rounded transition-all duration-500" style={{ width: `${doneWidth}%`, backgroundColor: doneBarColor }} />
-                              )}
-                              <span className="absolute right-2 inset-y-0 flex items-center text-[11px] font-bold text-white drop-shadow">
-                                {row.total}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex ml-[7.5rem] mt-2">
-                      {xTicks.map((tick) => (
-                        <div key={tick} className="flex-1 text-center text-[10px] text-slate-400">{tick}</div>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-4 mt-3 ml-[7.5rem]">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#22c55e' }} />
-                        <span className="text-[11px] text-slate-500">Tổng task</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    {/* Thẻ 1: Tổng số task hoàn thành / tổng task */}
+                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                      <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Hoàn thành / Tổng số</p>
+                      <div className="flex items-baseline gap-2 mt-1">
+                        <span className="text-2xl font-bold text-[#0b1c30]">{kpiDone} / {kpiTotal}</span>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }} />
-                        <span className="text-[11px] text-slate-500">Đã hoàn thành</span>
+                      <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                        <div className="bg-[#0058be] h-full" style={{ width: '100%' }}></div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-3 h-3 rounded-sm bg-slate-300" />
-                        <span className="text-[11px] text-slate-500">Chưa gắn</span>
+                    </div>
+
+                    {/* Thẻ 2: % Tiến độ (Tính dựa trên thẻ 1) */}
+                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                      <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tiến độ dự án</p>
+                      <div className="flex items-baseline gap-2 mt-1">
+                        <span className="text-2xl font-bold text-indigo-600">{devProgressPercent}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                        <div className="bg-indigo-500 h-full" style={{ width: `${devProgressPercent}%` }}></div>
+                      </div>
+                    </div>
+
+                    {/* Thẻ 3: Tổng Manday */}
+                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                      <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Tổng Manday</p>
+                      <div className="flex items-baseline justify-between mt-1">
+                        <span className="text-2xl font-bold text-blue-600">{kpiTotalManday}</span>
+                        <span className="material-symbols-outlined text-blue-400 text-[18px]">calendar_month</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                        <div className="bg-blue-500 h-full" style={{ width: '100%' }}></div>
+                      </div>
+                    </div>
+
+                    {/* Thẻ 4: Trễ deadline */}
+                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
+                      <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Trễ deadline</p>
+                      <div className="flex items-baseline justify-between mt-1">
+                        <span className="text-2xl font-bold text-red-600">{kpiWarning}</span>
+                        <span className="material-symbols-outlined text-red-500 text-[18px]">warning</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                        <div className="bg-red-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiWarning / kpiTotal) * 100 : 0}%` }}></div>
+                      </div>
+                    </div>
+
+                    {/* Thẻ 5: Critical tuần này */}
+                    <div className="bg-white p-5 rounded-xl border border-emerald-200 border-2 shadow-sm transition-transform hover:-translate-y-0.5">
+                      <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Critical Tuần Này</p>
+                      <div className="flex items-baseline justify-between mt-1">
+                        <span className="text-2xl font-bold text-emerald-600">{kpiCriticalThisWeek}</span>
+                        <span className="material-symbols-outlined text-emerald-500 text-[18px]">priority_high</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
+                        <div className="bg-emerald-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiCriticalThisWeek / kpiTotal) * 100 : 0}%` }}></div>
                       </div>
                     </div>
                   </div>
-                );
-              })()}
-            </div>
 
-            {/* KPI FINAL LEADERBOARD - PODIUM */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[310px] flex flex-col">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
-                    <span className="material-symbols-outlined text-amber-500 text-[18px]">emoji_events</span>
-                    Bảng xếp hạng KPI
-                  </h3>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
-                </div>
-                {kpiLeaderboardStats.length > 3 && (
-                  <button
-                    onClick={() => setShowAllKpi(!showAllKpi)}
-                    className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
-                  >
-                    {showAllKpi ? 'Thu gọn' : 'Xem thêm'}
-                  </button>
-                )}
-              </div>
+                  {/* CHARTS ROW: 2 columns */}
+                  <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 
-              {kpiLeaderboardStats.length === 0 ? (
-                <p className="text-xs text-slate-500 italic text-center py-8">Chưa có dữ liệu KPI Final.</p>
-              ) : (() => {
-                const top3 = kpiLeaderboardStats.slice(0, 3);
-                const rest = kpiLeaderboardStats.slice(3);
-                // Podium order: 2nd left, 1st center, 3rd right
-                const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean);
-                const podiumHeights = { 0: 'h-20', 1: 'h-28', 2: 'h-14' };
-                const podiumColors: Record<number, string> = { 0: '#94a3b8', 1: '#f59e0b', 2: '#cd7c2f' };
-                const podiumRanks: Record<number, string> = { 0: '2', 1: '1', 2: '3' };
-                const podiumOrigIdx: Record<number, number> = {};
-                podiumOrder.forEach((p, i) => {
-                  if (p) podiumOrigIdx[i] = kpiLeaderboardStats.findIndex(r => r.name === p.name);
-                });
-                return (
-                  <div>
-                    {/* PODIUM */}
-                    <div className="flex items-end justify-center gap-2 mt-2 mb-4">
-                      {podiumOrder.map((row, i) => {
-                        if (!row) return null;
-                        const origIdx = podiumOrigIdx[i];
-                        const initials = row.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
-                        const isFirst = podiumRanks[i] === '1';
+                    {/* WORKLOAD CHART */}
+                    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[310px] flex flex-col">
+                      <div className="flex items-center justify-between mb-1">
+                        <div>
+                          <h3 className="text-sm font-bold text-[#0b1c30]">Khối lượng theo người phụ trách</h3>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Số task đã nhận theo trạng thái</p>
+                        </div>
+                        {workloadStats.length > 3 && (
+                          <button
+                            onClick={() => setShowAllLeaderboard(!showAllLeaderboard)}
+                            className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
+                          >
+                            {showAllLeaderboard ? 'Thu gọn' : 'Xem thêm'}
+                          </button>
+                        )}
+                      </div>
+
+                      {workloadStats.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-4 flex-1 flex items-center justify-center">Chưa có dữ liệu để hiển thị.</p>
+                      ) : (() => {
+                        const displayRows = showAllLeaderboard ? workloadStats : workloadStats.slice(0, 3);
+                        const maxTotal = Math.max(...workloadStats.map(r => r.total), 1);
+                        const xTicks = Array.from({ length: 6 }, (_, i) => Math.round((maxTotal / 5) * i));
                         return (
-                          <div key={row.name} className="flex flex-col items-center gap-1 flex-1">
-                            {/* Avatar */}
-                            <div
-                              className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-black ring-2 ring-white shadow-md"
-                              style={{ backgroundColor: podiumColors[i] }}
-                            >
-                              {initials}
+                          <div className="mt-4 flex-1 flex flex-col justify-end">
+                            <div className="space-y-3">
+                              {displayRows.map((row) => {
+                                const isUnassigned = row.name === 'Chưa gắn';
+                                const barColor = isUnassigned ? '#c8c8c8' : '#22c55e';
+                                const doneBarColor = isUnassigned ? '#9ca3af' : '#16a34a';
+                                const totalWidth = (row.total / maxTotal) * 100;
+                                const doneWidth = (row.done / maxTotal) * 100;
+                                return (
+                                  <div key={row.name} className="flex items-center gap-3">
+                                    <span className="text-[11px] text-slate-600 w-24 shrink-0 text-right truncate" title={row.name}>{row.name}</span>
+                                    <div className="flex-1 relative h-7 bg-slate-100 rounded overflow-hidden">
+                                      <div className="absolute inset-y-0 left-0 rounded transition-all duration-500" style={{ width: `${totalWidth}%`, backgroundColor: barColor }} />
+                                      {row.done > 0 && (
+                                        <div className="absolute inset-y-0 left-0 rounded transition-all duration-500" style={{ width: `${doneWidth}%`, backgroundColor: doneBarColor }} />
+                                      )}
+                                      <span className="absolute right-2 inset-y-0 flex items-center text-[11px] font-bold text-white drop-shadow">
+                                        {row.total}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
-                            {/* Name */}
-                            <span className="text-[10px] font-bold text-[#0b1c30] text-center truncate w-full px-1" title={row.name}>{row.name}</span>
-                            {/* Score */}
-                            <span className="text-[10px] font-semibold text-slate-500">{row.total} đ</span>
-                            {/* Podium block */}
-                            <div
-                              className={`w-full ${podiumHeights[i as keyof typeof podiumHeights]} rounded-t-md flex items-center justify-center text-white font-black text-lg shadow-inner`}
-                              style={{ backgroundColor: podiumColors[i] }}
-                            >
-                              {podiumRanks[i]}
+                            <div className="flex ml-[7.5rem] mt-2">
+                              {xTicks.map((tick) => (
+                                <div key={tick} className="flex-1 text-center text-[10px] text-slate-400">{tick}</div>
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-4 mt-3 ml-[7.5rem]">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#22c55e' }} />
+                                <span className="text-[11px] text-slate-500">Tổng task</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }} />
+                                <span className="text-[11px] text-slate-500">Đã hoàn thành</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-3 h-3 rounded-sm bg-slate-300" />
+                                <span className="text-[11px] text-slate-500">Chưa gắn</span>
+                              </div>
                             </div>
                           </div>
                         );
-                      })}
+                      })()}
                     </div>
 
-                    {/* REST OF LIST */}
-                    {showAllKpi && rest.length > 0 && (
-                      <div className="border-t border-slate-100 pt-3 space-y-1.5">
-                        {rest.map((row, i) => (
-                          <div key={row.name} className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-slate-50">
-                            <span className="text-[11px] text-slate-400 w-5 text-center font-bold">{i + 4}</span>
-                            <span className="text-[11px] text-slate-700 flex-1 truncate font-medium" title={row.name}>{row.name}</span>
-                            <span className="text-[11px] font-bold text-[#0058be]">{row.total} đ</span>
-                          </div>
-                        ))}
+                    {/* KPI FINAL LEADERBOARD - PODIUM */}
+                    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[310px] flex flex-col">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
+                            <span className="material-symbols-outlined text-amber-500 text-[18px]">emoji_events</span>
+                            Bảng xếp hạng KPI
+                          </h3>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
+                        </div>
+                        {kpiLeaderboardStats.length > 3 && (
+                          <button
+                            onClick={() => setShowAllKpi(!showAllKpi)}
+                            className="text-[12px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
+                          >
+                            {showAllKpi ? 'Thu gọn' : 'Xem thêm'}
+                          </button>
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
 
-          </div>
+                      {kpiLeaderboardStats.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-8">Chưa có dữ liệu KPI Final.</p>
+                      ) : (() => {
+                        const top3 = kpiLeaderboardStats.slice(0, 3);
+                        const rest = kpiLeaderboardStats.slice(3);
+                        // Podium order: 2nd left, 1st center, 3rd right
+                        const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean);
+                        const podiumHeights = { 0: 'h-20', 1: 'h-28', 2: 'h-14' };
+                        const podiumColors: Record<number, string> = { 0: '#94a3b8', 1: '#f59e0b', 2: '#cd7c2f' };
+                        const podiumRanks: Record<number, string> = { 0: '2', 1: '1', 2: '3' };
+                        const podiumOrigIdx: Record<number, number> = {};
+                        podiumOrder.forEach((p, i) => {
+                          if (p) podiumOrigIdx[i] = kpiLeaderboardStats.findIndex(r => r.name === p.name);
+                        });
+                        return (
+                          <div>
+                            {/* PODIUM */}
+                            <div className="flex items-end justify-center gap-2 mt-2 mb-4">
+                              {podiumOrder.map((row, i) => {
+                                if (!row) return null;
+                                const origIdx = podiumOrigIdx[i];
+                                const initials = row.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                                const isFirst = podiumRanks[i] === '1';
+                                return (
+                                  <div key={row.name} className="flex flex-col items-center gap-1 flex-1">
+                                    {/* Avatar */}
+                                    <div
+                                      className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-black ring-2 ring-white shadow-md"
+                                      style={{ backgroundColor: podiumColors[i] }}
+                                    >
+                                      {initials}
+                                    </div>
+                                    {/* Name */}
+                                    <span className="text-[10px] font-bold text-[#0b1c30] text-center truncate w-full px-1" title={row.name}>{row.name}</span>
+                                    {/* Score */}
+                                    <span className="text-[10px] font-semibold text-slate-500">{row.total} đ</span>
+                                    {/* Podium block */}
+                                    <div
+                                      className={`w-full ${podiumHeights[i as keyof typeof podiumHeights]} rounded-t-md flex items-center justify-center text-white font-black text-lg shadow-inner`}
+                                      style={{ backgroundColor: podiumColors[i] }}
+                                    >
+                                      {podiumRanks[i]}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* REST OF LIST */}
+                            {showAllKpi && rest.length > 0 && (
+                              <div className="border-t border-slate-100 pt-3 space-y-1.5">
+                                {rest.map((row, i) => (
+                                  <div key={row.name} className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-slate-50">
+                                    <span className="text-[11px] text-slate-400 w-5 text-center font-bold">{i + 4}</span>
+                                    <span className="text-[11px] text-slate-700 flex-1 truncate font-medium" title={row.name}>{row.name}</span>
+                                    <span className="text-[11px] font-bold text-[#0058be]">{row.total} đ</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                  </div>
                 </div>
               )}
 
@@ -4291,10 +4304,10 @@ value={editValue}
                       {dynamicTabs.map(p => (
                         <button key={p.key} onClick={() => setActivePhase(p.key)}
                           className={`px-5 py-2.5 rounded-lg text-[13px] font-bold transition-all flex items-center gap-1.5 ${activePhase === p.key
-                              ? p.key === 'ALL'
-                                ? 'bg-[#0058be] text-white shadow-sm'
-                                : 'bg-white text-[#0058be] shadow-sm'
-                              : 'text-[#565e74] hover:text-[#0058be]'
+                            ? p.key === 'ALL'
+                              ? 'bg-[#0058be] text-white shadow-sm'
+                              : 'bg-white text-[#0058be] shadow-sm'
+                            : 'text-[#565e74] hover:text-[#0058be]'
                             }`}>
                           <span>{p.label}</span>
                           {activePhase === p.key && !p.is_master && (
@@ -4966,12 +4979,11 @@ value={editValue}
                                           )}
                                         </td>
                                         <td className="p-3 whitespace-nowrap">
-                                          <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
-                                            t.priority === 'Interrupt' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${t.priority === 'Interrupt' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
                                             t.priority === 'Critical' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
-                                            t.priority === 'High' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                                            'bg-blue-50 text-blue-700 border border-blue-200'
-                                          }`}>
+                                              t.priority === 'High' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                                                'bg-blue-50 text-blue-700 border border-blue-200'
+                                            }`}>
                                             {t.priority || 'Normal'}
                                           </span>
                                         </td>
@@ -5137,15 +5149,83 @@ value={editValue}
                       {/* SUB-TAB 2: CHAT SOURCES */}
                       {activeChatSubTab === 'sources' && (
                         <div className="space-y-6">
+                          {/* Telegram Bot Helper Banner */}
+                          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                            <div className="flex items-start gap-3">
+                              <div className="w-9 h-9 rounded-lg bg-[#27a7e7] text-white flex items-center justify-center font-bold text-lg shadow-sm shrink-0 mt-0.5">
+                                🤖
+                              </div>
+                              <div className="text-xs">
+                                <div className="font-bold text-[#0b1c30] text-sm flex items-center gap-1.5">
+                                  Hướng dẫn kết nối Telegram Bot
+                                  <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">@cloudgate_pm_bot</span>
+                                </div>
+                                <div className="text-slate-600 mt-1 space-y-0.5">
+                                  <p><b>Bước 1:</b> Thêm Bot <b>@cloudgate_pm_bot</b> vào Nhóm Telegram của bạn.</p>
+                                  <p><b>Bước 2:</b> Copy Link Topic trên Telegram dán vào ô bên dưới để AI tự động lọc tin nhắn.</p>
+                                </div>
+                              </div>
+                            </div>
+                            <a
+                              href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center justify-center gap-1.5 bg-[#27a7e7] hover:bg-[#2094ce] text-white font-bold text-xs px-3.5 py-2 rounded-lg shadow-sm transition-all shrink-0"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">add_circle</span>
+                              Thêm Bot vào Telegram ngay
+                            </a>
+                          </div>
+
                           {/* Form Thêm Group Chat */}
                           <div className="bg-white border border-[#c2c6d6]/60 shadow-sm rounded-xl p-5">
                             <h3 className="text-sm font-bold text-[#0b1c30] mb-4 flex items-center gap-2">
                               <span className="material-symbols-outlined text-[#0058be] text-[20px]">add_circle</span>
                               Thêm Chat Group
                             </h3>
+
+                            {/* Step 1 Smart Action Button for Telegram */}
+                            {newGroupPlatform === 'Telegram' && (
+                              <div className="mb-4 p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-xl text-xs space-y-2">
+                                <div className="font-bold text-[#0b1c30] flex items-center justify-between">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-5 h-5 rounded-full bg-[#0058be] text-white flex items-center justify-center text-[10px] font-bold">1</span>
+                                    BẮT BUỘC: Thêm Bot @cloudgate_pm_bot vào Nhóm Telegram
+                                  </span>
+                                  {hasClickedAddBot && (
+                                    <span className="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 border border-emerald-300">
+                                      <span className="material-symbols-outlined text-[14px]">check_circle</span> Đã kích hoạt thêm Bot!
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="pt-1">
+                                  {!hasClickedAddBot ? (
+                                    <a
+                                      href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={() => setHasClickedAddBot(true)}
+                                      className="inline-flex items-center gap-2 bg-[#27a7e7] hover:bg-[#2094ce] text-white font-bold px-4 py-2 rounded-lg text-xs transition-all shadow-xs active:scale-95"
+                                    >
+                                      <span>🤖</span> Bấm thêm @cloudgate_pm_bot vào Nhóm ngay
+                                      <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+                                    </a>
+                                  ) : (
+                                    <p className="text-emerald-700 text-[11px] font-semibold flex items-center gap-1">
+                                      ✅ Đã mở Telegram! Bạn hãy hoàn thành việc thêm Bot vào nhóm trên ứng dụng Telegram và dán Link Topic ở ô bên dưới.
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
                             <form
                               onSubmit={async e => {
                                 e.preventDefault();
+                                if (newGroupPlatform === 'Telegram' && !hasClickedAddBot) {
+                                  alert('⚠️ Bạn phải bấm nút "Bấm thêm @cloudgate_pm_bot vào Nhóm ngay" ở Bước 1 trước khi dán Link kết nối!');
+                                  return;
+                                }
                                 if (!newGroupName.trim() || !newGroupLink.trim()) return;
                                 try {
                                   const group = await createChatGroup(Number(id), {
@@ -5158,6 +5238,7 @@ value={editValue}
                                   setNewGroupName('');
                                   setNewGroupLink('');
                                   setNewGroupDesc('');
+                                  setHasClickedAddBot(false);
                                   flash('Đã thêm group chat!');
                                 } catch (err: any) {
                                   alert('Lỗi thêm group chat: ' + (err.response?.data?.detail || err.message));
@@ -5195,19 +5276,24 @@ value={editValue}
                               </div>
 
                               <div className="sm:col-span-2">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Link *</label>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Link Topic *</label>
                                 <div className="flex gap-2">
                                   <input
                                     type="url"
                                     required
                                     value={newGroupLink}
                                     onChange={e => setNewGroupLink(e.target.value)}
-                                    placeholder="https://..."
+                                    placeholder="https://t.me/c/..."
                                     className="flex-1 bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
                                   />
                                   <button
                                     type="submit"
-                                    className="bg-[#0058be] hover:bg-[#0058be]/90 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all whitespace-nowrap"
+                                    disabled={newGroupPlatform === 'Telegram' && !hasClickedAddBot}
+                                    className={`font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all whitespace-nowrap ${newGroupPlatform === 'Telegram' && !hasClickedAddBot
+                                      ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                                      : 'bg-[#0058be] hover:bg-[#0058be]/90 text-white'
+                                      }`}
+                                    title={newGroupPlatform === 'Telegram' && !hasClickedAddBot ? 'Vui lòng bấm nút ở Bước 1 để mở Telegram thêm Bot trước' : ''}
                                   >
                                     Thêm mới
                                   </button>
@@ -5298,15 +5384,28 @@ value={editValue}
                                     </span>
                                   </div>
 
-                                  <a
-                                    href={g.link}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="w-full text-center bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 rounded-lg transition-colors flex items-center justify-center gap-1 mt-3"
-                                  >
-                                    <span className="material-symbols-outlined text-[14px]">open_in_new</span>
-                                    Mở nhóm chat
-                                  </a>
+                                  <div className="flex gap-2 mt-3">
+                                    <a
+                                      href={g.link}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex-1 text-center bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                                    >
+                                      <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                                      Mở nhóm chat
+                                    </a>
+                                    {g.platform === 'Telegram' && (
+                                      <a
+                                        href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="bg-[#27a7e7]/10 hover:bg-[#27a7e7]/20 text-[#27a7e7] font-bold text-[11px] px-2.5 py-2 rounded-lg transition-colors flex items-center justify-center gap-1 shrink-0"
+                                        title="Thêm @cloudgate_pm_bot vào nhóm"
+                                      >
+                                        🤖 Thêm Bot
+                                      </a>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -6125,18 +6224,20 @@ value={editValue}
 
                   {/* MODAL KẾT NỐI NHÓM CHAT */}
                   {isConnectModalOpen && (
-                    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-                      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
-                        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
+                        {/* FIXED HEADER */}
+                        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white z-10">
                           <div>
                             <h3 className="text-base font-bold text-[#0b1c30]">Kết nối nhóm chat</h3>
                             <p className="text-xs text-slate-500 mt-0.5">Thêm nguồn dữ liệu mới cho AI Task Parser.</p>
                           </div>
-                          <button onClick={() => setIsConnectModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                          <button type="button" onClick={() => setIsConnectModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
                             <span className="material-symbols-outlined">close</span>
                           </button>
                         </div>
 
+                        {/* FORM WITH FLEX COL TO SEPARATE SCROLLABLE CONTENT FROM FIXED FOOTER */}
                         <form
                           onSubmit={async e => {
                             e.preventDefault();
@@ -6158,81 +6259,205 @@ value={editValue}
                               alert('Lỗi kết nối group: ' + (err.response?.data?.detail || err.message));
                             }
                           }}
-                          className="p-5 space-y-4 text-xs"
+                          className="flex flex-col flex-1 min-h-0 overflow-hidden"
                         >
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nền tảng *</label>
-                              <select
-                                value={newGroupPlatform}
-                                onChange={e => setNewGroupPlatform(e.target.value)}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
-                              >
-                                <option value="Telegram">Telegram</option>
-                                <option value="Zalo">Zalo</option>
-                                <option value="Slack">Slack</option>
-                                <option value="Teams">Microsoft Teams</option>
-                                <option value="Discord">Discord</option>
-                                <option value="WhatsApp">WhatsApp</option>
-                                <option value="Khác">Khác</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên nhóm *</label>
-                              <input
-                                type="text"
-                                required
-                                value={newGroupName}
-                                onChange={e => setNewGroupName(e.target.value)}
-                                placeholder="VD: HR Product Team"
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
-                              />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Link nhóm / ID nhóm *</label>
-                            <input
-                              type="url"
-                              required
-                              value={newGroupLink}
-                              onChange={e => setNewGroupLink(e.target.value)}
-                              placeholder="https://t.me/..."
-                              className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2"
-                            />
-                          </div>
-
-                          {newGroupPlatform === 'Telegram' && (
-                            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                          {/* SCROLLABLE INPUTS AREA */}
+                          <div className="p-4 sm:p-5 space-y-4 text-xs overflow-y-auto flex-1">
+                            <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <b className="text-xs text-[#0b1c30] block font-bold">1-Click Thêm Bot vào Telegram Group</b>
-                                <p className="text-[11px] text-slate-500 mt-0.5">Mở tự động ứng dụng Telegram và cho phép Bot gia nhập nhóm ngay.</p>
+                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Nền tảng *</label>
+                                <select
+                                  value={newGroupPlatform}
+                                  onChange={e => {
+                                    setNewGroupPlatform(e.target.value);
+                                    setIsTopicOnly(false);
+                                    setNewGroupDesc('');
+                                  }}
+                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
+                                >
+                                  <option value="Telegram">Telegram</option>
+                                  <option value="Zalo">Zalo</option>
+                                  <option value="Slack">Slack</option>
+                                  <option value="Teams">Microsoft Teams</option>
+                                  <option value="Discord">Discord</option>
+                                  <option value="WhatsApp">WhatsApp</option>
+                                  <option value="Khác">Khác</option>
+                                </select>
                               </div>
-                              <a
-                                href="https://t.me/cloudgate_pm_bot?startgroup=true"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="bg-[#0088cc] hover:bg-[#0077b5] active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-sm whitespace-nowrap inline-flex items-center gap-1.5 shrink-0 transition-all"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">smart_toy</span>
-                                Thêm Bot Ngay
-                              </a>
+                              <div>
+                                <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Tên nhóm *</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={newGroupName}
+                                  onChange={e => setNewGroupName(e.target.value)}
+                                  placeholder="VD: Markee Team"
+                                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 font-semibold"
+                                />
+                              </div>
                             </div>
-                          )}
 
-                          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 space-y-2">
-                            <b className="block text-xs text-[#0058be] flex items-center gap-1.5 font-bold">
-                              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-                              Quy trình tự động kết nối Bot vào nhóm:
-                            </b>
-                            <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pl-0.5 leading-relaxed font-medium">
-                              <li>Nhập <b>Tên nhóm</b> & dán <b>Link tham gia nhóm chat</b> ở ô trên.</li>
-                              <li>Mở Zalo/Telegram ➔ Bấm <b>"Mời thành viên"</b> và chọn Bot hệ thống <b>@MarkeeTask (hoặc Zalo OA)</b> gia nhập nhóm.</li>
-                              <li>Bot sẽ tự động gửi tin nhắn chào mừng trong nhóm. Mọi tin nhắn giao việc từ đó sẽ được AI bóc tách trực tiếp vào bảng Inbox của bạn!</li>
-                            </ol>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Link nhóm / Link Topic *</label>
+                              <input
+                                type="url"
+                                required
+                                value={newGroupLink}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setNewGroupLink(val);
+
+                                  const urlParts = val.trim().split('/').filter(Boolean);
+                                  const lastSeg = urlParts[urlParts.length - 1];
+
+                                  if (lastSeg && /^\d+$/.test(lastSeg) && urlParts.length >= 3) {
+                                    setIsTopicOnly(true);
+                                    if (!newGroupDesc || newGroupDesc.startsWith('Topic #')) {
+                                      setNewGroupDesc(`Topic #${lastSeg}`);
+                                    }
+                                  } else if (val && (!lastSeg || !/^\d+$/.test(lastSeg))) {
+                                    setIsTopicOnly(false);
+                                  }
+                                }}
+                                placeholder="https://t.me/c/3986585281/6 (hoặc link nhóm)"
+                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-medium"
+                              />
+
+                              {/* SMART BADGE IF DETECTED IN LINK */}
+                              {newGroupLink && (() => {
+                                const parts = newGroupLink.trim().split('/').filter(Boolean);
+                                const lastPart = parts[parts.length - 1];
+                                if (lastPart && /^\d+$/.test(lastPart) && parts.length >= 3) {
+                                  return (
+                                    <div className="bg-amber-50 border border-amber-300 rounded-lg p-2.5 text-[11px] text-amber-900 font-semibold flex items-center gap-2 shadow-xs mt-2">
+                                      <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0">topic</span>
+                                      <span>
+                                        ✨ <b>Đã phát hiện Link Topic #{lastPart}!</b> Hệ thống tự động chuyển sang chế độ <b>"Chỉ 1 nhóm nhỏ (Topic #{lastPart})"</b> để AI lọc chuẩn tin nhắn.
+                                      </span>
+                                    </div>
+                                  );
+                                } else if (newGroupLink.length > 10) {
+                                  return (
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 text-[11px] text-blue-900 font-semibold flex items-center gap-2 shadow-xs mt-2">
+                                      <span className="material-symbols-outlined text-[18px] text-blue-600 shrink-0">groups</span>
+                                      <span>
+                                        🌐 <b>Đã nhận diện Link Nhóm lớn!</b> Hệ thống sẽ bóc tách tin nhắn từ toàn bộ nhóm Telegram này.
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
+
+                            {newGroupPlatform === 'Telegram' && (
+                              <div className="space-y-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-xl p-3.5">
+                                <div className="font-bold text-[#0b1c30] text-xs flex items-center justify-between">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-5 h-5 rounded-full bg-[#0058be] text-white flex items-center justify-center text-[10px] font-bold">1</span>
+                                    BẮT BUỘC: Thêm Bot @cloudgate_pm_bot vào Nhóm Telegram
+                                  </span>
+                                  {hasClickedAddBot && (
+                                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
+                                      ✓ Đã kích hoạt
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div>
+                                  {!hasClickedAddBot ? (
+                                    <a
+                                      href="https://t.me/cloudgate_pm_bot?startgroup=true"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={() => setHasClickedAddBot(true)}
+                                      className="inline-flex items-center gap-1.5 bg-[#27a7e7] hover:bg-[#2094ce] text-white font-bold px-3.5 py-2 rounded-lg text-xs transition-all shadow-xs active:scale-95"
+                                    >
+                                      <span>🤖</span> Bấm thêm @cloudgate_pm_bot vào Nhóm ngay
+                                      <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                                    </a>
+                                  ) : (
+                                    <p className="text-emerald-700 text-[11px] font-semibold flex items-center gap-1">
+                                      ✅ Đã mở Telegram! Hãy hoàn thành thêm Bot vào nhóm trên Telegram và dán Link Topic ở trên.
+                                    </p>
+                                  )}
+                                </div>
+
+                                <label className="text-[11px] font-bold text-slate-600 uppercase block pt-1">
+                                  Phạm vi kết nối trong Telegram *
+                                </label>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsTopicOnly(false);
+                                      setNewGroupDesc('');
+                                    }}
+                                    className={`p-2.5 rounded-lg border text-left flex items-start gap-2 transition-all ${!isTopicOnly
+                                      ? 'bg-blue-50 border-blue-500 text-blue-900 shadow-sm font-semibold'
+                                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100/60'
+                                      }`}
+                                  >
+                                    <span className="material-symbols-outlined text-[18px] text-blue-600 shrink-0 mt-0.5">groups</span>
+                                    <div>
+                                      <b className="text-xs block font-bold">Toàn bộ nhóm lớn</b>
+                                      <p className="text-[10px] opacity-75 mt-0.5">Bóc tách task từ tất cả tin nhắn trong nhóm.</p>
+                                    </div>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsTopicOnly(true)}
+                                    className={`p-2.5 rounded-lg border text-left flex items-start gap-2 transition-all ${isTopicOnly
+                                      ? 'bg-amber-50 border-amber-500 text-amber-950 shadow-sm font-semibold'
+                                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100/60'
+                                      }`}
+                                  >
+                                    <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">topic</span>
+                                    <div>
+                                      <b className="text-xs block font-bold">Chỉ 1 nhóm nhỏ (Topic)</b>
+                                      <p className="text-[10px] opacity-75 mt-0.5">Chỉ kết nối đúng 1 topic nhỏ (VD: Topic #6).</p>
+                                    </div>
+                                  </button>
+                                </div>
+
+                                {/* SMART AUTO-DETECTION OR MANUAL TOPIC INPUT */}
+                                {isTopicOnly && (
+                                  <div className="pt-1 animate-in fade-in zoom-in-95 duration-150 space-y-1.5">
+                                    <label className="text-[11px] font-bold text-slate-600 block">
+                                      Tên Nhóm Nhỏ / Topic ID *
+                                    </label>
+                                    <div className="relative flex items-center">
+                                      <span className="material-symbols-outlined text-[18px] text-amber-500 absolute left-2.5 pointer-events-none">tag</span>
+                                      <input
+                                        type="text"
+                                        required
+                                        value={newGroupDesc}
+                                        onChange={e => setNewGroupDesc(e.target.value)}
+                                        placeholder="VD: Topic #6 hoặc 5. Thông báo Summary meeting"
+                                        className="w-full bg-white border border-[#c2c6d6] rounded-lg py-2 pr-3 pl-8 text-xs font-medium"
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 space-y-2">
+                              <b className="block text-xs text-[#0058be] flex items-center gap-1.5 font-bold">
+                                <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                                Quy trình tự động kết nối Bot vào nhóm:
+                              </b>
+                              <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pl-0.5 leading-relaxed font-medium">
+                                <li>Bấm <b>Thêm Bot @cloudgate_pm_bot</b> vào nhóm & tick xác nhận ở Bước 1.</li>
+                                <li>Dán <b>Link Topic Telegram</b> ở ô trên (Hệ thống tự nhận diện Topic ID).</li>
+                                <li>Bấm <b>Kết nối & kiểm tra</b> để hoàn tất.</li>
+                              </ol>
+                            </div>
                           </div>
 
-                          <div className="pt-2 flex justify-end gap-2">
+                          {/* FIXED FOOTER BUTTONS */}
+                          <div className="p-4 border-t border-slate-200 flex justify-end gap-2 shrink-0 bg-white z-20 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
                             <button
                               type="button"
                               onClick={() => setIsConnectModalOpen(false)}
@@ -6242,7 +6467,12 @@ value={editValue}
                             </button>
                             <button
                               type="submit"
-                              className="px-4 py-2 bg-[#0058be] text-white text-xs font-bold rounded-lg shadow-sm hover:bg-[#0058be]/90"
+                              disabled={newGroupPlatform === 'Telegram' && !hasClickedAddBot}
+                              className={`px-4 py-2 text-xs font-bold rounded-lg shadow-sm transition-all ${newGroupPlatform === 'Telegram' && !hasClickedAddBot
+                                ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                                : 'bg-[#0058be] hover:bg-[#0058be]/90 text-white'
+                                }`}
+                              title={newGroupPlatform === 'Telegram' && !hasClickedAddBot ? 'Vui lòng bấm nút ở Bước 1 để mở Telegram thêm Bot trước' : ''}
                             >
                               Kết nối & kiểm tra
                             </button>
@@ -6394,6 +6624,9 @@ value={editValue}
                 </div>
               )}
 
+              {activeMainTab === 'audit_logs' && (
+                <AuditLogsTab projectId={Number(id)} />
+              )}
             </div>
 
           </div>
@@ -7632,8 +7865,8 @@ function renderRemarkTags(remarkVal: string, settings: any[]) {
         }
 
         return (
-          <span 
-            key={idx} 
+          <span
+            key={idx}
             className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-bold leading-none select-none transition-colors ${bgClass}`}
             title={ruleName}
           >
@@ -7665,8 +7898,8 @@ function RemarkMultiSelectInput({ value, performanceSettings, onChange, placehol
       }
       const found = performanceSettings.find(rule => {
         const rulePerf = rule.performance.trim().toLowerCase();
-        const cleanRulePerf = rulePerf.startsWith('(t)') || rulePerf.startsWith('(p)') 
-          ? rulePerf.substring(3).trim() 
+        const cleanRulePerf = rulePerf.startsWith('(t)') || rulePerf.startsWith('(p)')
+          ? rulePerf.substring(3).trim()
           : rulePerf;
         const partLower = part.toLowerCase();
         return rulePerf === partLower || cleanRulePerf === partLower;
@@ -7754,7 +7987,7 @@ function RemarkMultiSelectInput({ value, performanceSettings, onChange, placehol
           })
         )}
       </div>
-      
+
       {isOpen && (
         <div className="absolute left-0 mt-1 w-[400px] max-h-[300px] bg-white border border-slate-200 rounded-lg shadow-2xl z-[9999] p-3 flex flex-col gap-2 transition-all animate-fadeIn">
           <input
@@ -7803,7 +8036,7 @@ function RemarkMultiSelectInput({ value, performanceSettings, onChange, placehol
                         </span>
                       );
                     }
-                    
+
                     return (
                       <div
                         key={rule.id}
@@ -7813,11 +8046,10 @@ function RemarkMultiSelectInput({ value, performanceSettings, onChange, placehol
                             : [...selectedIds, rule.id];
                           onChange(updated.join(','));
                         }}
-                        className={`group flex items-center justify-between px-2.5 py-1.5 rounded cursor-pointer text-xs font-semibold transition-all duration-150 ${
-                          isSelected
-                            ? 'bg-[#eff4ff] text-[#0058be]'
-                            : 'text-slate-700 hover:bg-slate-50'
-                        }`}
+                        className={`group flex items-center justify-between px-2.5 py-1.5 rounded cursor-pointer text-xs font-semibold transition-all duration-150 ${isSelected
+                          ? 'bg-[#eff4ff] text-[#0058be]'
+                          : 'text-slate-700 hover:bg-slate-50'
+                          }`}
                       >
                         <div className="flex items-center gap-2 max-w-[80%]">
                           <input
