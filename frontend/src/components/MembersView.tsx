@@ -22,6 +22,8 @@ interface Member {
   position?: string;
   department?: string;
   experience_year?: number;
+  leader_name?: string;
+  leader_email?: string;
   skill_ids: number[];
   skills: Skill[];
 }
@@ -261,6 +263,7 @@ export default function MembersView({ onFlash }: Props) {
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
                 <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
+                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Leader</th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 w-16"></th>
               </tr>
             </thead>
@@ -300,6 +303,9 @@ export default function MembersView({ onFlash }: Props) {
                   <td className="px-4 py-3 text-slate-500 text-[10px]">
                     {m.email || <span className="text-slate-300">–</span>}
                   </td>
+                  <td className="px-4 py-3 text-slate-600 font-semibold text-[11px]">
+                    {m.leader_name || <span className="text-slate-300">–</span>}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 justify-end">
                       <button onClick={() => openEdit(m)}
@@ -312,7 +318,7 @@ export default function MembersView({ onFlash }: Props) {
               ))}
               {members.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="text-center py-16 text-slate-400 font-medium">
+                  <td colSpan={10} className="text-center py-16 text-slate-400 font-medium">
                     Không tìm thấy thành viên nào
                   </td>
                 </tr>

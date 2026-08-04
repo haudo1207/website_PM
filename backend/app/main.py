@@ -142,6 +142,12 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS cv_link VARCHAR(255)"
         ))
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_name VARCHAR(100)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_email VARCHAR(255)"
+        ))
 
         # Add business_unit column to customers and drop obsolete unique name constraint
         conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50) NOT NULL DEFAULT 'infrastructure'"))

@@ -32,6 +32,8 @@ def member_to_dict(m: Member) -> dict:
         "department": m.department,
         "experience_year": m.experience_year,
         "created_at": m.created_at,
+        "leader_name": m.leader_name,
+        "leader_email": m.leader_email,
         "skill_ids": [s.id for s in m.skills],
         "skills": [
             {"id": s.id, "name": s.name}
@@ -400,6 +402,19 @@ def sync_candidate(
         else:
             mapped_team = team
             
+    raw_leader_name = body.get("leader_name")
+    leader_name = None
+    if raw_leader_name:
+        words = [w for w in str(raw_leader_name).strip().split() if w]
+        if len(words) <= 2:
+            leader_name = " ".join(words)
+        else:
+            abbr = ".".join([w[0].upper() for w in words[:-2]])
+            last_two = " ".join(words[-2:])
+            leader_name = f"{abbr} {last_two}"
+            
+    leader_email = str(body.get("leader_email", "")).strip() or None
+
     # 3. Find if member already exists by email or display_name
     member = None
     if email:
@@ -425,6 +440,8 @@ def sync_candidate(
             member.birth_date = birth_date
         if cv_link:
             member.cv_link = cv_link
+        member.leader_name = leader_name
+        member.leader_email = leader_email
     else:
         # Create new member
         member = Member(
@@ -437,7 +454,9 @@ def sync_candidate(
             position=position or None,
             department=team or None,  # Set department to team name (e.g. Marketing, AI)
             birth_date=birth_date,
-            cv_link=cv_link or None
+            cv_link=cv_link or None,
+            leader_name=leader_name,
+            leader_email=leader_email
         )
         db.add(member)
         
@@ -548,6 +567,16 @@ def sync_from_recruitment(
         candidates = response.json()
     except Exception as err:
         raise HTTPException(status_code=502, detail=f"Không thể kết nối đến hệ thống tuyển dụng: {str(err)}")
+
+    # Fetch recruitment leaders
+    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders"
+    try:
+        leaders_response = requests.get(leaders_url, headers=headers, timeout=15)
+        leaders_list = leaders_response.json() if leaders_response.status_code == 200 else []
+    except Exception:
+        leaders_list = []
+    
+    leaders_map = {str(l.get("id")).strip().lower(): l for l in leaders_list if l.get("id")}
         
     success_count = 0
     deleted_count = 0
@@ -608,6 +637,31 @@ def sync_from_recruitment(
             level = meta.get("currentLevel", "lv1")
             telegram_username = str(meta.get("telegram", "")).strip()[:100]
             
+            # Find leader details
+            leader_data = meta.get("leader")
+            leader_id = ""
+            if isinstance(leader_data, dict):
+                leader_id = str(leader_data.get("id") or "").strip().lower()
+            elif isinstance(leader_data, str):
+                leader_id = leader_data.strip().lower()
+                
+            leader_name = None
+            leader_email = None
+            
+            if leader_id and leader_id in leaders_map:
+                leader_info = leaders_map[leader_id]
+                raw_leader_name = str(leader_info.get("name", "")).strip()
+                leader_email = str(leader_info.get("email", "")).strip() or None
+                if raw_leader_name:
+                    # Apply Display Name formula
+                    words = [w for w in raw_leader_name.split() if w]
+                    if len(words) <= 2:
+                        leader_name = " ".join(words)
+                    else:
+                        abbr = ".".join([w[0].upper() for w in words[:-2]])
+                        last_two = " ".join(words[-2:])
+                        leader_name = f"{abbr} {last_two}"
+
             if not full_name:
                 continue
                 
@@ -660,6 +714,8 @@ def sync_from_recruitment(
                     member.birth_date = birth_date
                 if cv_link:
                     member.cv_link = cv_link
+                member.leader_name = leader_name
+                member.leader_email = leader_email
             else:
                 member = Member(
                     display_name=display_name,
@@ -671,7 +727,9 @@ def sync_from_recruitment(
                     position=position or None,
                     department=primary_team or None,
                     birth_date=birth_date,
-                    cv_link=cv_link or None
+                    cv_link=cv_link or None,
+                    leader_name=leader_name,
+                    leader_email=leader_email
                 )
                 db.add(member)
                 

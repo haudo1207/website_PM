@@ -27,6 +27,8 @@ class Member(Base):
     department      = Column(String(100), nullable=True)
     experience_year = Column(Integer, default=0, nullable=True)
     cv_link         = Column(String(255), nullable=True)
+    leader_name     = Column(String(100), nullable=True)
+    leader_email    = Column(String(255), nullable=True)
     created_at      = Column(String, default=lambda: datetime.datetime.utcnow().isoformat())
 
     skills = relationship(
