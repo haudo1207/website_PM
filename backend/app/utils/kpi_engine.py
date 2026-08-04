@@ -291,11 +291,32 @@ def recalculate_task(task, db):
 
             if is_matched:
                 rule_kpi = Decimal(str(rule.kpi))
-                # If rule_kpi is between 0 and 1.0 (multiplier/coefficient like FAIL or Rework)
+                
+                # Handle parent remarks first and exclusively for multipliers
+                if getattr(rule, 'is_parent', False):
+                    if "(p) fail 1" in rule_perf:
+                        multiplier *= Decimal("0.7")
+                    elif "(p) fail 2" in rule_perf:
+                        multiplier *= Decimal("0.5")
+                    elif (0.0 <= rule_kpi <= 1.0): # Other parent remarks that are multipliers
+                        multiplier *= rule_kpi
+                    else: # Parent remarks that are additive
+                        remark_perform += rule_kpi
+                    continue # This is critical to prevent double-counting
+
+                # For non-parent rules, apply multiplier ONLY if it's not a parent-like remark
+                # This check helps prevent a generic "fail" rule from matching "(p) fail 1"
+                is_parent_like_match = False
+                for part in remark_parts:
+                    if part.startswith('(p)') and (rule_perf in part or clean_rule_perf in part):
+                        is_parent_like_match = True
+                        break
+                
                 if (0.0 <= rule_kpi <= 1.0) and ("fail" in rule_perf or "rework" in rule_perf):
-                    multiplier *= rule_kpi
+                    if not is_parent_like_match:
+                         multiplier *= rule_kpi
+                    # If it is parent-like, it has been handled by the block above, so we do nothing here.
                 else:
-                    # Remark +/- values are shown in KPI Perform immediately.
                     remark_perform += rule_kpi
     except Exception as e:
         print(f"[!] Error parsing performance settings: {e}")
