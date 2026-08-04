@@ -3,6 +3,9 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from .config import settings
 
 db_url = settings.DATABASE_URL
+if not db_url or not db_url.strip():
+    raise ValueError("DATABASE_URL is missing or empty. Please set DATABASE_URL in .env on the server.")
+
 engine = create_engine(
     db_url,
     pool_pre_ping=True,
