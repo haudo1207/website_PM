@@ -6,171 +6,188 @@ import { getEmail, getName, getToken } from '@/lib/auth';
 import KpiCard from '@/components/dashboard/KpiCard';
 import PieChartCard from '@/components/dashboard/PieChartCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
+import SvgIcon from '@/components/dashboard/Icons';
 import { 
   priorityDot,
   statusStyle,
-  activityColor,
-  activityIcon
+  activityColor
 } from '@/app/dashboard/constants';
+
+let cachedReportData: any = null;
 
 export default function ReportTab() {
   const [kpiTimeFilter, setKpiTimeFilter] = useState<'month' | 'week'>('month');
   const [chartFilter, setChartFilter] = useState<'month' | 'week'>('week');
 
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
-  const [realMemberData, setRealMemberData] = useState<any>(null);
+  const [realMemberData, setRealMemberData] = useState<any>(cachedReportData?.realMemberData || null);
   const [loadingReal, setLoadingReal] = useState(false);
 
-  const [myRealTasks, setMyRealTasks] = useState<any[]>([]);
-  const [realUpcomingDeadlines, setRealUpcomingDeadlines] = useState<any[]>([]);
-  const [realOverdueTasks, setRealOverdueTasks] = useState<any[]>([]);
-  const [realTaskStats, setRealTaskStats] = useState({ done: 0, inProgress: 0, overdue: 0, total: 0, manday: 0 });
+  const [myRealTasks, setMyRealTasks] = useState<any[]>(cachedReportData?.myRealTasks || []);
+  const [realUpcomingDeadlines, setRealUpcomingDeadlines] = useState<any[]>(cachedReportData?.realUpcomingDeadlines || []);
+  const [realOverdueTasks, setRealOverdueTasks] = useState<any[]>(cachedReportData?.realOverdueTasks || []);
+  const [realTaskStats, setRealTaskStats] = useState(cachedReportData?.realTaskStats || { done: 0, inProgress: 0, overdue: 0, total: 0, manday: 0 });
   
   // Real dynamic activities & chart progress
-  const [recentActivities, setRecentActivities] = useState<any[]>([]);
-  const [weeklyProgress, setWeeklyProgress] = useState<any[]>([]);
-  const [monthlyProgress, setMonthlyProgress] = useState<any[]>([]);
+  const [recentActivities, setRecentActivities] = useState<any[]>(cachedReportData?.recentActivities || []);
+  const [weeklyProgress, setWeeklyProgress] = useState<any[]>(cachedReportData?.weeklyProgress || []);
+  const [monthlyProgress, setMonthlyProgress] = useState<any[]>(cachedReportData?.monthlyProgress || []);
 
-  const fetchReportData = useCallback(() => {
+  const fetchReportData = useCallback((forceRefresh = false) => {
+    if (!forceRefresh && cachedReportData && cachedReportData.myRealTasks?.length > 0) {
+      return;
+    }
+
     setLoadingReal(true);
     const ts = Date.now();
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
     
-    axios.get(`/api/users/me?_t=${ts}`, config)
-      .then(userRes => {
-        const currentUser = userRes.data || {};
-        setCurrentUserProfile(currentUser);
-        const currentUserId = currentUser.id;
-        const currentEmail = (currentUser.email || getEmail() || '').toLowerCase().trim();
-        const currentName = (currentUser.full_name || getName() || '').toLowerCase().trim();
-        const memberIdFromAccount = currentUser.member_id;
+    // Fast parallel fetch for User, Members, and All Tasks in 1 batch
+    Promise.all([
+      axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
+      axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] }))
+    ]).then(([userRes, membersRes, tasksRes]) => {
+      const currentUser = userRes.data || {};
+      setCurrentUserProfile(currentUser);
+      const currentEmail = (currentUser.email || getEmail() || '').toLowerCase().trim();
+      const currentName = (currentUser.full_name || getName() || '').toLowerCase().trim();
+      const memberIdFromAccount = currentUser.member_id;
+
+      const list = membersRes.data || [];
+      let matched = null;
+      if (memberIdFromAccount) matched = list.find((m: any) => m.id === memberIdFromAccount);
+      if (!matched && currentEmail) matched = list.find((m: any) => m.email?.toLowerCase() === currentEmail);
+      if (!matched && currentName) matched = list.find((m: any) => 
+        m.display_name?.toLowerCase() === currentName || 
+        m.full_name?.toLowerCase() === currentName
+      );
+
+      setRealMemberData(matched);
+      const memberId = matched?.id || memberIdFromAccount;
+      const memberDisplayName = (matched?.display_name || '').toLowerCase().trim();
+      const memberFullName = (matched?.full_name || '').toLowerCase().trim();
+
+      const allTasksCombined = tasksRes.data || [];
+
+      // STRICT MEMBER TASK FILTERING: Match Member ID or exact Display/Full Name
+      const myTasks = allTasksCombined.filter((t: any) => {
+        // 1. Strict Member ID matching in assigned_id or support_id
+        if (memberId && (t.assigned_id === memberId || t.support_id === memberId)) return true;
+
+        // 2. Strict Display Name / Full Name matching in assigned_name or support_name
+        const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
+        const suppNameLow = (t.support_name || '').toLowerCase().trim();
+
+        if (assignNameLow || suppNameLow) {
+          if (memberDisplayName && (assignNameLow === memberDisplayName || suppNameLow === memberDisplayName)) return true;
+          if (memberFullName && (assignNameLow === memberFullName || suppNameLow === memberFullName)) return true;
+        }
+
+        return false;
+      });
+
+      let doneCount = 0;
+      let inProgressCount = 0;
+      let overdueCount = 0;
+      let mandayTotal = 0;
+      const upcoming: any[] = [];
+      const overdueList: any[] = [];
+      const acts: any[] = [];
+      const now = new Date();
+
+      myTasks.forEach((t: any) => {
+        mandayTotal += (t.manday_actual || t.manday_est || 0);
         
-        return axios.get(`/api/members?_t=${ts}`, config).then(membersRes => {
-          const list = membersRes.data || [];
-          let matched = null;
-          
-          if (memberIdFromAccount) matched = list.find((m: any) => m.id === memberIdFromAccount);
-          if (!matched && currentEmail) matched = list.find((m: any) => m.email?.toLowerCase() === currentEmail);
-          if (!matched && currentName) matched = list.find((m: any) => 
-            m.display_name?.toLowerCase() === currentName || 
-            m.full_name?.toLowerCase() === currentName
-          );
-          
-          setRealMemberData(matched);
-          const memberId = matched?.id || memberIdFromAccount;
-          const memberDisplayName = matched?.display_name?.toLowerCase().trim();
-          const memberFullName = matched?.full_name?.toLowerCase().trim();
-            
-          // Single global API call to fetch all tasks across all projects
-          axios.get(`/api/all-tasks-global?_t=${ts}`, config).then(tRes => {
-            const allTasksCombined = tRes.data || [];
-            
-            // Robust matching by Display Name, Full Name, Email, or Member/User ID
-            const myTasks = allTasksCombined.filter((t: any) => {
-              // 1. Match by ID
-              if (currentUserId && (t.assigned_id === currentUserId || t.support_id === currentUserId)) return true;
-              if (memberIdFromAccount && (t.assigned_id === memberIdFromAccount || t.support_id === memberIdFromAccount)) return true;
-              if (memberId && (t.assigned_id === memberId || t.support_id === memberId)) return true;
-              
-              // 2. Match by Display Name & Full Name (bidirectional inclusion)
-              const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
-              const suppNameLow = (t.support_name || '').toLowerCase().trim();
-              
-              if (memberDisplayName && (
-                assignNameLow.includes(memberDisplayName) || memberDisplayName.includes(assignNameLow) ||
-                suppNameLow.includes(memberDisplayName) || memberDisplayName.includes(suppNameLow)
-              )) return true;
-              
-              if (memberFullName && (
-                assignNameLow.includes(memberFullName) || memberFullName.includes(assignNameLow) ||
-                suppNameLow.includes(memberFullName) || memberFullName.includes(suppNameLow)
-              )) return true;
+        const isDone = t.status === 'Done' || t.status === 'done';
+        const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+        const daysLateNum = typeof t.days_late === 'number' ? t.days_late : 0;
 
-              if (currentEmail && (assignNameLow.includes(currentEmail) || suppNameLow.includes(currentEmail))) return true;
-              if (currentName && (assignNameLow.includes(currentName) || suppNameLow.includes(currentName))) return true;
-              
-              return false;
+        // OVERDUE RULE: strictly based on days_late > 0 for uncompleted tasks
+        const isOverdue = !isDone && !isCancel && daysLateNum > 0;
+
+        if (isDone) {
+          doneCount++;
+          acts.push({ action: `Hoàn thành: ${t.name}`, time: 'Đã hoàn thành', type: 'done' });
+        } else if (isCancel) {
+          acts.push({ action: `Đã hủy: ${t.name}`, time: 'Hủy tác vụ', type: 'cancel' });
+        } else {
+          inProgressCount++;
+          if (isOverdue) {
+            overdueCount++;
+            overdueList.push({
+              id: t.id,
+              project: t.projectName,
+              name: t.name,
+              deadline: t.end_date_est || 'Chưa có',
+              daysLate: daysLateNum
             });
+            acts.push({ action: `Trễ hạn ${daysLateNum} ngày: ${t.name}`, time: 'Cần chú ý', type: 'overdue' });
+          } else if (t.end_date_est) {
+            const diffTime = new Date(t.end_date_est).getTime() - now.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (diffDays >= 0 && diffDays <= 3) {
+              upcoming.push({
+                id: t.id, project: t.projectName, name: t.name, deadline: t.end_date_est, daysLeft: diffDays
+              });
+            }
+          }
+        }
+      });
 
-            let doneCount = 0;
-            let inProgressCount = 0;
-            let overdueCount = 0;
-            let mandayTotal = 0;
-            const upcoming: any[] = [];
-            const overdueList: any[] = [];
-            const acts: any[] = [];
-            const today = new Date();
+      setMyRealTasks(myTasks);
+      setRealUpcomingDeadlines(upcoming);
+      setRealOverdueTasks(overdueList);
+      setRecentActivities(acts.slice(0, 5));
 
-            myTasks.forEach((t: any) => {
-              mandayTotal += (t.manday_actual || t.manday_est || 0);
-              if (t.status === 'Done') {
-                doneCount++;
-                acts.push({ action: `Hoàn thành: ${t.name}`, time: 'Đã hoàn thành', type: 'done' });
-              } else {
-                inProgressCount++;
-                if (t.days_late > 0) {
-                  overdueCount++;
-                  overdueList.push({
-                    id: t.id, project: t.projectName, name: t.name, deadline: t.end_date_est || 'Chưa có'
-                  });
-                  acts.push({ action: `Trễ hạn: ${t.name}`, time: 'Cần chú ý', type: 'overdue' });
-                } else if (t.end_date_est) {
-                  const diffTime = new Date(t.end_date_est).getTime() - today.getTime();
-                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                  if (diffDays >= 0 && diffDays <= 3) {
-                    upcoming.push({
-                      id: t.id, project: t.projectName, name: t.name, deadline: t.end_date_est, daysLeft: diffDays
-                    });
-                  }
-                }
-              }
-            });
+      const stats = {
+        total: myTasks.length,
+        done: doneCount,
+        inProgress: inProgressCount,
+        overdue: overdueCount,
+        manday: Math.round(mandayTotal * 10) / 10
+      };
+      setRealTaskStats(stats);
 
-            setMyRealTasks(myTasks);
-            setRealUpcomingDeadlines(upcoming);
-            setRealOverdueTasks(overdueList);
-            setRecentActivities(acts.slice(0, 5));
+      const kpiPoints = matched?.kpi_total || (doneCount * 6);
 
-            setRealTaskStats({
-              total: myTasks.length,
-              done: doneCount,
-              inProgress: inProgressCount,
-              overdue: overdueCount,
-              manday: Math.round(mandayTotal * 10) / 10
-            });
+      const wProg = [
+        { name: 'Tuần 1', kpi: Math.round(kpiPoints * 0.25), tasks: Math.ceil(doneCount * 0.25) },
+        { name: 'Tuần 2', kpi: Math.round(kpiPoints * 0.5), tasks: Math.ceil(doneCount * 0.5) },
+        { name: 'Tuần 3', kpi: Math.round(kpiPoints * 0.75), tasks: Math.ceil(doneCount * 0.75) },
+        { name: 'Tuần 4', kpi: Math.round(kpiPoints), tasks: myTasks.length },
+      ];
+      setWeeklyProgress(wProg);
 
-            const kpiPoints = matched?.kpi_total || (doneCount * 6);
+      const mProg = [{ name: 'Tháng này', kpi: Math.round(kpiPoints), tasks: myTasks.length }];
+      setMonthlyProgress(mProg);
 
-            // Calculate Dynamic Chart Progress from real tasks
-            setWeeklyProgress([
-              { name: 'Tuần 1', kpi: Math.round(kpiPoints * 0.25), tasks: Math.ceil(doneCount * 0.25) },
-              { name: 'Tuần 2', kpi: Math.round(kpiPoints * 0.5), tasks: Math.ceil(doneCount * 0.5) },
-              { name: 'Tuần 3', kpi: Math.round(kpiPoints * 0.75), tasks: Math.ceil(doneCount * 0.75) },
-              { name: 'Tuần 4', kpi: Math.round(kpiPoints), tasks: myTasks.length },
-            ]);
-
-            setMonthlyProgress([
-              { name: 'Tháng này', kpi: Math.round(kpiPoints), tasks: myTasks.length }
-            ]);
-          });
-        });
-      })
-      .catch(err => console.error("Không thể đồng bộ thông tin tài khoản thật:", err))
-      .finally(() => setLoadingReal(false));
+      // Cache result
+      cachedReportData = {
+        realMemberData: matched,
+        myRealTasks: myTasks,
+        realUpcomingDeadlines: upcoming,
+        realOverdueTasks: overdueList,
+        realTaskStats: stats,
+        recentActivities: acts.slice(0, 5),
+        weeklyProgress: wProg,
+        monthlyProgress: mProg
+      };
+    }).finally(() => setLoadingReal(false));
   }, []);
 
   useEffect(() => {
-    fetchReportData();
+    fetchReportData(false);
   }, [fetchReportData]);
 
   const reportKpiCards = [
-    { label: 'Tasks Được Giao', value: realTaskStats.total, icon: '📋', border: 'border-l-[#0058be]', text: 'text-[#0058be]', trend: kpiTimeFilter === 'week' ? 'Trong tuần' : 'Trong tháng' },
-    { label: 'Đã Hoàn Thành', value: realTaskStats.done, icon: '✅', border: 'border-l-emerald-500', text: 'text-emerald-600', trend: realTaskStats.total > 0 ? `${Math.round((realTaskStats.done / realTaskStats.total) * 100)}%` : '0%' },
-    { label: 'Đang Làm', value: realTaskStats.inProgress, icon: '⚡', border: 'border-l-amber-500', text: 'text-amber-600', trend: 'Đang triển khai' },
-    { label: 'Trễ Hạn', value: realTaskStats.overdue, icon: '🔴', border: 'border-l-red-500', text: 'text-red-600', trend: 'Cần xử lý' },
-    { label: 'Manday Làm Việc', value: realTaskStats.manday, icon: '⏱️', border: 'border-l-cyan-500', text: 'text-cyan-600', trend: 'Số ngày tích lũy' },
-    { label: 'Điểm KPI', value: realMemberData?.kpi_total || 0, icon: '🏆', border: 'border-l-purple-500', text: 'text-purple-600', trend: 'Thành tích cá nhân' }
+    { label: 'Tasks Được Giao', value: realTaskStats.total, icon: 'tasks',     border: 'border-l-[#0058be]', text: 'text-[#0058be]', trend: kpiTimeFilter === 'week' ? 'Trong tuần' : 'Trong tháng' },
+    { label: 'Đã Hoàn Thành', value: realTaskStats.done, icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: realTaskStats.total > 0 ? `${Math.round((realTaskStats.done / realTaskStats.total) * 100)}%` : '0%' },
+    { label: 'Đang Làm', value: realTaskStats.inProgress, icon: 'lightning', border: 'border-l-amber-500', text: 'text-amber-600', trend: 'Đang triển khai' },
+    { label: 'Trễ Hạn', value: realTaskStats.overdue, icon: 'alert',     border: 'border-l-red-500', text: 'text-red-600', trend: 'Cần xử lý' },
+    { label: 'Manday Làm Việc', value: realTaskStats.manday, icon: 'clock',     border: 'border-l-cyan-500', text: 'text-cyan-600', trend: 'Số ngày tích lũy' },
+    { label: 'Điểm KPI', value: realMemberData?.kpi_total || 0, icon: 'trophy',    border: 'border-l-purple-500', text: 'text-purple-600', trend: 'Thành tích cá nhân' }
   ];
 
   return (
@@ -182,11 +199,11 @@ export default function ReportTab() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={fetchReportData}
-            disabled={loadingReal}
-            className="flex items-center gap-1 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all disabled:opacity-50"
+            onClick={() => fetchReportData(true)}
+            className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
           >
-            <span>↻</span> Làm mới dữ liệu
+            <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
+            <span>Làm mới dữ liệu</span>
           </button>
           <div className="flex gap-1.5 bg-white border border-slate-200 rounded-lg p-0.5 shadow-sm text-[11px] font-bold">
             <button
@@ -241,7 +258,10 @@ export default function ReportTab() {
 
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">📋 Task Của Tôi</h3>
+          <div className="flex items-center gap-2">
+            <SvgIcon name="tasks" className="w-4 h-4 text-[#0058be]" />
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Task Của Tôi</h3>
+          </div>
           <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full border border-indigo-100">{myRealTasks.length} task</span>
         </div>
         <div className="overflow-x-auto">
@@ -294,7 +314,10 @@ export default function ReportTab() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-amber-50/40 to-white">
-            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">⏰ Deadline Gần (≤ 3 ngày)</h3>
+            <div className="flex items-center gap-2">
+              <SvgIcon name="clock" className="w-4 h-4 text-amber-600" />
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Deadline Gần (≤ 3 ngày)</h3>
+            </div>
             <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full border border-amber-100">{realUpcomingDeadlines.length}</span>
           </div>
           <div className="p-4 space-y-3">
@@ -317,7 +340,10 @@ export default function ReportTab() {
 
         <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">🕐 Hoạt Động Gần Đây</h3>
+            <div className="flex items-center gap-2">
+              <SvgIcon name="history" className="w-4 h-4 text-slate-600" />
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Hoạt Động Gần Đây</h3>
+            </div>
             <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{recentActivities.length}</span>
           </div>
           <div className="p-4 space-y-2.5">
@@ -326,7 +352,7 @@ export default function ReportTab() {
             ) : (
               recentActivities.map((a, idx) => (
                 <div key={idx} className="flex gap-3 items-start p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                  <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${activityColor[a.type] || 'bg-slate-100 text-slate-500'}`}>{activityIcon[a.type] || '✓'}</span>
+                  <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${activityColor[a.type] || 'bg-slate-100 text-slate-500'}`}>✓</span>
                   <div><p className="text-[11px] font-semibold text-[#0b1c30]">{a.action}</p><p className="text-[10px] text-slate-400 mt-0.5">{a.time}</p></div>
                 </div>
               ))
@@ -336,7 +362,10 @@ export default function ReportTab() {
 
         <div className="bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-red-100 bg-red-50/50">
-            <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">🚨 Task Trễ Hạn</h3>
+            <div className="flex items-center gap-2">
+              <SvgIcon name="alert" className="w-4 h-4 text-red-600" />
+              <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">Task Trễ Hạn</h3>
+            </div>
             <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">{realOverdueTasks.length}</span>
           </div>
           <div className="p-4 space-y-3">
@@ -348,7 +377,7 @@ export default function ReportTab() {
                   <span className="text-[9px] font-extrabold text-red-700 bg-red-100 px-2 py-0.5 rounded-full uppercase">{t.project}</span>
                   <p className="text-xs font-bold text-[#0b1c30] mt-1.5 leading-snug">{t.name}</p>
                   <div className="flex items-center justify-between mt-3 text-[11px]">
-                    <span className="font-extrabold text-red-600 bg-white border border-red-200 px-2 py-0.5 rounded-md">Trễ Hạn</span>
+                    <span className="font-extrabold text-red-600 bg-white border border-red-200 px-2 py-0.5 rounded-md">Trễ {t.daysLate} ngày</span>
                     <span className="text-slate-400 font-semibold tabular-nums">Hạn: {t.deadline}</span>
                   </div>
                 </div>

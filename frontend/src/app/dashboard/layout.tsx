@@ -1,13 +1,14 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
+import { isSuperAdmin, isLeader } from '@/lib/auth';
 
 type Tab = 'report' | 'overview' | 'system-audit';
 
-const TABS: { id: Tab; label: string; path: string }[] = [
+const ALL_TABS: { id: Tab; label: string; path: string }[] = [
   { id: 'report',       label: 'Report',       path: '/dashboard/report' },
   { id: 'overview',     label: 'Overview',     path: '/dashboard/overview' },
   { id: 'system-audit', label: 'System Audit', path: '/dashboard/system-audit' },
@@ -15,6 +16,30 @@ const TABS: { id: Tab; label: string; path: string }[] = [
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [allowedTabs, setAllowedTabs] = useState<{ id: Tab; label: string; path: string }[]>([
+    { id: 'report', label: 'Report', path: '/dashboard/report' }
+  ]);
+
+  useEffect(() => {
+    const canAudit = isSuperAdmin();
+    const canOverview = isLeader() || isSuperAdmin();
+
+    const filtered = ALL_TABS.filter(t => {
+      if (t.id === 'system-audit') return canAudit;
+      if (t.id === 'overview') return canOverview;
+      return true;
+    });
+
+    setAllowedTabs(filtered);
+
+    // Permission guard
+    if (pathname.includes('/system-audit') && !canAudit) {
+      router.replace('/dashboard/report');
+    } else if (pathname.includes('/overview') && !canOverview) {
+      router.replace('/dashboard/report');
+    }
+  }, [pathname, router]);
 
   let activeTab: Tab = 'report';
   if (pathname === '/dashboard/overview' || pathname === '/dashboard/leader') {
@@ -52,9 +77,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        {/* Tab Bar — Soft Client Navigation Link without page reload */}
+        {/* Tab Bar — Strictly filtered by user role permissions */}
         <div className="bg-white border-b border-slate-200 px-8 flex gap-6 shrink-0 z-30">
-          {TABS.map(tab => (
+          {allowedTabs.map(tab => (
             <Link
               key={tab.id}
               href={tab.path}
