@@ -550,7 +550,43 @@ def sync_from_recruitment(
         raise HTTPException(status_code=502, detail=f"Không thể kết nối đến hệ thống tuyển dụng: {str(err)}")
         
     success_count = 0
+    deleted_count = 0
     try:
+        # 1. Thu thập danh sách email và display name của ứng viên "đã nhận"
+        accepted_emails = set()
+        accepted_display_names = set()
+        for app_data in candidates:
+            email_val = str(app_data.get("email", "")).strip().lower()
+            full_name_val = str(app_data.get("full_name", "")).strip()
+            if email_val:
+                accepted_emails.add(email_val)
+            if full_name_val:
+                words = [w for w in full_name_val.split() if w]
+                if len(words) <= 2:
+                    d_name = " ".join(words)
+                else:
+                    abbr = ".".join([w[0].upper() for w in words[:-2]])
+                    last_two = " ".join(words[-2:])
+                    d_name = f"{abbr} {last_two}"
+                accepted_display_names.add(d_name.lower())
+
+        # 2. Xóa các ứng viên đã đồng bộ (có cv_link) không còn trạng thái "đã nhận" (accepted) bên Marke
+        synced_members = db.query(Member).filter(Member.cv_link.isnot(None), Member.cv_link != "").all()
+        for m in synced_members:
+            m_email = str(m.email or "").strip().lower()
+            m_display = str(m.display_name or "").strip().lower()
+            
+            is_still_accepted = False
+            if m_email and m_email in accepted_emails:
+                is_still_accepted = True
+            elif m_display and m_display in accepted_display_names:
+                is_still_accepted = True
+                
+            if not is_still_accepted:
+                db.delete(m)
+                deleted_count += 1
+        
+        # 3. Đồng bộ/Cập nhật các ứng viên đã nhận hiện tại
         for app_data in candidates:
             full_name = str(app_data.get("full_name", "")).strip()[:255]
             email = str(app_data.get("email", "")).strip().lower()[:255]
@@ -642,7 +678,10 @@ def sync_from_recruitment(
             success_count += 1
             
         db.commit()
-        return {"status": "success", "count": success_count, "message": f"Đồng bộ thành công {success_count} ứng viên."}
+        message = f"Đồng bộ thành công {success_count} ứng viên."
+        if deleted_count > 0:
+            message += f" Đã gỡ bỏ {deleted_count} ứng viên không còn ở trạng thái đã nhận."
+        return {"status": "success", "count": success_count, "message": message}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Lỗi database trong quá trình đồng bộ: {str(e)}")
