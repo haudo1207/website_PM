@@ -2,10 +2,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    DATABASE_URL: str
-    SECRET_KEY: str
+    DATABASE_URL: str = "sqlite:///./app.db"
+    SECRET_KEY: str = "default-development-secret-key-change-in-env"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     INTERNAL_SYNC_TOKEN: str = ""
@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     DEFAULT_ADMIN_EMAIL: str = "admin@company.com"
     DEFAULT_ADMIN_PASSWORD: str = ""
     GOOGLE_LOGIN_ENABLED: bool = True
-    PASSWORD_LOGIN_ENABLED: bool = False
+    PASSWORD_LOGIN_ENABLED: bool = True
     AUTH_SUPERADMIN_EMAILS: str = ""
     AI_BASE_URL: str = "https://api.shopaikey.com/v1"
     AI_API_KEY: str = ""
