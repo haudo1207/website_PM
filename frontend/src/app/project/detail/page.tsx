@@ -14,7 +14,7 @@ import {
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
-  getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getMasterPhases,
+  getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks, getMasterPhases,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting
 } from '@/lib/api';
@@ -142,6 +142,7 @@ function ProjectDetailContent() {
   // Interactive Task Management additions
   const [editingCell, setEditingCell] = useState<{ taskId: number, colName: string } | null>(null);
   const [editingGroupDate, setEditingGroupDate] = useState<number | null>(null);
+  const [editingGroupRemark, setEditingGroupRemark] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
 
@@ -454,6 +455,7 @@ function ProjectDetailContent() {
   const [dbPriorities, setDbPriorities] = useState<any[]>([]);
   const [dbStatuses, setDbStatuses] = useState<any[]>([]);
   const [performanceSettings, setPerformanceSettings] = useState<any[]>([]);
+  const [parentRemarks, setParentRemarks] = useState<any[]>([]);
 
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
@@ -693,6 +695,14 @@ function ProjectDetailContent() {
       })
       .catch((err) => {
         console.error('Error fetching performance settings:', err);
+      });
+
+    getParentRemarks()
+      .then((data) => {
+        setParentRemarks(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching parent remarks:', err);
       });
 
     getMasterPhases()
@@ -1325,6 +1335,26 @@ function ProjectDetailContent() {
       });
     } finally {
       isSavingRef.current = false;
+    }
+  };
+
+  const handleSyncRemarkToChildren = async (groupId: number, remarkValue: string) => {
+    if (isSavingRef.current) return;
+    const childTasks = items.filter(t => t.task_group_id === groupId);
+    if (childTasks.length === 0) {
+      setEditingGroupRemark(null);
+      return;
+    }
+    isSavingRef.current = true;
+    try {
+      await Promise.all(childTasks.map(task => updateTask(groupId, task.id, { remark: remarkValue })));
+      flash(`Đã đồng bộ Remark cho ${childTasks.length} task con!`);
+      await reloadAll(true);
+    } catch (err: any) {
+      alert('Lỗi đồng bộ Remark: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      isSavingRef.current = false;
+      setEditingGroupRemark(null);
     }
   };
 
@@ -3135,7 +3165,7 @@ function ProjectDetailContent() {
     // Columns NOT applicable to Task Group (show as disabled/empty)
     const GROUP_DISABLED_COLS = [
       'PRIORITY', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
-      'TICKET ID', 'REMARK', 'SEND', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL',
+      'TICKET ID', 'SEND', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL',
       'DAYS LATE', 'SUB ID', 'ROOT TASKS', 'SOLUTION', 'NOTES'
     ];
     // Editable columns for Task Group
@@ -3489,6 +3519,32 @@ function ProjectDetailContent() {
               if (isDisabled) {
                 return (
                   <td key={col} className="px-4 py-2.5 text-center text-slate-300 text-xs select-none">—</td>
+                );
+              }
+
+              // Special editable cell for REMARK
+              if (colUpper === 'REMARK') {
+                if (editingGroupRemark === group.id) {
+                   return (
+                    <ParentRemarkSelectCell
+                      key={col}
+                      col={col}
+                      parentRemarks={parentRemarks}
+                      onSelect={(val) => handleSyncRemarkToChildren(group.id, val)}
+                      onCancel={() => setEditingGroupRemark(null)}
+                      onClear={() => handleSyncRemarkToChildren(group.id, '')} // Huỷ REMARK CHA hiện tại: xoá trống remark cho tất cả task con
+                    />
+                   );
+                }
+                return (
+                   <td key={col} className="px-4 py-2.5 text-center text-xs">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingGroupRemark(group.id); }}
+                        className="text-[10.5px] text-emerald-600 hover:bg-emerald-100 bg-emerald-50 px-2 py-1 rounded font-bold border border-emerald-200 transition-colors shadow-sm whitespace-nowrap"
+                      >
+                        Chọn Remark
+                      </button>
+                   </td>
                 );
               }
 
@@ -7839,6 +7895,91 @@ function RemarkDropdownCell({ col, task, editValue, performanceSettings, onSaveW
         onChange={setCurrentVal}
         placeholder="Chọn Remark..."
       />
+    </td>
+  );
+}
+
+interface ParentRemarkSelectCellProps {
+  col: string;
+  parentRemarks: any[];
+  onSelect: (val: string) => void;
+  onClear: () => void;
+  onCancel: () => void;
+}
+
+function ParentRemarkSelectCell({ col, parentRemarks, onSelect, onClear, onCancel }: ParentRemarkSelectCellProps) {
+  const containerRef = useRef<HTMLTableDataCellElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        onCancel();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onCancel]);
+
+  return (
+    <td key={col} className="px-2 py-1 min-w-[260px] relative" ref={containerRef}>
+      <div className="bg-white border border-emerald-300 rounded-lg shadow-xl z-50 p-2 min-w-[240px]">
+        <div className="text-[10px] font-bold text-emerald-700 uppercase tracking-wide px-1 pb-1.5 border-b border-emerald-100 mb-1.5">
+          Chọn Remark Cha
+        </div>
+        {parentRemarks.length === 0 ? (
+          <div className="text-[11px] text-slate-400 italic px-1 py-2">
+            Chưa có Remark Cha nào. Vui lòng tạo trong Settings → KPIs.
+          </div>
+) : (
+          <div className="flex flex-col gap-1 max-h-[220px] overflow-y-auto">
+            {parentRemarks.map((pr) => {
+              const kpiVal = parseFloat(pr.kpi);
+              const lowerName = (pr.performance || '').toLowerCase();
+              const isMultiplier = lowerName.includes('fail') || lowerName.includes('rework');
+              let kpiText = `${kpiVal} KPI`;
+              let kpiBadgeClass = "bg-slate-100 text-slate-600 border-slate-200";
+              if (isMultiplier) {
+                // FAIL / Rework là hệ số nhân KPI FINAL: ×0.7, ×0.5, ×0
+                kpiText = `×${kpiVal}`;
+                kpiBadgeClass = kpiVal > 0
+                  ? "bg-amber-50 text-amber-700 border-amber-200"
+                  : "bg-rose-50 text-rose-700 border-rose-200";
+              } else if (kpiVal > 0) {
+                kpiText = `+${kpiVal} KPI`;
+                kpiBadgeClass = "bg-emerald-50 text-emerald-700 border-emerald-200";
+              } else if (kpiVal < 0) {
+                kpiText = `${kpiVal} KPI`;
+                kpiBadgeClass = "bg-rose-50 text-rose-700 border-rose-200";
+              } else {
+                kpiBadgeClass = "bg-amber-50 text-amber-700 border-amber-200";
+              }
+              return (
+                <button
+                  key={pr.id}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onSelect(pr.performance); }}
+                  className="text-left text-[11.5px] px-2.5 py-1.5 rounded-md hover:bg-emerald-50 hover:text-emerald-800 text-slate-700 font-semibold transition-colors border border-transparent hover:border-emerald-200 flex items-center gap-2 justify-between w-full"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                    <span className="truncate">{pr.performance}</span>
+                  </span>
+                  <span className={`shrink-0 text-[9.5px] font-black px-1.5 py-0.5 rounded border ${kpiBadgeClass}`}>
+                    {kpiText}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onClear(); }}
+          className="mt-2 w-full text-[10px] text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded py-1 transition-colors text-center font-semibold"
+        >
+          🗑 Huỷ Remark hiện tại
+        </button>
+      </div>
     </td>
   );
 }

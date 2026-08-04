@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   getPerformanceSettings,
+  getParentRemarks,
   createPerformanceSetting,
   updatePerformanceSetting,
   deletePerformanceSetting,
@@ -22,6 +23,8 @@ interface RemarkRule {
   description?: string;
   sort_order: number;
   is_active: boolean;
+  is_parent?: boolean;
+  parent_id?: number | null;
 }
 
 interface KPIsViewProps {
@@ -52,19 +55,33 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
   const [editingStatusId, setEditingStatusId] = useState<number | null>(null);
   const [editingStatusName, setEditingStatusName] = useState('');
 
-  // 3. REMARK STATES (formerly Performance Settings)
+  // 3. REMARK CHA STATES
+  const [parentRemarks, setParentRemarks] = useState<RemarkRule[]>([]);
+  const [showAddParent, setShowAddParent] = useState(false);
+  const [newParentPerf, setNewParentPerf] = useState('');
+  const [newParentKpi, setNewParentKpi] = useState(0);
+  const [newParentType, setNewParentType] = useState('Penalty');
+
+  const [editingParentId, setEditingParentId] = useState<number | null>(null);
+  const [editingParentPerf, setEditingParentPerf] = useState('');
+  const [editingParentKpi, setEditingParentKpi] = useState(0);
+  const [editingParentType, setEditingParentType] = useState('Penalty');
+
+  // 4. REMARK STATES (formerly Performance Settings)
   const [remarks, setRemarks] = useState<RemarkRule[]>([]);
   const [showAddRemark, setShowAddRemark] = useState(false);
   const [newRemarkPerf, setNewRemarkPerf] = useState('');
   const [newRemarkKpi, setNewRemarkKpi] = useState(0);
   const [newRemarkType, setNewRemarkType] = useState('Bonus');
   const [newRemarkDesc, setNewRemarkDesc] = useState('');
+  const [newRemarkParentId, setNewRemarkParentId] = useState<number | null>(null);
 
   const [editingRemarkId, setEditingRemarkId] = useState<number | null>(null);
   const [editingRemarkPerf, setEditingRemarkPerf] = useState('');
   const [editingRemarkKpi, setEditingRemarkKpi] = useState(0);
   const [editingRemarkType, setEditingRemarkType] = useState('Bonus');
   const [editingRemarkDesc, setEditingRemarkDesc] = useState('');
+  const [editingRemarkParentId, setEditingRemarkParentId] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(true);
 
@@ -75,14 +92,17 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [prioData, statusData, remarkData] = await Promise.all([
+      const [prioData, statusData, remarkData, parentData] = await Promise.all([
         getPriorities(),
         getStatuses().catch(() => []),
-        getPerformanceSettings()
+        getPerformanceSettings(),
+        getParentRemarks().catch(() => [])
       ]);
       setPriorities(prioData || []);
       setDbStatuses(statusData || []);
-      setRemarks(remarkData || []);
+      // Separate regular remarks from parent remarks
+      setRemarks((remarkData || []).filter((r: RemarkRule) => !r.is_parent));
+      setParentRemarks(parentData || []);
     } catch (err) {
       console.error(err);
       onFlash('Lỗi tải danh sách Cấu hình KPI');
@@ -179,6 +199,56 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
     }
   };
 
+  // --- HANDLERS: REMARK CHA ---
+  const handleAddParent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newParentPerf.trim()) return;
+    try {
+      await createPerformanceSetting({
+        performance: newParentPerf.trim(),
+        kpi: Number(newParentKpi),
+        remark_type: newParentType,
+        is_parent: true,
+      });
+      setNewParentPerf('');
+      setNewParentKpi(0);
+      setNewParentType('Penalty');
+      setShowAddParent(false);
+      loadAll();
+      onFlash('Đã thêm Remark Cha mới thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi thêm Remark Cha');
+    }
+  };
+
+  const handleUpdateParent = async (id: number) => {
+    if (!editingParentPerf.trim()) return;
+    try {
+      await updatePerformanceSetting(id, {
+        performance: editingParentPerf.trim(),
+        kpi: Number(editingParentKpi),
+        remark_type: editingParentType,
+        is_parent: true,
+      });
+      setEditingParentId(null);
+      loadAll();
+      onFlash('Đã cập nhật Remark Cha thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi cập nhật Remark Cha');
+    }
+  };
+
+  const handleDeleteParent = async (id: number, name: string) => {
+    if (!confirm(`Xóa Remark Cha "${name}"? Các Remark con sẽ mất liên kết.`)) return;
+    try {
+      await deletePerformanceSetting(id);
+      loadAll();
+      onFlash('Đã xóa Remark Cha thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi khi xóa Remark Cha');
+    }
+  };
+
   // --- HANDLERS: REMARK ---
   const handleAddRemark = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,12 +258,15 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
         performance: newRemarkPerf.trim(),
         kpi: Number(newRemarkKpi),
         remark_type: newRemarkType,
-        description: newRemarkDesc.trim() || undefined
+        description: newRemarkDesc.trim() || undefined,
+        is_parent: false,
+        parent_id: newRemarkParentId,
       });
       setNewRemarkPerf('');
       setNewRemarkKpi(0);
       setNewRemarkType('Bonus');
       setNewRemarkDesc('');
+      setNewRemarkParentId(null);
       setShowAddRemark(false);
       loadAll();
       onFlash('Đã thêm Remark mới thành công');
@@ -209,7 +282,8 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
         performance: editingRemarkPerf.trim(),
         kpi: Number(editingRemarkKpi),
         remark_type: editingRemarkType,
-        description: editingRemarkDesc.trim() || undefined
+        description: editingRemarkDesc.trim() || undefined,
+        parent_id: editingRemarkParentId,
       });
       setEditingRemarkId(null);
       loadAll();
@@ -496,173 +570,334 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
         </div>
       )}
 
-      {/* TAB 3: REMARK */}
+      {/* TAB 3: REMARK — side-by-side: Remark Cha (left) | Remark (right) */}
       {activeTab === 'remark' && (
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
-            <div>
-              <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
-                🏷️ Remark
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Quản lý các Remark dùng trong Task, hệ số/điểm KPI (+/-) và loại Thưởng/Phạt</p>
-            </div>
-            <button
-              onClick={() => setShowAddRemark(!showAddRemark)}
-              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg font-bold transition-all shadow-sm"
-            >
-              {showAddRemark ? 'Đóng' : '+ Thêm Remark'}
-            </button>
-          </div>
+        <div className="flex gap-5 items-start">
 
-          {showAddRemark && (
-            <form onSubmit={handleAddRemark} className="p-6 bg-slate-50/30 border-b border-slate-200 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="md:col-span-2 flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Remark <span className="text-red-500">*</span></label>
+          {/* ── LEFT: REMARK CHA ── */}
+          <div className="w-80 shrink-0 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-slate-200 bg-amber-50/60 flex justify-between items-center">
+              <div>
+                <h3 className="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center gap-2">📂 Remark Task Cha</h3>
+                <p className="text-[10px] text-amber-600/80 mt-0.5">Nhóm lý do cha — Remark con sẽ thuộc về đây</p>
+              </div>
+              <button
+                onClick={() => setShowAddParent(!showAddParent)}
+                className="text-[11px] bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg font-bold transition-all shadow-sm"
+              >
+                {showAddParent ? 'Đóng' : '+ Thêm'}
+              </button>
+            </div>
+
+            {showAddParent && (
+              <form onSubmit={handleAddParent} className="p-4 bg-amber-50/30 border-b border-slate-200 space-y-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Remark Cha <span className="text-red-500">*</span></label>
                   <input
                     required
                     type="text"
-                    placeholder="Ví dụ: (T) Có tài liệu đào tạo, (P) Điền sai form..."
-                    value={newRemarkPerf}
-                    onChange={e => setNewRemarkPerf(e.target.value)}
-                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                    placeholder="Ví dụ: (P) FAIL 1, (P) FAIL 2..."
+                    value={newParentPerf}
+                    onChange={e => setNewParentPerf(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-amber-400"
                   />
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Loại (Thưởng/Phạt)</label>
-                  <select
-                    value={newRemarkType}
-                    onChange={e => setNewRemarkType(e.target.value)}
-                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
-                  >
-                    <option value="Bonus">🎁 Thưởng (Bonus)</option>
-                    <option value="Penalty">⚠️ Phạt (Penalty)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">KPI (+/- hệ số hoặc điểm)</label>
-                  <input
-                    required
-                    type="number"
-                    step="0.1"
-                    placeholder="Ví dụ: 1.2, -0.5, 2..."
-                    value={newRemarkKpi}
-                    onChange={e => setNewRemarkKpi(Number(e.target.value))}
-                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div className="md:col-span-2 flex gap-3 items-end">
-                  <div className="flex-1 flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả (tùy chọn)</label>
+                <div className="flex gap-2">
+                  <div className="flex-1 flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Loại</label>
+                    <select
+                      value={newParentType}
+                      onChange={e => setNewParentType(e.target.value)}
+                      className="bg-white border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none focus:border-amber-400"
+                    >
+                      <option value="Bonus">🎁 Thưởng</option>
+                      <option value="Penalty">⚠️ Phạt</option>
+                    </select>
+                  </div>
+                  <div className="flex-1 flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">KPI</label>
                     <input
+                      type="number" step="0.1"
+                      value={newParentKpi}
+                      onChange={e => setNewParentKpi(Number(e.target.value))}
+                      className="bg-white border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none focus:border-amber-400"
+                    />
+                  </div>
+                </div>
+                <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-lg text-xs font-bold transition-all">
+                  Lưu Remark Cha
+                </button>
+              </form>
+            )}
+
+            <div className="divide-y divide-slate-100">
+              {parentRemarks.length === 0 ? (
+                <div className="p-5 text-center text-xs text-slate-400">Chưa có Remark Cha nào.</div>
+              ) : (
+                parentRemarks.map(pr => {
+                  const isBonus = pr.remark_type === 'Bonus';
+                  return (
+                    <div key={pr.id} className="px-4 py-3 hover:bg-slate-50/50 transition-colors">
+                      {editingParentId === pr.id ? (
+                        <div className="space-y-2">
+                          <input
+                            type="text"
+                            value={editingParentPerf}
+                            onChange={e => setEditingParentPerf(e.target.value)}
+                            className="w-full bg-white border border-slate-300 rounded px-2.5 py-1 text-xs"
+                          />
+                          <div className="flex gap-2">
+                            <select
+                              value={editingParentType}
+                              onChange={e => setEditingParentType(e.target.value)}
+                              className="flex-1 bg-white border border-slate-300 rounded px-2 py-1 text-xs"
+                            >
+                              <option value="Bonus">🎁 Thưởng</option>
+                              <option value="Penalty">⚠️ Phạt</option>
+                            </select>
+                            <input
+                              type="number" step="0.1"
+                              value={editingParentKpi}
+                              onChange={e => setEditingParentKpi(Number(e.target.value))}
+                              className="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => handleUpdateParent(pr.id)} className="flex-1 text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
+                            <button onClick={() => setEditingParentId(null)} className="flex-1 text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold text-[#0f172a] truncate">{pr.performance}</div>
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                isBonus ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                              }`}>
+                                {isBonus ? '🎁 Thưởng' : '⚠️ Phạt'}
+                              </span>
+                              <span className={`text-[10px] font-mono font-bold ${
+                                isBonus ? 'text-emerald-700' : 'text-rose-700'
+                              }`}>
+                                {pr.kpi > 0 ? `+${pr.kpi}` : pr.kpi} KPI
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <button
+                              onClick={() => { setEditingParentId(pr.id); setEditingParentPerf(pr.performance); setEditingParentKpi(pr.kpi); setEditingParentType(pr.remark_type || 'Penalty'); }}
+                              className="text-xs text-blue-600 hover:underline font-semibold"
+                            >Sửa</button>
+                            <button
+                              onClick={() => handleDeleteParent(pr.id, pr.performance)}
+                              className="text-xs text-red-600 hover:underline font-semibold"
+                            >Xóa</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* ── RIGHT: REMARK ── */}
+          <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">🏷️ Remark Task con</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Quản lý các Remark dùng trong Task, hệ số/điểm KPI (+/-) và loại Thưởng/Phạt</p>
+              </div>
+              <button
+                onClick={() => setShowAddRemark(!showAddRemark)}
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg font-bold transition-all shadow-sm"
+              >
+                {showAddRemark ? 'Đóng' : '+ Thêm Remark'}
+              </button>
+            </div>
+
+            {showAddRemark && (
+              <form onSubmit={handleAddRemark} className="p-6 bg-slate-50/30 border-b border-slate-200 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="md:col-span-2 flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Remark <span className="text-red-500">*</span></label>
+                    <input
+                      required
                       type="text"
-                      placeholder="Mô tả trường hợp áp dụng Remark..."
-                      value={newRemarkDesc}
-                      onChange={e => setNewRemarkDesc(e.target.value)}
+                      placeholder="Ví dụ: (T) Có tài liệu đào tạo, (P) Điền sai form..."
+                      value={newRemarkPerf}
+                      onChange={e => setNewRemarkPerf(e.target.value)}
                       className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                     />
                   </div>
-                  <button
-                    type="submit"
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 h-[38px]"
-                  >
-                    Lưu Remark
-                  </button>
-                </div>
-              </div>
-            </form>
-          )}
-
-          <div className="divide-y divide-slate-100">
-            {remarks.length === 0 ? (
-              <div className="p-6 text-center text-xs text-slate-400">Chưa có Remark nào được tạo.</div>
-            ) : (
-              remarks.map(rm => {
-                const isBonus = rm.remark_type ? rm.remark_type === 'Bonus' : (rm.kpi > 0 && !rm.performance.startsWith('(P)'));
-                return (
-                  <div key={rm.id} className="p-4 px-6 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
-                    {editingRemarkId === rm.id ? (
-                      <div className="flex-1 flex flex-col md:flex-row gap-3 items-center">
-                        <input
-                          type="text"
-                          value={editingRemarkPerf}
-                          onChange={e => setEditingRemarkPerf(e.target.value)}
-                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
-                        />
-                        <select
-                          value={editingRemarkType}
-                          onChange={e => setEditingRemarkType(e.target.value)}
-                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
-                        >
-                          <option value="Bonus">🎁 Thưởng</option>
-                          <option value="Penalty">⚠️ Phạt</option>
-                        </select>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={editingRemarkKpi}
-                          onChange={e => setEditingRemarkKpi(Number(e.target.value))}
-                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] w-20"
-                        />
-                        <div className="flex gap-2">
-                          <button onClick={() => handleUpdateRemark(rm.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
-                          <button onClick={() => setEditingRemarkId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            isBonus ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
-                          }`}>
-                            {isBonus ? '🎁 Thưởng' : '⚠️ Phạt'}
-                          </span>
-                          <div>
-                            <div className="text-xs font-bold text-[#0f172a]">
-                              {rm.performance}
-                            </div>
-                            {rm.description && <div className="text-[11px] text-slate-500 mt-0.5">{rm.description}</div>}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-4">
-                          <span className={`text-xs font-bold font-mono px-2 py-1 rounded ${
-                            isBonus ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                          }`}>
-                            {rm.kpi > 0 ? `+${rm.kpi}` : rm.kpi} KPI
-                          </span>
-
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => {
-                                setEditingRemarkId(rm.id);
-                                setEditingRemarkPerf(rm.performance);
-                                setEditingRemarkKpi(rm.kpi);
-                                setEditingRemarkType(rm.remark_type || (rm.kpi >= 0 ? 'Bonus' : 'Penalty'));
-                                setEditingRemarkDesc(rm.description || '');
-                              }}
-                              className="text-xs text-blue-600 hover:underline font-semibold"
-                            >
-                              Sửa
-                            </button>
-                            <button
-                              onClick={() => handleDeleteRemark(rm.id, rm.performance)}
-                              className="text-xs text-red-600 hover:underline font-semibold"
-                            >
-                              Xóa
-                            </button>
-                          </div>
-                        </div>
-                      </>
-                    )}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Loại (Thưởng/Phạt)</label>
+                    <select
+                      value={newRemarkType}
+                      onChange={e => setNewRemarkType(e.target.value)}
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
+                    >
+                      <option value="Bonus">🎁 Thưởng (Bonus)</option>
+                      <option value="Penalty">⚠️ Phạt (Penalty)</option>
+                    </select>
                   </div>
-                );
-              })
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">KPI (+/- hệ số hoặc điểm)</label>
+                    <input
+                      required type="number" step="0.1"
+                      placeholder="Ví dụ: 1.2, -0.5, 2..."
+                      value={newRemarkKpi}
+                      onChange={e => setNewRemarkKpi(Number(e.target.value))}
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Remark Cha (tùy chọn)</label>
+                    <select
+                      value={newRemarkParentId ?? ''}
+                      onChange={e => setNewRemarkParentId(e.target.value ? Number(e.target.value) : null)}
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      <option value="">-- Không có --</option>
+                      {parentRemarks.map(p => (
+                        <option key={p.id} value={p.id}>{p.performance}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex gap-3 items-end">
+                    <div className="flex-1 flex flex-col gap-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả (tùy chọn)</label>
+                      <input
+                        type="text"
+                        placeholder="Mô tả trường hợp áp dụng Remark..."
+                        value={newRemarkDesc}
+                        onChange={e => setNewRemarkDesc(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 h-[38px]"
+                    >
+                      Lưu Remark
+                    </button>
+                  </div>
+                </div>
+              </form>
             )}
+
+            <div className="divide-y divide-slate-100">
+              {remarks.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400">Chưa có Remark nào được tạo.</div>
+              ) : (
+                <>
+                  {/* Header Row */}
+                  <div className="p-4 px-6 flex items-center bg-slate-50/50">
+                    <div className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wider">Remark</div>
+                    <div className="w-36 text-xs font-bold text-slate-500 uppercase tracking-wider">Remark Cha</div>
+                    <div className="w-28 text-xs font-bold text-slate-500 uppercase tracking-wider">KPI</div>
+                    <div className="w-24 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</div>
+                  </div>
+                  {/* Data Rows */}
+                  {remarks.map(rm => {
+                    const isBonus = rm.remark_type ? rm.remark_type === 'Bonus' : (rm.kpi > 0 && !rm.performance.startsWith('(P)'));
+                    const parentRemark = parentRemarks.find(p => p.id === rm.parent_id);
+                    return (
+                      <div key={rm.id} className="p-4 px-6 flex items-center hover:bg-slate-50/50 transition-colors">
+                        {editingRemarkId === rm.id ? (
+                          <div className="flex-1 flex flex-col md:flex-row gap-3 items-center w-full">
+                            <input
+                              type="text"
+                              value={editingRemarkPerf}
+                              onChange={e => setEditingRemarkPerf(e.target.value)}
+                              className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
+                            />
+                            <select
+                              value={editingRemarkType}
+                              onChange={e => setEditingRemarkType(e.target.value)}
+                              className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] w-28"
+                            >
+                              <option value="Bonus">🎁 Thưởng</option>
+                              <option value="Penalty">⚠️ Phạt</option>
+                            </select>
+                            <select
+                              value={editingRemarkParentId ?? ''}
+                              onChange={e => setEditingRemarkParentId(e.target.value ? Number(e.target.value) : null)}
+                              className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] w-36"
+                            >
+                              <option value="">-- Không có --</option>
+                              {parentRemarks.map(p => (
+                                <option key={p.id} value={p.id}>{p.performance}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="number" step="0.1"
+                              value={editingRemarkKpi}
+                              onChange={e => setEditingRemarkKpi(Number(e.target.value))}
+                              className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] w-20"
+                            />
+                            <div className="flex gap-2 w-24 justify-end">
+                              <button onClick={() => handleUpdateRemark(rm.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
+                              <button onClick={() => setEditingRemarkId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex-1">
+                              <div className="text-xs font-bold text-[#0f172a]">{rm.performance}</div>
+                              {rm.description && <div className="text-[11px] text-slate-500 mt-0.5">{rm.description}</div>}
+                            </div>
+
+                            <div className="w-36">
+                              {parentRemark ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 truncate block max-w-full">
+                                  📂 {parentRemark.performance}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-400">—</span>
+                              )}
+                            </div>
+
+                            <div className="w-28">
+                              <span className={`text-xs font-bold font-mono px-2 py-1 rounded ${
+                                isBonus ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {rm.kpi > 0 ? `+${rm.kpi}` : rm.kpi} KPI
+                              </span>
+                            </div>
+
+                            <div className="w-24 flex justify-end items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setEditingRemarkId(rm.id);
+                                  setEditingRemarkPerf(rm.performance);
+                                  setEditingRemarkKpi(rm.kpi);
+                                  setEditingRemarkType(rm.remark_type || (rm.kpi >= 0 ? 'Bonus' : 'Penalty'));
+                                  setEditingRemarkDesc(rm.description || '');
+                                  setEditingRemarkParentId(rm.parent_id ?? null);
+                                }}
+                                className="text-xs text-blue-600 hover:underline font-semibold"
+                              >Sửa</button>
+                              <button
+                                onClick={() => handleDeleteRemark(rm.id, rm.performance)}
+                                className="text-xs text-red-600 hover:underline font-semibold"
+                              >Xóa</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
           </div>
+
         </div>
       )}
     </div>

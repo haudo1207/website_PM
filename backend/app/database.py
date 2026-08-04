@@ -6,8 +6,8 @@ db_url = settings.DATABASE_URL
 engine = create_engine(
     db_url,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=2,
+    max_overflow=0,
     pool_recycle=300,
     pool_timeout=30,
 )
