@@ -12,7 +12,9 @@ import {
   updateProject,
   deleteProject,
   getMembers,
-  getMasterPhases
+  getMasterPhases,
+  getProjectTemplates,
+  applyProjectTemplate
 } from '@/lib/api';
 
 interface CustomersProjectsViewProps {
@@ -73,6 +75,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     status: 'Planning',
     description: ''
   });
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | ''>('');
 
   // Modal searchable dropdown states
   const [modalPmDropdownOpen, setModalPmDropdownOpen] = useState(false);
@@ -310,7 +314,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   };
 
   // --- PROJECT CRUD HANDLERS ---
-  const handleOpenCreateProject = () => {
+  const handleOpenCreateProject = async () => {
     setModalMode('create');
     setEditingProjectId(null);
     setProjectForm({
@@ -326,6 +330,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       status: 'Planning',
       description: ''
     });
+    setSelectedTemplateId('');
+    // Load templates for the dropdown
+    try {
+      const tpls = await getProjectTemplates();
+      setTemplates(tpls || []);
+    } catch (err) {
+      setTemplates([]);
+    }
     setShowProjectModal(true);
   };
 
@@ -388,7 +400,18 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
       if (modalMode === 'create') {
         const created = await createProject(payload);
-        onFlash('Đã tạo dự án mới thành công');
+        
+        // Nếu có chọn template, tự động áp dụng template vào dự án vừa tạo
+        if (created && created.id && selectedTemplateId) {
+          try {
+            await applyProjectTemplate(Number(selectedTemplateId), created.id);
+            onFlash('Đã tạo dự án và áp dụng template thành công');
+          } catch (applyErr: any) {
+            onFlash('Đã tạo dự án nhưng áp dụng template thất bại: ' + (applyErr?.response?.data?.detail || applyErr?.message || 'Lỗi'), true);
+          }
+        } else {
+          onFlash('Đã tạo dự án mới thành công');
+        }
         
         // Auto-select the year of the newly created project
         if (created && created.year) {
@@ -1314,6 +1337,30 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </div>
 
 
+
+              {/* Template Selection (Chỉ hiện khi tạo mới) */}
+              {modalMode === 'create' && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    Áp dụng Template (Tùy chọn)
+                  </label>
+                  <select
+                    value={selectedTemplateId}
+                    onChange={e => setSelectedTemplateId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="">-- Không áp dụng template --</option>
+                    {templates.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.phases?.length || 0} phases)
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-400 italic">
+                    Chọn template để tự động tạo Phase + Task cha cho dự án mới sau khi tạo.
+                  </p>
+                </div>
+              )}
 
               {/* Description */}
               <div className="space-y-1">
