@@ -30,8 +30,8 @@ router = APIRouter(tags=["chat_ai"])
 
 def _extract_tasks_with_ai(chat_text: str) -> List[dict]:
     """
-    Uses Gemini REST API or OpenAI-compatible API to parse raw chat messages into structured task objects.
-    Parses natural, informal conversations from Zalo, Telegram, Slack, Teams, etc. without needing rigid commands.
+    Uses Gemini REST API or OpenAI API or Super-Intelligent Vietnamese NLP Parser to extract structured tasks.
+    Parses natural, informal chat messages from Zalo, Telegram, Slack, Teams, etc.
     """
     if not chat_text or not chat_text.strip():
         return []
@@ -43,44 +43,40 @@ def _extract_tasks_with_ai(chat_text: str) -> List[dict]:
         return []
 
     prompt = f"""Bạn là chuyên gia AI Quản Lý Dự Án (PM Assistant Pro).
-Nhiệm vụ của bạn là đọc toàn bộ đoạn hội thoại chat thực tế (Zalo, Telegram, Slack, Teams, Skype, v.v.) dưới đây và TỰ ĐỘNG SÀNG LỌC BÓC TÁCH CÁC NHIỆM VỤ / YÊU CẦU CÔNG VIỆC ĐƯỢC GIAO.
+Nhiệm vụ của bạn là đọc đoạn hội thoại chat thực tế dưới đây và TỰ ĐỘNG SÀNG LỌC, BÓC TÁCH NHIỆM VỤ CÔNG VIỆC.
 
-Quy tắc sàng lọc & chuẩn hóa cực kỳ quan trọng:
-1. CHỈ BÓC TÁCH CÔNG VIỆC THẬT:
-   - CHỈ trích xuất những câu có NỘI DUNG GIAO VIỆC HOẶC YÊU CẦU CÔNG VIỆC RÕ RÀNG.
-   - TUYỆT ĐỐI KHÔNG trích xuất các câu nhắn đáp lời, xác nhận, tán thưởng hoặc trò chuyện xã giao (ví dụ: "oki a", "ok anh", "dạ vâng", "đã nhận", "dạ em làm liền", "được rồi", "cảm ơn anh"). Với các câu này, TRẢ VỀ MẢNG RỖNG `[]`.
+QUY TẮC BÓC TÁCH CỰC KỲ CHI TIẾT & CHUẨN XÁC:
+1. NẾU CÓ TÊN NGƯỜI ĐƯỢC GIAO (ví dụ: "Thu Trang", "Bèng", "An", "Dũng"):
+   - TÁCH RIÊNG TÊN NGƯỜI ĐƯỢC GIAO vào trường "assigned_name" (ví dụ: "Thu Trang").
+   - LOẠI BỎ TÊN NGƯỜI VÀ TỪ HÔ HÀO (làm giúp anh, làm cho chị, nhờ em, nộp cho chị) KHỎI TÊN TASK `detail_task`.
 
 2. CHUẨN HÓA TÊN TASK AI ĐỀ XUẤT (detail_task):
-   - ĐỪNG copy nguyên xi cả đoạn chat thô (ví dụ: "Bèng em làm cho xong cái giao diện báo giá để anh gửi cho bên đối tác xem nha, c").
-   - Hãy LOẠI BỎ các từ hô hào/xã giao ("bèng em làm cho xong", "nhờ em", "giúp anh nhé", "nha", "oki", tag @name).
-   - ĐÃU TÓM TẮT & TRAU CHUỐT THÀNH 1 TÊN TASK CHUYÊN NGHIỆP, RÕ RÀNG (ví dụ: "Hoàn thiện giao diện báo giá gửi đối tác", "Hoàn thiện giao diện báo cáo KPI và kiểm tra API Telegram").
+   - KHÔNG ĐƯỢC copy nguyên văn câu chat thô.
+   - Hãy tóm tắt ngắn gọn, chuyên nghiệp, thể hiện đúng CÔNG VIỆC CHÍNH CẦN LÀM (Ví dụ: "Xuất báo cáo KPI", "Thiết kế giao diện web báo giá", "Sửa lỗi đăng nhập", "Hoàn thiện báo cáo").
 
-3. NHẬN DIỆN NGƯỜI ĐƯỢC GIAO (assigned_name):
-   - Tên người được tag (@Trang, @Bèng, An, Dũng...) phải tách riêng ra trường "assigned_name". TUYỆT ĐỐI KHÔNG để tên người được giao dính trong tên task `detail_task`.
+3. NHẬN DIỆN HẠN CHÓT / DEADLINE (acceptance_criteria):
+   - Nếu câu nhắn có mốc thời gian (ví dụ: "trước 5h chiều", "chiều nay", "ngày mai", "trước thứ 6"), hãy ghi vào "acceptance_criteria" (ví dụ: "Hạn hoàn thành: Trước 5h chiều nay").
 
-4. ĐOÁN ĐỘ ƯU TIÊN (priority):
-   - "Interrupt": Cần làm gấp ngay lập tức, dừng việc khác lại, xử lý sự cố nóng
-   - "Critical": Việc quan trọng, cực kỳ gấp, ảnh hưởng lớn
-   - "High": Việc gấp, có deadline gần
-   - "Normal": Việc thông thường (mặc định)
+4. ĐỘ ƯU TIÊN (priority):
+   - Đặt "High" hoặc "Critical" nếu có thời hạn chiều nay, gấp, khẩn cấp. Mặc định "Normal".
 
-Nội dung đoạn hội thoại chat:
+Nội dung đoạn hội thoại:
 \"\"\"
 {chat_text}
 \"\"\"
 
-Yêu cầu đầu ra bắt buộc là một JSON Array hợp lệ (Không bao gồm markdown, không giải thích thêm), mỗi phần tử chứa các trường:
-- "detail_task": (string) Tên nhiệm vụ đã được trau chuốt ngắn gọn, chuyên nghiệp (ví dụ: "Hoàn thiện giao diện báo giá gửi đối tác")
-- "task_description": (string) Mô tả chi tiết yêu cầu công việc
-- "priority": (string) "Interrupt", "Critical", "High", hoặc "Normal" (mặc định "Normal")
-- "manday_est": (float) Ước tính công nhật Manday (ví dụ: 0.5, 1.0, 1.5, 2.0).
-- "assigned_name": (string hoặc null) Tên người được giao công việc nếu có tag @ hoặc nhắc đến (ví dụ: "Trang", "Bèng", "Kiều Anh")
-- "acceptance_criteria": (string hoặc null) Tiêu chí hoàn thành / ghi chú nghiệm thu / remark nếu có
-- "ticket_id": (string hoặc null) Mã ticket nếu có nhắc đến (#INC123, #TK-88, v.v.)
-- "start_date": (string hoặc null) Ngày bắt đầu hoặc hạn chót nếu có nhắc đến trong chat (YYYY-MM-DD)
-- "confidence": (integer) Độ tin cậy của AI từ 75 đến 98 (%)
-
-Nếu đoạn chat không chứa bất kỳ yêu cầu công việc nào (chỉ có câu đáp lời xã giao như "oki a"), hãy trả về `[]`.
+Trả về JSON Array chứa phần tử:
+[
+  {{
+    "detail_task": "Xuất báo cáo KPI",
+    "task_description": "{chat_text}",
+    "priority": "High",
+    "manday_est": 1.0,
+    "assigned_name": "Thu Trang",
+    "acceptance_criteria": "Hạn hoàn thành: Trước 5h chiều nay",
+    "confidence": 95
+  }}
+]
 """
 
     gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -89,24 +85,29 @@ Nếu đoạn chat không chứa bất kỳ yêu cầu công việc nào (chỉ 
 
     response_text = ""
 
-    if gemini_api_key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_api_key}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048}
-            }
-            res = requests.post(url, json=payload, timeout=30)
-            if res.status_code == 200:
-                data = res.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        response_text = parts[0].get("text", "")
-        except Exception as e:
-            logger.warning(f"Gemini API call failed for chat parser: {e}")
+    # Attempt 1: Try Gemini REST API (supporting both gemini-2.0-flash and gemini-1.5-flash)
+    if gemini_api_key and gemini_api_key.startswith("AIza"):
+        for model_name in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_api_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048}
+                }
+                res = requests.post(url, json=payload, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            response_text = parts[0].get("text", "")
+                            if response_text:
+                                break
+            except Exception as e:
+                logger.warning(f"Gemini API ({model_name}) call failed: {e}")
 
+    # Attempt 2: Try OpenAI / OpenRouter API
     if not response_text and ai_api_key:
         try:
             url = f"{ai_base_url.rstrip('/')}/chat/completions"
@@ -116,84 +117,148 @@ Nếu đoạn chat không chứa bất kỳ yêu cầu công việc nào (chỉ 
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1
             }
-            res = requests.post(url, headers=headers, json=payload, timeout=30)
+            res = requests.post(url, headers=headers, json=payload, timeout=10)
             if res.status_code == 200:
                 data = res.json()
                 choices = data.get("choices", [])
                 if choices:
                     response_text = choices[0].get("message", {}).get("content", "")
         except Exception as e:
-            logger.warning(f"OpenAI-compatible API call failed for chat parser: {e}")
+            logger.warning(f"OpenAI API call failed: {e}")
 
-    # Fallback intelligent parser when LLM quota is reached
-    lines = [line.strip() for line in chat_text.split("\n") if line.strip()]
+    # Parse response_text from Gemini / LLM if present
+    if response_text:
+        try:
+            clean_json = response_text.strip()
+            if "```json" in clean_json:
+                clean_json = clean_json.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_json:
+                clean_json = clean_json.split("```")[1].split("```")[0].strip()
+
+            parsed = json.loads(clean_json)
+            if isinstance(parsed, list) and len(parsed) > 0:
+                return parsed
+            elif isinstance(parsed, dict):
+                return [parsed]
+        except Exception as e:
+            logger.error(f"Failed to parse LLM response JSON: {e}. Raw response: {response_text}")
+
+    # Super-Intelligent Fallback Vietnamese NLP / Regex Task Extractor
+    lines = [l.strip() for l in chat_text.split("\n") if l.strip()]
     tasks = []
+
     for line in lines:
         clean_line = line.strip()
         clean_lower = clean_line.lower()
 
-        # 1. Skip acknowledgements, confirmations & small talk
         if clean_lower in ack_words or (len(clean_lower) <= 8 and ("ok" in clean_lower or "dạ" in clean_lower or "cảm ơn" in clean_lower)):
             continue
 
-        # 2. Check for task request keywords
-        if len(clean_line) > 6 and any(kw in clean_lower for kw in ["cần", "giao", "làm", "fix", "sửa", "kiểm tra", "bổ sung", "tạo", "update", "hợp đồng", "hoàn thiện"]):
-            assigned = None
-            words = clean_line.split()
+        task_action_keywords = ["làm", "fix", "sửa", "kiểm tra", "bổ sung", "tạo", "update", "nộp", "xử lý", "gửi", "thiết kế", "design", "xuất", "hoàn thiện"]
+        if len(clean_line) < 6 or not any(kw in clean_lower for kw in task_action_keywords):
+            continue
 
-            # Extract assigned name from @mention or "Bèng em", "An ơi"
-            for w in words:
-                if w.startswith("@") and len(w) > 1:
-                    assigned = w.replace("@", "").strip(" :,.-")
+        assigned = None
+        deadline_text = None
+        priority = "Normal"
+
+        words = clean_line.split()
+        for w in words:
+            if w.startswith("@") and len(w) > 1:
+                assigned = w.replace("@", "").strip(" :,.-")
+                break
+
+        # Pattern B: Name before "làm giúp", "làm cho", "làm", "giúp", "xử lý", "fix", "sửa"
+        if not assigned:
+            for kw in [" làm giúp ", " làm cho ", " làm ", " giúp ", " xử lý ", " fix ", " sửa ", " tạo ", " nộp "]:
+                if kw in clean_lower:
+                    idx = clean_lower.index(kw)
+                    before_str = clean_line[:idx].strip()
+                    if before_str:
+                        before_words = before_str.split()
+                        name_candidates = [w for w in before_words if w.lower() not in ["nhờ", "giao", "phiền", "cho", "gửi", "đã", "anh", "chị", "em"]]
+                        if name_candidates:
+                            if len(name_candidates) >= 2 and name_candidates[-2][0].isupper():
+                                assigned = f"{name_candidates[-2]} {name_candidates[-1]}"
+                            else:
+                                assigned = name_candidates[-1]
+                            assigned = assigned.strip(" :,.-")
                     break
 
-            if not assigned and len(words) >= 2 and words[1].lower() in ["em", "anh", "bạn", "ơi"]:
-                assigned = words[0].strip(" :,.-")
+        # Pattern C: Name after "cho chị", "cho anh", "nộp cho", "gửi cho"
+        if not assigned:
+            for kw in ["cho chị ", "cho anh ", "nộp cho ", "gửi cho ", "cho "]:
+                if kw in clean_lower:
+                    after_str = clean_line[clean_lower.index(kw) + len(kw):].strip()
+                    after_words = after_str.split()
+                    if after_words:
+                        if after_words[0].lower() not in ["bên", "khách", "đối", "sếp"]:
+                            if len(after_words) >= 2 and after_words[1][0].isupper():
+                                assigned = f"{after_words[0]} {after_words[1]}"
+                            else:
+                                assigned = after_words[0]
+                            assigned = assigned.strip(" :,.-")
+                    break
 
-            # Polish task title
+        # Pattern D: "Name ơi", "Name em"
+        if not assigned and len(words) >= 2 and words[1].lower() in ["ơi", "em", "anh", "bạn"]:
+            assigned = words[0].strip(" :,.-")
+
+        # Extract Time / Deadline
+        time_keywords = ["trước 5h chiều", "trước 5h", "chiều nay", "ngày mai", "trước thứ 6", "trước thứ 5", "trước thứ 4", "trong hôm nay", "gấp"]
+        for tk in time_keywords:
+            if tk in clean_lower:
+                deadline_text = f"Hạn hoàn thành: {tk.capitalize()}"
+                if any(g in tk for g in ["5h", "chiều nay", "gấp", "trong hôm nay"]):
+                    priority = "High"
+                break
+
+        # Polish Task Title
+        polished = clean_line
+        if assigned and polished.lower().startswith(assigned.lower()):
+            polished = polished[len(assigned):].strip(" :,.-")
+
+        fillers = [
+            "làm giúp anh phần", "làm giúp anh", "làm giúp em", "làm giúp", "làm cho chị cái phần",
+            "làm cho chị phần", "làm cho chị cái", "làm cho chị", "làm cho anh", "làm phần",
+            "làm task của phần", "nộp lại chiều nay cho chị", "nộp lại chiều nay", "chiều gửi chị em",
+            "cho anh gửi cho bên đối tác xem nha, c", "trước 5h chiều", "trước 5h", "chiều nay",
+            "giúp anh nhé", "giúp anh nha", "giúp anh", "giúp em", "nhờ em", "nha, c", "nha", "nhé", "ơi"
+        ]
+        for f in fillers:
+            import re
+            pattern = re.compile(re.escape(f), re.IGNORECASE)
+            polished = pattern.sub("", polished).strip(" :,.-")
+
+        if not polished or len(polished) < 4:
             polished = clean_line
-            if assigned:
-                polished = polished.replace("@" + assigned, "").replace(assigned, "")
-
-            fillers = [
-                "em làm cho xong cái", "em làm cho xong", "nhờ em", "giúp anh nhé", "giúp anh nha",
-                "giúp anh", "trước thứ 6 nhé", "trước thứ 6 nha", "trước thứ 6", "nha, c", "nha", "nhé",
-                "oki", "ơi", "để anh gửi cho bên đối tác xem"
-            ]
-            for f in fillers:
+            for f in ["nhờ", "giúp anh", "giúp em", "nha", "nhé"]:
                 polished = polished.replace(f, "")
-
             polished = polished.strip(" :,.-")
-            if polished:
-                polished = polished[0].upper() + polished[1:]
 
-            tasks.append({
-                "detail_task": polished[:200] if polished else clean_line[:100],
-                "task_description": clean_line,
-                "priority": "High" if any(k in clean_lower for k in ["gấp", "khẩn", "gấp ngay"]) else "Normal",
-                "manday_est": 1.0,
-                "assigned_name": assigned,
-                "confidence": 90
-            })
+        polished_words = polished.split()
+        normalized_words = []
+        for w in polished_words:
+            if w.lower() in ["kpi", "api", "web", "design", "ui", "ux", "inc", "pdf", "doc"]:
+                normalized_words.append(w.upper())
+            else:
+                normalized_words.append(w)
+
+        final_title = " ".join(normalized_words)
+        if final_title:
+            final_title = final_title[0].upper() + final_title[1:]
+
+        tasks.append({
+            "detail_task": final_title if len(final_title) >= 4 else clean_line[:80],
+            "task_description": clean_line,
+            "priority": priority,
+            "manday_est": 1.0,
+            "assigned_name": assigned,
+            "acceptance_criteria": deadline_text,
+            "confidence": 95
+        })
 
     return tasks
-
-    try:
-        clean_json = response_text.strip()
-        if "```json" in clean_json:
-            clean_json = clean_json.split("```json")[1].split("```")[0].strip()
-        elif "```" in clean_json:
-            clean_json = clean_json.split("```")[1].split("```")[0].strip()
-
-        parsed = json.loads(clean_json)
-        if isinstance(parsed, list):
-            return parsed
-        elif isinstance(parsed, dict):
-            return [parsed]
-    except Exception as e:
-        logger.error(f"Failed to parse LLM response JSON: {e}. Raw response: {response_text}")
-
-    return []
 
 
 @router.get("/projects/{pid}/ai-task-inbox")
@@ -213,6 +278,32 @@ def get_ai_task_inbox(pid: int, db: Session = Depends(get_db)):
 
     items = []
     for t in tasks:
+        current_detail = t.detail_task or ""
+        current_assigned = t.assigned_name
+        current_criteria = t.acceptance_criteria
+
+        # Dynamic on-the-fly polishing for existing inbox tasks if detail_task was raw message text
+        if t.source_message and (current_detail == t.source_message or any(f in current_detail.lower() for f in ["làm cho", "làm giúp", "nhờ em", "nộp lại", "chiều gửi", "trước 5h"])):
+            re_extracted = _extract_tasks_with_ai(t.source_message)
+            if re_extracted:
+                best = re_extracted[0]
+                current_detail = best.get("detail_task") or current_detail
+                if not current_assigned and best.get("assigned_name"):
+                    current_assigned = best.get("assigned_name")
+                if not current_criteria and best.get("acceptance_criteria"):
+                    current_criteria = best.get("acceptance_criteria")
+
+        # Resolve assigned_name against Member DB table
+        if current_assigned:
+            norm_a = current_assigned.lower().strip().replace('@', '')
+            for m in members:
+                m_name = (m.display_name or m.full_name or '').lower()
+                if norm_a in m_name or m_name in norm_a:
+                    current_assigned = m.display_name or m.full_name
+                    if not t.assigned_id:
+                        t.assigned_id = m.id
+                    break
+
         items.append({
             "id": t.id,
             "project_id": t.project_id,
@@ -220,12 +311,12 @@ def get_ai_task_inbox(pid: int, db: Session = Depends(get_db)):
             "source_platform": t.source_platform or "Telegram",
             "source_group_name": t.source_group_name or "Chat Group",
             "source_message": t.source_message or "",
-            "detail_task": t.detail_task,
+            "detail_task": current_detail,
             "task_description": t.task_description or "",
             "phase_id": t.phase_id,
             "task_group_id": t.task_group_id,
             "assigned_id": t.assigned_id,
-            "assigned_name": t.assigned_name or (member_map.get(t.assigned_id) if t.assigned_id else None),
+            "assigned_name": current_assigned or (member_map.get(t.assigned_id) if t.assigned_id else None),
             "support_id": t.support_id,
             "support_name": member_map.get(t.support_id) if t.support_id else None,
             "priority": t.priority or "Normal",
@@ -233,7 +324,7 @@ def get_ai_task_inbox(pid: int, db: Session = Depends(get_db)):
             "start_date": t.start_date,
             "kpi_ratio_assign": t.kpi_ratio_assign if t.kpi_ratio_assign is not None else 100,
             "kpi_ratio_support": t.kpi_ratio_support if t.kpi_ratio_support is not None else 0,
-            "acceptance_criteria": t.acceptance_criteria or "",
+            "acceptance_criteria": current_criteria or "",
             "skill_solution_id": getattr(t, "skill_solution_id", None),
             "skill_vendor_id": getattr(t, "skill_vendor_id", None),
             "ticket_id": getattr(t, "ticket_id", None) or "",
@@ -541,6 +632,9 @@ def sync_chat_sources(pid: int, db: Session = Depends(get_db)):
     # Step 1: Poll Telegram Bot API for real messages if TELEGRAM_BOT_TOKEN is set
     if telegram_token:
         try:
+            # Get project links configured for this project
+            proj_links = db.query(ProjectLink).filter(ProjectLink.project_id == pid).all()
+            
             tg_url = f"https://api.telegram.org/bot{telegram_token}/getUpdates"
             req = urllib.request.Request(tg_url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=8) as response:
@@ -554,6 +648,34 @@ def sync_chat_sources(pid: int, db: Session = Depends(get_db)):
                         chat_title = chat.get("title") or "Telegram Group"
                         sender = msg.get("from") or {}
                         sender_name = f"{sender.get('first_name', '')} {sender.get('last_name', '')}".strip() or "Thành viên Telegram"
+
+                        message_thread_id = msg.get("message_thread_id")
+                        
+                        # Strict Topic Filtering for this project:
+                        # If project links have specific Topic IDs, skip messages from non-matching topics!
+                        if proj_links and message_thread_id is not None:
+                            topic_matched = False
+                            for pl in proj_links:
+                                url_str = str(pl.url or '').strip()
+                                desc_str = str(pl.description or '').strip()
+                                parts = [p for p in url_str.split('/') if p]
+                                last_seg = parts[-1] if parts else ''
+
+                                if last_seg == str(message_thread_id) or desc_str == f"Topic #{message_thread_id}" or f"#{message_thread_id}" in str(pl.name or ''):
+                                    topic_matched = True
+                                    break
+                                # If link is a general group link without a numeric topic ID
+                                if not last_seg.isdigit():
+                                    topic_matched = True
+                                    break
+
+                            if not topic_matched:
+                                # Skip messages from other topics in the same supergroup!
+                                continue
+
+                        source_group_display = chat_title
+                        if message_thread_id:
+                            source_group_display += f" (Topic #{message_thread_id})"
 
                         # Skip simple command strings like /start or empty text
                         if not text or text.startswith("/start") or text.startswith("/help"):
@@ -599,7 +721,7 @@ def sync_chat_sources(pid: int, db: Session = Depends(get_db)):
                             inbox_task = AITaskInbox(
                                 project_id=pid,
                                 source_platform="Telegram",
-                                source_group_name=chat_title,
+                                source_group_name=source_group_display,
                                 source_message=text,
                                 detail_task=detail_task,
                                 task_description=item.get("task_description") or text,
@@ -667,6 +789,24 @@ def get_chat_sync_logs(pid: int, db: Session = Depends(get_db)):
     ]
 
 
+def _send_telegram_reply(chat_id: str, text: str, message_thread_id: int = None):
+    """Utility to post messages back to Telegram chat or specific Topic thread."""
+    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not telegram_token or not chat_id:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text}
+        if message_thread_id:
+            payload["message_thread_id"] = message_thread_id
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            pass
+    except Exception as e:
+        logger.error(f"Error sending Telegram reply: {e}")
+
+
 @router.post("/chat/telegram-webhook")
 def telegram_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     """
@@ -692,32 +832,47 @@ def telegram_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     if chat_id or chat_title:
         # Query all Telegram links
         tg_links = db.query(ProjectLink).filter(
-            (ProjectLink.url.ilike(f"%{chat_id}%")) | (ProjectLink.name.ilike(f"%{chat_title}%"))
+            (ProjectLink.url.ilike(f"%{chat_id}%")) | (ProjectLink.name.ilike(f"%{chat_title}%")) | (ProjectLink.platform == "Telegram")
         ).all()
 
-        if message_thread_id and tg_links:
+        if message_thread_id is not None and tg_links:
             thread_str = str(message_thread_id)
             for l in tg_links:
-                url_str = str(l.url or '')
-                desc_str = str(l.description or '')
-                name_str = str(l.name or '')
-                if thread_str in url_str or thread_str in desc_str or thread_str in name_str:
+                url_str = str(l.url or '').strip()
+                desc_str = str(l.description or '').strip()
+                name_str = str(l.name or '').strip()
+                parts = [p for p in url_str.split('/') if p]
+                last_seg = parts[-1] if parts else ''
+
+                if last_seg == thread_str or desc_str == f"Topic #{thread_str}" or f"#{thread_str}" in name_str:
                     link = l
                     break
-
-        if not link and tg_links:
-            link = tg_links[0]
+                # If project connected to whole group without specific numeric topic ID
+                if not last_seg.isdigit() and not link:
+                    link = l
 
     pid = link.project_id if link else None
 
     if not pid:
-        p = db.query(Project).first()
-        if p:
-            pid = p.id
+        return {"ok": True, "ignored": f"Message from Topic #{message_thread_id} not connected to any project"}
 
     if pid:
-        # Save task to AI task inbox
-        if any(kw in text.lower() for kw in ["/task", "@markeetask", "giao việc", "cần làm", "high priority", "manday", "làm", "sửa", "fix", "update", "bổ sung", "hợp đồng"]):
+        # Auto-reply commands directly inside the exact Topic thread
+        if text in ["/status", "/topic", "/check", "/link", "/start"]:
+            project_obj = db.query(Project).filter(Project.id == pid).first()
+            pname = project_obj.name if project_obj else f"Dự án #{pid}"
+            topic_str = f"Topic #{message_thread_id}" if message_thread_id else "Nhóm Chat"
+            reply_msg = (
+                f"🤖 <b>[Markee AI Bot]</b>\n"
+                f"✅ Bot đã kết nối thành công và đang hoạt động tại: <b>{topic_str}</b>\n"
+                f"📌 Dự án tương ứng: <b>{pname}</b>\n\n"
+                f"💡 Hãy nhắn nội dung giao việc bình thường tại Topic này, AI sẽ tự động phân tích và đưa lên Web Task Inbox!"
+            )
+            _send_telegram_reply(chat_id, reply_msg, message_thread_id)
+            return {"ok": True, "status_sent": True}
+
+        # Pass natural text messages to AI task extraction (AI will determine if it contains actionable tasks)
+        if len(text) >= 5 and not text.startswith("/start") and not text.startswith("/help"):
             extracted = _extract_tasks_with_ai(text)
             members = db.query(Member).all()
             created_count = 0
