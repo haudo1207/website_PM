@@ -882,8 +882,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       {/* PROJECT CREATE/EDIT MODAL */}
       {/* ============================================================== */}
       {showProjectModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center responsive-modal-overlay">
-          <div className="bg-white border border-slate-200 shadow-2xl overflow-hidden flex flex-col transition-all animate-in fade-in zoom-in duration-200 responsive-modal-container">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-0 [@media(min-height:700px)]:p-4">
+          <div className="bg-white border-0 [@media(min-height:700px)]:border border-slate-200 w-full h-full rounded-none [@media(min-height:700px)]:w-[90vw] [@media(min-height:700px)]:max-w-[1000px] [@media(min-height:700px)]:h-[90vh] [@media(min-height:700px)]:max-h-[900px] [@media(min-height:700px)]:rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
             
             {/* Header with Context Pill */}
             <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
