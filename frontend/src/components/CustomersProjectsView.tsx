@@ -78,6 +78,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   });
   const [templates, setTemplates] = useState<any[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | ''>('');
+  const [formSubmitted, setFormSubmitted] = useState(false);
 
   // Modal searchable dropdown states
   const [modalPmDropdownOpen, setModalPmDropdownOpen] = useState(false);
@@ -345,6 +346,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const handleOpenCreateProject = async () => {
     setModalMode('create');
     setEditingProjectId(null);
+    setFormSubmitted(false);
     setProjectForm({
       name: '',
       year: selectedYear || new Date().getFullYear(),
@@ -372,6 +374,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const handleOpenEditProject = (proj: any) => {
     setModalMode('edit');
     setEditingProjectId(proj.id);
+    setFormSubmitted(false);
 
     // Safely extract multiple stakeholder IDs
     const pmIds = proj.pm_ids || (proj.pm_id ? [proj.pm_id] : []);
@@ -397,12 +400,13 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
   const handleSaveProjectForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormSubmitted(true);
+
     if (!projectForm.name.trim()) {
-      alert('Tên dự án không được để trống!');
       return;
     }
     if (!projectForm.customerId) {
-      alert('Vui lòng chọn khách hàng!');
+      onFlash('Vui lòng chọn khách hàng!', true);
       return;
     }
 
@@ -871,30 +875,32 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
             ) : (
               <div className="text-center py-20 text-slate-400">
                 <svg className="w-12 h-12 mx-auto text-slate-300 stroke-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-                <p className="text-xs italic mt-2">Chọn Năm ở cột bên trái để hiển thị danh sách dự án.</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-      </div>
-
-      {/* ============================================================== */}
+                  <pa      {/* ============================================================== */}
       {/* PROJECT CREATE/EDIT MODAL */}
       {/* ============================================================== */}
       {showProjectModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 w-full max-w-2xl rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white border border-slate-200 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-200">
             
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
-              <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider">
-                {modalMode === 'create' ? '➕ Thêm dự án mới' : '📝 Cập nhật dự án'}
-              </h3>
+            {/* Header with Context Pill */}
+            <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="text-sm font-extrabold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
+                  <span>{modalMode === 'create' ? '➕ Tạo dự án' : '📝 Cập nhật dự án'}</span>
+                </h3>
+                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 mt-0.5">
+                  <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">{projectForm.business || 'Infrastructure'}</span>
+                  <span>●</span>
+                  <span className="text-slate-700 font-bold">
+                    {projectForm.customerId 
+                      ? (allCustomers.find(c => c.id === Number(projectForm.customerId))?.name || (selectedCustomer ? selectedCustomer.name : 'Chưa chọn KH'))
+                      : (selectedCustomer ? selectedCustomer.name : 'Chưa chọn KH')}
+                  </span>
+                </div>
+              </div>
               <button
                 onClick={() => setShowProjectModal(false)}
-                className="text-slate-400 hover:text-slate-600 transition-all"
+                className="text-slate-400 hover:text-slate-600 transition-all p-1.5 hover:bg-slate-200/60 rounded-lg cursor-pointer"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -902,531 +908,601 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </button>
             </div>
 
-            <form onSubmit={handleSaveProjectForm} className="p-6 space-y-4 overflow-y-auto flex-1">
+            <form onSubmit={handleSaveProjectForm} className="p-6 space-y-5 overflow-y-auto flex-1">
               
-              {/* Row 1: Project Name & Year */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Tên dự án <span className="text-red-500">*</span>
+              {/* SECTION 1: THÔNG TIN DỰ ÁN */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                  <h4 className="text-[11px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>📌</span> Thông tin dự án
+                  </h4>
+                  <span className="text-[9px] font-bold text-red-500 uppercase bg-red-50 px-2 py-0.5 rounded border border-red-100">
+                    ● Required
+                  </span>
+                </div>
+
+                {/* Row 1: Project Name & Year */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider flex items-center justify-between">
+                      <span>Tên dự án</span>
+                      <span className="text-red-500 font-bold">* Required</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ví dụ: Portal PM Hải Phòng..."
+                      value={projectForm.name}
+                      onChange={e => {
+                        setProjectForm({ ...projectForm, name: e.target.value });
+                        if (formSubmitted && e.target.value.trim()) setFormSubmitted(false);
+                      }}
+                      className={`w-full bg-white border ${formSubmitted && !projectForm.name.trim() ? 'border-red-500 bg-red-50/20' : 'border-slate-200'} rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 focus:border-blue-500 outline-none font-semibold transition-all`}
+                    />
+                    {formSubmitted && !projectForm.name.trim() && (
+                      <p className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-0.5 animate-in fade-in">
+                        ⚠️ Tên dự án là bắt buộc
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                      Năm *
+                    </label>
+                    <input
+                      type="number"
+                      min={1990}
+                      max={2100}
+                      value={projectForm.year}
+                      onChange={e => setProjectForm({ ...projectForm, year: Number(e.target.value) })}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 font-semibold"
+                    />
+                  </div>
+                </div>
+
+                {/* Row 2: Customer & Business */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                      Khách hàng *
+                    </label>
+                    <select
+                      value={projectForm.customerId}
+                      onChange={e => setProjectForm({ ...projectForm, customerId: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
+                    >
+                      <option value="">-- Chọn khách hàng --</option>
+                      {modalCustomerOptions.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                      Business *
+                    </label>
+                    <select
+                      value={projectForm.business}
+                      onChange={e => setProjectForm({ ...projectForm, business: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-bold text-blue-700"
+                    >
+                      <option value="Infrastructure">Infrastructure</option>
+                      <option value="Markee">Markee</option>
+                      <option value="All">All (Cả 2 team)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Row 3: Current Phase */}
+                <div ref={modalPhaseRef} className="space-y-1 relative">
+                  <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                    Giai đoạn hiện tại *
                   </label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="Ví dụ: Portal PM..."
-                    value={projectForm.name}
-                    onChange={e => setProjectForm({ ...projectForm, name: e.target.value })}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModalPhaseDropdownOpen(!modalPhaseDropdownOpen);
+                      setModalPmDropdownOpen(false);
+                      setModalLeaderDropdownOpen(false);
+                      setModalSalesDropdownOpen(false);
+                      setModalMemberDropdownOpen(false);
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] flex items-center justify-between outline-none focus:border-blue-500 transition-all cursor-pointer text-left font-semibold"
+                  >
+                    <span className="truncate">{projectForm.currentPhase}</span>
+                    <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  {modalPhaseDropdownOpen && (
+                    <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-[160px] overflow-y-auto">
+                      {(dbMasterPhases.length > 0 ? dbMasterPhases.map((m: any) => m.name) : PROJECT_PHASES).map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => {
+                            setProjectForm({ ...projectForm, currentPhase: p });
+                            setModalPhaseDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 transition-colors ${
+                            projectForm.currentPhase === p ? 'bg-blue-50 text-blue-600 font-semibold' : 'text-[#0f172a]'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* SECTION 2: NHÂN SỰ DỰ ÁN (2 Column Grid Layout) */}
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                  <h4 className="text-[11px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>👥</span> NHÂN SỰ DỰ ÁN
+                  </h4>
+                  <span className="text-[10px] text-slate-400">Hỗ trợ tìm kiếm nhanh thành viên</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Left Column: PM & Sales */}
+                  <div className="space-y-3">
+                    {/* PM Field */}
+                    <div ref={modalPmRef} className="space-y-1 relative">
+                      <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">PM (Project Manager)</label>
+                      <div
+                        onClick={() => {
+                          setModalPmDropdownOpen(!modalPmDropdownOpen);
+                          setModalLeaderDropdownOpen(false);
+                          setModalSalesDropdownOpen(false);
+                          setModalMemberDropdownOpen(false);
+                          setModalPhaseDropdownOpen(false);
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
+                      >
+                        <div className="flex flex-wrap gap-1 flex-1">
+                          {projectForm.pmIds.length === 0 ? (
+                            <span className="text-slate-400 px-1 py-0.5">Chọn PM...</span>
+                          ) : (
+                            projectForm.pmIds.map(id => {
+                              const m = members.find(x => x.id === id);
+                              return (
+                                <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
+                                  {m?.display_name || id}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setProjectForm({
+                                        ...projectForm,
+                                        pmIds: projectForm.pmIds.filter(x => x !== id)
+                                      });
+                                    }}
+                                    className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })
+                          )}
+                        </div>
+                        <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+
+                      {modalPmDropdownOpen && (
+                        <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[200px] flex flex-col">
+                          <input
+                            type="text"
+                            value={modalPmSearch}
+                            onChange={(e) => setModalPmSearch(e.target.value)}
+                            placeholder="Search member..."
+                            className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
+                          />
+                          <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[130px]">
+                            {members
+                              .filter(u => u.display_name?.toLowerCase().includes(modalPmSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalPmSearch.toLowerCase()))
+                              .map((u) => {
+                                const isSelected = projectForm.pmIds.includes(u.id);
+                                return (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setProjectForm({
+                                        ...projectForm,
+                                        pmIds: isSelected
+                                          ? projectForm.pmIds.filter(id => id !== u.id)
+                                          : [...projectForm.pmIds, u.id]
+                                      });
+                                    }}
+                                    className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
+                                      isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
+                                    }`}
+                                  >
+                                    <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                                    {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Sales Field */}
+                    <div ref={modalSalesRef} className="space-y-1 relative">
+                      <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Sales</label>
+                      <div
+                        onClick={() => {
+                          setModalSalesDropdownOpen(!modalSalesDropdownOpen);
+                          setModalPmDropdownOpen(false);
+                          setModalLeaderDropdownOpen(false);
+                          setModalMemberDropdownOpen(false);
+                          setModalPhaseDropdownOpen(false);
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
+                      >
+                        <div className="flex flex-wrap gap-1 flex-1">
+                          {projectForm.salesIds.length === 0 ? (
+                            <span className="text-slate-400 px-1 py-0.5">Chọn Sales...</span>
+                          ) : (
+                            projectForm.salesIds.map(id => {
+                              const m = members.find(x => x.id === id);
+                              return (
+                                <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
+                                  {m?.display_name || id}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setProjectForm({
+                                        ...projectForm,
+                                        salesIds: projectForm.salesIds.filter(x => x !== id)
+                                      });
+                                    }}
+                                    className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })
+                          )}
+                        </div>
+                        <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+
+                      {modalSalesDropdownOpen && (
+                        <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[200px] flex flex-col">
+                          <input
+                            type="text"
+                            value={modalSalesSearch}
+                            onChange={(e) => setModalSalesSearch(e.target.value)}
+                            placeholder="Search member..."
+                            className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
+                          />
+                          <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[130px]">
+                            {members
+                              .filter(u => u.display_name?.toLowerCase().includes(modalSalesSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalSalesSearch.toLowerCase()))
+                              .map((u) => {
+                                const isSelected = projectForm.salesIds.includes(u.id);
+                                return (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setProjectForm({
+                                        ...projectForm,
+                                        salesIds: isSelected
+                                          ? projectForm.salesIds.filter(id => id !== u.id)
+                                          : [...projectForm.salesIds, u.id]
+                                      });
+                                    }}
+                                    className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
+                                      isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
+                                    }`}
+                                  >
+                                    <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                                    {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: TL & Members */}
+                  <div className="space-y-3">
+                    {/* Technical Leader Field */}
+                    <div ref={modalLeaderRef} className="space-y-1 relative">
+                      <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Technical Leader (TL)</label>
+                      <div
+                        onClick={() => {
+                          setModalLeaderDropdownOpen(!modalLeaderDropdownOpen);
+                          setModalPmDropdownOpen(false);
+                          setModalSalesDropdownOpen(false);
+                          setModalMemberDropdownOpen(false);
+                          setModalPhaseDropdownOpen(false);
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
+                      >
+                        <div className="flex flex-wrap gap-1 flex-1">
+                          {projectForm.leaderIds.length === 0 ? (
+                            <span className="text-slate-400 px-1 py-0.5">Chọn Technical Leader...</span>
+                          ) : (
+                            projectForm.leaderIds.map(id => {
+                              const m = members.find(x => x.id === id);
+                              return (
+                                <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
+                                  {m?.display_name || id}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setProjectForm({
+                                        ...projectForm,
+                                        leaderIds: projectForm.leaderIds.filter(x => x !== id)
+                                      });
+                                    }}
+                                    className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })
+                          )}
+                        </div>
+                        <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+
+                      {modalLeaderDropdownOpen && (
+                        <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[200px] flex flex-col">
+                          <input
+                            type="text"
+                            value={modalLeaderSearch}
+                            onChange={(e) => setModalLeaderSearch(e.target.value)}
+                            placeholder="Search member..."
+                            className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
+                          />
+                          <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[130px]">
+                            {members
+                              .filter(u => u.display_name?.toLowerCase().includes(modalLeaderSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalLeaderSearch.toLowerCase()))
+                              .map((u) => {
+                                const isSelected = projectForm.leaderIds.includes(u.id);
+                                return (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setProjectForm({
+                                        ...projectForm,
+                                        leaderIds: isSelected
+                                          ? projectForm.leaderIds.filter(id => id !== u.id)
+                                          : [...projectForm.leaderIds, u.id]
+                                      });
+                                    }}
+                                    className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
+                                      isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
+                                    }`}
+                                  >
+                                    <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                                    {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Members Field */}
+                    <div ref={modalMemberRef} className="space-y-1 relative">
+                      <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Members</label>
+                      <div
+                        onClick={() => {
+                          setModalMemberDropdownOpen(!modalMemberDropdownOpen);
+                          setModalPmDropdownOpen(false);
+                          setModalLeaderDropdownOpen(false);
+                          setModalSalesDropdownOpen(false);
+                          setModalPhaseDropdownOpen(false);
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
+                      >
+                        <div className="flex flex-wrap gap-1 flex-1">
+                          {projectForm.memberIds.length === 0 ? (
+                            <span className="text-slate-400 px-1 py-0.5">Chọn Members...</span>
+                          ) : (
+                            projectForm.memberIds.map(id => {
+                              const m = members.find(x => x.id === id);
+                              return (
+                                <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
+                                  {m?.display_name || id}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setProjectForm({
+                                        ...projectForm,
+                                        memberIds: projectForm.memberIds.filter(x => x !== id)
+                                      });
+                                    }}
+                                    className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })
+                          )}
+                        </div>
+                        <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+
+                      {modalMemberDropdownOpen && (
+                        <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[200px] flex flex-col">
+                          <input
+                            type="text"
+                            value={modalMemberSearch}
+                            onChange={(e) => setModalMemberSearch(e.target.value)}
+                            placeholder="Search member..."
+                            className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
+                          />
+                          <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[130px]">
+                            {members
+                              .filter(u => u.display_name?.toLowerCase().includes(modalMemberSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalMemberSearch.toLowerCase()))
+                              .map((u) => {
+                                const isSelected = projectForm.memberIds.includes(u.id);
+                                return (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setProjectForm({
+                                        ...projectForm,
+                                        memberIds: isSelected
+                                          ? projectForm.memberIds.filter(id => id !== u.id)
+                                          : [...projectForm.memberIds, u.id]
+                                      });
+                                    }}
+                                    className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
+                                      isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
+                                    }`}
+                                  >
+                                    <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
+                                    {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: KHỞI TẠO & MÔ TẢ */}
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                  <h4 className="text-[11px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>⚙️</span> KHỞI TẠO & MÔ TẢ
+                  </h4>
+                </div>
+
+                {/* Template Selection */}
+                {modalMode === 'create' && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                      Template Khởi tạo
+                    </label>
+                    <select
+                      value={selectedTemplateId}
+                      onChange={e => setSelectedTemplateId(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
+                    >
+                      <option value="">None (Không áp dụng template)</option>
+                      {templates.map(t => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.phases?.length || 18} phases)
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Template Preview Badge */}
+                    {selectedTemplateId && (
+                      <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-3 text-[11px] font-bold text-emerald-800 animate-in fade-in">
+                        <span className="flex items-center gap-1">✓ 18 Phase</span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">✓ 35 Task Group</span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">✓ 220 Tasks</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Description */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Mô tả dự án</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Thông tin ghi chú thêm về dự án..."
+                    value={projectForm.description}
+                    onChange={e => setProjectForm({ ...projectForm, description: e.target.value })}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 focus:border-blue-500 outline-none"
                   />
                 </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Năm <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    required
-                    type="number"
-                    min={1990}
-                    max={2100}
-                    value={projectForm.year}
-                    onChange={e => setProjectForm({ ...projectForm, year: Number(e.target.value) })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                  />
-                </div>
               </div>
 
-              {/* Row 2: Customer & Business */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Khách hàng <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    required
-                    value={projectForm.customerId}
-                    onChange={e => setProjectForm({ ...projectForm, customerId: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer"
-                  >
-                    <option value="">-- Chọn khách hàng --</option>
-                    {modalCustomerOptions.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  {modalCustomerMismatch && (
-                    <p className="text-[10px] font-semibold text-amber-600 flex items-start gap-1">
-                      ⚠ Khách hàng hiện tại không thuộc Workspace đã chọn. Vui lòng chọn khách hàng khác.
-                    </p>
-                  )}
+              {/* LIVE PROJECT SUMMARY CARD */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between font-bold text-slate-700 border-b border-slate-200/80 pb-1">
+                  <span className="flex items-center gap-1 text-[11px]">
+                    <span>📊</span> Project Summary Preview
+                  </span>
+                  <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-extrabold uppercase">
+                    {projectForm.business || 'Infrastructure'}
+                  </span>
                 </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Workspace <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    required
-                    value={projectForm.business}
-                    onChange={e => setProjectForm({ ...projectForm, business: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
-                  >
-                    <option value="Infrastructure">Infrastructure</option>
-                    <option value="Markee">Markee</option>
-                    <option value="All">All (Cả 2 team)</option>
-                  </select>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                  <div>
+                    <span className="text-slate-400 block">Khách hàng:</span>
+                    <span className="font-bold text-slate-800 truncate block">
+                      {projectForm.customerId 
+                        ? (allCustomers.find(c => c.id === Number(projectForm.customerId))?.name || (selectedCustomer ? selectedCustomer.name : 'Chưa chọn KH'))
+                        : (selectedCustomer ? selectedCustomer.name : 'Chưa chọn KH')}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block">Năm:</span>
+                    <span className="font-bold text-slate-800">{projectForm.year}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block">Current Phase:</span>
+                    <span className="font-bold text-slate-800 truncate block">{projectForm.currentPhase}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block">Template:</span>
+                    <span className="font-bold text-slate-800 truncate block">
+                      {selectedTemplateId ? 'Standard Template' : 'None'}
+                    </span>
+                  </div>
                 </div>
-              </div>
-
-              {/* Phase Selection Dropdown */}
-              <div ref={modalPhaseRef} className="space-y-1 relative">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Giai đoạn hiện tại <span className="text-red-500">*</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setModalPhaseDropdownOpen(!modalPhaseDropdownOpen);
-                    setModalPmDropdownOpen(false);
-                    setModalLeaderDropdownOpen(false);
-                    setModalSalesDropdownOpen(false);
-                    setModalMemberDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] flex items-center justify-between outline-none focus:border-blue-500 transition-all cursor-pointer text-left"
-                >
-                  <span className="truncate">{projectForm.currentPhase}</span>
-                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-
-                {modalPhaseDropdownOpen && (
-                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-[160px] overflow-y-auto">
-                    {(dbMasterPhases.length > 0 ? dbMasterPhases.map((m: any) => m.name) : PROJECT_PHASES).map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => {
-                          setProjectForm({ ...projectForm, currentPhase: p });
-                          setModalPhaseDropdownOpen(false);
-                        }}
-                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 transition-colors ${
-                          projectForm.currentPhase === p ? 'bg-blue-50 text-blue-600 font-semibold' : 'text-[#0f172a]'
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* PM Multi-select */}
-              <div ref={modalPmRef} className="space-y-1 relative">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Project Manager (PM)
-                </label>
-                <div
-                  onClick={() => {
-                    setModalPmDropdownOpen(!modalPmDropdownOpen);
-                    setModalLeaderDropdownOpen(false);
-                    setModalSalesDropdownOpen(false);
-                    setModalMemberDropdownOpen(false);
-                    setModalPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
-                >
-                  <div className="flex flex-wrap gap-1 flex-1">
-                    {projectForm.pmIds.length === 0 ? (
-                      <span className="text-slate-400 px-1 py-0.5">Chọn Project Manager (PM)...</span>
-                    ) : (
-                      projectForm.pmIds.map(id => {
-                        const m = members.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setProjectForm({
-                                  ...projectForm,
-                                  pmIds: projectForm.pmIds.filter(x => x !== id)
-                                });
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-
-                {modalPmDropdownOpen && (
-                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[220px] flex flex-col">
-                    <input
-                      type="text"
-                      value={modalPmSearch}
-                      onChange={(e) => setModalPmSearch(e.target.value)}
-                      placeholder="Tìm kiếm PM..."
-                      className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
-                    />
-                    <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[140px]">
-                      {members
-                        .filter(u => u.display_name?.toLowerCase().includes(modalPmSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalPmSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = projectForm.pmIds.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                setProjectForm({
-                                  ...projectForm,
-                                  pmIds: isSelected
-                                    ? projectForm.pmIds.filter(id => id !== u.id)
-                                    : [...projectForm.pmIds, u.id]
-                                });
-                              }}
-                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
-                                isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
-                              }`}
-                            >
-                              <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Technical Leader Multi-select */}
-              <div ref={modalLeaderRef} className="space-y-1 relative">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Technical Leader
-                </label>
-                <div
-                  onClick={() => {
-                    setModalLeaderDropdownOpen(!modalLeaderDropdownOpen);
-                    setModalPmDropdownOpen(false);
-                    setModalSalesDropdownOpen(false);
-                    setModalMemberDropdownOpen(false);
-                    setModalPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
-                >
-                  <div className="flex flex-wrap gap-1 flex-1">
-                    {projectForm.leaderIds.length === 0 ? (
-                      <span className="text-slate-400 px-1 py-0.5">Chọn Technical Leader...</span>
-                    ) : (
-                      projectForm.leaderIds.map(id => {
-                        const m = members.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setProjectForm({
-                                  ...projectForm,
-                                  leaderIds: projectForm.leaderIds.filter(x => x !== id)
-                                });
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-
-                {modalLeaderDropdownOpen && (
-                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[220px] flex flex-col">
-                    <input
-                      type="text"
-                      value={modalLeaderSearch}
-                      onChange={(e) => setModalLeaderSearch(e.target.value)}
-                      placeholder="Tìm kiếm Technical Leader..."
-                      className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
-                    />
-                    <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[140px]">
-                      {members
-                        .filter(u => u.display_name?.toLowerCase().includes(modalLeaderSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalLeaderSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = projectForm.leaderIds.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                setProjectForm({
-                                  ...projectForm,
-                                  leaderIds: isSelected
-                                    ? projectForm.leaderIds.filter(id => id !== u.id)
-                                    : [...projectForm.leaderIds, u.id]
-                                });
-                              }}
-                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
-                                isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
-                              }`}
-                            >
-                              <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Sales Multi-select */}
-              <div ref={modalSalesRef} className="space-y-1 relative">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Sales
-                </label>
-                <div
-                  onClick={() => {
-                    setModalSalesDropdownOpen(!modalSalesDropdownOpen);
-                    setModalPmDropdownOpen(false);
-                    setModalLeaderDropdownOpen(false);
-                    setModalMemberDropdownOpen(false);
-                    setModalPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
-                >
-                  <div className="flex flex-wrap gap-1 flex-1">
-                    {projectForm.salesIds.length === 0 ? (
-                      <span className="text-slate-400 px-1 py-0.5">Chọn Sales...</span>
-                    ) : (
-                      projectForm.salesIds.map(id => {
-                        const m = members.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setProjectForm({
-                                  ...projectForm,
-                                  salesIds: projectForm.salesIds.filter(x => x !== id)
-                                });
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-
-                {modalSalesDropdownOpen && (
-                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[220px] flex flex-col">
-                    <input
-                      type="text"
-                      value={modalSalesSearch}
-                      onChange={(e) => setModalSalesSearch(e.target.value)}
-                      placeholder="Tìm kiếm Sales..."
-                      className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
-                    />
-                    <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[140px]">
-                      {members
-                        .filter(u => u.display_name?.toLowerCase().includes(modalSalesSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalSalesSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = projectForm.salesIds.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                setProjectForm({
-                                  ...projectForm,
-                                  salesIds: isSelected
-                                    ? projectForm.salesIds.filter(id => id !== u.id)
-                                    : [...projectForm.salesIds, u.id]
-                                });
-                              }}
-                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
-                                isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
-                              }`}
-                            >
-                              <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Members Multi-select */}
-              <div ref={modalMemberRef} className="space-y-1 relative">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Thành viên dự án
-                </label>
-                <div
-                  onClick={() => {
-                    setModalMemberDropdownOpen(!modalMemberDropdownOpen);
-                    setModalPmDropdownOpen(false);
-                    setModalLeaderDropdownOpen(false);
-                    setModalSalesDropdownOpen(false);
-                    setModalPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-[#0f172a] flex flex-wrap gap-1 items-center justify-between min-h-[36px] cursor-pointer focus-within:border-blue-500 transition-all"
-                >
-                  <div className="flex flex-wrap gap-1 flex-1">
-                    {projectForm.memberIds.length === 0 ? (
-                      <span className="text-slate-400 px-1 py-0.5">Chọn thành viên tham gia...</span>
-                    ) : (
-                      projectForm.memberIds.map(id => {
-                        const m = members.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setProjectForm({
-                                  ...projectForm,
-                                  memberIds: projectForm.memberIds.filter(x => x !== id)
-                                });
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5 text-xs"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-
-                {modalMemberDropdownOpen && (
-                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1.5 max-h-[220px] flex flex-col">
-                    <input
-                      type="text"
-                      value={modalMemberSearch}
-                      onChange={(e) => setModalMemberSearch(e.target.value)}
-                      placeholder="Tìm kiếm thành viên..."
-                      className="w-full bg-slate-50 border border-slate-200 text-[#0f172a] px-2.5 py-1.5 rounded-md text-xs focus:outline-none focus:border-blue-500"
-                    />
-                    <div className="overflow-y-auto space-y-0.5 flex-1 max-h-[140px]">
-                      {members
-                        .filter(u => u.display_name?.toLowerCase().includes(modalMemberSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(modalMemberSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = projectForm.memberIds.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                setProjectForm({
-                                  ...projectForm,
-                                  memberIds: isSelected
-                                    ? projectForm.memberIds.filter(id => id !== u.id)
-                                    : [...projectForm.memberIds, u.id]
-                                });
-                              }}
-                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-slate-50 rounded transition-colors flex items-center justify-between ${
-                                isSelected ? 'bg-blue-50 text-blue-600 font-bold' : 'text-[#0f172a]'
-                              }`}
-                            >
-                              <span>{u.display_name} <span className="text-[9px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[12px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-
-
-              {/* Template Selection (Chỉ hiện khi tạo mới) */}
-              {modalMode === 'create' && (
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Áp dụng Template (Tùy chọn)
-                  </label>
-                  <select
-                    value={selectedTemplateId}
-                    onChange={e => setSelectedTemplateId(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer"
-                  >
-                    <option value="">-- Không áp dụng template --</option>
-                    {templates.map(t => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({t.phases?.length || 0} phases)
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-slate-400 italic">
-                    Chọn template để tự động tạo Phase + Task cha cho dự án mới sau khi tạo.
-                  </p>
-                </div>
-              )}
-
-              {/* Description */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả dự án</label>
-                <textarea
-                  rows={3}
-                  placeholder="Thông tin thêm về dự án..."
-                  value={projectForm.description}
-                  onChange={e => setProjectForm({ ...projectForm, description: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 focus:border-blue-500 outline-none"
-                />
               </div>
 
               {/* Modal Buttons */}
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-4">
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
                 <button
                   type="button"
                   onClick={() => setShowProjectModal(false)}
-                  className="bg-slate-150 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-xs font-bold transition-all"
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-50"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-50 cursor-pointer"
                 >
-                  {modalMode === 'create' ? 'Tạo dự án mới' : 'Cập nhật dự án'}
+                  {modalMode === 'create' ? 'Tạo dự án' : 'Cập nhật dự án'}
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
       )}
 
       {/* ============================================================== */}

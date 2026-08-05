@@ -743,7 +743,7 @@ export default function NewProjectPage() {
                 ) : (
                   <>
                     <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>add_circle</span>
-                    Tạo dự án mới
+                    Tạo dự án
                   </>
                 )}
               </button>
