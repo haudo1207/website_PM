@@ -6857,7 +6857,7 @@ value={editValue}
                 {/* Business */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Business <span className="text-rose-500 font-bold">*</span>
+                    Workspace <span className="text-rose-500 font-bold">*</span>
                   </label>
                   <select
                     required
@@ -6916,7 +6916,7 @@ value={editValue}
                   {editCustomerMismatch && (
                     <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
                       <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>
-                      Khách hàng hiện tại không thuộc Business đã chọn. Vui lòng chọn khách hàng khác.
+                      Khách hàng hiện tại không thuộc Workspace đã chọn. Vui lòng chọn khách hàng khác.
                     </p>
                   )}
 
