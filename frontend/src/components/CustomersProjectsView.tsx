@@ -100,6 +100,18 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const modalPhaseRef = React.useRef<HTMLDivElement>(null);
   const nameInputRef = React.useRef<HTMLInputElement>(null);
 
+  // Body scroll lock effect when modal is active
+  useEffect(() => {
+    if (showProjectModal || showCustomerDeleteModal || showProjectDeleteModal) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showProjectModal, showCustomerDeleteModal, showProjectDeleteModal]);
+
   // Click outside listener for modal dropdowns
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -882,8 +894,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       {/* PROJECT CREATE/EDIT MODAL */}
       {/* ============================================================== */}
       {showProjectModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-0 [@media(min-height:700px)]:p-4">
-          <div className="bg-white border-0 [@media(min-height:700px)]:border border-slate-200 w-full h-full rounded-none [@media(min-height:700px)]:w-[90vw] [@media(min-height:700px)]:max-w-[1000px] [@media(min-height:700px)]:h-[90vh] [@media(min-height:700px)]:max-h-[900px] [@media(min-height:700px)]:rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center responsive-modal-overlay">
+          <div className="bg-white border border-slate-200 shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
             
             {/* Header with Context Pill */}
             <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
