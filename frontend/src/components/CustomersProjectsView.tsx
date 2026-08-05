@@ -882,8 +882,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       {/* PROJECT CREATE/EDIT MODAL */}
       {/* ============================================================== */}
       {showProjectModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white border border-slate-200 w-[90vw] max-w-[1000px] h-[90vh] max-h-[900px] rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white border border-slate-200 w-[92vw] max-w-[1000px] h-[90vh] max-h-[calc(100vh-2rem)] sm:max-h-[880px] rounded-2xl shadow-2xl overflow-hidden flex flex-col min-h-0 animate-in fade-in zoom-in duration-200">
             
             {/* Header with Context Pill */}
             <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
@@ -911,10 +911,10 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </button>
             </div>
 
-            <form onSubmit={handleSaveProjectForm} className="flex flex-col flex-1 overflow-hidden min-h-0">
+            <form onSubmit={handleSaveProjectForm} className="flex flex-col flex-1 overflow-hidden min-h-0 h-full">
               
               {/* Scrollable Form Content Body */}
-              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1">
+              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1 min-h-0">
                 
                 {/* SECTION 1: THÔNG TIN DỰ ÁN */}
                 <div className="space-y-3.5 bg-slate-50/50 p-3.5 sm:p-4 rounded-xl border border-slate-100">
