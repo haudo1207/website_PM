@@ -231,6 +231,7 @@ export const generateMeetingLink = (data: { platform: string; title: string; dat
   api.post('/meetings/generate-link', data).then(r => r.data);
 export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);
 export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
+export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);
 
 
 
