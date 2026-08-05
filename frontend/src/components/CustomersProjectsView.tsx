@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin, isAdmin } from '@/lib/auth';
 import {
@@ -46,6 +47,12 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const [activeBU, setActiveBU] = useState<'infrastructure' | 'markee'>('infrastructure');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
+
+  // Mounted state for SSR-safe portal rendering
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Filter/Search states
   const [customerSearch, setCustomerSearch] = useState('');
@@ -896,7 +903,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       {/* ============================================================== */}
       {/* PROJECT CREATE/EDIT MODAL */}
       {/* ============================================================== */}
-      {showProjectModal && (
+      {showProjectModal && mounted && createPortal(
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-start justify-center responsive-modal-overlay">
           <div className="bg-white border border-slate-200 shadow-2xl flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
             
@@ -1558,13 +1565,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ============================================================== */}
       {/* CUSTOMER DELETE CONFIRMATION MODAL */}
       {/* ============================================================== */}
-      {showCustomerDeleteModal && deletingCustomer && (
+      {showCustomerDeleteModal && deletingCustomer && mounted && createPortal(
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
             <div className="flex items-center gap-3 text-red-600 mb-3">
@@ -1646,13 +1654,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ============================================================== */}
       {/* PROJECT DELETE CONFIRMATION MODAL */}
       {/* ============================================================== */}
-      {showProjectDeleteModal && deletingProject && (
+      {showProjectDeleteModal && deletingProject && mounted && createPortal(
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
             <div className="flex items-center gap-3 text-red-600 mb-3">
@@ -1708,7 +1717,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>
