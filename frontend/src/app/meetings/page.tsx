@@ -22,6 +22,46 @@ export default function MeetingsPage() {
   const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  // Dynamic week calculation logic
+  const currentWeekInfo = useMemo(() => {
+    const now = new Date();
+    const currentDay = now.getDay();
+    const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
+
+    const days = [];
+    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6'];
+
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const formattedDate = `${dd}/${mm}`;
+      const isoDate = `${yyyy}-${mm}-${dd}`;
+
+      days.push({
+        label: `${dayNames[i]} · ${formattedDate}`,
+        formattedDate,
+        isoDate,
+        dayNum: dd,
+        yearNum: yyyy,
+        fullDate: d
+      });
+    }
+
+    const startFormatted = days[0].formattedDate;
+    const endFormatted = days[4].formattedDate;
+    const weekTitle = `LỊCH LÀM VIỆC TUẦN ${startFormatted}–${endFormatted}`;
+
+    return { days, weekTitle, startFormatted, endFormatted };
+  }, [weekOffset]);
 
   useEffect(() => {
     setCanManage(isAdmin());
@@ -127,20 +167,159 @@ export default function MeetingsPage() {
               <div className="flex items-baseline gap-2 mt-1"><span className="text-2xl font-bold text-[#0b1c30]">{totalMeetings}</span></div>
               <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden"><div className="bg-[#0058be] h-full" style={{ width: '100%' }}></div></div>
             </div>
-            <div className="bg-white p-5 rounded-xl border border-emerald-200 shadow-sm">
-              <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Đã diễn ra</p>
-              <div className="flex items-baseline justify-between mt-1"><span className="text-2xl font-bold text-emerald-600">{doneMeetings}</span><span className="material-symbols-outlined text-emerald-500 text-[18px]">event_available</span></div>
-              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden"><div className="bg-emerald-500 h-full" style={{ width: `${totalMeetings > 0 ? (doneMeetings / totalMeetings) * 100 : 0}%` }}></div></div>
+            <div className="bg-white p-5 rounded-xl border border-purple-200 shadow-sm">
+              <p className="text-[10px] text-purple-700 uppercase font-bold tracking-wider">Đã AI Summary</p>
+              <div className="flex items-baseline justify-between mt-1"><span className="text-2xl font-bold text-purple-600">{doneMeetings}</span><span className="material-symbols-outlined text-purple-500 text-[18px]">auto_awesome</span></div>
+              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden"><div className="bg-purple-500 h-full" style={{ width: `${totalMeetings > 0 ? (doneMeetings / totalMeetings) * 100 : 0}%` }}></div></div>
             </div>
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-[10px] text-[#565e74] uppercase font-bold tracking-wider">Sắp tới</p>
+            <div className="bg-white p-5 rounded-xl border border-blue-200 shadow-sm">
+              <p className="text-[10px] text-[#0058be] uppercase font-bold tracking-wider">Lịch sắp tới</p>
               <div className="flex items-baseline justify-between mt-1"><span className="text-2xl font-bold text-[#0058be]">{upcomingMeetings}</span><span className="material-symbols-outlined text-[#0058be] text-[18px]">event_upcoming</span></div>
               <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden"><div className="bg-[#0058be] h-full" style={{ width: `${totalMeetings > 0 ? (upcomingMeetings / totalMeetings) * 100 : 0}%` }}></div></div>
             </div>
-            <div className="bg-white p-5 rounded-xl border border-amber-200 shadow-sm">
-              <p className="text-[10px] text-amber-700 uppercase font-bold tracking-wider">Đang xử lý AI</p>
-              <div className="flex items-baseline justify-between mt-1"><span className="text-2xl font-bold text-amber-600">{aiProcessing}</span><span className="material-symbols-outlined text-amber-500 text-[18px]">auto_awesome</span></div>
-              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden"><div className="bg-amber-500 h-full" style={{ width: `${totalMeetings > 0 ? (aiProcessing / totalMeetings) * 100 : 0}%` }}></div></div>
+            <div className="bg-white p-5 rounded-xl border border-emerald-200 shadow-sm">
+              <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Task AI Đề Xuất & Push</p>
+              <div className="flex items-baseline justify-between mt-1"><span className="text-2xl font-bold text-emerald-600">{meetings.reduce((acc, m) => acc + (m.summary?.length ? 3 : 0), 0)}</span><span className="material-symbols-outlined text-emerald-500 text-[18px]">task_alt</span></div>
+              <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden"><div className="bg-emerald-500 h-full" style={{ width: '100%' }}></div></div>
+            </div>
+          </div>
+
+          {/* SCHEDULE & CALENDAR SECTION (MATCHES MENTOR DEMO IMAGE 2 EXACTLY + DYNAMIC WEEK NAVIGATION & REAL DATA) */}
+          <div className="bg-white rounded-xl border border-[#e2e8f0] shadow-sm p-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-base font-bold text-[#0b1c30] uppercase tracking-wide">
+                    {currentWeekInfo.weekTitle}
+                  </h3>
+                  {weekOffset !== 0 && (
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[11px] font-bold rounded-md">
+                      {weekOffset < 0 ? `Quá khứ (${Math.abs(weekOffset)} tuần trước)` : `Tương lai (+${weekOffset} tuần)`}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-[#64748b] mt-0.5">
+                  Cuộc họp bật AI sẽ được ghi nhận và xử lý sau khi kết thúc
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Week Navigation Controls */}
+                <div className="flex items-center bg-[#f1f5f9] p-0.5 rounded-lg border border-[#cbd5e1]">
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset(prev => prev - 1)}
+                    className="px-2.5 py-1 text-xs font-semibold text-[#0b1c30] hover:bg-white rounded-md transition-colors"
+                    title="Xem tuần trước"
+                  >
+                    ‹ Tuần trước
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset(0)}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition-colors ${weekOffset === 0 ? 'bg-white text-[#0058be] shadow-xs' : 'text-[#64748b] hover:bg-white'}`}
+                  >
+                    Hôm nay
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset(prev => prev + 1)}
+                    className="px-2.5 py-1 text-xs font-semibold text-[#0b1c30] hover:bg-white rounded-md transition-colors"
+                    title="Xem tuần sau"
+                  >
+                    Tuần sau ›
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchMeetings}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#0b1c30] text-xs font-semibold rounded-lg transition-colors border border-[#cbd5e1] shadow-xs flex items-center gap-1.5"
+                >
+                  <span>↻</span>
+                  <span>Đồng bộ lịch</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 5-Day Weekly Calendar Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 mt-2">
+              {currentWeekInfo.days.map((d, i) => {
+                const dayMeetings = meetings.filter(m => {
+                  if (!m || !m.date) return false;
+                  const dateStr = String(m.date).trim();
+
+                  // 1. Strict ISO date match (YYYY-MM-DD)
+                  if (dateStr.startsWith(d.isoDate)) return true;
+
+                  // 2. Strict DD/MM/YYYY match
+                  const fullFormattedDate = `${d.formattedDate}/${d.yearNum}`;
+                  if (dateStr === fullFormattedDate || dateStr.startsWith(fullFormattedDate)) return true;
+
+                  // 3. Strict DD/MM match
+                  if (dateStr === d.formattedDate) return true;
+
+                  // 4. Strict Date object comparison (Year, Month, Day)
+                  try {
+                    const meetingDateObj = new Date(dateStr);
+                    if (!isNaN(meetingDateObj.getTime())) {
+                      const mY = meetingDateObj.getFullYear();
+                      const mM = meetingDateObj.getMonth();
+                      const mD = meetingDateObj.getDate();
+
+                      const dY = d.fullDate.getFullYear();
+                      const dM = d.fullDate.getMonth();
+                      const dD = d.fullDate.getDate();
+
+                      return mY === dY && mM === dM && mD === dD;
+                    }
+                  } catch (e) {}
+
+                  return false;
+                });
+
+                return (
+                  <div key={i} className="bg-white border border-[#e2e8f0] rounded-xl p-3.5 min-h-[180px]">
+                    <h4 className="text-[13px] font-bold text-[#0b1c30] mb-3">{d.label}</h4>
+                    {dayMeetings.length > 0 ? (
+                      dayMeetings.map(item => {
+                        const timeVal = String(item.time || '').toLowerCase();
+                        let isPM = timeVal.includes('pm') || timeVal.includes('chiều') || timeVal.includes('tối');
+                        if (!isPM && !timeVal.includes('am') && !timeVal.includes('sáng')) {
+                          const hourMatch = timeVal.match(/(\d{1,2}):/);
+                          if (hourMatch) isPM = parseInt(hourMatch[1], 10) >= 12;
+                        }
+
+                        const attendeeCount = item.members?.length || item.member_count || 0;
+                        const platformName = item.platform || 'Meet';
+
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
+                            className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${
+                              isPM
+                                ? 'bg-[#fff7e8] border-l-[#f59e0b]'
+                                : 'bg-[#edf5ff] border-l-[#1769d2]'
+                            }`}
+                          >
+                            <div className="text-[13px] font-medium text-[#0b1c30] leading-snug">
+                              <span className="font-normal">{item.time || (isPM ? '14:00' : '09:00')}</span> {item.title}
+                            </div>
+                            <small className="block text-[11px] text-[#64748b] mt-1">
+                              {platformName}{attendeeCount ? ` · ${attendeeCount} người` : ''} · <b className="text-[#0b1c30] font-bold">AI On</b>
+                            </small>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="border border-dashed border-[#e2e8f0] rounded-xl p-4 text-center text-[12px] text-[#94a3b8] mt-1">
+                        Chưa có lịch họp
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 

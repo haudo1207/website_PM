@@ -9,14 +9,27 @@ interface CreateMeetingModalProps {
   initialData?: any;
 }
 
+interface MeetingFormData {
+  title: string;
+  platform: string;
+  date: string;
+  time: string;
+  duration: string;
+  link: string;
+  transcript?: string;
+  auto_summarize?: boolean;
+}
+
 export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData }: CreateMeetingModalProps) {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<MeetingFormData>({
     title: '',
     platform: 'Google Meet',
     date: '',
     time: '',
     duration: '60',
-    link: ''
+    link: '',
+    transcript: '',
+    auto_summarize: true
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
@@ -27,7 +40,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     if (initialData) {
       setFormData({ 
         ...initialData, 
-        platform: initialData.platform || 'Google Meet' 
+        platform: initialData.platform || 'Google Meet',
+        transcript: initialData.transcript || '',
+        auto_summarize: true
       });
     } else {
       const today = new Date().toISOString().split('T')[0];
@@ -37,7 +52,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         date: today,
         time: '09:00',
         duration: '60',
-        link: ''
+        link: '',
+        transcript: '',
+        auto_summarize: true
       });
     }
     setError('');
@@ -285,6 +302,28 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     </p>
                   )}
                 </>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                <span>Biên bản cuộc họp / Transcript (Tùy chọn)</span>
+                <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[11px] normal-case">
+                  <Sparkles size={13} /> AI Auto Summary
+                </span>
+              </label>
+              <textarea
+                value={formData.transcript || ''}
+                onChange={e => setFormData({ ...formData, transcript: e.target.value })}
+                placeholder="Dán nội dung thảo luận / transcript cuộc họp vào đây để AI tự động phân tích & tóm tắt..."
+                rows={3}
+                className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none placeholder:text-slate-400"
+              />
+              {formData.transcript && formData.transcript.trim() && (
+                <div className="mt-1.5 flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-[11px] text-emerald-800 font-medium">
+                  <span className="material-symbols-outlined text-[16px] text-emerald-600 shrink-0">auto_awesome</span>
+                  <span>✨ AI sẽ tự động bóc tách & tạo <b>Tóm Tắt Cuộc Họp (Meeting Summary)</b> ngay khi lưu!</span>
+                </div>
               )}
             </div>
           </div>

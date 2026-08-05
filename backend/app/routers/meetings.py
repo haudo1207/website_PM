@@ -57,41 +57,55 @@ def meeting_to_dict(m: Meeting) -> dict:
         if end_mins >= start_mins:
             duration = end_mins - start_mins
 
-    # Format AI Summary object (JSONB/dict/list) to a flat array for frontend compatibility
+    proj_name = m.project.name if m.project else "Dự án chung"
+
+    executive_summary = ""
+    decisions = []
+    recommended_tasks = []
     summary_list = []
+
+    # Only process AI summary if meeting actually has ai_summary JSON or has a transcript uploaded
     if m.ai_summary:
-        if isinstance(m.ai_summary, list):
+        if isinstance(m.ai_summary, dict):
+            executive_summary = m.ai_summary.get("executive_summary") or m.ai_summary.get("summary") or ""
+            decisions = m.ai_summary.get("decisions") or []
+            recommended_tasks = m.ai_summary.get("recommended_tasks") or m.ai_summary.get("action_items") or []
+        elif isinstance(m.ai_summary, list):
             summary_list = [str(item) for item in m.ai_summary]
-        elif isinstance(m.ai_summary, dict):
-            if "lines" in m.ai_summary and isinstance(m.ai_summary["lines"], list):
-                summary_list = [str(item) for item in m.ai_summary["lines"]]
-            else:
-                sum_text = m.ai_summary.get("summary")
-                if sum_text:
-                    if "MEETING SUMMARY" in str(sum_text):
-                        summary_list = [l.rstrip() for l in str(sum_text).split("\n") if l.strip()]
-                    else:
-                        summary_list.append(str(sum_text))
+            if summary_list:
+                executive_summary = summary_list[0]
+    elif m.transcript and m.transcript.strip():
+        try:
+            from ..services.meeting_sync import summarize_meeting_with_ai_structured
+            meeting_info = {
+                "title": m.title,
+                "project": proj_name,
+                "project_name": proj_name,
+                "date": m.meeting_date.isoformat() if m.meeting_date else "",
+                "transcript": m.transcript
+            }
+            ai_res = summarize_meeting_with_ai_structured(m.transcript, meeting_info)
+            executive_summary = ai_res.get("executive_summary") or ""
+            decisions = ai_res.get("decisions") or []
+            recommended_tasks = ai_res.get("recommended_tasks") or []
+        except Exception as e:
+            logger.warning(f"Failed to generate dynamic AI summary for meeting {m.id}: {e}")
 
-                decisions = m.ai_summary.get("decisions") or []
-                if decisions:
-                    summary_list.append("1. QUYẾT ĐỊNH CHÍNH:")
-                    for d in decisions:
-                        summary_list.append(f"• {d}")
-
-                action_items = m.ai_summary.get("action_items") or []
-                if action_items and not ("MEETING SUMMARY" in str(sum_text or "")):
-                    summary_list.append("2. HÀNH ĐỘNG TIẾP THEO:")
-                    for a in action_items:
-                        summary_list.append(f"• {a}")
-
-                issues = m.ai_summary.get("issues") or []
-                if issues:
-                    summary_list.append("3. VẤN ĐỀ CẦN GIẢI QUYẾT:")
-                    for i in issues:
-                        summary_list.append(f"• {i}")
-        else:
-            summary_list = [str(m.ai_summary)]
+    # Build summary_list if empty
+    if not summary_list:
+        if executive_summary:
+            summary_list.append(executive_summary)
+        if decisions:
+            summary_list.append("1. QUYẾT ĐỊNH CHÍNH:")
+            for d in decisions:
+                summary_list.append(f"• {d}")
+        if recommended_tasks:
+            summary_list.append("2. TASK AI ĐỀ XUẤT:")
+            for idx, t in enumerate(recommended_tasks):
+                if isinstance(t, dict):
+                    summary_list.append(f"• {t.get('detail_task')} (Priority: {t.get('priority', 'Normal')})")
+                elif isinstance(t, str):
+                    summary_list.append(f"• {t}")
 
     return {
         "id": m.id,
@@ -99,21 +113,24 @@ def meeting_to_dict(m: Meeting) -> dict:
         "description": m.description,
         "platform": m.platform,
         "meeting_url": m.meeting_url,
-        "link": m.meeting_url, # Frontend uses meeting.link
-        "date": m.meeting_date.isoformat() if m.meeting_date else None, # Frontend uses date
+        "link": m.meeting_url,
+        "date": m.meeting_date.isoformat() if m.meeting_date else None,
         "meeting_date": m.meeting_date.isoformat() if m.meeting_date else None,
-        "time": m.start_time.strftime("%H:%M") if m.start_time else None, # Frontend uses time
+        "time": m.start_time.strftime("%H:%M") if m.start_time else None,
         "start_time": m.start_time.strftime("%H:%M") if m.start_time else None,
-        "endTime": m.end_time.strftime("%H:%M") if m.end_time else None, # Frontend uses endTime
+        "endTime": m.end_time.strftime("%H:%M") if m.end_time else None,
         "end_time": m.end_time.strftime("%H:%M") if m.end_time else None,
         "duration": duration,
-        "status": STATUS_DB_TO_FE.get(m.status, m.status), # Map to FE status text label
+        "status": STATUS_DB_TO_FE.get(m.status, m.status),
         "transcript": m.transcript,
         "ai_summary": m.ai_summary,
-        "summary": summary_list, # Map to FE flat list structure
+        "summary": summary_list,
+        "executive_summary": executive_summary,
+        "decisions": decisions,
+        "recommended_tasks": recommended_tasks,
         "project_id": m.project_id,
-        "project": m.project.name if m.project else None, # Frontend uses project (string)
-        "project_name": m.project.name if m.project else None,
+        "project": proj_name,
+        "project_name": proj_name,
         "created_by": m.created_by,
         "creator_name": m.creator.display_name if m.creator else None,
         "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -126,7 +143,8 @@ def meeting_to_dict(m: Meeting) -> dict:
                 "role": mm.role,
                 "joined_at": mm.joined_at.isoformat() if mm.joined_at else None
             } for mm in m.members
-        ]
+        ],
+        "member_count": len(m.members)
     }
 
 # ─── LIST ───────────────────────────────────────────────
@@ -333,6 +351,23 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         project_id=project_id,
         created_by=created_by
     )
+    # Auto-summarize with AI if transcript is provided
+    if m.transcript and m.transcript.strip() and (not m.ai_summary or body.get("auto_summarize")):
+        try:
+            from ..services.meeting_sync import summarize_with_ai
+            meeting_info = {
+                "title": m.title,
+                "date": m.meeting_date.isoformat() if m.meeting_date else "",
+                "meeting_date": m.meeting_date,
+                "start_time": m.start_time,
+                "transcript": m.transcript,
+            }
+            summary_result = summarize_with_ai(m.transcript, meeting_info)
+            if summary_result:
+                m.ai_summary = summary_result
+                m.status = "DONE"
+        except Exception as e:
+            logger.warning(f"Auto-summarize meeting {m.id} on create failed: {e}")
 
     db.add(m)
     db.commit()
@@ -679,5 +714,71 @@ def google_callback(code: str, state: str = None, db: Session = Depends(get_db))
             "access_token": creds.token,
             "refresh_token": creds.refresh_token,
         })
+        db.commit()
 
-    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google=success")
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
+
+
+# ─── PUSH MEETING AI RECOMMENDED TASKS INTO PROJECT ───────
+@router.post("/{id}/push-tasks")
+def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Push AI recommended meeting tasks into Project/AITaskInbox."""
+    m = db.query(Meeting).filter(Meeting.id == id).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy cuộc họp")
+
+    tasks_data = body.get("tasks", [])
+    if not isinstance(tasks_data, list) or not tasks_data:
+        raise HTTPException(400, "Vui lòng cung cấp danh sách task cần push")
+
+    pushed_count = 0
+    from ..models.ai_task_inbox import AITaskInbox
+    from ..models.project import Project
+    from ..models.member import Member
+
+    for item in tasks_data:
+        detail_task = str(item.get("detail_task") or item.get("title") or item.get("name") or "").strip()
+        if not detail_task:
+            continue
+
+        project_id = item.get("project_id") or m.project_id
+        if not project_id and item.get("project_name"):
+            p_obj = db.query(Project).filter(Project.name.ilike(str(item["project_name"]).strip())).first()
+            if p_obj:
+                project_id = p_obj.id
+
+        if not project_id:
+            first_p = db.query(Project).first()
+            if first_p:
+                project_id = first_p.id
+
+        if not project_id:
+            continue
+
+        assigned_id = item.get("assigned_id")
+        assigned_name = item.get("assigned_name") or item.get("member_name") or item.get("owner")
+        if not assigned_id and assigned_name:
+            mb = db.query(Member).filter(Member.display_name.ilike(str(assigned_name).strip())).first()
+            if not mb:
+                mb = db.query(Member).filter(Member.full_name.ilike(str(assigned_name).strip())).first()
+            if mb:
+                assigned_id = mb.id
+
+        inbox_task = AITaskInbox(
+            project_id=project_id,
+            source_platform=m.platform or "Meeting AI",
+            source_group_name=m.title or "Cuộc họp",
+            source_message=f"[Meeting: {m.title}] {detail_task}",
+            detail_task=detail_task,
+            priority=item.get("priority", "Normal"),
+            assigned_id=assigned_id,
+            assigned_name=assigned_name,
+            acceptance_criteria=f"Hạn hoàn thành: {item.get('deadline', 'Chưa xác định')}",
+            status="PENDING",
+            manday_est=float(item.get("manday_est", 1.0)),
+        )
+        db.add(inbox_task)
+        pushed_count += 1
+
+    db.commit()
+    return {"success": True, "pushed_count": pushed_count, "message": f"Đã push {pushed_count} task vào Project thành công!"}
