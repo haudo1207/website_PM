@@ -305,26 +305,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               )}
             </div>
 
-            <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5 flex items-center justify-between">
-                <span>Biên bản cuộc họp / Transcript (Tùy chọn)</span>
-                <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[11px] normal-case">
-                  <Sparkles size={13} /> AI Auto Summary
-                </span>
-              </label>
-              <textarea
-                value={formData.transcript || ''}
-                onChange={e => setFormData({ ...formData, transcript: e.target.value })}
-                placeholder="Dán nội dung thảo luận / transcript cuộc họp vào đây để AI tự động phân tích & tóm tắt..."
-                rows={3}
-                className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none placeholder:text-slate-400"
-              />
-              {formData.transcript && formData.transcript.trim() && (
-                <div className="mt-1.5 flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-[11px] text-emerald-800 font-medium">
-                  <span className="material-symbols-outlined text-[16px] text-emerald-600 shrink-0">auto_awesome</span>
-                  <span>✨ AI sẽ tự động bóc tách & tạo <b>Tóm Tắt Cuộc Họp (Meeting Summary)</b> ngay khi lưu!</span>
-                </div>
-              )}
+            {/* Auto AI Summary Notice */}
+            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-[#6d28d9] text-xs">
+                <Sparkles size={14} />
+                <span>Tự động thu âm & AI Summary</span>
+              </div>
+              <p className="text-[11px] text-[#516079] leading-relaxed font-medium">
+                Khi cuộc họp kết thúc, hệ thống sẽ tự động đồng bộ transcript từ link Zoom hoặc Google Meet để AI phân tích và gợi ý task vào dự án.
+              </p>
             </div>
           </div>
 

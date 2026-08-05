@@ -1,6 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
+import { Share2, Check, ExternalLink, Video } from 'lucide-react';
 
 interface MeetingCardProps {
   meeting: any;
@@ -11,11 +12,12 @@ interface MeetingCardProps {
 }
 
 export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingCardProps) {
+  const [copied, setCopied] = useState(false);
+
   const statusUpper = String(meeting.status || 'CHƯA DIỄN RA').toUpperCase();
   const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
   const isProcessing = statusUpper === 'ĐANG XỬ LÝ AI' || (meeting as any).ai_status === 'processing';
   
-  // Real attendee count from meeting.members array
   const attendeeCount = Array.isArray(meeting.members) 
     ? meeting.members.length 
     : (meeting.member_count !== undefined ? meeting.member_count : (meeting.people || 0));
@@ -24,6 +26,15 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
   const execSummary = meeting.executive_summary || (meeting.summary && meeting.summary.length ? meeting.summary[0] : '');
   const hasAISummary = Boolean(execSummary && isDone);
   const tasksCount = Array.isArray(meeting.recommended_tasks) ? meeting.recommended_tasks.length : 0;
+
+  const meetingLink = meeting.link || meeting.meeting_url;
+
+  const handleShare = () => {
+    const urlToCopy = meetingLink || window.location.href;
+    navigator.clipboard.writeText(urlToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-[#e4eaf3] p-5 shadow-xs hover:shadow-md transition-all space-y-4">
@@ -49,7 +60,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
             )}
           </div>
           
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
             {/* Real AI Summary Badge */}
             {hasAISummary ? (
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
@@ -64,19 +75,63 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
                 Chưa có AI Summary
               </span>
             )}
+
+            {meeting.platform && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                {meeting.platform}
+              </span>
+            )}
           </div>
         </div>
 
-        {onDelete && (
-          <button onClick={() => onDelete(meeting.id)} className="text-[11px] text-slate-400 hover:text-red-500 font-medium">Xóa</button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Share Link Button */}
+          <button
+            type="button"
+            onClick={handleShare}
+            className="text-xs font-semibold text-[#1769d2] hover:text-[#1258b3] flex items-center gap-1 bg-blue-50 px-2.5 py-1 rounded-lg transition-colors border border-blue-100"
+            title="Sao chép đường link cuộc họp"
+          >
+            {copied ? (
+              <>
+                <Check size={13} className="text-emerald-600" />
+                <span className="text-emerald-600 font-bold">Đã chép link!</span>
+              </>
+            ) : (
+              <>
+                <Share2 size={13} />
+                <span>Chia sẻ link</span>
+              </>
+            )}
+          </button>
+
+          {onDelete && (
+            <button onClick={() => onDelete(meeting.id)} className="text-[11px] text-slate-400 hover:text-red-500 font-medium ml-1">Xóa</button>
+          )}
+        </div>
       </div>
 
       {/* Real Metadata Line */}
-      <div className="text-[11px] text-[#718096] flex items-center gap-3 flex-wrap font-medium">
-        <span>📅 {meeting.date || meeting.meeting_date || 'Chưa chọn'} · {meeting.time || meeting.start_time || 'Chưa chọn'}</span>
-        <span>👤 {attendeeCount} người</span>
-        <span>⏱ {durationStr}</span>
+      <div className="text-[11px] text-[#718096] flex items-center justify-between gap-3 flex-wrap font-medium">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span>📅 {meeting.date || meeting.meeting_date || 'Chưa chọn'} · {meeting.time || meeting.start_time || 'Chưa chọn'}</span>
+          <span>👤 {attendeeCount} người</span>
+          <span>⏱ {durationStr}</span>
+        </div>
+
+        {/* Direct Join Link */}
+        {meetingLink && (
+          <a
+            href={meetingLink.startsWith('http') ? meetingLink : `https://${meetingLink}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all shadow-2xs"
+          >
+            <Video size={13} />
+            <span>Tham gia cuộc họp</span>
+            <ExternalLink size={11} />
+          </a>
+        )}
       </div>
 
       {/* Dynamic Stepper Workflow (4 steps) */}
