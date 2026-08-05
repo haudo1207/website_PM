@@ -894,7 +894,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       {/* PROJECT CREATE/EDIT MODAL */}
       {/* ============================================================== */}
       {showProjectModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center responsive-modal-overlay">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-start justify-center responsive-modal-overlay">
           <div className="bg-white border border-slate-200 shadow-2xl flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
             
             {/* Header with Context Pill */}
