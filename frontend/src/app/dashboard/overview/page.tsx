@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
 import { getName, getToken } from '@/lib/auth';
@@ -13,29 +13,20 @@ import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
 let cachedOverviewData: any = null;
 
 export default function OverviewTab() {
-  const [realTaskStats, setRealTaskStats] = useState(cachedOverviewData?.realTaskStats || { done: 0, inProgress: 0, overdue: 0, total: 0 });
-  const [techLeaderStats, setTechLeaderStats] = useState(cachedOverviewData?.techLeaderStats || { name: 'Chưa xác định', total: 0, done: 0, inProgress: 0, overdue: 0 });
-  const [realProjects, setRealProjects] = useState<any[]>(cachedOverviewData?.realProjects || []);
-  const [showAllProjects, setShowAllProjects] = useState(false);
-
-  const [teamMembers, setTeamMembers] = useState<any[]>(cachedOverviewData?.teamMembers || []);
-  const [topPerformer, setTopPerformer] = useState<any>(cachedOverviewData?.topPerformer || null);
-  const [lowestPerformer, setLowestPerformer] = useState<any>(cachedOverviewData?.lowestPerformer || null);
-  
-  const [availableTeams, setAvailableTeams] = useState<string[]>(cachedOverviewData?.availableTeams || []);
-  const [selectedTeam, setSelectedTeam] = useState<string>(cachedOverviewData?.selectedTeam || '');
-  
+  const [selectedTeam, setSelectedTeam] = useState<string>('');
   const [loading, setLoading] = useState(false);
-  
-  // Team Audit Log states
-  const [teamAuditLogs, setTeamAuditLogs] = useState<any[]>(cachedOverviewData?.teamAuditLogs || []);
-  const [auditLoading, setAuditLoading] = useState(false);
+  const [showAllProjects, setShowAllProjects] = useState(false);
   const [auditModuleFilter, setAuditModuleFilter] = useState('all');
 
-  const fetchOverviewData = useCallback((forceRefresh = false, targetTeam?: string) => {
-    if (!forceRefresh && cachedOverviewData && !targetTeam) {
-      return;
-    }
+  // Raw data from APIs
+  const [rawMembers, setRawMembers] = useState<any[]>(cachedOverviewData?.rawMembers || []);
+  const [rawTasks, setRawTasks] = useState<any[]>(cachedOverviewData?.rawTasks || []);
+  const [rawProjects, setRawProjects] = useState<any[]>(cachedOverviewData?.rawProjects || []);
+  const [rawAuditLogs, setRawAuditLogs] = useState<any[]>(cachedOverviewData?.rawAuditLogs || []);
+  const [currentUserProfile, setCurrentUserProfile] = useState<any>(cachedOverviewData?.currentUserProfile || null);
+
+  const fetchOverviewData = useCallback((forceRefresh = false) => {
+    if (!forceRefresh && cachedOverviewData && cachedOverviewData.rawMembers?.length > 0) return;
 
     setLoading(true);
     const ts = Date.now();
@@ -49,136 +40,169 @@ export default function OverviewTab() {
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } }))
     ]).then(([userRes, membersRes, projRes, tasksRes, auditRes]) => {
-      const currentUser = userRes.data || {};
-      const currentEmail = currentUser.email;
-      const currentName = currentUser.full_name || getName();
-      const memberIdFromAccount = currentUser.member_id;
-
-      const list = membersRes.data || [];
-      
-      const allTeams = Array.from(new Set(list.map((m: any) => m.team).filter(Boolean))) as string[];
-      setAvailableTeams(allTeams);
-
-      let matched = null;
-      if (memberIdFromAccount) matched = list.find((m: any) => m.id === memberIdFromAccount);
-      if (!matched && currentEmail) matched = list.find((m: any) => m.email?.toLowerCase() === currentEmail.toLowerCase());
-      if (!matched && currentName) matched = list.find((m: any) => m.display_name?.toLowerCase() === currentName.toLowerCase() || m.full_name?.toLowerCase() === currentName.toLowerCase());
-
-      const teamName = targetTeam || (matched?.team ? matched.team : (allTeams.length > 0 ? allTeams[0] : 'Infrastructure'));
-      setSelectedTeam(teamName);
-
-      const teamList = list.filter((m: any) => m.team === teamName);
-      let tl = teamList.find((m: any) => m.position?.toLowerCase().includes('tech') || m.position?.toLowerCase().includes('leader'));
-      if (!tl && teamList.length > 0) tl = teamList[0];
-
+      const userProfile = userRes.data || {};
+      const members = membersRes.data || [];
       const projects = projRes.data || [];
-      const allTasksCombined = tasksRes.data || [];
-
-      let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = 0;
-      if (matched) {
-        const myTasks = allTasksCombined.filter((t: any) => t.assigned_id === matched.id || t.support_id === matched.id);
-        pmTotal = myTasks.length;
-        myTasks.forEach((t: any) => {
-          if (t.status === 'Done') pmDone++;
-          else {
-            pmInProg++;
-            if (t.days_late > 0) pmOverdue++;
-          }
-        });
-      }
-      const pmStats = { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue };
-      setRealTaskStats(pmStats);
-
-      let tlDone = 0, tlInProg = 0, tlOverdue = 0, tlTotal = 0;
-      let tlStats = { name: 'Chưa xác định', total: 0, done: 0, inProgress: 0, overdue: 0 };
-      if (tl) {
-        const tlTasks = allTasksCombined.filter((t: any) => t.assigned_id === tl.id || t.support_id === tl.id);
-        tlTotal = tlTasks.length;
-        tlTasks.forEach((t: any) => {
-          if (t.status === 'Done') tlDone++;
-          else {
-            tlInProg++;
-            if (t.days_late > 0) tlOverdue++;
-          }
-        });
-        tlStats = { name: `${tl.full_name || tl.display_name} (Tech Leader)`, total: tlTotal, done: tlDone, inProgress: tlInProg, overdue: tlOverdue };
-        setTechLeaderStats(tlStats);
-      }
-
-      const activeProjects = projects.map((p: any) => {
-        const projTasks = allTasksCombined.filter((t: any) => t.project_id === p.id);
-        const total = projTasks.length;
-        const done = projTasks.filter((t: any) => t.status === 'Done').length;
-        const prog = total > 0 ? Math.round((done / total) * 100) : 0;
-        return { id: p.id, name: p.name, status: p.status || 'Developing', progress: prog, tasks: total, done };
-      });
-      setRealProjects(activeProjects);
-
-      const memberStats = teamList.map((m: any) => {
-        const mTasks = allTasksCombined.filter((t: any) => t.assigned_id === m.id || t.support_id === m.id);
-        let done = 0, inProg = 0, overdue = 0;
-        let manday = 0;
-        mTasks.forEach((t: any) => {
-          if (t.status === 'Done') done++;
-          else {
-            inProg++;
-            if (t.days_late > 0) overdue++;
-          }
-          manday += (t.manday_actual || 0);
-        });
-        return {
-          id: m.id,
-          name: m.full_name || m.display_name || 'No Name',
-          team: m.team || 'N/A',
-          assigned: mTasks.length,
-          done,
-          inProgress: inProg,
-          overdue,
-          manday,
-          kpi: m.kpi_total || 0,
-        };
-      }).sort((a: any, b: any) => b.kpi - a.kpi).map((m: any, idx: number) => ({ ...m, rank: idx + 1 }));
-
-      setTeamMembers(memberStats);
-      let topP = null, lowP = null;
-      if (memberStats.length > 0) {
-        topP = memberStats[0];
-        lowP = memberStats[memberStats.length - 1];
-        setTopPerformer(topP);
-        setLowestPerformer(lowP);
-      }
-
+      const tasks = tasksRes.data || [];
       const logs = auditRes.data?.items || [];
-      setTeamAuditLogs(logs);
+
+      setCurrentUserProfile(userProfile);
+      setRawMembers(members);
+      setRawProjects(projects);
+      setRawTasks(tasks);
+      setRawAuditLogs(logs);
 
       cachedOverviewData = {
-        realTaskStats: pmStats,
-        techLeaderStats: tlStats,
-        realProjects: activeProjects,
-        teamMembers: memberStats,
-        topPerformer: topP,
-        lowestPerformer: lowP,
-        selectedTeam: teamName,
-        availableTeams: allTeams,
-        teamAuditLogs: logs
+        currentUserProfile: userProfile,
+        rawMembers: members,
+        rawProjects: projects,
+        rawTasks: tasks,
+        rawAuditLogs: logs
       };
     }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    fetchOverviewData(false, selectedTeam);
-  }, [fetchOverviewData, selectedTeam]);
+    fetchOverviewData();
+  }, [fetchOverviewData]);
 
-  const handleTeamChange = (newTeam: string) => {
-    setSelectedTeam(newTeam);
-    fetchOverviewData(true, newTeam);
-  };
+  // Derived data based on selectedDepartment and selectedTeam
+  const {
+    leaderCards,
+    depMembers,
+    realTaskStats,
+    techLeaderStats,
+    realProjects,
+    teamMembers,
+    topPerformer,
+    lowestPerformer,
+    teamAuditLogs,
+    activeLeader
+  } = useMemo(() => {
+    // 1. Get all members
+    const depList = rawMembers;
+
+    // 2. Generate Leader Cards by grouping `leader_name`
+    const rawUniqueLeaders = Array.from(new Set(depList.map((m: any) => m.leader_name).filter(Boolean))) as string[];
+    const cards = rawUniqueLeaders.map(lName => {
+      const tMembers = depList.filter((m: any) => m.leader_name === lName);
+      let lId = null;
+      const leaderObj = rawMembers.find((m: any) => m.full_name === lName || m.display_name === lName);
+      if (leaderObj) lId = leaderObj.id;
+
+      return {
+        leaderName: lName,
+        leaderId: lId,
+        memberCount: tMembers.length
+      };
+    });
+
+    // Handle activeLeader fallback to first leader
+    let currentLeader = selectedTeam;
+    if (!currentLeader || currentLeader === 'All' || !rawUniqueLeaders.includes(currentLeader)) {
+      currentLeader = rawUniqueLeaders.length > 0 ? rawUniqueLeaders[0] : '';
+    }
+
+    // 3. Filter members by activeLeader
+    let activeTeamList = depList.filter((m: any) => m.leader_name === currentLeader);
+
+    // 4. Calculate Tech Leader Stats
+    let tlDone = 0, tlInProg = 0, tlOverdue = 0, tlTotal = 0;
+    let tlCritical = 0, tlHigh = 0, tlNormal = 0, tlInterrupt = 0;
+    let tlStats = { name: 'Chưa có Leader', total: 0, done: 0, inProgress: 0, overdue: 0, critical: 0, high: 0, normal: 0, interrupt: 0 };
+    
+    const card = cards.find(c => c.leaderName === currentLeader);
+    if (card && card.leaderId) {
+      const tlTasks = rawTasks.filter((t: any) => t.assigned_id === card.leaderId || t.support_id === card.leaderId);
+      tlTotal = tlTasks.length;
+      tlTasks.forEach((t: any) => {
+        if (t.status === 'Done') tlDone++;
+        else { tlInProg++; if (t.days_late > 0) tlOverdue++; }
+
+        const prio = (t.priority || '').toLowerCase();
+        if (prio === 'critical') tlCritical++;
+        else if (prio === 'high') tlHigh++;
+        else if (prio === 'normal') tlNormal++;
+        else if (prio === 'interrupt') tlInterrupt++;
+      });
+      tlStats = { name: card.leaderName, total: tlTotal, done: tlDone, inProgress: tlInProg, overdue: tlOverdue, critical: tlCritical, high: tlHigh, normal: tlNormal, interrupt: tlInterrupt };
+    }
+
+    // 5. Calculate Team Stats for the 6 KPI boxes
+    const teamMemberIds = activeTeamList.map((m: any) => m.id);
+    const teamTasks = rawTasks.filter((t: any) => teamMemberIds.includes(t.assigned_id) || teamMemberIds.includes(t.support_id));
+
+    let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = teamTasks.length, pmManday = 0, pmKpi = 0;
+    teamTasks.forEach((t: any) => {
+      if (t.status === 'Done') pmDone++;
+      else { pmInProg++; if (t.days_late > 0) pmOverdue++; }
+      pmManday += (t.manday_actual || 0);
+    });
+    activeTeamList.forEach((m: any) => {
+      pmKpi += (m.kpi_total || 0);
+    });
+
+    const pmStats = { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: pmManday, kpi: pmKpi };
+
+    // 6. Active Projects
+    // (teamMemberIds and teamTasks already calculated above)
+    const projectIds = Array.from(new Set(teamTasks.map((t: any) => t.project_id).filter(Boolean)));
+    const activeProjects = rawProjects.filter((p: any) => projectIds.includes(p.id)).map((p: any) => {
+      const projTasks = rawTasks.filter((t: any) => t.project_id === p.id);
+      const total = projTasks.length;
+      const done = projTasks.filter((t: any) => t.status === 'Done').length;
+      const prog = total > 0 ? Math.round((done / total) * 100) : 0;
+      return { id: p.id, name: p.name, status: p.status || 'Developing', progress: prog, tasks: total, done };
+    });
+
+    // 7. Member KPI Ranking
+    const memberStats = activeTeamList.map((m: any) => {
+      const mTasks = rawTasks.filter((t: any) => t.assigned_id === m.id || t.support_id === m.id);
+      let done = 0, inProg = 0, overdue = 0;
+      let manday = 0;
+      mTasks.forEach((t: any) => {
+        if (t.status === 'Done') done++;
+        else { inProg++; if (t.days_late > 0) overdue++; }
+        manday += (t.manday_actual || 0);
+      });
+      return {
+        id: m.id,
+        name: m.full_name || m.display_name || 'No Name',
+        team: m.team || 'N/A',
+        assigned: mTasks.length,
+        done, inProgress: inProg, overdue, manday,
+        kpi: m.kpi_total || 0,
+      };
+    }).sort((a: any, b: any) => b.kpi - a.kpi).map((m: any, idx: number) => ({ ...m, rank: idx + 1 }));
+
+    let topP = null, lowP = null;
+    if (memberStats.length > 0) {
+      topP = memberStats[0];
+      lowP = memberStats[memberStats.length - 1];
+    }
+
+    return {
+      leaderCards: cards,
+      depMembers: depList,
+      realTaskStats: pmStats,
+      techLeaderStats: tlStats,
+      realProjects: activeProjects,
+      teamMembers: memberStats,
+      topPerformer: topP,
+      lowestPerformer: lowP,
+      teamAuditLogs: rawAuditLogs,
+      activeLeader: currentLeader
+    };
+  }, [rawMembers, rawTasks, rawProjects, rawAuditLogs, selectedTeam, currentUserProfile]);
+
 
   const pmKpiCards = [
-    { label: 'Task PM làm',   value: realTaskStats.total,  icon: 'user',      border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Đảm nhận trực tiếp' },
-    { label: 'Hoàn Thành',    value: realTaskStats.done,   icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: realTaskStats.total ? `${Math.round(realTaskStats.done/realTaskStats.total*100)}%` : '0%' },
+    { label: 'Task Được Giao',   value: realTaskStats.total,  icon: 'user',      border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Tổng số task' },
+    { label: 'Đã Hoàn Thành',    value: realTaskStats.done,   icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: realTaskStats.total ? `${Math.round(realTaskStats.done/realTaskStats.total*100)}%` : '0%' },
     { label: 'Đang Làm',      value: realTaskStats.inProgress,   icon: 'lightning', border: 'border-l-amber-500',   text: 'text-amber-600',  trend: realTaskStats.total ? `${Math.round(realTaskStats.inProgress/realTaskStats.total*100)}%` : '0%' },
     { label: 'Trễ Hạn',       value: realTaskStats.overdue,   icon: 'alert',     border: 'border-l-red-500',     text: 'text-red-600',    trend: 'Cần chú ý' },
+    { label: 'Manday Thực Tế', value: Number(realTaskStats.manday).toFixed(1), icon: 'clock', border: 'border-l-cyan-500', text: 'text-cyan-600', trend: 'Ngày làm việc' },
+    { label: 'KPI Đạt',       value: Number(realTaskStats.kpi).toFixed(1), icon: 'trending-up', border: 'border-l-purple-500', text: 'text-purple-600', trend: 'Điểm tích lũy' },
   ];
 
   const filteredAuditLogs = teamAuditLogs.filter(log => {
@@ -188,7 +212,7 @@ export default function OverviewTab() {
     return true;
   });
 
-  const displayedProjects = showAllProjects ? realProjects : realProjects.slice(0, 6);
+  const displayedProjects = realProjects;
 
   return (
     <div className="p-6 space-y-5">
@@ -196,21 +220,10 @@ export default function OverviewTab() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tổng quan Team Leader</h3>
-          {availableTeams.length > 0 && (
-            <select
-              value={selectedTeam}
-              onChange={(e) => handleTeamChange(e.target.value)}
-              className="ml-2 text-xs font-bold text-[#0058be] bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-[#0058be] cursor-pointer"
-            >
-              {availableTeams.map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          )}
           {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse ml-2">Đang cập nhật...</span>}
         </div>
         <button
-          onClick={() => fetchOverviewData(true, selectedTeam)}
+          onClick={() => fetchOverviewData(true)}
           className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
         >
           <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
@@ -218,7 +231,22 @@ export default function OverviewTab() {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {/* Leader Selection Cards */}
+      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+        {leaderCards.map(c => (
+          <button
+            key={c.leaderName}
+            onClick={() => setSelectedTeam(c.leaderName)}
+            className={`flex-shrink-0 p-3 rounded-xl border text-left min-w-[140px] transition-all ${activeLeader === c.leaderName ? 'border-[#0058be] bg-blue-50 shadow-sm' : 'border-slate-200 bg-white hover:border-blue-300'}`}
+          >
+            <p className={`text-xs font-bold ${activeLeader === c.leaderName ? 'text-[#0058be]' : 'text-[#0b1c30]'}`}>{c.leaderName}</p>
+            <p className="text-[10px] text-slate-500 mt-1">{c.memberCount} member</p>
+          </button>
+        ))}
+      </div>
+
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {pmKpiCards.map(c => <KpiCard key={c.label} {...c} />)}
       </div>
 
@@ -233,7 +261,7 @@ export default function OverviewTab() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
-              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Technical Leader — {selectedTeam}</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Technical Leader — {activeLeader}</p>
             </div>
             <p className="text-sm font-extrabold text-[#0b1c30]">{techLeaderStats.name}</p>
             <p className="text-xs text-slate-400 mt-0.5">Tổng task phụ trách: {techLeaderStats.total}</p>
@@ -252,6 +280,25 @@ export default function OverviewTab() {
               <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Trễ Hạn</p>
             </div>
           </div>
+          
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            <div className="bg-purple-50 border border-purple-100 rounded-lg p-2 text-center">
+              <p className="text-sm font-extrabold text-purple-600">{techLeaderStats.critical}</p>
+              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Critical</p>
+            </div>
+            <div className="bg-orange-50 border border-orange-100 rounded-lg p-2 text-center">
+              <p className="text-sm font-extrabold text-orange-600">{techLeaderStats.high}</p>
+              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">High</p>
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-2 text-center">
+              <p className="text-sm font-extrabold text-blue-600">{techLeaderStats.normal}</p>
+              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Normal</p>
+            </div>
+            <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-center">
+              <p className="text-sm font-extrabold text-slate-600">{techLeaderStats.interrupt}</p>
+              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Interrupt</p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -263,17 +310,8 @@ export default function OverviewTab() {
               <SvgIcon name="folder" className="w-4 h-4 text-slate-700" />
               <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự Án Đang Triển Khai</h3>
             </div>
-            {realProjects.length > 6 && (
-              <button
-                onClick={() => setShowAllProjects(!showAllProjects)}
-                className="text-[10px] font-bold text-[#0058be] bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full transition-all flex items-center gap-1 cursor-pointer active:scale-95"
-              >
-                <span>{showAllProjects ? 'Thu gọn' : `Xem thêm (${realProjects.length - 6} dự án)`}</span>
-                <span>{showAllProjects ? '▲' : '▼'}</span>
-              </button>
-            )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-5 max-h-[400px] overflow-y-auto pr-2 pb-2 custom-scrollbar">
             {displayedProjects.length === 0 ? (
               <p className="col-span-4 text-center text-slate-400 text-xs py-4 font-semibold">Chưa có dự án nào đang hoạt động.</p>
             ) : (
@@ -296,18 +334,6 @@ export default function OverviewTab() {
             )}
           </div>
         </div>
-
-        {realProjects.length > 6 && !showAllProjects && (
-          <div className="flex justify-center mt-4 pt-3 border-t border-slate-100">
-            <button
-              onClick={() => setShowAllProjects(true)}
-              className="px-4 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0058be] rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-            >
-              <span>Xem thêm tất cả {realProjects.length} dự án</span>
-              <span>▼</span>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* TEAM AUDIT LOG SECTION */}
@@ -316,7 +342,7 @@ export default function OverviewTab() {
           <div className="flex items-center gap-2">
             <SvgIcon name="history" className="w-4 h-4 text-blue-600" />
             <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Audit Log — Team {selectedTeam}</h3>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Audit Log — {activeLeader}</h3>
               <p className="text-[10px] text-slate-400 mt-0.5">Nhật ký hoạt động & thay đổi của các thành viên trong team</p>
             </div>
           </div>
@@ -346,7 +372,7 @@ export default function OverviewTab() {
               </tr>
             </thead>
             <tbody>
-              {auditLoading ? (
+              {teamAuditLogs.length === 0 ? (
                 <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Đang tải nhật ký hoạt động...</td></tr>
               ) : filteredAuditLogs.length === 0 ? (
                 <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Chưa có nhật ký hoạt động nào cho team này.</td></tr>
@@ -386,16 +412,16 @@ export default function OverviewTab() {
           <div className="flex items-center gap-2">
             <SvgIcon name="user" className="w-4 h-4 text-indigo-600" />
             <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên — Team {selectedTeam}</h3>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên — {activeLeader}</h3>
               <p className="text-[10px] text-slate-400 mt-0.5">Dữ liệu thực tế</p>
             </div>
           </div>
           <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-full border border-indigo-100">{teamMembers.length} thành viên</span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-slate-50/80 text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider">
+        <div className="max-h-[400px] overflow-y-auto overflow-x-auto custom-scrollbar">
+          <table className="w-full text-xs relative">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-slate-50/95 backdrop-blur-sm text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider shadow-sm">
                 <th className="px-4 py-3 text-center font-bold w-14">Hạng</th>
                 <th className="px-4 py-3 text-left font-bold">Thành Viên</th>
                 <th className="px-4 py-3 text-center font-bold">Giao</th>
