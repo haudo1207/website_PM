@@ -7,6 +7,7 @@ import { getName, getToken } from '@/lib/auth';
 import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
+import PieChartCard from '@/components/dashboard/PieChartCard';
 import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
 
 let cachedOverviewData: any = null;
@@ -20,7 +21,10 @@ export default function OverviewTab() {
   const [teamMembers, setTeamMembers] = useState<any[]>(cachedOverviewData?.teamMembers || []);
   const [topPerformer, setTopPerformer] = useState<any>(cachedOverviewData?.topPerformer || null);
   const [lowestPerformer, setLowestPerformer] = useState<any>(cachedOverviewData?.lowestPerformer || null);
-  const [leaderTeamName, setLeaderTeamName] = useState<string>(cachedOverviewData?.leaderTeamName || 'Dev Team');
+  
+  const [availableTeams, setAvailableTeams] = useState<string[]>(cachedOverviewData?.availableTeams || []);
+  const [selectedTeam, setSelectedTeam] = useState<string>(cachedOverviewData?.selectedTeam || '');
+  
   const [loading, setLoading] = useState(false);
   
   // Team Audit Log states
@@ -28,8 +32,8 @@ export default function OverviewTab() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditModuleFilter, setAuditModuleFilter] = useState('all');
 
-  const fetchOverviewData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedOverviewData) {
+  const fetchOverviewData = useCallback((forceRefresh = false, targetTeam?: string) => {
+    if (!forceRefresh && cachedOverviewData && !targetTeam) {
       return;
     }
 
@@ -38,7 +42,6 @@ export default function OverviewTab() {
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
 
-    // Parallel fetch for ultra-fast loading
     Promise.all([
       axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
@@ -52,16 +55,21 @@ export default function OverviewTab() {
       const memberIdFromAccount = currentUser.member_id;
 
       const list = membersRes.data || [];
+      
+      const allTeams = Array.from(new Set(list.map((m: any) => m.team).filter(Boolean))) as string[];
+      setAvailableTeams(allTeams);
+
       let matched = null;
       if (memberIdFromAccount) matched = list.find((m: any) => m.id === memberIdFromAccount);
       if (!matched && currentEmail) matched = list.find((m: any) => m.email?.toLowerCase() === currentEmail.toLowerCase());
       if (!matched && currentName) matched = list.find((m: any) => m.display_name?.toLowerCase() === currentName.toLowerCase() || m.full_name?.toLowerCase() === currentName.toLowerCase());
 
-      const teamName = matched?.team || currentUser?.department || 'Infrastructure';
-      setLeaderTeamName(teamName);
+      const teamName = targetTeam || (matched?.team ? matched.team : (allTeams.length > 0 ? allTeams[0] : 'Infrastructure'));
+      setSelectedTeam(teamName);
 
-      let tl = list.find((m: any) => m.position?.toLowerCase().includes('tech') || m.position?.toLowerCase().includes('leader'));
-      if (!tl && list.length > 0) tl = list[0];
+      const teamList = list.filter((m: any) => m.team === teamName);
+      let tl = teamList.find((m: any) => m.position?.toLowerCase().includes('tech') || m.position?.toLowerCase().includes('leader'));
+      if (!tl && teamList.length > 0) tl = teamList[0];
 
       const projects = projRes.data || [];
       const allTasksCombined = tasksRes.data || [];
@@ -106,7 +114,7 @@ export default function OverviewTab() {
       });
       setRealProjects(activeProjects);
 
-      const memberStats = list.map((m: any) => {
+      const memberStats = teamList.map((m: any) => {
         const mTasks = allTasksCombined.filter((t: any) => t.assigned_id === m.id || t.support_id === m.id);
         let done = 0, inProg = 0, overdue = 0;
         let manday = 0;
@@ -150,15 +158,21 @@ export default function OverviewTab() {
         teamMembers: memberStats,
         topPerformer: topP,
         lowestPerformer: lowP,
-        leaderTeamName: teamName,
+        selectedTeam: teamName,
+        availableTeams: allTeams,
         teamAuditLogs: logs
       };
     }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    fetchOverviewData(false);
-  }, [fetchOverviewData]);
+    fetchOverviewData(false, selectedTeam);
+  }, [fetchOverviewData, selectedTeam]);
+
+  const handleTeamChange = (newTeam: string) => {
+    setSelectedTeam(newTeam);
+    fetchOverviewData(true, newTeam);
+  };
 
   const pmKpiCards = [
     { label: 'Task PM làm',   value: realTaskStats.total,  icon: 'user',      border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Đảm nhận trực tiếp' },
@@ -181,11 +195,22 @@ export default function OverviewTab() {
       {/* Overview Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tổng quan Team Leader — {leaderTeamName}</h3>
-          {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật...</span>}
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tổng quan Team Leader</h3>
+          {availableTeams.length > 0 && (
+            <select
+              value={selectedTeam}
+              onChange={(e) => handleTeamChange(e.target.value)}
+              className="ml-2 text-xs font-bold text-[#0058be] bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-[#0058be] cursor-pointer"
+            >
+              {availableTeams.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          )}
+          {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse ml-2">Đang cập nhật...</span>}
         </div>
         <button
-          onClick={() => fetchOverviewData(true)}
+          onClick={() => fetchOverviewData(true, selectedTeam)}
           className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
         >
           <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
@@ -197,95 +222,101 @@ export default function OverviewTab() {
         {pmKpiCards.map(c => <KpiCard key={c.label} {...c} />)}
       </div>
 
-      {/* Main Row: Active Projects + Technical Leader Card */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5 flex flex-col justify-between">
-          <div>
-            <div className="px-1 py-1 pb-4 border-b border-slate-100 flex justify-between items-center mb-4">
-              <div className="flex items-center gap-2">
-                <SvgIcon name="folder" className="w-4 h-4 text-slate-700" />
-                <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự Án Đang Triển Khai</h3>
-              </div>
-              {realProjects.length > 6 && (
-                <button
-                  onClick={() => setShowAllProjects(!showAllProjects)}
-                  className="text-[10px] font-bold text-[#0058be] bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full transition-all flex items-center gap-1 cursor-pointer active:scale-95"
-                >
-                  <span>{showAllProjects ? 'Thu gọn' : `Xem thêm (${realProjects.length - 6} dự án)`}</span>
-                  <span>{showAllProjects ? '▲' : '▼'}</span>
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              {displayedProjects.length === 0 ? (
-                <p className="col-span-3 text-center text-slate-400 text-xs py-4 font-semibold">Chưa có dự án nào đang hoạt động.</p>
-              ) : (
-                displayedProjects.map(p => (
-                  <Link
-                    key={p.id}
-                    href={`/project/detail?id=${p.id}`}
-                    className="group p-4 bg-slate-50/50 border border-slate-100 rounded-xl hover:border-blue-300 hover:bg-blue-50/30 hover:shadow-md transition-all flex flex-col justify-between cursor-pointer block"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-[#0b1c30] group-hover:text-blue-600 transition-colors truncate" title={p.name}>{p.name}</span>
-                      <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full ${projectStatusBadge[p.status] || 'bg-slate-100 text-slate-500'}`}>{p.status}</span>
-                    </div>
-                    <div className="mt-3">
-                      <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-slate-400'} height="h-2" />
-                      <p className="text-[10px] text-slate-400 mt-2 font-semibold">{p.done}/{p.tasks} tasks hoàn thành ({p.progress}%)</p>
-                    </div>
-                  </Link>
-                ))
-              )}
-            </div>
-          </div>
+        <PieChartCard title="Trạng thái Task (PM)" data={[
+          { name: 'Hoàn Thành', value: realTaskStats.done, fill: '#10b981' },
+          { name: 'Đang Làm', value: Math.max(0, realTaskStats.inProgress - realTaskStats.overdue), fill: '#f59e0b' },
+          { name: 'Trễ Hạn', value: realTaskStats.overdue, fill: '#ef4444' }
+        ]} />
 
-          {realProjects.length > 6 && !showAllProjects && (
-            <div className="flex justify-center mt-4 pt-3 border-t border-slate-100">
-              <button
-                onClick={() => setShowAllProjects(true)}
-                className="px-4 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0058be] rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-              >
-                <span>Xem thêm tất cả {realProjects.length} dự án</span>
-                <span>▼</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white rounded-2xl border border-blue-200 p-5 shadow-sm flex flex-col justify-between">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-blue-200 p-5 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center gap-2 mb-2">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
-              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Technical Leader</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Technical Leader — {selectedTeam}</p>
             </div>
             <p className="text-sm font-extrabold text-[#0b1c30]">{techLeaderStats.name}</p>
             <p className="text-xs text-slate-400 mt-0.5">Tổng task phụ trách: {techLeaderStats.total}</p>
           </div>
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2 text-center">
-              <p className="text-sm font-extrabold text-emerald-600">{techLeaderStats.done}</p>
-              <p className="text-[8px] font-bold text-slate-400 uppercase mt-0.5">Đã Xong</p>
+          <div className="mt-4 grid grid-cols-3 gap-4">
+            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
+              <p className="text-lg font-extrabold text-emerald-600">{techLeaderStats.done}</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Đã Xong</p>
             </div>
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-2 text-center">
-              <p className="text-sm font-extrabold text-amber-600">{techLeaderStats.inProgress}</p>
-              <p className="text-[8px] font-bold text-slate-400 uppercase mt-0.5">Đang làm</p>
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-center">
+              <p className="text-lg font-extrabold text-amber-600">{techLeaderStats.inProgress}</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Đang làm</p>
             </div>
-            <div className="bg-red-50 border border-red-100 rounded-xl p-2 text-center">
-              <p className="text-sm font-extrabold text-red-600">{techLeaderStats.overdue}</p>
-              <p className="text-[8px] font-bold text-slate-400 uppercase mt-0.5">Trễ Hạn</p>
+            <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
+              <p className="text-lg font-extrabold text-red-600">{techLeaderStats.overdue}</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Trễ Hạn</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* TEAM AUDIT LOG SECTION — Audit log riêng cho team leader */}
+      {/* Main Row: Active Projects */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5 flex flex-col justify-between">
+        <div>
+          <div className="px-1 py-1 pb-4 border-b border-slate-100 flex justify-between items-center mb-4">
+            <div className="flex items-center gap-2">
+              <SvgIcon name="folder" className="w-4 h-4 text-slate-700" />
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự Án Đang Triển Khai</h3>
+            </div>
+            {realProjects.length > 6 && (
+              <button
+                onClick={() => setShowAllProjects(!showAllProjects)}
+                className="text-[10px] font-bold text-[#0058be] bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+              >
+                <span>{showAllProjects ? 'Thu gọn' : `Xem thêm (${realProjects.length - 6} dự án)`}</span>
+                <span>{showAllProjects ? '▲' : '▼'}</span>
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+            {displayedProjects.length === 0 ? (
+              <p className="col-span-4 text-center text-slate-400 text-xs py-4 font-semibold">Chưa có dự án nào đang hoạt động.</p>
+            ) : (
+              displayedProjects.map(p => (
+                <Link
+                  key={p.id}
+                  href={`/project/detail?id=${p.id}`}
+                  className="group p-4 bg-slate-50/50 border border-slate-100 rounded-xl hover:border-blue-300 hover:bg-blue-50/30 hover:shadow-md transition-all flex flex-col justify-between cursor-pointer block"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-[#0b1c30] group-hover:text-blue-600 transition-colors truncate" title={p.name}>{p.name}</span>
+                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full ${projectStatusBadge[p.status] || 'bg-slate-100 text-slate-500'}`}>{p.status}</span>
+                  </div>
+                  <div className="mt-3">
+                    <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-slate-400'} height="h-2" />
+                    <p className="text-[10px] text-slate-400 mt-2 font-semibold">{p.done}/{p.tasks} tasks hoàn thành ({p.progress}%)</p>
+                  </div>
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
+
+        {realProjects.length > 6 && !showAllProjects && (
+          <div className="flex justify-center mt-4 pt-3 border-t border-slate-100">
+            <button
+              onClick={() => setShowAllProjects(true)}
+              className="px-4 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0058be] rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+            >
+              <span>Xem thêm tất cả {realProjects.length} dự án</span>
+              <span>▼</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* TEAM AUDIT LOG SECTION */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-white">
           <div className="flex items-center gap-2">
             <SvgIcon name="history" className="w-4 h-4 text-blue-600" />
             <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Audit Log — Team {leaderTeamName}</h3>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Audit Log — Team {selectedTeam}</h3>
               <p className="text-[10px] text-slate-400 mt-0.5">Nhật ký hoạt động & thay đổi của các thành viên trong team</p>
             </div>
           </div>
@@ -355,7 +386,7 @@ export default function OverviewTab() {
           <div className="flex items-center gap-2">
             <SvgIcon name="user" className="w-4 h-4 text-indigo-600" />
             <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên — Team {leaderTeamName}</h3>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên — Team {selectedTeam}</h3>
               <p className="text-[10px] text-slate-400 mt-0.5">Dữ liệu thực tế</p>
             </div>
           </div>

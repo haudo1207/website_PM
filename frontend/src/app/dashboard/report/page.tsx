@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { getEmail, getName, getToken } from '@/lib/auth';
 import KpiCard from '@/components/dashboard/KpiCard';
@@ -15,26 +15,23 @@ import {
 
 let cachedReportData: any = null;
 
+function getWeekOfMonth(date: Date) {
+  const firstDay = new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+  return Math.ceil((date.getDate() + firstDay) / 7);
+}
+
 export default function ReportTab() {
-  const [kpiTimeFilter, setKpiTimeFilter] = useState<'month' | 'week'>('month');
-  const [chartFilter, setChartFilter] = useState<'month' | 'week'>('week');
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
 
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [realMemberData, setRealMemberData] = useState<any>(cachedReportData?.realMemberData || null);
   const [loadingReal, setLoadingReal] = useState(false);
 
-  const [myRealTasks, setMyRealTasks] = useState<any[]>(cachedReportData?.myRealTasks || []);
-  const [realUpcomingDeadlines, setRealUpcomingDeadlines] = useState<any[]>(cachedReportData?.realUpcomingDeadlines || []);
-  const [realOverdueTasks, setRealOverdueTasks] = useState<any[]>(cachedReportData?.realOverdueTasks || []);
-  const [realTaskStats, setRealTaskStats] = useState(cachedReportData?.realTaskStats || { done: 0, inProgress: 0, overdue: 0, total: 0, manday: 0 });
+  const [rawMyTasks, setRawMyTasks] = useState<any[]>(cachedReportData?.rawMyTasks || []);
   
-  // Real dynamic activities & chart progress
-  const [recentActivities, setRecentActivities] = useState<any[]>(cachedReportData?.recentActivities || []);
-  const [weeklyProgress, setWeeklyProgress] = useState<any[]>(cachedReportData?.weeklyProgress || []);
-  const [monthlyProgress, setMonthlyProgress] = useState<any[]>(cachedReportData?.monthlyProgress || []);
-
   const fetchReportData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedReportData && cachedReportData.myRealTasks?.length > 0) {
+    if (!forceRefresh && cachedReportData && cachedReportData.rawMyTasks?.length > 0) {
       return;
     }
 
@@ -43,7 +40,6 @@ export default function ReportTab() {
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
     
-    // Fast parallel fetch for User, Members, and All Tasks in 1 batch
     Promise.all([
       axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
@@ -71,12 +67,8 @@ export default function ReportTab() {
 
       const allTasksCombined = tasksRes.data || [];
 
-      // STRICT MEMBER TASK FILTERING: Match Member ID or exact Display/Full Name
       const myTasks = allTasksCombined.filter((t: any) => {
-        // 1. Strict Member ID matching in assigned_id or support_id
         if (memberId && (t.assigned_id === memberId || t.support_id === memberId)) return true;
-
-        // 2. Strict Display Name / Full Name matching in assigned_name or support_name
         const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
         const suppNameLow = (t.support_name || '').toLowerCase().trim();
 
@@ -88,91 +80,11 @@ export default function ReportTab() {
         return false;
       });
 
-      let doneCount = 0;
-      let inProgressCount = 0;
-      let overdueCount = 0;
-      let mandayTotal = 0;
-      const upcoming: any[] = [];
-      const overdueList: any[] = [];
-      const acts: any[] = [];
-      const now = new Date();
+      setRawMyTasks(myTasks);
 
-      myTasks.forEach((t: any) => {
-        mandayTotal += (t.manday_actual || t.manday_est || 0);
-        
-        const isDone = t.status === 'Done' || t.status === 'done';
-        const isCancel = t.status === 'Cancel' || t.status === 'cancel';
-        const daysLateNum = typeof t.days_late === 'number' ? t.days_late : 0;
-
-        // OVERDUE RULE: strictly based on days_late > 0 for uncompleted tasks
-        const isOverdue = !isDone && !isCancel && daysLateNum > 0;
-
-        if (isDone) {
-          doneCount++;
-          acts.push({ action: `Hoàn thành: ${t.name}`, time: 'Đã hoàn thành', type: 'done' });
-        } else if (isCancel) {
-          acts.push({ action: `Đã hủy: ${t.name}`, time: 'Hủy tác vụ', type: 'cancel' });
-        } else {
-          inProgressCount++;
-          if (isOverdue) {
-            overdueCount++;
-            overdueList.push({
-              id: t.id,
-              project: t.projectName,
-              name: t.name,
-              deadline: t.end_date_est || 'Chưa có',
-              daysLate: daysLateNum
-            });
-            acts.push({ action: `Trễ hạn ${daysLateNum} ngày: ${t.name}`, time: 'Cần chú ý', type: 'overdue' });
-          } else if (t.end_date_est) {
-            const diffTime = new Date(t.end_date_est).getTime() - now.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            if (diffDays >= 0 && diffDays <= 3) {
-              upcoming.push({
-                id: t.id, project: t.projectName, name: t.name, deadline: t.end_date_est, daysLeft: diffDays
-              });
-            }
-          }
-        }
-      });
-
-      setMyRealTasks(myTasks);
-      setRealUpcomingDeadlines(upcoming);
-      setRealOverdueTasks(overdueList);
-      setRecentActivities(acts.slice(0, 5));
-
-      const stats = {
-        total: myTasks.length,
-        done: doneCount,
-        inProgress: inProgressCount,
-        overdue: overdueCount,
-        manday: Math.round(mandayTotal * 10) / 10
-      };
-      setRealTaskStats(stats);
-
-      const kpiPoints = matched?.kpi_total || (doneCount * 6);
-
-      const wProg = [
-        { name: 'Tuần 1', kpi: Math.round(kpiPoints * 0.25), tasks: Math.ceil(doneCount * 0.25) },
-        { name: 'Tuần 2', kpi: Math.round(kpiPoints * 0.5), tasks: Math.ceil(doneCount * 0.5) },
-        { name: 'Tuần 3', kpi: Math.round(kpiPoints * 0.75), tasks: Math.ceil(doneCount * 0.75) },
-        { name: 'Tuần 4', kpi: Math.round(kpiPoints), tasks: myTasks.length },
-      ];
-      setWeeklyProgress(wProg);
-
-      const mProg = [{ name: 'Tháng này', kpi: Math.round(kpiPoints), tasks: myTasks.length }];
-      setMonthlyProgress(mProg);
-
-      // Cache result
       cachedReportData = {
         realMemberData: matched,
-        myRealTasks: myTasks,
-        realUpcomingDeadlines: upcoming,
-        realOverdueTasks: overdueList,
-        realTaskStats: stats,
-        recentActivities: acts.slice(0, 5),
-        weeklyProgress: wProg,
-        monthlyProgress: mProg
+        rawMyTasks: myTasks,
       };
     }).finally(() => setLoadingReal(false));
   }, []);
@@ -181,8 +93,110 @@ export default function ReportTab() {
     fetchReportData(false);
   }, [fetchReportData]);
 
+  // Derived state based on filters
+  const {
+    myRealTasks,
+    realUpcomingDeadlines,
+    realOverdueTasks,
+    realTaskStats,
+    filteredActivities,
+    weeklyProgress,
+    monthlyProgress
+  } = useMemo(() => {
+    let doneCount = 0;
+    let inProgressCount = 0;
+    let overdueCount = 0;
+    let mandayTotal = 0;
+    const upcoming: any[] = [];
+    const overdueList: any[] = [];
+    const acts: any[] = [];
+    const now = new Date();
+
+    const filteredTasks = rawMyTasks.filter(t => {
+      if (!t.end_date_est) return true;
+      const taskDate = new Date(t.end_date_est);
+      if (isNaN(taskDate.getTime())) return true;
+
+      const taskMonth = taskDate.getMonth() + 1;
+      if (taskMonth !== selectedMonth) return false;
+
+      if (selectedWeek !== 'all') {
+        const taskWeek = getWeekOfMonth(taskDate);
+        if (taskWeek !== selectedWeek) return false;
+      }
+      return true;
+    });
+
+    filteredTasks.forEach((t: any) => {
+      mandayTotal += (t.manday_actual || t.manday_est || 0);
+      
+      const isDone = t.status === 'Done' || t.status === 'done';
+      const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+      const daysLateNum = typeof t.days_late === 'number' ? t.days_late : 0;
+
+      const isOverdue = !isDone && !isCancel && daysLateNum > 0;
+
+      if (isDone) {
+        doneCount++;
+        acts.push({ action: `Hoàn thành: ${t.name}`, time: 'Đã hoàn thành', type: 'done' });
+      } else if (isCancel) {
+        acts.push({ action: `Đã hủy: ${t.name}`, time: 'Hủy tác vụ', type: 'cancel' });
+      } else {
+        inProgressCount++;
+        if (isOverdue) {
+          overdueCount++;
+          overdueList.push({
+            id: t.id,
+            project: t.projectName,
+            name: t.name,
+            deadline: t.end_date_est || 'Chưa có',
+            daysLate: daysLateNum
+          });
+          acts.push({ action: `Trễ hạn ${daysLateNum} ngày: ${t.name}`, time: 'Cần chú ý', type: 'overdue' });
+        } else if (t.end_date_est) {
+          const diffTime = new Date(t.end_date_est).getTime() - now.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          if (diffDays >= 0 && diffDays <= 3) {
+            upcoming.push({
+              id: t.id, project: t.projectName, name: t.name, deadline: t.end_date_est, daysLeft: diffDays
+            });
+          }
+        }
+      }
+    });
+
+    const stats = {
+      total: filteredTasks.length,
+      done: doneCount,
+      inProgress: inProgressCount,
+      overdue: overdueCount,
+      manday: Math.round(mandayTotal * 10) / 10
+    };
+
+    const kpiPoints = realMemberData?.kpi_total || (doneCount * 6);
+
+    const wProg = [
+      { name: 'Tuần 1', kpi: Math.round(kpiPoints * 0.25), tasks: Math.ceil(doneCount * 0.25) },
+      { name: 'Tuần 2', kpi: Math.round(kpiPoints * 0.5), tasks: Math.ceil(doneCount * 0.5) },
+      { name: 'Tuần 3', kpi: Math.round(kpiPoints * 0.75), tasks: Math.ceil(doneCount * 0.75) },
+      { name: 'Tuần 4', kpi: Math.round(kpiPoints), tasks: filteredTasks.length },
+    ];
+    
+    const mProg = [{ name: `Tháng ${selectedMonth}`, kpi: Math.round(kpiPoints), tasks: filteredTasks.length }];
+
+    return {
+      myRealTasks: filteredTasks,
+      realUpcomingDeadlines: upcoming,
+      realOverdueTasks: overdueList,
+      realTaskStats: stats,
+      filteredActivities: acts.slice(0, 5),
+      weeklyProgress: wProg,
+      monthlyProgress: mProg
+    };
+  }, [rawMyTasks, selectedMonth, selectedWeek, realMemberData]);
+
   const reportKpiCards = [
-    { label: 'Tasks Được Giao', value: realTaskStats.total, icon: 'tasks',     border: 'border-l-[#0058be]', text: 'text-[#0058be]', trend: kpiTimeFilter === 'week' ? 'Trong tuần' : 'Trong tháng' },
+    { label: 'Tasks Được Giao', value: realTaskStats.total, icon: 'tasks',     border: 'border-l-[#0058be]', text: 'text-[#0058be]', trend: selectedWeek === 'all' ? 'Trong tháng' : 'Trong tuần' },
     { label: 'Đã Hoàn Thành', value: realTaskStats.done, icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: realTaskStats.total > 0 ? `${Math.round((realTaskStats.done / realTaskStats.total) * 100)}%` : '0%' },
     { label: 'Đang Làm', value: realTaskStats.inProgress, icon: 'lightning', border: 'border-l-amber-500', text: 'text-amber-600', trend: 'Đang triển khai' },
     { label: 'Trễ Hạn', value: realTaskStats.overdue, icon: 'alert',     border: 'border-l-red-500', text: 'text-red-600', trend: 'Cần xử lý' },
@@ -194,10 +208,10 @@ export default function ReportTab() {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Báo cáo hiệu suất cá nhân (Report)</h3>
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Báo cáo hiệu suất cá nhân</h3>
           {loadingReal && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật...</span>}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             onClick={() => fetchReportData(true)}
             className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
@@ -205,19 +219,30 @@ export default function ReportTab() {
             <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
             <span>Làm mới dữ liệu</span>
           </button>
-          <div className="flex gap-1.5 bg-white border border-slate-200 rounded-lg p-0.5 shadow-sm text-[11px] font-bold">
-            <button
-              onClick={() => setKpiTimeFilter('month')}
-              className={`px-3 py-1 rounded-md transition-all ${kpiTimeFilter === 'month' ? 'bg-[#0058be] text-white' : 'text-slate-500 hover:text-slate-800'}`}
-            >
-              Lọc theo Tháng
-            </button>
-            <button
-              onClick={() => setKpiTimeFilter('week')}
-              className={`px-3 py-1 rounded-md transition-all ${kpiTimeFilter === 'week' ? 'bg-[#0058be] text-white' : 'text-slate-500 hover:text-slate-800'}`}
-            >
-              Lọc theo Tuần
-            </button>
+          
+          <div className="flex gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">Tháng:</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+              >
+                {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+              </select>
+            </div>
+            <div className="w-px h-4 bg-slate-200 self-center"></div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">Tuần:</span>
+              <select
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+              >
+                <option value="all">Tất cả</option>
+                {[...Array(5)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+              </select>
+            </div>
           </div>
         </div>
       </div>
@@ -234,19 +259,9 @@ export default function ReportTab() {
         ]} />
         
         <div className="relative">
-          <div className="absolute top-4 right-4 z-10">
-            <select
-              value={chartFilter}
-              onChange={(e) => setChartFilter(e.target.value as 'week' | 'month')}
-              className="text-xs font-bold text-[#0b1c30] bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-[#0058be] shadow-sm cursor-pointer"
-            >
-              <option value="week">Tiến độ theo Tuần</option>
-              <option value="month">Tiến độ theo Tháng</option>
-            </select>
-          </div>
           <BarChartCard
-            title={chartFilter === 'week' ? "Tiến độ KPI theo tuần" : "Tiến độ KPI theo tháng"}
-            data={chartFilter === 'week' ? weeklyProgress : monthlyProgress}
+            title={selectedWeek === 'all' ? "Tiến độ KPI theo tuần trong tháng" : "Tiến độ KPI tuần này"}
+            data={selectedWeek === 'all' ? weeklyProgress : monthlyProgress}
             bars={[
               { key: 'kpi',   name: 'Điểm KPI',  fill: '#6366f1' },
               { key: 'tasks', name: 'Số Task', fill: '#10b981' },
@@ -279,7 +294,7 @@ export default function ReportTab() {
             <tbody>
               {myRealTasks.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-6 text-slate-400 font-semibold">Chưa có task nào được giao cho bạn.</td>
+                  <td colSpan={6} className="text-center py-6 text-slate-400 font-semibold">Chưa có task nào phù hợp bộ lọc.</td>
                 </tr>
               ) : (
                 myRealTasks.map((t, i) => (
@@ -295,6 +310,7 @@ export default function ReportTab() {
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${
                         t.priority === 'Critical' ? 'bg-red-100 text-red-700' :
                         t.priority === 'High'     ? 'bg-orange-100 text-orange-700' :
+                        t.priority === 'Interrupt'? 'bg-purple-100 text-purple-700' :
                         t.priority === 'Normal'   ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
                       }`}>{t.priority || 'Normal'}</span>
                     </td>
@@ -344,13 +360,13 @@ export default function ReportTab() {
               <SvgIcon name="history" className="w-4 h-4 text-slate-600" />
               <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Hoạt Động Gần Đây</h3>
             </div>
-            <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{recentActivities.length}</span>
+            <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{filteredActivities.length}</span>
           </div>
           <div className="p-4 space-y-2.5">
-            {recentActivities.length === 0 ? (
+            {filteredActivities.length === 0 ? (
               <p className="text-xs text-slate-400 font-semibold text-center py-6">Chưa có hoạt động gần đây.</p>
             ) : (
-              recentActivities.map((a, idx) => (
+              filteredActivities.map((a, idx) => (
                 <div key={idx} className="flex gap-3 items-start p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
                   <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${activityColor[a.type] || 'bg-slate-100 text-slate-500'}`}>✓</span>
                   <div><p className="text-[11px] font-semibold text-[#0b1c30]">{a.action}</p><p className="text-[10px] text-slate-400 mt-0.5">{a.time}</p></div>
