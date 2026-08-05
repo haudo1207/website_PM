@@ -159,6 +159,7 @@
       height: 90vh;
       max-height: 900px;
       border-radius: 1rem;
+      overflow: hidden; /* clip content to rounded corners in Desktop mode only */
     }
   }
 }

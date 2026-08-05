@@ -895,7 +895,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       {/* ============================================================== */}
       {showProjectModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center responsive-modal-overlay">
-          <div className="bg-white border border-slate-200 shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
+          <div className="bg-white border border-slate-200 shadow-2xl flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
             
             {/* Header with Context Pill */}
             <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center responsive-modal-header">
@@ -923,7 +923,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </button>
             </div>
 
-            <form onSubmit={handleSaveProjectForm} className="flex flex-col flex-1 overflow-hidden min-h-0">
+            <form onSubmit={handleSaveProjectForm} className="flex flex-col flex-1 min-h-0">
               
               {/* Scrollable Form Content Body */}
               <div className="responsive-modal-body">
