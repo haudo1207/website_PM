@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   getMembers, createMember, updateMember, deleteMember,
   getTeams, getPositions, getDepartments, getCategories,
-  syncFromRecruitment
+  syncFromRecruitment, getLeaders
 } from '@/lib/api';
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -31,7 +31,8 @@ interface Member {
 const EMPTY_FORM = {
   display_name: '', full_name: '', email: '', telegram_username: '',
   phone: '', birth_date: '', gender: '', team: '', position: '',
-  department: '', experience_year: 0, skill_ids: [] as number[]
+  department: '', experience_year: 0, skill_ids: [] as number[],
+  leader_name: '', leader_email: ''
 };
 
 interface Props {
@@ -45,6 +46,7 @@ export default function MembersView({ onFlash }: Props) {
   const [departments, setDepartments] = useState<any[]>([]);
   const [allSkillGroups, setAllSkillGroups] = useState<SkillGroup[]>([]);
   const [allSkillsMap, setAllSkillsMap] = useState<Map<number, string>>(new Map());
+  const [availableLeaders, setAvailableLeaders] = useState<{name: string, email: string}[]>([]);
 
   // filters
   const [search, setSearch] = useState('');
@@ -89,6 +91,7 @@ export default function MembersView({ onFlash }: Props) {
     getTeams().then(setTeams).catch(() => { });
     getPositions().then(setPositions).catch(() => { });
     getDepartments().then(setDepartments).catch(() => { });
+    getLeaders().then(setAvailableLeaders).catch(() => { });
     getCategories().then((cats: any[]) => {
       const groups: SkillGroup[] = [];
       const skillMap = new Map<number, string>();
@@ -133,6 +136,8 @@ export default function MembersView({ onFlash }: Props) {
       department: m.department || '',
       experience_year: m.experience_year || 0,
       skill_ids: m.skill_ids || [],
+      leader_name: m.leader_name || '',
+      leader_email: m.leader_email || '',
     });
     setShowModal(true);
   };
@@ -407,7 +412,7 @@ export default function MembersView({ onFlash }: Props) {
                   Thông tin tổ chức
                   <span className="flex-1 border-t border-slate-100"></span>
                 </h3>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Level *</label>
                     <select required value={form.team} onChange={e => setForm({ ...form, team: e.target.value })}
@@ -423,6 +428,35 @@ export default function MembersView({ onFlash }: Props) {
                       <option value="">-- Chọn Team --</option>
                       {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
                     </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Leader</label>
+                    <select
+                      value={form.leader_name}
+                      onChange={e => {
+                        const selected = availableLeaders.find(l => l.name === e.target.value);
+                        setForm({
+                          ...form,
+                          leader_name: e.target.value,
+                          leader_email: selected ? selected.email : form.leader_email
+                        });
+                      }}
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all font-medium"
+                    >
+                      <option value="">-- Chọn Leader --</option>
+                      {availableLeaders.map(l => (
+                        <option key={l.name} value={l.name}>{l.name}</option>
+                      ))}
+                      {form.leader_name && !availableLeaders.some(l => l.name === form.leader_name) && (
+                        <option value={form.leader_name}>{form.leader_name}</option>
+                      )}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email Leader</label>
+                    <input type="email" value={form.leader_email} onChange={e => setForm({ ...form, leader_email: e.target.value })}
+                      placeholder="leader@company.com"
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all" />
                   </div>
                 </div>
               </div>

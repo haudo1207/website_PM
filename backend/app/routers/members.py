@@ -257,6 +257,8 @@ def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_a
         position=body.get("position") or None,
         department=body.get("department") or None,
         experience_year=int(body.get("experience_year") or 0),
+        leader_name=body.get("leader_name") or None,
+        leader_email=body.get("leader_email") or None,
     )
 
     skill_ids = body.get("skill_ids", [])
@@ -316,6 +318,8 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(
     m.position = body.get("position") or None
     m.department = body.get("department") or None
     m.experience_year = int(body.get("experience_year") or 0)
+    m.leader_name = body.get("leader_name") or None
+    m.leader_email = body.get("leader_email") or None
 
     skill_ids = body.get("skill_ids")
     if skill_ids is not None:
@@ -343,6 +347,58 @@ def delete_member(id: int, db: Session = Depends(get_db), _=Depends(require_admi
 def list_teams(db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.query(Member.team).filter(Member.team.isnot(None)).distinct().all()
     return sorted([r[0] for r in rows if r[0]])
+
+
+# ─── GET LEADERS (from Supabase/DB distinct list) ─────────
+@router.get("/meta/leaders")
+def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    # 1. Try to fetch recruitment leaders from Supabase
+    SUPABASE_URL = "https://supabase.stratumconsultants.tech"
+    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UtbG9jYWwiLCJpYXQiOjE3NzgwNDM5NDUsImV4cCI6MjA5MzQwMzk0NX0.MLey0ChjN3lr8__Jc1lmiBw6xSbeW-mrXEXsxgkDywI"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders"
+    try:
+        import requests
+        import re
+        response = requests.get(leaders_url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            leaders_list = response.json()
+            out = []
+            seen = set()
+            for l in leaders_list:
+                raw_name = l.get("name", "")
+                email = l.get("email", "")
+                if raw_name:
+                    clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_name).strip()
+                    # Apply abbreviation display name formula
+                    words = [w for w in clean_name.split() if w]
+                    if len(words) <= 2:
+                        display_name = " ".join(words)
+                    else:
+                        abbr = ".".join([w[0].upper() for w in words[:-2]])
+                        last_two = " ".join(words[-2:])
+                        display_name = f"{abbr} {last_two}"
+                    
+                    if display_name not in seen:
+                        seen.add(display_name)
+                        out.append({"name": display_name, "email": email or ""})
+            return sorted(out, key=lambda x: x["name"])
+    except Exception:
+        pass
+
+    # Fallback to unique leaders in local database
+    rows = db.query(Member.leader_name, Member.leader_email).filter(Member.leader_name.isnot(None)).distinct().all()
+    out = []
+    seen = set()
+    for r in rows:
+        name = r[0].strip()
+        if name and name not in seen:
+            seen.add(name)
+            out.append({"name": name, "email": r[1] or ""})
+    return sorted(out, key=lambda x: x["name"])
 
 
 # ─── SYNC CANDIDATE ──────────────────────────────────────────
@@ -405,7 +461,9 @@ def sync_candidate(
     raw_leader_name = body.get("leader_name")
     leader_name = None
     if raw_leader_name:
-        words = [w for w in str(raw_leader_name).strip().split() if w]
+        import re
+        clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(raw_leader_name)).strip()
+        words = [w for w in clean_leader_name.split() if w]
         if len(words) <= 2:
             leader_name = " ".join(words)
         else:
@@ -440,8 +498,10 @@ def sync_candidate(
             member.birth_date = birth_date
         if cv_link:
             member.cv_link = cv_link
-        member.leader_name = leader_name
-        member.leader_email = leader_email
+        if leader_name:
+            member.leader_name = leader_name
+        if leader_email:
+            member.leader_email = leader_email
     else:
         # Create new member
         member = Member(
@@ -653,8 +713,10 @@ def sync_from_recruitment(
                 raw_leader_name = str(leader_info.get("name", "")).strip()
                 leader_email = str(leader_info.get("email", "")).strip() or None
                 if raw_leader_name:
+                    import re
+                    clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_leader_name).strip()
                     # Apply Display Name formula
-                    words = [w for w in raw_leader_name.split() if w]
+                    words = [w for w in clean_leader_name.split() if w]
                     if len(words) <= 2:
                         leader_name = " ".join(words)
                     else:
@@ -714,8 +776,10 @@ def sync_from_recruitment(
                     member.birth_date = birth_date
                 if cv_link:
                     member.cv_link = cv_link
-                member.leader_name = leader_name
-                member.leader_email = leader_email
+                if leader_name:
+                    member.leader_name = leader_name
+                if leader_email:
+                    member.leader_email = leader_email
             else:
                 member = Member(
                     display_name=display_name,
