@@ -898,7 +898,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
           <div className="bg-white border border-slate-200 shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
             
             {/* Header with Context Pill */}
-            <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
+            <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center responsive-modal-header">
               <div>
                 <h3 className="text-sm font-extrabold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
                   <span>{modalMode === 'create' ? '➕ Tạo dự án' : '📝 Cập nhật dự án'}</span>
@@ -926,18 +926,18 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
             <form onSubmit={handleSaveProjectForm} className="flex flex-col flex-1 overflow-hidden min-h-0">
               
               {/* Scrollable Form Content Body */}
-              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1">
+              <div className="responsive-modal-body">
                 
                 {/* SECTION 1: THÔNG TIN DỰ ÁN */}
-                <div className="space-y-3.5 bg-slate-50/50 p-3.5 sm:p-4 rounded-xl border border-slate-100">
-                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                <div className="modal-section space-y-3.5 bg-slate-50/50 p-3.5 sm:p-4 rounded-xl border border-slate-100">
+                  <div className="modal-section-title flex items-center justify-between border-b border-slate-200/80 pb-2">
                     <h4 className="text-[11px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-2">
                       <span>📌</span> THÔNG TIN DỰ ÁN
                     </h4>
                   </div>
 
                   {/* Row 1: Project Name (75%) & Year (25%) */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 items-start">
+                  <div className="modal-field-gap grid grid-cols-1 md:grid-cols-4 gap-3.5 items-start">
                     <div className="md:col-span-3 space-y-1.5">
                       <label className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider block">
                         Tên dự án <span className="text-amber-500 font-bold ml-0.5">*</span>
@@ -951,7 +951,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                           setProjectForm({ ...projectForm, name: e.target.value });
                           if (formSubmitted && e.target.value.trim()) setFormSubmitted(false);
                         }}
-                        className={`w-full bg-white border ${formSubmitted && !projectForm.name.trim() ? 'border-red-500 bg-red-50/20' : 'border-slate-200'} rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 focus:border-blue-500 outline-none font-semibold transition-all`}
+                        className={`modal-input w-full bg-white border ${formSubmitted && !projectForm.name.trim() ? 'border-red-500 bg-red-50/20' : 'border-slate-200'} rounded-lg px-3 py-2 text-xs text-[#0f172a] placeholder-slate-400 focus:border-blue-500 outline-none font-semibold transition-all`}
                       />
                       {formSubmitted && !projectForm.name.trim() && (
                         <p className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-0.5 animate-in fade-in">
@@ -1061,8 +1061,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                 </div>
 
                 {/* SECTION 2: NHÂN SỰ DỰ ÁN */}
-                <div className="space-y-3.5 bg-slate-50/50 p-3.5 sm:p-4 rounded-xl border border-slate-100">
-                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                <div className="modal-section space-y-3.5 bg-slate-50/50 p-3.5 sm:p-4 rounded-xl border border-slate-100">
+                  <div className="modal-section-title flex items-center justify-between border-b border-slate-200/80 pb-2">
                     <h4 className="text-[11px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-2">
                       <span>👥</span> NHÂN SỰ DỰ ÁN
                     </h4>
@@ -1419,8 +1419,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                 </div>
 
                 {/* SECTION 3: KHỞI TẠO & MÔ TẢ */}
-                <div className="space-y-3.5 bg-slate-50/50 p-3.5 sm:p-4 rounded-xl border border-slate-100">
-                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                <div className="modal-section space-y-3.5 bg-slate-50/50 p-3.5 sm:p-4 rounded-xl border border-slate-100">
+                  <div className="modal-section-title flex items-center justify-between border-b border-slate-200/80 pb-2">
                     <h4 className="text-[11px] font-extrabold text-blue-700 uppercase tracking-wider flex items-center gap-2">
                       <span>⚙️</span> KHỞI TẠO & MÔ TẢ
                     </h4>
@@ -1511,7 +1511,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               {/* End Scrollable Form Content Body */}
 
               {/* FIXED STICKY FOOTER */}
-              <div className="px-6 py-3.5 bg-white border-t border-slate-200/90 shadow-[0_-4px_16px_rgba(0,0,0,0.05)] flex items-center justify-between shrink-0 z-10">
+              <div className="px-6 py-3.5 bg-white border-t border-slate-200/90 shadow-[0_-4px_16px_rgba(0,0,0,0.05)] flex items-center justify-between z-10 responsive-modal-footer">
                 {/* Left Side: Field Status Indicator */}
                 <div className="flex items-center gap-2">
                   {!projectForm.name.trim() || !projectForm.customerId ? (
