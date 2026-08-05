@@ -257,6 +257,8 @@ def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_a
         position=body.get("position") or None,
         department=body.get("department") or None,
         experience_year=int(body.get("experience_year") or 0),
+        leader_name=body.get("leader_name") or None,
+        leader_email=body.get("leader_email") or None,
     )
 
     skill_ids = body.get("skill_ids", [])
@@ -316,6 +318,8 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(
     m.position = body.get("position") or None
     m.department = body.get("department") or None
     m.experience_year = int(body.get("experience_year") or 0)
+    m.leader_name = body.get("leader_name") or None
+    m.leader_email = body.get("leader_email") or None
 
     skill_ids = body.get("skill_ids")
     if skill_ids is not None:
@@ -405,7 +409,9 @@ def sync_candidate(
     raw_leader_name = body.get("leader_name")
     leader_name = None
     if raw_leader_name:
-        words = [w for w in str(raw_leader_name).strip().split() if w]
+        import re
+        clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(raw_leader_name)).strip()
+        words = [w for w in clean_leader_name.split() if w]
         if len(words) <= 2:
             leader_name = " ".join(words)
         else:
@@ -440,8 +446,10 @@ def sync_candidate(
             member.birth_date = birth_date
         if cv_link:
             member.cv_link = cv_link
-        member.leader_name = leader_name
-        member.leader_email = leader_email
+        if leader_name:
+            member.leader_name = leader_name
+        if leader_email:
+            member.leader_email = leader_email
     else:
         # Create new member
         member = Member(
@@ -653,8 +661,10 @@ def sync_from_recruitment(
                 raw_leader_name = str(leader_info.get("name", "")).strip()
                 leader_email = str(leader_info.get("email", "")).strip() or None
                 if raw_leader_name:
+                    import re
+                    clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_leader_name).strip()
                     # Apply Display Name formula
-                    words = [w for w in raw_leader_name.split() if w]
+                    words = [w for w in clean_leader_name.split() if w]
                     if len(words) <= 2:
                         leader_name = " ".join(words)
                     else:
@@ -714,8 +724,10 @@ def sync_from_recruitment(
                     member.birth_date = birth_date
                 if cv_link:
                     member.cv_link = cv_link
-                member.leader_name = leader_name
-                member.leader_email = leader_email
+                if leader_name:
+                    member.leader_name = leader_name
+                if leader_email:
+                    member.leader_email = leader_email
             else:
                 member = Member(
                     display_name=display_name,

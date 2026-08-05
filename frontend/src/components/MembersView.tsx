@@ -31,7 +31,8 @@ interface Member {
 const EMPTY_FORM = {
   display_name: '', full_name: '', email: '', telegram_username: '',
   phone: '', birth_date: '', gender: '', team: '', position: '',
-  department: '', experience_year: 0, skill_ids: [] as number[]
+  department: '', experience_year: 0, skill_ids: [] as number[],
+  leader_name: '', leader_email: ''
 };
 
 interface Props {
@@ -133,6 +134,8 @@ export default function MembersView({ onFlash }: Props) {
       department: m.department || '',
       experience_year: m.experience_year || 0,
       skill_ids: m.skill_ids || [],
+      leader_name: m.leader_name || '',
+      leader_email: m.leader_email || '',
     });
     setShowModal(true);
   };
@@ -407,7 +410,7 @@ export default function MembersView({ onFlash }: Props) {
                   Thông tin tổ chức
                   <span className="flex-1 border-t border-slate-100"></span>
                 </h3>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Level *</label>
                     <select required value={form.team} onChange={e => setForm({ ...form, team: e.target.value })}
@@ -423,6 +426,18 @@ export default function MembersView({ onFlash }: Props) {
                       <option value="">-- Chọn Team --</option>
                       {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
                     </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Leader</label>
+                    <input value={form.leader_name} onChange={e => setForm({ ...form, leader_name: e.target.value })}
+                      placeholder="Ví dụ: N. Văn Thương"
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email Leader</label>
+                    <input type="email" value={form.leader_email} onChange={e => setForm({ ...form, leader_email: e.target.value })}
+                      placeholder="leader@company.com"
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all" />
                   </div>
                 </div>
               </div>
