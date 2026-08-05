@@ -100,14 +100,17 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const modalPhaseRef = React.useRef<HTMLDivElement>(null);
   const nameInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Body scroll lock effect when modal is active
+  // Body and HTML scroll lock effect when modal is active
   useEffect(() => {
     if (showProjectModal || showCustomerDeleteModal || showProjectDeleteModal) {
+      document.documentElement.style.overflow = 'hidden';
       document.body.style.overflow = 'hidden';
     } else {
+      document.documentElement.style.overflow = '';
       document.body.style.overflow = '';
     }
     return () => {
+      document.documentElement.style.overflow = '';
       document.body.style.overflow = '';
     };
   }, [showProjectModal, showCustomerDeleteModal, showProjectDeleteModal]);
@@ -563,7 +566,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 1: CUSTOMERS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[650px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">🏢 Khách hàng</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customers.length}</span>
@@ -691,7 +694,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 2: YEARS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[650px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📅 Năm</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customerYears.length}</span>
@@ -768,7 +771,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 3: PROJECTS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[650px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📁 Dự án</span>
             <div className="flex items-center gap-2">
