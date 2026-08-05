@@ -298,9 +298,9 @@ export default function ProjectListContent() {
             </div>
 
             <div className="flex flex-col flex-shrink-0 w-[140px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Business</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Workspace</label>
               <select value={businessFilter} onChange={e => { setBusinessFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả Business</option>
+                <option value="All">Tất cả Workspace</option>
                 <option value="Infrastructure">Infrastructure</option>
                 <option value="Markee">Markee</option>
               </select>

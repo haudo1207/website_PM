@@ -519,7 +519,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
-          <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Business Unit</p>
+          <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Workspace</p>
         </div>
 
         {/* Business Unit Selector Tabs */}
@@ -955,14 +955,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                   </select>
                   {modalCustomerMismatch && (
                     <p className="text-[10px] font-semibold text-amber-600 flex items-start gap-1">
-                      ⚠ Khách hàng hiện tại không thuộc Business đã chọn. Vui lòng chọn khách hàng khác.
+                      ⚠ Khách hàng hiện tại không thuộc Workspace đã chọn. Vui lòng chọn khách hàng khác.
                     </p>
                   )}
                 </div>
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Business <span className="text-red-500">*</span>
+                    Workspace <span className="text-red-500">*</span>
                   </label>
                   <select
                     required

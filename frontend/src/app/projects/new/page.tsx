@@ -234,7 +234,7 @@ export default function NewProjectPage() {
                 {/* Business Selector */}
                 <div className="space-y-2">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Business <span className="text-rose-500 font-bold ml-0.5">*</span>
+                    Workspace <span className="text-rose-500 font-bold ml-0.5">*</span>
                   </label>
                   <select
                     required
