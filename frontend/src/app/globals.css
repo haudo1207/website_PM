@@ -49,7 +49,34 @@
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: #3b82f6;
+}
+
+/* Responsive Modal Strategy (Viewport Height based) */
+@layer utilities {
+  .responsive-modal-overlay {
+    padding: 0;
+  }
+  .responsive-modal-container {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    max-width: 100vw;
+    max-height: 100vh;
+  }
+
+  @media (min-height: 700px) {
+    .responsive-modal-overlay {
+      padding: 1rem;
+    }
+    .responsive-modal-container {
+      width: 90vw;
+      max-width: 1000px;
+      height: 90vh;
+      max-height: 900px;
+      border-radius: 1rem;
+    }
+  }
 }
 
 /* Firefox */
