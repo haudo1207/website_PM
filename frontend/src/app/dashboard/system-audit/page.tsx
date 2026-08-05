@@ -204,7 +204,7 @@ export default function SystemAuditTab() {
     { label: 'Task Hoàn Thành',    value: taskStats.done,               icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: taskStats.total ? `${Math.round(taskStats.done/taskStats.total*100)}%` : '0%' },
   ];
 
-  const displayedProjects = showAllProjects ? activeProjectsProgress : activeProjectsProgress.slice(0, 6);
+  const displayedProjects = activeProjectsProgress;
 
   return (
     <div className="p-6 space-y-5">
@@ -248,21 +248,12 @@ export default function SystemAuditTab() {
             <SvgIcon name="chart" className="w-4 h-4 text-[#0058be]" />
             <div>
               <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Tiến Độ Dự Án Trong Hệ Thống</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">Hiển thị {displayedProjects.length} / {activeProjectsProgress.length} dự án. Bấm vào dự án để xem chi tiết.</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Hiển thị {activeProjectsProgress.length} dự án. Bấm vào dự án để xem chi tiết.</p>
             </div>
           </div>
-          {activeProjectsProgress.length > 6 && (
-            <button
-              onClick={() => setShowAllProjects(!showAllProjects)}
-              className="text-[11px] font-bold bg-blue-50 text-[#0058be] hover:bg-blue-100 px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
-            >
-              <span>{showAllProjects ? 'Thu gọn' : `Xem thêm (${activeProjectsProgress.length - 6} dự án)`}</span>
-              <span>{showAllProjects ? '▲' : '▼'}</span>
-            </button>
-          )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 max-h-[400px] overflow-y-auto pr-2 pb-2 custom-scrollbar">
           {displayedProjects.length === 0 ? (
             <p className="col-span-3 text-center text-slate-400 text-xs py-6 font-semibold">Chưa có dữ liệu dự án.</p>
           ) : (
@@ -289,18 +280,6 @@ export default function SystemAuditTab() {
             ))
           )}
         </div>
-
-        {activeProjectsProgress.length > 6 && !showAllProjects && (
-          <div className="flex justify-center mt-4 pt-3 border-t border-slate-100">
-            <button
-              onClick={() => setShowAllProjects(true)}
-              className="px-5 py-2 bg-blue-50 hover:bg-blue-100 text-[#0058be] rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm active:scale-95 cursor-pointer"
-            >
-              <span>Xem thêm tất cả {activeProjectsProgress.length} dự án</span>
-              <span>▼</span>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Row 2: Phase Distribution & Projects at Risk */}

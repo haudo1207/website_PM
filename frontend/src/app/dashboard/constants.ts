@@ -3,6 +3,7 @@ export const priorityDot: Record<string, string> = {
   High: 'bg-orange-500',
   Normal: 'bg-blue-500',
   Low: 'bg-slate-400',
+  Interrupt: 'bg-purple-500',
 };
 
 export const statusStyle: Record<string, string> = {
