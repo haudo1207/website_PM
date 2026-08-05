@@ -197,17 +197,6 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       : modalSelectedCustomerBu !== projectForm.business.toLowerCase()
   );
 
-  // Keep the currently-selected customer visible in the modal even if it does not belong to the chosen Business
-  const modalCustomerOptions = useMemo(() => {
-    const opts = [...modalBusinessCustomers];
-    const selectedId = Number(projectForm.customerId);
-    if (selectedId && !opts.some(c => c.id === selectedId)) {
-      const current = allCustomers.find(c => c.id === selectedId);
-      if (current) opts.unshift(current);
-    }
-    return opts;
-  }, [modalBusinessCustomers, allCustomers, projectForm.customerId]);
-
   // Selected Customer details
   const selectedCustomer = useMemo(() => {
     return customers.find(c => c.id === selectedCustomerId) || null;
@@ -986,15 +975,21 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                         className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
                       >
                         <option value="">-- Chọn khách hàng --</option>
-                        {modalCustomerOptions.map(c => (
+                        {modalBusinessCustomers.map(c => (
                           <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
                       </select>
+                      {modalCustomerMismatch && (
+                        <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
+                          <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>
+                          Khách hàng hiện tại không thuộc Workspace đã chọn. Vui lòng chọn khách hàng khác.
+                        </p>
+                      )}
                     </div>
 
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider block">
-                        Business <span className="text-amber-500 font-bold ml-0.5">*</span>
+                        Workspace <span className="text-amber-500 font-bold ml-0.5">*</span>
                       </label>
                       <select
                         value={projectForm.business}
