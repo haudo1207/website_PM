@@ -349,6 +349,58 @@ def list_teams(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return sorted([r[0] for r in rows if r[0]])
 
 
+# ─── GET LEADERS (from Supabase/DB distinct list) ─────────
+@router.get("/meta/leaders")
+def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    # 1. Try to fetch recruitment leaders from Supabase
+    SUPABASE_URL = "https://supabase.stratumconsultants.tech"
+    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UtbG9jYWwiLCJpYXQiOjE3NzgwNDM5NDUsImV4cCI6MjA5MzQwMzk0NX0.MLey0ChjN3lr8__Jc1lmiBw6xSbeW-mrXEXsxgkDywI"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders"
+    try:
+        import requests
+        import re
+        response = requests.get(leaders_url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            leaders_list = response.json()
+            out = []
+            seen = set()
+            for l in leaders_list:
+                raw_name = l.get("name", "")
+                email = l.get("email", "")
+                if raw_name:
+                    clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_name).strip()
+                    # Apply abbreviation display name formula
+                    words = [w for w in clean_name.split() if w]
+                    if len(words) <= 2:
+                        display_name = " ".join(words)
+                    else:
+                        abbr = ".".join([w[0].upper() for w in words[:-2]])
+                        last_two = " ".join(words[-2:])
+                        display_name = f"{abbr} {last_two}"
+                    
+                    if display_name not in seen:
+                        seen.add(display_name)
+                        out.append({"name": display_name, "email": email or ""})
+            return sorted(out, key=lambda x: x["name"])
+    except Exception:
+        pass
+
+    # Fallback to unique leaders in local database
+    rows = db.query(Member.leader_name, Member.leader_email).filter(Member.leader_name.isnot(None)).distinct().all()
+    out = []
+    seen = set()
+    for r in rows:
+        name = r[0].strip()
+        if name and name not in seen:
+            seen.add(name)
+            out.append({"name": name, "email": r[1] or ""})
+    return sorted(out, key=lambda x: x["name"])
+
+
 # ─── SYNC CANDIDATE ──────────────────────────────────────────
 @router.post("/sync-candidate")
 def sync_candidate(

@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   getMembers, createMember, updateMember, deleteMember,
   getTeams, getPositions, getDepartments, getCategories,
-  syncFromRecruitment
+  syncFromRecruitment, getLeaders
 } from '@/lib/api';
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -46,6 +46,7 @@ export default function MembersView({ onFlash }: Props) {
   const [departments, setDepartments] = useState<any[]>([]);
   const [allSkillGroups, setAllSkillGroups] = useState<SkillGroup[]>([]);
   const [allSkillsMap, setAllSkillsMap] = useState<Map<number, string>>(new Map());
+  const [availableLeaders, setAvailableLeaders] = useState<{name: string, email: string}[]>([]);
 
   // filters
   const [search, setSearch] = useState('');
@@ -90,6 +91,7 @@ export default function MembersView({ onFlash }: Props) {
     getTeams().then(setTeams).catch(() => { });
     getPositions().then(setPositions).catch(() => { });
     getDepartments().then(setDepartments).catch(() => { });
+    getLeaders().then(setAvailableLeaders).catch(() => { });
     getCategories().then((cats: any[]) => {
       const groups: SkillGroup[] = [];
       const skillMap = new Map<number, string>();
@@ -429,9 +431,26 @@ export default function MembersView({ onFlash }: Props) {
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Leader</label>
-                    <input value={form.leader_name} onChange={e => setForm({ ...form, leader_name: e.target.value })}
-                      placeholder="Ví dụ: N. Văn Thương"
-                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all" />
+                    <select
+                      value={form.leader_name}
+                      onChange={e => {
+                        const selected = availableLeaders.find(l => l.name === e.target.value);
+                        setForm({
+                          ...form,
+                          leader_name: e.target.value,
+                          leader_email: selected ? selected.email : form.leader_email
+                        });
+                      }}
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all font-medium"
+                    >
+                      <option value="">-- Chọn Leader --</option>
+                      {availableLeaders.map(l => (
+                        <option key={l.name} value={l.name}>{l.name}</option>
+                      ))}
+                      {form.leader_name && !availableLeaders.some(l => l.name === form.leader_name) && (
+                        <option value={form.leader_name}>{form.leader_name}</option>
+                      )}
+                    </select>
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email Leader</label>
