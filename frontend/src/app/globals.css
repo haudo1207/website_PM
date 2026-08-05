@@ -147,7 +147,7 @@
 
   /* =============================================
      MODE: Desktop Modal (viewport height >= 700px)
-     Dynamic max-height with dvh - perfectly fits visual viewport
+     Natural UX: flexible height up to max-height bound
      ============================================= */
   @media (min-height: 700px) {
     .responsive-modal-overlay {
@@ -156,8 +156,8 @@
     .responsive-modal-container {
       width: min(1000px, 90vw);
       max-width: 1000px;
-      height: min(900px, calc(100dvh - 2rem));
-      max-height: calc(100dvh - 2rem);
+      height: auto;
+      max-height: min(900px, calc(100dvh - 2rem));
       border-radius: 1rem;
       overflow: hidden; /* clip content to rounded corners in Desktop mode only */
     }
