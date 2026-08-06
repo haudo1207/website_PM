@@ -39,6 +39,110 @@ interface Props {
   onFlash: (msg: string) => void;
 }
 
+interface SearchableSelectProps {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  options: string[];
+  placeholder?: string;
+  required?: boolean;
+}
+
+function SearchableSelect({ label, value, onChange, options, placeholder = "-- Chọn --", required = false }: SearchableSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(`.select-container-${label.replace(/\s+/g, '-').replace(/\*/g, '')}`)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('click', handleOutsideClick);
+    return () => document.removeEventListener('click', handleOutsideClick);
+  }, [isOpen, label]);
+
+  return (
+    <div className={`flex flex-col gap-1 relative select-container-${label.replace(/\s+/g, '-').replace(/\*/g, '')}`}>
+      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{label} {required && '*'}</label>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all text-left flex items-center justify-between font-medium"
+        >
+          <span className={value ? "text-slate-800" : "text-slate-400"}>
+            {value || placeholder}
+          </span>
+          <svg className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {isOpen && (
+          <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-hidden flex flex-col">
+            <div className="p-2 border-b border-slate-100 bg-slate-50">
+              <input
+                type="text"
+                autoFocus
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Tìm kiếm..."
+                className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none focus:border-blue-500 placeholder-slate-400 font-medium"
+              />
+            </div>
+            <div className="overflow-y-auto flex-1 divide-y divide-slate-50 max-h-48">
+              <button
+                type="button"
+                onClick={() => {
+                  onChange('');
+                  setIsOpen(false);
+                  setSearch('');
+                }}
+                className="w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-slate-50 transition-colors font-medium"
+              >
+                {placeholder}
+              </button>
+              {options
+                .filter(opt => opt && opt.toLowerCase().includes(search.toLowerCase()))
+                .map(opt => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => {
+                      onChange(opt);
+                      setIsOpen(false);
+                      setSearch('');
+                    }}
+                    className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 hover:text-blue-700 transition-colors font-medium ${
+                      value === opt ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-700"
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              {value && !options.some(opt => opt === value) && value.toLowerCase().includes(search.toLowerCase()) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    setSearch('');
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs bg-blue-50 text-blue-700 font-bold"
+                >
+                  {value}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function MembersView({ onFlash }: Props) {
   const [members, setMembers] = useState<Member[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
@@ -58,8 +162,6 @@ export default function MembersView({ onFlash }: Props) {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
-  const [leaderSearch, setLeaderSearch] = useState('');
-  const [isOpenLeaderDropdown, setIsOpenLeaderDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -116,25 +218,12 @@ export default function MembersView({ onFlash }: Props) {
     return () => clearTimeout(t);
   }, [loadMembers]);
 
-  // Click outside to close dropdown
-  useEffect(() => {
-    if (!isOpenLeaderDropdown) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.leader-dropdown-container')) {
-        setIsOpenLeaderDropdown(false);
-      }
-    };
-    document.addEventListener('click', handleOutsideClick);
-    return () => document.removeEventListener('click', handleOutsideClick);
-  }, [isOpenLeaderDropdown]);
+  // Redundant click outside handler removed
 
   // ─── Modal helpers ────────────────────────────────────────────────
   const openAdd = () => {
     setEditingId(null);
     setForm({ ...EMPTY_FORM });
-    setLeaderSearch('');
-    setIsOpenLeaderDropdown(false);
     setShowModal(true);
   };
 
@@ -156,8 +245,6 @@ export default function MembersView({ onFlash }: Props) {
       leader_name: m.leader_name || '',
       leader_email: m.leader_email || '',
     });
-    setLeaderSearch('');
-    setIsOpenLeaderDropdown(false);
     setShowModal(true);
   };
 
@@ -432,99 +519,35 @@ export default function MembersView({ onFlash }: Props) {
                   <span className="flex-1 border-t border-slate-100"></span>
                 </h3>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Level *</label>
-                    <select required value={form.team} onChange={e => setForm({ ...form, team: e.target.value })}
-                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all">
-                      <option value="">-- Chọn Level --</option>
-                      {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Team</label>
-                    <select value={form.department} onChange={e => setForm({ ...form, department: e.target.value })}
-                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all">
-                      <option value="">-- Chọn Team --</option>
-                      {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1 relative leader-dropdown-container">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Leader</label>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setIsOpenLeaderDropdown(!isOpenLeaderDropdown)}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all text-left flex items-center justify-between font-medium"
-                      >
-                        <span className={form.leader_name ? "text-slate-800" : "text-slate-400"}>
-                          {form.leader_name || "-- Chọn Leader --"}
-                        </span>
-                        <svg className={`w-4 h-4 text-slate-400 transition-transform ${isOpenLeaderDropdown ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-
-                      {isOpenLeaderDropdown && (
-                        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-hidden flex flex-col">
-                          <div className="p-2 border-b border-slate-100 bg-slate-50">
-                            <input
-                              type="text"
-                              autoFocus
-                              value={leaderSearch}
-                              onChange={e => setLeaderSearch(e.target.value)}
-                              placeholder="Tìm kiếm leader..."
-                              className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none focus:border-blue-500 placeholder-slate-400 font-medium"
-                            />
-                          </div>
-                          <div className="overflow-y-auto flex-1 divide-y divide-slate-50 max-h-48">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setForm({ ...form, leader_name: '', leader_email: '' });
-                                setIsOpenLeaderDropdown(false);
-                                setLeaderSearch('');
-                              }}
-                              className="w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-slate-50 transition-colors font-medium"
-                            >
-                              -- Chọn Leader --
-                            </button>
-                            {availableLeaders
-                              .filter(l => l.name.toLowerCase().includes(leaderSearch.toLowerCase()))
-                              .map(l => (
-                                <button
-                                  key={l.name}
-                                  type="button"
-                                  onClick={() => {
-                                    setForm({ ...form, leader_name: l.name, leader_email: l.email });
-                                    setIsOpenLeaderDropdown(false);
-                                    setLeaderSearch('');
-                                  }}
-                                  className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 hover:text-blue-700 transition-colors font-medium ${
-                                    form.leader_name === l.name ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-700"
-                                  }`}
-                                >
-                                  {l.name}
-                                </button>
-                              ))}
-                            {form.leader_name && 
-                             !availableLeaders.some(l => l.name === form.leader_name) &&
-                             form.leader_name.toLowerCase().includes(leaderSearch.toLowerCase()) && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsOpenLeaderDropdown(false);
-                                  setLeaderSearch('');
-                                }}
-                                className="w-full text-left px-3 py-2 text-xs bg-blue-50 text-blue-700 font-bold"
-                              >
-                                {form.leader_name}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <SearchableSelect
+                    label="Level"
+                    required
+                    value={form.team}
+                    onChange={val => setForm({ ...form, team: val })}
+                    options={teams.map(t => t.name)}
+                    placeholder="-- Chọn Level --"
+                  />
+                  <SearchableSelect
+                    label="Team"
+                    value={form.department}
+                    onChange={val => setForm({ ...form, department: val })}
+                    options={departments.map(d => d.name)}
+                    placeholder="-- Chọn Team --"
+                  />
+                  <SearchableSelect
+                    label="Tên Leader"
+                    value={form.leader_name}
+                    onChange={val => {
+                      const selected = availableLeaders.find(l => l.name === val);
+                      setForm({
+                        ...form,
+                        leader_name: val,
+                        leader_email: selected ? selected.email : form.leader_email
+                      });
+                    }}
+                    options={availableLeaders.map(l => l.name)}
+                    placeholder="-- Chọn Leader --"
+                  />
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email Leader</label>
                     <input type="email" value={form.leader_email} onChange={e => setForm({ ...form, leader_email: e.target.value })}
