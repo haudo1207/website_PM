@@ -485,7 +485,10 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     for field in ["name", "code", "customer_name", "description", "status", "current_phase"]:
         if field in body:
             val = body[field]
-            setattr(p, field, str(val).strip() if val is not None else None)
+            if field == "code" and val:
+                setattr(p, "code", str(val).strip()[:50])
+            else:
+                setattr(p, field, str(val).strip() if val is not None else None)
 
     if "year" in body:
         y_val = body["year"]

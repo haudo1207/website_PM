@@ -429,9 +429,11 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     setActionLoading(true);
     try {
       const selectedCust = allCustomers.find(c => c.id === Number(projectForm.customerId));
+      const cleanNameSlug = projectForm.name.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
+      const safeCode = (cleanNameSlug.slice(0, 40) + `-${projectForm.year}`).slice(0, 50);
       const payload = {
         name: projectForm.name.trim(),
-        code: `${projectForm.name.trim().replace(/\s+/g, '-')}-${projectForm.year}`,
+        code: safeCode,
         customer_id: Number(projectForm.customerId),
         customer_name: selectedCust ? selectedCust.name : '',
         business: projectForm.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure'),
