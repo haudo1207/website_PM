@@ -9,8 +9,8 @@ import { isSuperAdmin, isLeader } from '@/lib/auth';
 type Tab = 'report' | 'overview' | 'system-audit';
 
 const ALL_TABS: { id: Tab; label: string; path: string }[] = [
-  { id: 'report',       label: 'Report',       path: '/dashboard/report' },
   { id: 'overview',     label: 'Overview',     path: '/dashboard/overview' },
+  { id: 'report',       label: 'Report',       path: '/dashboard/report' },
   { id: 'system-audit', label: 'System Audit', path: '/dashboard/system-audit' },
 ];
 
