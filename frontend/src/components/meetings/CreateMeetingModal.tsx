@@ -9,14 +9,27 @@ interface CreateMeetingModalProps {
   initialData?: any;
 }
 
+interface MeetingFormData {
+  title: string;
+  platform: string;
+  date: string;
+  time: string;
+  duration: string;
+  link: string;
+  transcript?: string;
+  auto_summarize?: boolean;
+}
+
 export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData }: CreateMeetingModalProps) {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<MeetingFormData>({
     title: '',
     platform: 'Google Meet',
     date: '',
     time: '',
     duration: '60',
-    link: ''
+    link: '',
+    transcript: '',
+    auto_summarize: true
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
@@ -27,7 +40,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     if (initialData) {
       setFormData({ 
         ...initialData, 
-        platform: initialData.platform || 'Google Meet' 
+        platform: initialData.platform || 'Google Meet',
+        transcript: initialData.transcript || '',
+        auto_summarize: true
       });
     } else {
       const today = new Date().toISOString().split('T')[0];
@@ -37,7 +52,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         date: today,
         time: '09:00',
         duration: '60',
-        link: ''
+        link: '',
+        transcript: '',
+        auto_summarize: true
       });
     }
     setError('');
@@ -286,6 +303,17 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   )}
                 </>
               )}
+            </div>
+
+            {/* Auto AI Summary Notice */}
+            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-[#6d28d9] text-xs">
+                <Sparkles size={14} />
+                <span>Tự động thu âm & AI Summary</span>
+              </div>
+              <p className="text-[11px] text-[#516079] leading-relaxed font-medium">
+                Khi cuộc họp kết thúc, hệ thống sẽ tự động đồng bộ transcript từ link Zoom hoặc Google Meet để AI phân tích và gợi ý task vào dự án.
+              </p>
             </div>
           </div>
 

@@ -44,6 +44,24 @@ def run_migration():
             print(f"Adding columns to 'task_groups' table: {additions}")
             conn.execute(text("ALTER TABLE task_groups " + ", ".join(additions)))
             conn.commit()
+
+        # Check members table columns
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'members'"
+        ))
+        existing_members_cols = {row[0] for row in result}
+        
+        member_additions = []
+        if "leader_name" not in existing_members_cols:
+            member_additions.append("ADD COLUMN leader_name VARCHAR(100)")
+        if "leader_email" not in existing_members_cols:
+            member_additions.append("ADD COLUMN leader_email VARCHAR(255)")
+            
+        if member_additions:
+            print(f"Adding columns to 'members' table: {member_additions}")
+            conn.execute(text("ALTER TABLE members " + ", ".join(member_additions)))
+            conn.commit()
             
         print("Database schema migration completed successfully!")
 

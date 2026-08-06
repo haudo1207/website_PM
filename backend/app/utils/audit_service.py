@@ -8,6 +8,7 @@ from ..models.audit_log import AuditLog
 from ..models.project import Project
 import json
 import datetime
+import uuid
 
 class AuditService:
     @staticmethod
@@ -25,6 +26,7 @@ class AuditService:
         old_value: Optional[Any] = None,
         new_value: Optional[Any] = None,
         description: Optional[str] = None,
+        event_id: Optional[str] = None,
         request: Optional[Request] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -36,6 +38,7 @@ class AuditService:
         try:
             old_str = AuditService._format_value(old_value)
             new_str = AuditService._format_value(new_value)
+            evt_id = event_id or str(uuid.uuid4())
 
             # Auto derive business_unit if project_id is given
             bu = business_unit
@@ -62,6 +65,7 @@ class AuditService:
                     url = str(request.url)
 
             log_entry = AuditLog(
+                event_id=evt_id,
                 business_unit=bu,
                 customer_id=customer_id,
                 project_id=project_id,
@@ -98,13 +102,16 @@ class AuditService:
         customer_id: Optional[int] = None,
         business_unit: Optional[str] = None,
         field_labels: Optional[Dict[str, str]] = None,
+        event_id: Optional[str] = None,
         request: Optional[Request] = None
     ) -> List[str]:
         """
-        Compare old_dict and new_dict, creating an AuditLog entry for each changed field.
+        Compare old_dict and new_dict, creating an AuditLog entry for each changed field with a shared event_id.
         """
         labels = field_labels or {}
         changed_fields = []
+        batch_event_id = event_id or str(uuid.uuid4())
+
         for key, new_val in new_dict.items():
             if key in old_dict:
                 old_val = old_dict[key]
@@ -127,6 +134,7 @@ class AuditService:
                         old_value=old_val,
                         new_value=new_val,
                         description=desc,
+                        event_id=batch_event_id,
                         request=request
                     )
                     changed_fields.append(key)

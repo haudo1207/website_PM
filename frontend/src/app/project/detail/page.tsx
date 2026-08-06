@@ -11,6 +11,7 @@ import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
   getAITaskInbox, analyzeChatLogs, updateAITaskInbox, rejectAITaskInbox, importAITaskToProjectPlan, bulkImportAITasks, getChatSyncLogs, syncAITasksFromChat,
+  getProjectTemplates, applyProjectTemplate,
   getPhases, createPhase, updatePhase, deletePhase,
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
@@ -101,6 +102,11 @@ function ProjectDetailContent() {
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [applyingTemplateId, setApplyingTemplateId] = useState<number | null>(null);
+  const [confirmApplyTemplateId, setConfirmApplyTemplateId] = useState<number | null>(null);
 
   // AI Review Drawer states
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
@@ -509,6 +515,40 @@ function ProjectDetailContent() {
     setTimeout(() => setMsg(null), 4000);
   };
 
+  const loadTemplates = useCallback(async () => {
+    try {
+      setLoadingTemplates(true);
+      const data = await getProjectTemplates();
+      setTemplates(data || []);
+    } catch (err: any) {
+      console.error('Không thể tải danh sách template:', err);
+      flash('Không thể tải danh sách template', true);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }, []);
+
+  const handleOpenTemplateModal = async () => {
+    setShowTemplateModal(true);
+    await loadTemplates();
+  };
+
+  const handleApplyTemplate = async (templateId: number) => {
+    if (!id) return;
+    setApplyingTemplateId(templateId);
+    try {
+      await applyProjectTemplate(templateId, Number(id));
+      flash('Áp dụng template thành công!');
+      setShowTemplateModal(false);
+      setConfirmApplyTemplateId(null);
+      reloadAll();
+    } catch (err: any) {
+      flash('Áp dụng template thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+    } finally {
+      setApplyingTemplateId(null);
+    }
+  };
+
   const handleDeleteSheet = async () => {
     try {
       await deleteProject(Number(id));
@@ -518,6 +558,60 @@ function ProjectDetailContent() {
       flash('Xóa dự án thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
     }
   };
+
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const loadMeetings = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await getMeetings({ project_id: Number(id) });
+      if (data && data.success && Array.isArray(data.data)) {
+        setMeetings(data.data);
+      } else if (Array.isArray(data)) {
+        setMeetings(data);
+      }
+    } catch (err) {
+      console.error('Lỗi khi tải danh sách cuộc họp dự án:', err);
+    }
+  }, [id]);
+
+  const currentWeekInfo = useMemo(() => {
+    const now = new Date();
+    const currentDay = now.getDay();
+    const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
+
+    const days = [];
+    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6'];
+
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const formattedDate = `${dd}/${mm}`;
+      const isoDate = `${yyyy}-${mm}-${dd}`;
+
+      days.push({
+        label: `${dayNames[i]} · ${formattedDate}`,
+        formattedDate,
+        isoDate,
+        dayNum: dd,
+        yearNum: yyyy,
+        fullDate: d
+      });
+    }
+
+    const startFormatted = days[0].formattedDate;
+    const endFormatted = days[4].formattedDate;
+    const weekTitle = `LỊCH HỌP DỰ ÁN TUẦN ${startFormatted}–${endFormatted}`;
+
+    return { days, weekTitle, startFormatted, endFormatted };
+  }, [weekOffset]);
 
   const loadProject = useCallback(async () => {
     try {
@@ -615,23 +709,6 @@ function ProjectDetailContent() {
     return () => clearInterval(timer);
   }, [id, loadChatData]);
 
-  const loadMeetings = useCallback(async () => {
-    if (!project?.name) return;
-    try {
-      const data = await getMeetings();
-      if (data.success) {
-        const filtered = data.data.filter((m: any) => m.project === project.name);
-        setMeetings(filtered);
-      }
-    } catch (error) {
-      console.error("Failed to fetch meetings", error);
-    }
-  }, [project?.name]);
-
-  useEffect(() => {
-    loadMeetings();
-  }, [project?.name, loadMeetings]);
-
   // Load chats from localStorage
   useEffect(() => {
     if (!id) return;
@@ -653,7 +730,8 @@ function ProjectDetailContent() {
     reloadAll();
     loadChatData();
     loadProjectMembers();
-  }, [id, loadProject, reloadAll, loadChatData, loadProjectMembers]);
+    loadMeetings();
+  }, [id, loadProject, reloadAll, loadChatData, loadProjectMembers, loadMeetings]);
 
   // Load members, customers and categories
   useEffect(() => {
@@ -3989,22 +4067,8 @@ value={editValue}
                       <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
                       Chỉnh sửa dự án
                     </button>
-                    <button
-                      onClick={() => setShowDeleteModal(true)}
-                      className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
-                      Xóa dự án
-                    </button>
                   </>
                 )}
-                <button
-                  onClick={() => router.push(`/project`)}
-                  className="bg-white text-slate-800 px-4 py-2 rounded-lg text-[13px] font-medium flex items-center border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[18px] mr-2">arrow_back</span>
-                  Quay lại
-                </button>
               </div>
             </div>
           </div>
@@ -4349,6 +4413,13 @@ value={editValue}
                         </button>
                       ))}
                       <button
+                        onClick={handleOpenTemplateModal}
+                        className="flex items-center justify-center w-8 h-8 rounded-lg text-[#0058be] hover:bg-white hover:shadow-sm transition-all shrink-0"
+                        title="Áp dụng template"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">schema</span>
+                      </button>
+                      <button
                         onClick={() => {
                           setNewPhaseName('');
                           setShowPhaseModal(true);
@@ -4591,28 +4662,154 @@ value={editValue}
                 </div>
               )}
 
-              {/* TAB 2: MEETINGS */}
+              {/* TAB 2: MEETINGS FOR THIS PROJECT */}
               {activeMainTab === 'meetings' && (
-                <div>
+                <div className="space-y-6">
                   {/* Header */}
-                  <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-sm font-bold text-[#0b1c30]">Lịch họp dự án</h2>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-bold text-[#0b1c30]">Quản lý Cuộc họp & Schedule (Dự án: {project?.name || ''})</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">Theo dõi lịch họp tuần, biên bản tóm tắt AI và push task khuyến nghị cho riêng dự án này.</p>
+                    </div>
                     <button
-                      onClick={() => { setEditingMeeting(null); setShowMeetingModal(true); }}
+                      onClick={() => {
+                        setEditingMeeting({ project: project?.name || '' });
+                        setShowMeetingModal(true);
+                      }}
                       className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all"
                     >
                       <span className="material-symbols-outlined text-[16px]">add</span>
-                      Tạo meeting
+                      Tạo meeting dự án
                     </button>
                   </div>
 
-                  {/* Meeting Cards */}
+                  {/* WEEKLY SCHEDULE CALENDAR FOR THIS PROJECT */}
+                  <div className="bg-white rounded-xl border border-[#e2e8f0] shadow-sm p-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4">
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wide">
+                            {currentWeekInfo.weekTitle}
+                          </h3>
+                          {weekOffset !== 0 && (
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[11px] font-bold rounded-md">
+                              {weekOffset < 0 ? `Quá khứ (${Math.abs(weekOffset)} tuần trước)` : `Tương lai (+${weekOffset} tuần)`}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#64748b] mt-0.5">
+                          Cuộc họp bật AI sẽ tự động tạo Summary & đề xuất task sau khi kết thúc
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Week Controls */}
+                        <div className="flex items-center bg-[#f1f5f9] p-0.5 rounded-lg border border-[#cbd5e1]">
+                          <button
+                            type="button"
+                            onClick={() => setWeekOffset(prev => prev - 1)}
+                            className="px-2.5 py-1 text-xs font-semibold text-[#0b1c30] hover:bg-white rounded-md transition-colors"
+                          >
+                            ‹ Tuần trước
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWeekOffset(0)}
+                            className={`px-2.5 py-1 text-xs font-bold rounded-md transition-colors ${weekOffset === 0 ? 'bg-white text-[#0058be] shadow-xs' : 'text-[#64748b] hover:bg-white'}`}
+                          >
+                            Hôm nay
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWeekOffset(prev => prev + 1)}
+                            className="px-2.5 py-1 text-xs font-semibold text-[#0b1c30] hover:bg-white rounded-md transition-colors"
+                          >
+                            Tuần sau ›
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={loadMeetings}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#0b1c30] text-xs font-semibold rounded-lg transition-colors border border-[#cbd5e1] shadow-xs flex items-center gap-1.5"
+                        >
+                          <span>↻</span>
+                          <span>Đồng bộ lịch</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 5-Day Weekly Calendar Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 mt-2">
+                      {currentWeekInfo.days.map((d, i) => {
+                        const dayMeetings = meetings.filter(m => {
+                          if (!m || !m.date) return false;
+                          const dateStr = String(m.date).trim();
+                          if (dateStr.startsWith(d.isoDate)) return true;
+                          const fullFormattedDate = `${d.formattedDate}/${d.yearNum}`;
+                          if (dateStr === fullFormattedDate || dateStr.startsWith(fullFormattedDate)) return true;
+                          if (dateStr === d.formattedDate) return true;
+                          try {
+                            const meetingDateObj = new Date(dateStr);
+                            if (!isNaN(meetingDateObj.getTime())) {
+                              return meetingDateObj.getFullYear() === d.fullDate.getFullYear() &&
+                                     meetingDateObj.getMonth() === d.fullDate.getMonth() &&
+                                     meetingDateObj.getDate() === d.fullDate.getDate();
+                            }
+                          } catch (e) {}
+                          return false;
+                        });
+
+                        return (
+                          <div key={i} className="bg-white border border-[#e2e8f0] rounded-xl p-3.5 min-h-[160px]">
+                            <h4 className="text-[13px] font-bold text-[#0b1c30] mb-3">{d.label}</h4>
+                            {dayMeetings.length > 0 ? (
+                              dayMeetings.map(item => {
+                                const timeVal = String(item.time || '').toLowerCase();
+                                let isPM = timeVal.includes('pm') || timeVal.includes('chiều') || timeVal.includes('tối');
+                                if (!isPM && !timeVal.includes('am') && !timeVal.includes('sáng')) {
+                                  const hourMatch = timeVal.match(/(\d{1,2}):/);
+                                  if (hourMatch) isPM = parseInt(hourMatch[1], 10) >= 12;
+                                }
+                                const attendeeCount = item.members?.length || item.member_count || 0;
+                                const platformName = item.platform || 'Meet';
+
+                                return (
+                                  <div
+                                    key={item.id}
+                                    onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
+                                    className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${
+                                      isPM ? 'bg-[#fff7e8] border-l-[#f59e0b]' : 'bg-[#edf5ff] border-l-[#1769d2]'
+                                    }`}
+                                  >
+                                    <div className="text-[13px] font-medium text-[#0b1c30] leading-snug">
+                                      <span className="font-normal">{item.time || (isPM ? '14:00' : '09:00')}</span> {item.title}
+                                    </div>
+                                    <small className="block text-[11px] text-[#64748b] mt-1">
+                                      {platformName}{attendeeCount ? ` · ${attendeeCount} người` : ''} · <b className="text-[#0b1c30] font-bold">AI On</b>
+                                    </small>
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <div className="border border-dashed border-[#e2e8f0] rounded-xl p-4 text-center text-[12px] text-[#94a3b8] mt-1">
+                                Chưa có lịch họp
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Meeting Cards List */}
                   <div className="space-y-4">
+                    <h3 className="text-sm font-bold text-[#0b1c30]">Danh sách cuộc họp dự án ({meetings.length})</h3>
                     {meetings.length === 0 ? (
                       <div className="bg-white border border-[#c2c6d6]/60 rounded-xl py-16 text-center">
                         <span className="material-symbols-outlined text-slate-300 text-[48px] block mb-3">event</span>
-                        <p className="text-sm font-semibold text-slate-500">Chưa có cuộc họp nào</p>
-                        <p className="text-xs text-slate-400 mt-1">Nhấn "+ Tạo meeting" để thêm cuộc họp đầu tiên</p>
+                        <p className="text-sm font-semibold text-slate-500">Chưa có cuộc họp nào cho dự án này</p>
+                        <p className="text-xs text-slate-400 mt-1">Nhấn "+ Tạo meeting dự án" để tạo cuộc họp mới</p>
                       </div>
                     ) : (
                       meetings.map(m => (
@@ -6625,7 +6822,30 @@ value={editValue}
               )}
 
               {activeMainTab === 'audit_logs' && (
-                <AuditLogsTab projectId={Number(id)} />
+                <AuditLogsTab
+                  projectId={Number(id)}
+                  onSelectTask={(taskCodeOrId) => {
+                    const found = items.find(t => t.task_code === taskCodeOrId || String(t.id) === String(taskCodeOrId));
+                    if (found) {
+                      setSelectedTask(found);
+                    } else {
+                      flash(`Không tìm thấy Task ${taskCodeOrId} trong danh sách hiện tại.`, true);
+                    }
+                  }}
+                  onSelectProject={() => {
+                    setShowEditProjectModal(true);
+                  }}
+                  onSelectPhase={(phId) => {
+                    const ph = phases.find(p => String(p.id) === String(phId));
+                    if (ph) {
+                      setActivePhase(ph.name);
+                      setActiveMainTab('tasks');
+                      flash(`Đã chuyển tới Phase '${ph.name}'`);
+                    } else {
+                      setActiveMainTab('tasks');
+                    }
+                  }}
+                />
               )}
             </div>
 
@@ -6634,6 +6854,141 @@ value={editValue}
         </div>
 
       </div>
+
+      {/* Project Template Modal */}
+      {showTemplateModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[85vh]">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3 text-[#0058be]">
+                <span className="material-symbols-outlined text-[28px]">schema</span>
+                <div>
+                  <h3 className="text-base font-bold text-[#0b1c30]">Áp dụng Project Template</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Chọn template để tạo nhanh các phase và task cha cho dự án này.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTemplateModal(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Cảnh báo ghi đè */}
+            <div className="px-6 pt-4">
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 flex items-start gap-2">
+                <span className="text-red-500 text-[14px] shrink-0 mt-0.5">⚠️</span>
+                <p className="text-[11px] text-red-700 leading-relaxed font-medium">
+                  <strong>Lưu ý:</strong> Áp dụng template sẽ <strong>XÓA TOÀN BỘ Phase và Task hiện tại</strong> của dự án này, sau đó thay bằng cấu trúc của template được chọn. Hành động này <strong>không thể hoàn tác</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-3 flex-1">
+              {loadingTemplates ? (
+                <div className="flex items-center justify-center py-10 text-sm text-slate-500">Đang tải template...</div>
+              ) : templates.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                  Chưa có template nào. Hãy tạo template từ trang Cấu hình hệ thống trước.
+                </div>
+              ) : (
+                templates.map((template: any) => (
+                  <div key={template.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="p-4 flex items-start justify-between gap-4 bg-slate-50/50">
+                      <div>
+                        <div className="font-semibold text-sm text-[#0b1c30]">{template.name}</div>
+                        <div className="text-xs text-slate-500 mt-1">{template.description || 'Không có mô tả'}</div>
+                        <div className="text-[11px] text-slate-400 mt-2">
+                          {template.phases?.length || 0} phases •{' '}
+                          {template.phases?.reduce((acc: number, p: any) => acc + (p.task_groups?.length || 0), 0) || 0} task cha
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setConfirmApplyTemplateId(template.id)}
+                        disabled={applyingTemplateId === template.id}
+                        className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors disabled:opacity-60 shrink-0"
+                      >
+                        {applyingTemplateId === template.id ? 'Đang áp dụng...' : 'Áp dụng'}
+                      </button>
+                    </div>
+
+                    {/* Template Structure Preview */}
+                    <div className="border-t border-slate-100 p-3 space-y-2 bg-white">
+                      {(template.phases || []).map((phase: any, pIdx: number) => (
+                        <div key={phase.id || pIdx} className="flex items-start gap-2">
+                          <span className="text-[10px] font-bold text-[#0058be] bg-[#eff4ff] border border-[#0058be]/20 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                            {pIdx + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold text-[#0b1c30]">{phase.name}</div>
+                            {(phase.task_groups || []).length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {(phase.task_groups || []).map((group: any, gIdx: number) => (
+                                  <span key={group.id || gIdx} className="text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
+                                    {group.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {phase.name.toLowerCase().includes('lab') || phase.name.toLowerCase().includes('poc') ? (
+                              <div className="text-[10px] text-slate-400 italic mt-0.5">Phase trống — người dùng tự thêm task khi cần</div>
+                            ) : (phase.task_groups || []).length === 0 ? (
+                              <div className="text-[10px] text-slate-400 italic mt-0.5">Chưa có task cha</div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="bg-slate-50 px-6 py-4 flex justify-end border-t border-slate-100 shrink-0">
+              <button
+                onClick={() => setShowTemplateModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xác Nhận Áp Dụng Template (GHI ĐÈ) */}
+      {confirmApplyTemplateId !== null && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-amber-600 mb-3">
+                <span className="material-symbols-outlined text-[28px]">warning</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">Xác nhận áp dụng template</h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Áp dụng template này sẽ <strong className="text-red-600">XÓA TOÀN BỘ Phase và Task hiện tại</strong> của dự án, sau đó tạo mới theo cấu trúc template được chọn.
+              </p>
+              <p className="text-xs text-slate-500 mt-2">Hành động này <strong>không thể hoàn tác</strong>. Bạn có chắc chắn muốn tiếp tục?</p>
+            </div>
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setConfirmApplyTemplateId(null)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => handleApplyTemplate(confirmApplyTemplateId)}
+                disabled={applyingTemplateId === confirmApplyTemplateId}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {applyingTemplateId === confirmApplyTemplateId ? 'Đang áp dụng...' : 'Xác nhận áp dụng'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Chỉnh Sửa Dự Án */}
       {showEditProjectModal && (
@@ -6675,7 +7030,7 @@ value={editValue}
                 {/* Business */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Business <span className="text-rose-500 font-bold">*</span>
+                    Workspace <span className="text-rose-500 font-bold">*</span>
                   </label>
                   <select
                     required
@@ -6734,7 +7089,7 @@ value={editValue}
                   {editCustomerMismatch && (
                     <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
                       <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>
-                      Khách hàng hiện tại không thuộc Business đã chọn. Vui lòng chọn khách hàng khác.
+                      Khách hàng hiện tại không thuộc Workspace đã chọn. Vui lòng chọn khách hàng khác.
                     </p>
                   )}
 
@@ -7091,26 +7446,76 @@ value={editValue}
             </div>
 
             {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditProjectModal(false);
+                  setShowDeleteModal(true);
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[16px]">delete</span>
+                Xóa dự án
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditProjectModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpdateProject}
+                  disabled={savingProject}
+                  className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {savingProject ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Đang lưu...
+                    </>
+                  ) : (
+                    <>Lưu thay đổi</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xác Nhận Xóa Dự Án */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-rose-600 mb-3">
+                <span className="material-symbols-outlined text-[28px]">warning</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">Xác nhận xóa dự án</h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Bạn có chắc chắn muốn xóa dự án <strong className="text-[#0b1c30]">"{project?.name || ''}"</strong>?
+              </p>
+              <p className="text-xs text-rose-500 mt-2 font-medium">⚠️ Hành động này sẽ xóa toàn bộ các Phase, Task và dữ liệu liên quan. Không thể hoàn tác!</p>
+            </div>
             <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
               <button
-                onClick={() => setShowEditProjectModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
               >
                 Hủy bỏ
               </button>
               <button
-                onClick={handleUpdateProject}
-                disabled={savingProject}
-                className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                type="button"
+                onClick={handleDeleteSheet}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition-colors shadow-sm cursor-pointer"
               >
-                {savingProject ? (
-                  <>
-                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Đang lưu...
-                  </>
-                ) : (
-                  <>Lưu thay đổi</>
-                )}
+                Xác nhận xóa
               </button>
             </div>
           </div>

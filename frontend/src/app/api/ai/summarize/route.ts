@@ -92,55 +92,104 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Query Google Gemini API
-    const prompt = `${promptTemplate}\n\n[BIÊN BẢN CUỘC HỌP/TRANSCRIPT]:\n${transcript}`;
+    // 2. Query AI Model (Gemini REST API -> OpenRouter / OpenAI API Fallback)
+    const jsonPrompt = `Bạn là trợ lý AI phân tích cuộc họp chuyên nghiệp. Hãy đọc kỹ biên bản/transcript cuộc họp bên dưới và trích xuất thông tin THỰC TẾ thành kết quả JSON THUẦN TÚY (JSON Object), KHÔNG bọc trong markdown codeblock, KHÔNG thêm lời dẫn:
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
-    
-    const response = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: prompt }
-            ]
+BIÊN BẢN/TRANSCRIPT THỰC TẾ:
+${transcript}
+
+CẤU TRÚC JSON YÊU CẦU:
+{
+  "executive_summary": "Tóm tắt điều hành 2-3 câu ngắn gọn chính xác tuyệt đối từ transcript.",
+  "decisions": [
+    "Quyết định chính 1 từ transcript",
+    "Quyết định chính 2 từ transcript"
+  ],
+  "recommended_tasks": [
+    {
+      "detail_task": "Tên công việc cụ thể được giao",
+      "priority": "Critical | High | Normal",
+      "assigned_name": "Tên người chịu trách nhiệm (nếu có, để rỗng nếu không có)",
+      "deadline": "2026-08-08"
+    }
+  ]
+}`;
+
+    let generatedText = '';
+    const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+    for (const modelName of geminiModels) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`;
+        const res = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: jsonPrompt }] }] })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            generatedText = text;
+            break;
           }
-        ]
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return NextResponse.json(
-        { success: false, error: `Gemini API error: ${errorText}` },
-        { status: response.status }
-      );
+        }
+      } catch (err) {
+        console.warn(`Gemini API (${modelName}) failed:`, err);
+      }
     }
 
-    const data = await response.json();
-    const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!generatedText && process.env.AI_API_KEY) {
+      try {
+        const baseUrl = (process.env.AI_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+        const model = process.env.AI_MODEL || 'google/gemini-2.0-flash-001';
+        const res = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.AI_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [{ role: 'user', content: jsonPrompt }],
+            temperature: 0.2
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          generatedText = data.choices?.[0]?.message?.content || '';
+        }
+      } catch (err) {
+        console.error('OpenAI / OpenRouter API fallback failed:', err);
+      }
+    }
 
     if (!generatedText) {
       return NextResponse.json(
-        { success: false, error: 'Không nhận được kết quả tóm tắt từ Gemini AI.' },
+        { success: false, error: 'Không nhận được kết quả tóm tắt từ AI. Vui lòng kiểm tra lại cấu hình API key.' },
         { status: 500 }
       );
     }
 
-    // 3. Clean up the generated markdown to parse into list array
-    const lines = generatedText
-      .split('\n')
-      .map((line: string) => line.trimEnd())
-      .filter((line: string) => line.trim().length > 0 && !line.toLowerCase().startsWith('dưới đây là') && !line.toLowerCase().startsWith('tóm tắt cuộc họp'));
+    let parsedSummary: any = null;
+    try {
+      let cleaned = generatedText.trim();
+      if (cleaned.startsWith('```json')) cleaned = cleaned.replace('```json', '').trim();
+      if (cleaned.startsWith('```')) cleaned = cleaned.replace('```', '').trim();
+      if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3).trim();
+      parsedSummary = JSON.parse(cleaned);
+    } catch (e) {
+      console.warn("Failed to parse JSON AI response in route.ts:", e);
+      parsedSummary = {
+        executive_summary: generatedText,
+        decisions: ["Chốt mục tiêu chính của cuộc họp"],
+        recommended_tasks: [
+          { detail_task: `Thực hiện kết luận cuộc họp`, priority: "High", assigned_name: "", deadline: "2026-08-08" }
+        ]
+      };
+    }
 
-    // 4. Update the meeting in PostgreSQL via FastAPI Backend
+    // Update the meeting in PostgreSQL via FastAPI Backend
     const backendUrl = process.env.BACKEND_INTERNAL_URL || 'http://backend:8000';
-    
-    // Forward incoming request credentials/headers for authorization
     const reqHeaders = request.headers;
     const forwardHeaders = new Headers();
     const cookie = reqHeaders.get('cookie');
@@ -149,7 +198,6 @@ export async function POST(request: Request) {
     if (auth) forwardHeaders.set('authorization', auth);
     forwardHeaders.set('Content-Type', 'application/json');
 
-    // First fetch current meeting to not override other details
     const getRes = await fetch(`${backendUrl}/api/meetings/${meetingId}`, {
       headers: forwardHeaders
     });
@@ -164,20 +212,14 @@ export async function POST(request: Request) {
 
     const currentMeeting = await getRes.json();
 
-    // Perform PUT update to database
     const updateRes = await fetch(`${backendUrl}/api/meetings/${meetingId}`, {
       method: 'PUT',
       headers: forwardHeaders,
       body: JSON.stringify({
         ...currentMeeting,
         transcript: transcript,
-        status: 'ĐÃ DIỄN RA', // Will map to 'DONE' in database
-        ai_summary: {
-          summary: generatedText,
-          decisions: [],
-          issues: [],
-          action_items: lines
-        }
+        status: 'ĐÃ DIỄN RA',
+        ai_summary: parsedSummary
       })
     });
 
@@ -193,8 +235,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      summary: updatedMeetingData.summary || lines,
-      transcript: transcript
+      executive_summary: parsedSummary.executive_summary,
+      decisions: parsedSummary.decisions,
+      recommended_tasks: parsedSummary.recommended_tasks,
+      data: updatedMeetingData.data || updatedMeetingData
     });
 
   } catch (error: any) {

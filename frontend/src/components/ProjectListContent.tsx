@@ -92,6 +92,7 @@ export default function ProjectListContent() {
   const [phaseFilter, setPhaseFilter] = useState('All');
   const [customerFilter, setCustomerFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
+  const [salesFilter, setSalesFilter] = useState('All');
   const [yearFilter, setYearFilter] = useState('All');
   const [sortBy, setSortBy] = useState('newest');
 
@@ -155,6 +156,7 @@ export default function ProjectListContent() {
     setPhaseFilter('All');
     setCustomerFilter('All');
     setPmFilter('All');
+    setSalesFilter('All');
     setYearFilter('All');
     setPage(1);
     router.push('/projects');
@@ -169,6 +171,14 @@ export default function ProjectListContent() {
 
   const uniquePms = useMemo(() => {
     return Array.from(new Set(projects.map(p => p.pm_name).filter(Boolean)));
+  }, [projects]);
+
+  const uniqueSales = useMemo(() => {
+    const names: string[] = [];
+    projects.forEach(p => {
+      (p.sales_name || '').split(',').map((s: string) => s.trim()).filter((s: string) => s).forEach((n: string) => names.push(n));
+    });
+    return Array.from(new Set(names)).sort();
   }, [projects]);
 
   const uniqueYears = useMemo(() => {
@@ -187,10 +197,12 @@ export default function ProjectListContent() {
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
         (paramCustId && String(p.customer_id) === String(paramCustId));
       const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
+      const matchSales = salesFilter === 'All' ||
+        (p.sales_name || '').split(',').map((s: string) => s.trim()).includes(salesFilter);
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
-      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchYear;
+      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, yearFilter]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter]);
 
   // Sort memoized
   const sorted = useMemo(() => {
@@ -275,10 +287,20 @@ export default function ProjectListContent() {
               </select>
             </div>
 
+            <div className="flex flex-col flex-shrink-0 w-[170px]">
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Sales</label>
+              <select value={salesFilter} onChange={e => { setSalesFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
+                <option value="All">Tất cả Sales</option>
+                {uniqueSales.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex flex-col flex-shrink-0 w-[140px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Business</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Workspace</label>
               <select value={businessFilter} onChange={e => { setBusinessFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả Business</option>
+                <option value="All">Tất cả Workspace</option>
                 <option value="Infrastructure">Infrastructure</option>
                 <option value="Markee">Markee</option>
               </select>
@@ -317,7 +339,7 @@ export default function ProjectListContent() {
                     <h3 className="text-base font-bold text-slate-800 mb-0.5 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
                     <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic flex items-center gap-1.5"><span className="not-italic text-sm">🏢</span> {p.customer_name || 'Chưa có khách hàng'}</p>
                     
-                    <div className="grid grid-cols-2 gap-y-4 mb-6">
+                    <div className="grid grid-cols-2 gap-y-4 mb-3">
                       <div>
                         <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Project Manager</p>
                         <p className="text-[13px] font-semibold text-slate-700 truncate">{p.pm_name || <span className="text-slate-400 italic">—</span>}</p>
@@ -326,6 +348,10 @@ export default function ProjectListContent() {
                         <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Technical Lead</p>
                         <p className="text-[13px] font-semibold text-slate-700 truncate">{p.technical_leader_name || <span className="text-slate-400 italic">—</span>}</p>
                       </div>
+                    </div>
+                    <div className="mb-6">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Sales</p>
+                      <p className="text-[13px] font-semibold text-slate-700 truncate">{p.sales_name || <span className="text-slate-400 italic">--</span>}</p>
                     </div>
 
                     <div className="border-t border-slate-100 pt-4 mt-auto flex justify-between items-center">

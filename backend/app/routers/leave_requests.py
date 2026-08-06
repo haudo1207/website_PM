@@ -30,6 +30,12 @@ def leave_to_dict(lr: LeaveRequest) -> dict:
         "created_at": lr.created_at.isoformat() if lr.created_at else None,
         "updated_at": lr.updated_at.isoformat() if lr.updated_at else None,
         "member_id": lr.user.member_id if lr.user else None,
+        "member": {
+            "id": lr.user.member.id,
+            "full_name": lr.user.member.full_name,
+            "member_id": lr.user.member.id,
+            "team": lr.user.member.team,
+        } if lr.user and lr.user.member else None,
         "user": {
             "id": lr.user.id,
             "full_name": lr.user.full_name,
@@ -48,7 +54,7 @@ def list_leave_requests(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    q = db.query(LeaveRequest).options(joinedload(LeaveRequest.user))
+    q = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member))
 
     # Admin can see all, regular users can only see their own
     if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
@@ -71,7 +77,7 @@ def list_leave_requests(
 # GET ONE LEAVE REQUEST
 @router.get("/{id}")
 def get_leave_request(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user)).filter(LeaveRequest.id == id).first()
+    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
     if not lr:
         raise HTTPException(404, "Không tìm thấy leave request")
     
@@ -102,7 +108,7 @@ def create_leave_request(body: dict, db: Session = Depends(get_db), current_user
     db.add(leave_request)
     db.commit()
     db.refresh(leave_request)
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user)).filter(LeaveRequest.id == leave_request.id).first()
+    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == leave_request.id).first()
     return leave_to_dict(lr)
 
 # UPDATE LEAVE REQUEST
@@ -127,7 +133,7 @@ def update_leave_request(id: int, body: dict, db: Session = Depends(get_db), cur
     
     db.commit()
     db.refresh(lr)
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user)).filter(LeaveRequest.id == id).first()
+    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
     return leave_to_dict(lr)
 
 # DELETE LEAVE REQUEST
@@ -159,5 +165,5 @@ def approve_leave_request(id: int, body: dict, db: Session = Depends(get_db), cu
     lr.status = status
     db.commit()
     db.refresh(lr)
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user)).filter(LeaveRequest.id == id).first()
+    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
     return leave_to_dict(lr)

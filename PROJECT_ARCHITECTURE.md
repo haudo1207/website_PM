@@ -82,25 +82,30 @@ pm-new/
 │       │   ├── performance_setting.py # Bảng performance_settings (Cấu hình KPI)
 │       │   ├── meeting.py        # Bảng meetings, meeting_members (Biên bản họp)
 │       │   ├── ai_review.py      # Bảng ai_prompts, ai_review_logs (AI đánh giá dự án)
+│       │   ├── ai_task_inbox.py  # Bảng chat_ai_tasks (AI xử lý yêu cầu)
 │       │   ├── google_token.py   # Bảng google_tokens (OAuth tokens)
 │       │   ├── leave_request.py  # Bảng leave_requests (Đơn xin nghỉ phép/công tác)
 │       │   ├── lunch_record.py   # Bảng lunch_records (Đăng ký suất ăn trưa)
 │       │   ├── master_phase.py   # Bảng master_phases (Các giai đoạn mẫu)
-│       │   └── setting.py        # Bảng settings + audit_logs
-│       │
+│       │   ├── project_template.py # Bảng project_templates (Mẫu dự án)
+│       │   ├── audit_log.py      # Bảng audit_logs (Lưu vết thao tác hệ thống)
+│       │   └── setting.py        # Bảng settings
 │       ├── routers/              # API Endpoints (FastAPI Routers)
 │       │   ├── auth.py           # POST /api/auth/login (OAuth2 Password Bearer)
 │       │   ├── users.py          # CRUD /api/users (profile)
 │       │   ├── accounts.py       # CRUD /api/accounts (admin quản lý tài khoản)
 │       │   ├── projects.py       # CRUD /api/projects + phases + members + links
+│       │   ├── project_templates.py # CRUD /api/project-templates
 │       │   ├── task_groups.py    # CRUD /api/task-groups + tasks
 │       │   ├── settings_router.py # CRUD /api/settings (platforms, priorities, statuses)
 │       │   ├── skills.py         # CRUD /api/skills (danh mục kỹ năng)
 │       │   ├── system_categories.py # CRUD /api/system-categories
+│       │   ├── system_audit.py   # /system-audit (Lưu vết thao tác)
 │       │   ├── members.py        # CRUD /api/members (thông tin thành viên)
 │       │   ├── meetings.py       # CRUD /api/meetings + sync Zoom/Google
 │       │   ├── performance_settings.py # CRUD /api/performance-settings
 │       │   ├── ai_review.py      # /api/ai-review (AI đánh giá dự án)
+│       │   ├── chat_ai.py        # /api/projects/{pid}/ai-task-inbox
 │       │   ├── leave_requests.py # CRUD /api/leave-requests (quản lý yêu cầu vắng mặt)
 │       │   └── lunch.py          # CRUD /api/lunch (quản lý đăng ký suất ăn trưa)
 │       │
@@ -136,6 +141,9 @@ pm-new/
         │   ├── SystemCategoriesView.tsx # Quản lý danh mục hệ thống
         │   ├── AIPromptsView.tsx # Cấu hình AI prompts
         │   ├── AIReviewDrawer.tsx # Panel hiển thị kết quả AI review
+        │   ├── SystemAuditView.tsx # Giao diện xem Audit Logs
+        │   ├── ProjectTemplatesView.tsx # Giao diện quản lý Project Templates
+        │   ├── CustomersProjectsView.tsx # Quản lý Customers và Dự án
         │   ├── meetings/         # Components cuộc họp (Create, Card, Summarize, PromptSettings)
         │   └── leave-request/    # Components vắng mặt (LeaveRequestForm, StatusBadge, SummaryCard)
         │
@@ -181,14 +189,17 @@ pm-new/
 | `/api/users` | users.py | Profile người dùng hiện tại |
 | `/api/accounts` | accounts.py | Admin CRUD tài khoản (create, lock, unlock, reset password, delete) |
 | `/api/projects` | projects.py | CRUD dự án + phases + project members + links |
+| `/api/project-templates` | project_templates.py | Quản lý Project Templates (khởi tạo dự án mẫu) |
 | `/api/task-groups` | task_groups.py | CRUD task groups + tasks |
 | `/api/settings` | settings_router.py | Cấu hình platforms, priorities, statuses |
 | `/api/skills` | skills.py | CRUD categories → groups → skills |
 | `/api/system-categories` | system_categories.py | Positions, departments, teams, customers |
+| `/system-audit` | system_audit.py | Truy xuất system audit logs |
 | `/api/members` | members.py | CRUD thành viên + skills assignment |
-| `/api/meetings` | meetings.py | CRUD cuộc họp + sync Google/Zoom |
+| `/api/meetings` | meetings.py | CRUD cuộc họp + sync Google/Google |
 | `/api/performance-settings` | performance_settings.py | Cấu hình KPI thresholds |
 | `/api/ai-review` | ai_review.py | AI đánh giá dự án + prompt management |
+| `/api/projects/{pid}/ai-task-inbox` | chat_ai.py | AI xử lý Inbox Task Requests |
 | `/api/leave-requests` | leave_requests.py | Quản lý yêu cầu vắng mặt (Leave Request) |
 | `/api/lunch` | lunch.py | Quản lý đăng ký suất ăn trưa |
 | `GET /health` | main.py | Health check |
@@ -261,7 +272,8 @@ Cấu hình brand (logo, tên, màu sắc) nằm trong `src/lib/brand.ts`.
 |-------|------|--------|
 | User | `users` | Tài khoản đăng nhập (role, data_scope, member_id) |
 | Member | `members` | Thành viên công ty (tên, department, position, skills) |
-| Project | `projects` | Dự án (tên, khách hàng, PM, status, data_scope) |
+| Project | `projects` | Dự án (tên, khách hàng, PM, Sales, status, data_scope, business) |
+| ProjectTemplate | `project_templates` | Mẫu dự án chuẩn (Template) |
 | Phase | `phases` | Giai đoạn dự án |
 | TaskGroup | `task_groups` | Nhóm công việc (cấp I, II, III) |
 | Task | `tasks` | Công việc chi tiết (assignee, deadline, status, KPI) |
@@ -274,9 +286,11 @@ Cấu hình brand (logo, tên, màu sắc) nằm trong `src/lib/brand.ts`.
 | GoogleToken | `google_tokens` | OAuth tokens Google |
 | AIPrompt | `ai_prompts` | Template prompt AI cho từng dự án |
 | AIReviewLog | `ai_review_logs` | Log kết quả AI review (score, issues, suggestions) |
+| ChatAITask | `chat_ai_tasks` | Task yêu cầu xử lý từ AI (Inbox) |
 | LeaveRequest | `leave_requests` | Yêu cầu vắng mặt (Work Remotely, Offline, Go on Business...) |
 | LunchRecord | `lunch_records` | Đăng ký suất ăn trưa của nhân viên |
 | MasterPhase | `master_phases` | Cấu hình các giai đoạn (phase) mẫu |
+| AuditLog | `audit_logs` | Lưu vết thao tác (actions) trong hệ thống |
 
 ### 5.4 Junction Tables
 

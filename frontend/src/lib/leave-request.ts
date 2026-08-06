@@ -18,6 +18,12 @@ export interface LeaveRequest {
   reason: string;
   status: LeaveStatus;
   created_at?: string;
+  member?: {
+    id: number;
+    full_name: string;
+    member_id: number;
+    team?: string;
+  };
   user?: {
     id: number;
     full_name: string;
@@ -42,9 +48,15 @@ export interface ProvinceOption {
   wards: string[];
 }
 
-export const leaveTypes: LeaveType[] = ['Work Remotely', 'Offline', 'Go on Business', 'Workshop', 'Work Weekend'];
+export enum leaveTypes {
+  WorkRemotely = 'Work Remotely',
+  Offline = 'Offline',
+  GoOnBusiness = 'Go on Business',
+  Workshop = 'Workshop',
+  WorkWeekend = 'Work Weekend'
+}
 
-import { locations as vnLocations } from '@/lib/vn-locations';
+import { locations as vnLocations } from '@/lib/location';
 
 export const locations: ProvinceOption[] = vnLocations;
 
@@ -100,7 +112,7 @@ export const mockLeaveRequests: LeaveRequest[] = [
   {
     id: 4,
     user_id: 4,
-    leave_type: 'Workshop',
+    leave_type: 'Work Weekend',
     start_date: '2026-07-14',
     end_date: '2026-07-14',
     man_day: 1,
@@ -210,6 +222,17 @@ export const mockLeaveRequests: LeaveRequest[] = [
     status: 'Pending',
   },
 ];
+
+const emptyValues: LeaveRequestFormValues = {
+  leaveType: 'Work Remotely',
+  startDate: '',
+  endDate: '',
+  reason: '',
+  province: 'Hà Nội',
+  ward: 'Phúc Tân',
+  address: '',
+  manDay: 0,
+};
 
 export function calculateManDay(startDate: string, endDate: string): number | null {
   if (!startDate || !endDate) return null;

@@ -178,6 +178,7 @@ export const createMember = (data: object) => api.post('/members', data).then(r 
 export const updateMember = (id: number, data: object) => api.put(`/members/${id}`, data).then(r => r.data);
 export const deleteMember = (id: number) => api.delete(`/members/${id}`).then(r => r.data);
 export const syncFromRecruitment = () => api.post('/members/sync-from-recruitment').then(r => r.data);
+export const getLeaders = () => api.get('/members/meta/leaders').then(r => r.data);
 
 // Customers
 export const getCustomers = (businessUnit?: string) =>
@@ -212,6 +213,13 @@ export const approveLeaveRequest = (id: number, status: 'Approved' | 'Rejected')
 // Meetings
 export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string }) =>
   api.get('/meetings', { params }).then(r => r.data);
+
+// Project Templates
+export const getProjectTemplates = () => api.get('/project-templates').then(r => r.data);
+export const createProjectTemplate = (data: object) => api.post('/project-templates', data).then(r => r.data);
+export const updateProjectTemplate = (id: number, data: object) => api.put(`/project-templates/${id}`, data).then(r => r.data);
+export const deleteProjectTemplate = (id: number) => api.delete(`/project-templates/${id}`).then(r => r.data);
+export const applyProjectTemplate = (templateId: number, projectId: number) => api.post(`/project-templates/${templateId}/apply/${projectId}`).then(r => r.data);
 export const getMeeting = (id: number) => api.get(`/meetings/${id}`).then(r => r.data);
 export const createMeeting = (data: object) => api.post('/meetings', data).then(r => r.data);
 export const updateMeeting = (id: number, data: object) => api.put(`/meetings/${id}`, data).then(r => r.data);
@@ -224,6 +232,7 @@ export const generateMeetingLink = (data: { platform: string; title: string; dat
   api.post('/meetings/generate-link', data).then(r => r.data);
 export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);
 export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
+export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);
 
 
 
@@ -276,6 +285,7 @@ export const syncAITasksFromChat = (projectId: number) =>
 // Audit Logs
 export interface AuditLogItem {
   id: number;
+  event_id?: string;
   project_id: number;
   module: string;
   entity_type: string;

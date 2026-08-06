@@ -4,6 +4,7 @@ from .routers import auth, users, settings_router, skills, system_categories, me
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
+from .routers import project_templates as project_templates_router
 from .database import engine, Base
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
@@ -12,7 +13,7 @@ from .models import phase as phase_model
 from .models import task_group as task_group_model
 from .models import task as task_model
 from .models import leave_request as leave_request_model
-from .models import audit_log as audit_log_model
+from .models import project_template as project_template_model
 from sqlalchemy import text
 
 # Create all tables (new v5 schema)
@@ -84,6 +85,19 @@ def apply_schema_updates():
             "GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1), true)"
         ))
 
+        # Auto-link unlinked users to members by matching Email, Full Name or Display Name
+        conn.execute(text("""
+            UPDATE users u
+            SET member_id = m.id
+            FROM members m
+            WHERE u.member_id IS NULL
+              AND m.id NOT IN (SELECT member_id FROM users WHERE member_id IS NOT NULL)
+              AND (
+                (u.email IS NOT NULL AND u.email != '' AND LOWER(u.email) = LOWER(m.email))
+                OR (u.full_name IS NOT NULL AND u.full_name != '' AND (LOWER(u.full_name) = LOWER(m.full_name) OR LOWER(u.full_name) = LOWER(m.display_name)))
+              )
+        """))
+
         # Add AI Review columns to projects
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
@@ -127,6 +141,12 @@ def apply_schema_updates():
         """))
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS cv_link VARCHAR(255)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_name VARCHAR(100)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_email VARCHAR(255)"
         ))
 
         # Add business_unit column to customers and drop obsolete unique name constraint
@@ -287,6 +307,75 @@ def init_db_defaults():
                 "check_interval_hours": 1
             }
             db.add(Setting(key="ai_config", value=json.dumps(ai, ensure_ascii=False)))
+
+        from .models.project_template import ProjectTemplate, ProjectTemplatePhase, ProjectTemplateTaskGroup, ProjectTemplateTask
+        if not db.query(ProjectTemplate).first():
+            template = ProjectTemplate(
+                name="Template dự án chuẩn",
+                description="Template mặc định theo chu kỳ Sale/Admin → Init → Lab/PoC → Implement → MA",
+                is_active=True,
+            )
+            db.add(template)
+            db.flush()
+
+            phases = [
+                ("1. Sale/Admin", "Khởi tạo phạm vi, kickoff và điều phối ban đầu", 1),
+                ("2. Init", "Khảo sát, phân tích và làm kế hoạch triển khai", 2),
+                ("2.1 Lab/PoC", "Chứng minh tính khả thi và thử nghiệm trước triển khai", 3),
+                ("3. Implement", "Triển khai chính và kiểm thử tích hợp", 4),
+                ("4. MA", "Hỗ trợ vận hành và bảo trì sau go-live", 5),
+            ]
+            for phase_name, description, sort_order in phases:
+                phase = ProjectTemplatePhase(template_id=template.id, name=phase_name, description=description, sort_order=sort_order, is_active=True)
+                db.add(phase)
+                db.flush()
+
+                if phase_name == "1. Sale/Admin":
+                    parent_tasks = [
+                        "Sales trao đổi với khách hàng",
+                        "Presales tư vấn giải pháp",
+                        "Presales + Team Admin làm báo giá",
+                        "Presales làm specs",
+                        "Làm thầu",
+                        "Làm rõ thầu và bổ sung tài liệu",
+                        "Ký hợp đồng và đặt hàng",
+                    ]
+                    for index, parent_task_name in enumerate(parent_tasks, start=1):
+                        group = ProjectTemplateTaskGroup(phase_id=phase.id, name=parent_task_name, description="Task cha theo spec đã confirm", sort_order=index)
+                        db.add(group)
+                        db.flush()
+                elif phase_name == "2. Init":
+                    parent_tasks = [
+                        "Ký kết hợp đồng và đặt hàng",
+                        "Khảo sát thông tin hệ thống",
+                        "Thiết kế hệ thống",
+                    ]
+                    for index, parent_task_name in enumerate(parent_tasks, start=1):
+                        group = ProjectTemplateTaskGroup(phase_id=phase.id, name=parent_task_name, description="Task cha theo spec đã confirm", sort_order=index)
+                        db.add(group)
+                        db.flush()
+                elif phase_name == "2.1 Lab/PoC":
+                    pass
+                elif phase_name == "3. Implement":
+                    parent_tasks = [
+                        "Triển khai",
+                        "Vận hành, kiểm thử hệ thống, báo cáo kết quả",
+                        "Kết thúc dự án",
+                    ]
+                    for index, parent_task_name in enumerate(parent_tasks, start=1):
+                        group = ProjectTemplateTaskGroup(phase_id=phase.id, name=parent_task_name, description="Task cha theo spec đã confirm", sort_order=index)
+                        db.add(group)
+                        db.flush()
+                elif phase_name == "4. MA":
+                    parent_tasks = [
+                        "Các lỗi xử lý trong quá trình vận hành",
+                        "Hệ thống triển khai Log & Monitor",
+                        "Hỗ trợ sau dự án",
+                    ]
+                    for index, parent_task_name in enumerate(parent_tasks, start=1):
+                        group = ProjectTemplateTaskGroup(phase_id=phase.id, name=parent_task_name, description="Task cha theo spec đã confirm", sort_order=index)
+                        db.add(group)
+                        db.flush()
 
         # 2. Initialize a legacy password admin only when password login is enabled.
         if db.query(User).count() == 0:
@@ -728,7 +817,7 @@ app.include_router(accounts.router,            prefix="/api/accounts")
 app.include_router(ai_review.router,            prefix="/api")
 app.include_router(lunch_router.router,         prefix="/api/lunch")
 app.include_router(chat_ai.router,              prefix="/api")
-app.include_router(system_audit.router,         prefix="/api")
+app.include_router(project_templates_router.router, prefix="/api")
 
 @app.get("/health")
 @app.get("/api/health")

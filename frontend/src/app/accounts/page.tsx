@@ -22,6 +22,8 @@ interface MemberInfo {
   team?: string;
   position?: string;
   department?: string;
+  leader_name?: string;
+  leader_email?: string;
 }
 
 interface Account {
@@ -354,7 +356,7 @@ export default function AccountsPage() {
                         <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
                         <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
                         <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Phạm vi dữ liệu</th>
+                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Workspace</th>
                         <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
                         <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
                         <th className="sticky top-0 z-20 bg-slate-50 text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
@@ -601,7 +603,7 @@ export default function AccountsPage() {
                 </select>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Phạm vi dự án</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Workspace</label>
                 <select
                   value={editForm.data_scope}
                   onChange={e => setEditForm(f => ({ ...f, data_scope: e.target.value }))}
