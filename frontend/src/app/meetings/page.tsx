@@ -6,7 +6,7 @@ import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
-import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting } from '@/lib/api';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleAuthUrl, getGoogleStatus } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 export default function MeetingsPage() {
@@ -23,6 +23,24 @@ export default function MeetingsPage() {
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [googleConnected, setGoogleConnected] = useState(false);
+
+  useEffect(() => {
+    getGoogleStatus().then(res => {
+      if (res && res.connected) setGoogleConnected(true);
+    }).catch(() => {});
+  }, []);
+
+  const handleConnectGoogle = async () => {
+    try {
+      const data = await getGoogleAuthUrl();
+      if (data && data.auth_url) {
+        window.location.href = data.auth_url;
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Vui lòng cấu hình GOOGLE_CLIENT_ID trong .env");
+    }
+  };
 
   // Dynamic week calculation logic
   const currentWeekInfo = useMemo(() => {
@@ -230,6 +248,20 @@ export default function MeetingsPage() {
                     Tuần sau ›
                   </button>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={handleConnectGoogle}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors border shadow-xs flex items-center gap-1.5 ${
+                    googleConnected
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                      : 'bg-[#0058be] hover:bg-[#004297] text-white border-transparent'
+                  }`}
+                  title="Kết nối tài khoản Google để tự động đồng bộ Google Meet & Transcript"
+                >
+                  <Sparkles size={13} />
+                  <span>{googleConnected ? '✓ Đã kết nối Google' : 'Kết nối Google Meet'}</span>
+                </button>
 
                 <button
                   type="button"
