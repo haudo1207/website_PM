@@ -2,7 +2,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, getCustomers } from '@/lib/api';
+import { getProjects, deleteProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin, isSuperAdmin } from '@/lib/auth';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
@@ -87,6 +87,7 @@ export default function ProjectListContent() {
   const canManage = isAdmin();
   const [projects, setProjects] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState('All');
   const [phaseFilter, setPhaseFilter] = useState('All');
@@ -103,12 +104,14 @@ export default function ProjectListContent() {
 
   const reload = async () => {
     try {
-      const [projs, custs] = await Promise.all([
+      const [projs, custs, wss] = await Promise.all([
         getProjects(),
-        getCustomers()
+        getCustomers(),
+        getWorkspaces().catch(() => [])
       ]);
       setProjects(projs || []);
       setCustomers(custs || []);
+      setWorkspaces(wss || []);
     } catch {
       // Fallback safe load
     }
@@ -185,12 +188,19 @@ export default function ProjectListContent() {
     return Array.from(new Set(projects.map(p => p.year).filter(v => v !== null && v !== undefined))).sort((a, b) => (b as number) - (a as number));
   }, [projects]);
 
+  // Workspace code → display name map from the Workspace Master
+  const wsNameByCode = useMemo(() => {
+    const m = new Map<string, string>();
+    (workspaces || []).forEach(w => m.set(w.code, w.name));
+    return m;
+  }, [workspaces]);
+
   // Filter memoized
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
-      const pBiz = (p.business || (p.business_unit === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase();
+      const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
       const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all');
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
@@ -202,7 +212,7 @@ export default function ProjectListContent() {
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
       return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter, wsNameByCode]);
 
   // Sort memoized
   const sorted = useMemo(() => {
@@ -301,8 +311,9 @@ export default function ProjectListContent() {
               <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Workspace</label>
               <select value={businessFilter} onChange={e => { setBusinessFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
                 <option value="All">Tất cả Workspace</option>
-                <option value="Infrastructure">Infrastructure</option>
-                <option value="Markee">Markee</option>
+                {workspaces.map(ws => (
+                  <option key={ws.code} value={ws.name}>{ws.name}</option>
+                ))}
               </select>
             </div>
 
