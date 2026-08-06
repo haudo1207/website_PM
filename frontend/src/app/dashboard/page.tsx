@@ -1,7 +1,5 @@
-'use client';
-
-import ReportTab from './report/page';
+import { redirect } from 'next/navigation';
 
 export default function DashboardPage() {
-  return <ReportTab />;
+  redirect('/dashboard/overview');
 }
