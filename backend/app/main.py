@@ -236,6 +236,30 @@ def apply_schema_updates():
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Critical', 20, '🔴 Đỏ') ON CONFLICT (name) DO NOTHING"))
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Interrupt', 25, '🟣 Tím') ON CONFLICT (name) DO NOTHING"))
 
+        # ── Workspace Master (Single Source of Truth) ──
+        # Seed the Workspace Master and migrate every legacy hard-coded value
+        # (infrastructure / markee) to the centralized Workspace records.
+        conn.execute(text("""
+            INSERT INTO workspaces (name, code, description)
+            SELECT 'INFRA', 'infra', 'Workspace Infrastructure'
+            WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE LOWER(code) = 'infra' OR LOWER(name) = 'infra')
+        """))
+        conn.execute(text("""
+            INSERT INTO workspaces (name, code, description)
+            SELECT 'DEV', 'dev', 'Workspace Dev'
+            WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE LOWER(code) = 'dev' OR LOWER(name) = 'dev')
+        """))
+        conn.execute(text("UPDATE users SET data_scope = 'infra' WHERE LOWER(data_scope) = 'infrastructure'"))
+        conn.execute(text("UPDATE users SET data_scope = 'dev' WHERE LOWER(data_scope) = 'markee'"))
+        conn.execute(text("UPDATE projects SET data_scope = 'infra' WHERE LOWER(data_scope) = 'infrastructure'"))
+        conn.execute(text("UPDATE projects SET data_scope = 'dev' WHERE LOWER(data_scope) = 'markee'"))
+        conn.execute(text("UPDATE projects SET business = 'INFRA' WHERE LOWER(business) = 'infrastructure'"))
+        conn.execute(text("UPDATE projects SET business = 'DEV' WHERE LOWER(business) = 'markee'"))
+        conn.execute(text("UPDATE customers SET business_unit = 'infra' WHERE LOWER(business_unit) = 'infrastructure'"))
+        conn.execute(text("UPDATE customers SET business_unit = 'dev' WHERE LOWER(business_unit) = 'markee'"))
+        conn.execute(text("UPDATE audit_logs SET business_unit = 'INFRA' WHERE LOWER(business_unit) = 'infrastructure'"))
+        conn.execute(text("UPDATE audit_logs SET business_unit = 'DEV' WHERE LOWER(business_unit) = 'markee'"))
+
 try:
     apply_schema_updates()
 except Exception as e:

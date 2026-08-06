@@ -12,6 +12,8 @@ import {
   lockAccount,
   unlockAccount,
   deleteAccount,
+  getWorkspaces,
+  Workspace
 } from '@/lib/api';
 
 interface MemberInfo {
@@ -53,12 +55,6 @@ const ROLE_COLORS: Record<string, string> = {
   viewer: 'bg-slate-100 text-slate-600',
 };
 
-const SCOPE_LABELS: Record<string, string> = {
-  all: 'Tất cả dự án',
-  infrastructure: 'Dự án Infrastructure',
-  markee: 'Dự án Markee',
-};
-
 const LEADER_MANAGED_ROLES = new Set(['member', 'viewer']);
 const ROLE_OPTIONS = [
   { value: 'super_admin', label: 'Super Admin — Quản trị toàn hệ thống' },
@@ -75,6 +71,7 @@ export default function AccountsPage() {
   const [authorized, setAuthorized] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [availableMembers, setAvailableMembers] = useState<MemberInfo[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [saved, setSaved] = useState('');
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'accounts' | 'members'>('accounts');
@@ -87,11 +84,11 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: '', full_name: '', member_id: 0 });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: 'infrastructure', member_id: 0 });
+  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: '', member_id: 0 });
 
   // Reset password modal
 
@@ -107,9 +104,16 @@ export default function AccountsPage() {
   const reload = async () => {
     setLoading(true);
     try {
-      const [accs, members] = await Promise.all([getAccounts(), getAvailableMembers()]);
+      const [accs, members, wss] = await Promise.all([
+        getAccounts(),
+        getAvailableMembers(),
+        getWorkspaces().catch(() => [])
+      ]);
       setAccounts(accs);
       setAvailableMembers(members);
+      setWorkspaces(wss || []);
+      setCreateForm(f => ({ ...f, data_scope: f.data_scope || (wss?.[0]?.code || '') }));
+      setEditForm(f => ({ ...f, data_scope: f.data_scope || (wss?.[0]?.code || '') }));
     } catch {
       flash('Lỗi tải dữ liệu');
     } finally {
@@ -121,6 +125,15 @@ export default function AccountsPage() {
     setSaved(msg);
     setTimeout(() => setSaved(''), 5000);
   };
+
+  // Workspace Master → data scope labels ('all' stays a global option)
+  const scopeLabels = useMemo(() => {
+    const labels: Record<string, string> = { all: 'Tất cả dự án' };
+    (workspaces || []).forEach(w => {
+      labels[w.code] = `Dự án ${w.name}`;
+    });
+    return labels;
+  }, [workspaces]);
 
   const filteredAccounts = useMemo(() => {
     const nameQuery = searchName.trim().toLowerCase();
@@ -153,7 +166,7 @@ export default function AccountsPage() {
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', role: 'member', data_scope: 'infrastructure', full_name: '', member_id: 0 });
+      setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), full_name: '', member_id: 0 });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -180,7 +193,7 @@ export default function AccountsPage() {
   const openEdit = (acc: Account) => {
     if (!canLeaderManageAccount(acc)) return;
     setEditAccount(acc);
-    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || 'infrastructure', member_id: acc.member_id || 0 });
+    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || (workspaces?.[0]?.code || ''), member_id: acc.member_id || 0 });
   };
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -324,9 +337,9 @@ export default function AccountsPage() {
                 <select value={filterScope} onChange={e => setFilterScope(e.target.value)}
                   className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
                   <option value="">Tất cả Data Scope</option>
-                  <option value="all">Tất cả dự án</option>
-                  <option value="infrastructure">Dự án Infrastructure</option>
-                  <option value="markee">Dự án Markee</option>
+                  {Object.entries(scopeLabels).map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
                 </select>
 
                 <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
@@ -390,7 +403,7 @@ export default function AccountsPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-600">
-                          {SCOPE_LABELS[acc.data_scope] || acc.data_scope}
+                          {scopeLabels[acc.data_scope] || acc.data_scope}
                         </td>
                         <td className="px-4 py-3">
                           {acc.member ? (
@@ -510,9 +523,10 @@ export default function AccountsPage() {
                   onChange={e => setCreateForm(f => ({ ...f, data_scope: e.target.value }))}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
-                  <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
-                  <option value="markee">Markee — Chỉ dự án của team Markee</option>
-                  <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
+                  {workspaces.map(ws => (
+                    <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
+                  ))}
+                  <option value="all">All — Tất cả dự án</option>
                 </select>
               </div>
 
@@ -609,9 +623,10 @@ export default function AccountsPage() {
                   onChange={e => setEditForm(f => ({ ...f, data_scope: e.target.value }))}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                 >
-                  <option value="infrastructure">Infrastructure — Chỉ dự án của team Infrastructure</option>
-                  <option value="markee">Markee — Chỉ dự án của team Markee</option>
-                  <option value="all">All — Tất cả dự án Markee và Infrastructure</option>
+                  {workspaces.map(ws => (
+                    <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
+                  ))}
+                  <option value="all">All — Tất cả dự án</option>
                 </select>
               </div>
             </form>

@@ -170,6 +170,21 @@ export const createTeam = (data: { name: string; description?: string }) => api.
 export const updateTeam = (id: number, data: { name: string; description?: string }) => api.put(`/system-categories/teams/${id}`, data).then(r => r.data);
 export const deleteTeam = (id: number) => api.delete(`/system-categories/teams/${id}`).then(r => r.data);
 
+// Workspaces (Master Data — Single Source of Truth for Business Units)
+export interface Workspace {
+  id: number;
+  name: string;
+  code: string;
+  description?: string | null;
+}
+export const getWorkspaces = () => api.get<Workspace[]>('/system-categories/workspaces').then(r => r.data);
+export const createWorkspace = (data: { name: string; code: string; description?: string }) =>
+  api.post('/system-categories/workspaces', data).then(r => r.data);
+export const updateWorkspace = (id: number, data: { name?: string; code?: string; description?: string }) =>
+  api.put(`/system-categories/workspaces/${id}`, data).then(r => r.data);
+export const deleteWorkspace = (id: number) =>
+  api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
+
 // Members
 export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; skill_id?: number }) =>
   api.get('/members', { params }).then(r => r.data);

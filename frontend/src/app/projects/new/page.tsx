@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { createProject, getMembers, getCustomers, getMasterPhases } from '@/lib/api';
+import { createProject, getMembers, getCustomers, getMasterPhases, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 export default function NewProjectPage() {
@@ -10,6 +10,7 @@ export default function NewProjectPage() {
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
   const [masterPhases, setMasterPhases] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
   // Danh sách giai đoạn dự án chuẩn
   const PROJECT_PHASES = [
@@ -25,7 +26,7 @@ export default function NewProjectPage() {
   const [name, setName] = useState('');
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [customerName, setCustomerName] = useState('');
-  const [business, setBusiness] = useState<'Infrastructure' | 'Markee' | 'All'>('Infrastructure');
+  const [business, setBusiness] = useState<string>('');
   const [currentPhase, setCurrentPhase] = useState('1. Tư vấn');
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
@@ -116,6 +117,14 @@ export default function NewProjectPage() {
         }
       })
       .catch(() => {});
+
+    getWorkspaces()
+      .then((data) => {
+        const wss = data || [];
+        setWorkspaces(wss);
+        if (wss.length > 0) setBusiness(wss[0].name);
+      })
+      .catch(() => {});
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -141,6 +150,12 @@ export default function NewProjectPage() {
       return;
     }
 
+    if (!business) {
+      setErrorMsg('Team/Business là bắt buộc.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await createProject({
         name,
@@ -148,7 +163,7 @@ export default function NewProjectPage() {
         year,
         customer_name: customerName || undefined,
         business,
-        data_scope: business.toLowerCase(),
+        data_scope: (workspaces.find(w => w.name === business)?.code) || business.toLowerCase(),
         current_phase: currentPhase,
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
@@ -239,12 +254,13 @@ export default function NewProjectPage() {
                   <select
                     required
                     value={business}
-                    onChange={(e) => setBusiness(e.target.value as 'Infrastructure' | 'Markee' | 'All')}
+                    onChange={(e) => setBusiness(e.target.value)}
                     className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
                   >
-                    <option value="Infrastructure">Infrastructure</option>
-                    <option value="Markee">Markee</option>
-                    <option value="All">All (Cả 2 team)</option>
+                    {workspaces.length === 0 && <option value="">Đang tải...</option>}
+                    {workspaces.map(ws => (
+                      <option key={ws.code} value={ws.name}>{ws.name}</option>
+                    ))}
                   </select>
                 </div>
 

@@ -7,8 +7,9 @@ from ..config import settings
 from ..models.member import Member
 from ..models.user import User
 from ..utils.access import (
-    DEFAULT_SCOPE,
-    VALID_DATA_SCOPES,
+    default_scope,
+    is_valid_scope,
+    valid_data_scopes,
     VALID_ROLES,
     ROLE_SUPER_ADMIN,
     ROLE_LEADER,
@@ -138,7 +139,7 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
     email = normalize_email(body.get("email"))
     password = str(body.get("password") or "")
     role = str(body.get("role") or "member").strip().lower()
-    data_scope = str(body.get("data_scope") or DEFAULT_SCOPE).strip().lower()
+    data_scope = str(body.get("data_scope") or default_scope(db)).strip().lower()
     member_id = body.get("member_id") or None
 
     if not email:
@@ -147,8 +148,8 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
         validate_password(password)
     if role not in VALID_ROLES:
         raise HTTPException(400, f"Role không hợp lệ. Chọn một trong: {sorted(VALID_ROLES)}")
-    if data_scope not in VALID_DATA_SCOPES:
-        raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(VALID_DATA_SCOPES)}")
+    if not is_valid_scope(db, data_scope):
+        raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(valid_data_scopes(db))}")
     if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(400, "Email đã tồn tại.")
 
@@ -240,8 +241,8 @@ def update_account(
 
     if "data_scope" in body:
         data_scope = str(body["data_scope"]).strip().lower()
-        if data_scope not in VALID_DATA_SCOPES:
-            raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(VALID_DATA_SCOPES)}")
+        if not is_valid_scope(db, data_scope):
+            raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(valid_data_scopes(db))}")
         if is_bootstrap_superadmin(account) and data_scope != "all":
             raise HTTPException(400, "The bootstrap super-admin must retain access to all data.")
         account.data_scope = data_scope
