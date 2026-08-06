@@ -74,23 +74,23 @@ def serialize_project(p, db):
 
     # Fetch PMs
     pms = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "PM").all()
-    pm_ids = [m.id for m in pms]
-    pm_names = ", ".join([m.display_name for m in pms])
+    pm_ids = [m.id for m in pms if m]
+    pm_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in pms if m])
 
     # Fetch Leaders
     leaders = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Leader").all()
-    leader_ids = [m.id for m in leaders]
-    leader_names = ", ".join([m.display_name for m in leaders])
+    leader_ids = [m.id for m in leaders if m]
+    leader_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in leaders if m])
 
     # Fetch Sales
     sales = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Sales").all()
-    sales_ids = [m.id for m in sales]
-    sales_names = ", ".join([m.display_name for m in sales])
+    sales_ids = [m.id for m in sales if m]
+    sales_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in sales if m])
 
     # Fetch Members
     members = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Member").all()
-    member_ids = [m.id for m in members]
-    member_names = ", ".join([m.display_name for m in members])
+    member_ids = [m.id for m in members if m]
+    member_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in members if m])
 
     # Combine all unique members for display
     all_members_query = (
@@ -99,7 +99,7 @@ def serialize_project(p, db):
         .filter(project_members.c.project_id == p.id)
         .all()
     )
-    members_list = [{"name": m_name, "email": m_email} for m_name, m_email in all_members_query]
+    members_list = [{"name": str(m_name or m_email or "Member"), "email": str(m_email or "")} for m_name, m_email in all_members_query]
 
     return {
         "id": p.id,
@@ -482,9 +482,31 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         "description": p.description,
     }
 
-    for field in ["name", "code", "customer_name", "customer_id", "year", "description", "status", "current_phase"]:
+    for field in ["name", "code", "customer_name", "description", "status", "current_phase"]:
         if field in body:
-            setattr(p, field, body[field])
+            val = body[field]
+            setattr(p, field, str(val).strip() if val is not None else None)
+
+    if "year" in body:
+        y_val = body["year"]
+        if y_val is None or y_val == "" or y_val == 0:
+            p.year = None
+        else:
+            try:
+                p.year = int(y_val)
+            except (ValueError, TypeError):
+                p.year = None
+
+    if "customer_id" in body:
+        c_val = body["customer_id"]
+        if c_val is None or c_val == "" or c_val == 0:
+            p.customer_id = None
+        else:
+            try:
+                p.customer_id = int(c_val)
+            except (ValueError, TypeError):
+                p.customer_id = None
+
     if "business" in body or "business_unit" in body:
         b_in = str(body.get("business") or body.get("business_unit") or "").strip().lower()
         if b_in == "all":
@@ -495,26 +517,27 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             p.business = "Infrastructure"
         if "data_scope" not in body and (user_scope(current_user) == ALL_SCOPE or getattr(current_user, "role", None) in {"admin", "super_admin"}):
             p.data_scope = b_in
-    if "customer_id" in body and body["customer_id"]:
+    if p.customer_id:
         from ..models.system_category import Customer as DB_Customer
-        c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()
+        c_obj = db.query(DB_Customer).filter(DB_Customer.id == p.customer_id).first()
         if c_obj:
             p.customer_name = c_obj.name
 
     # If project business is "All", ensure customer is synced across both Business Units
-    if p.business == "All" and p.customer_name:
+    if p.business == "All" and p.customer_name and str(p.customer_name).strip():
         from ..models.system_category import Customer as DB_Customer
-        c_obj = db.query(DB_Customer).filter(DB_Customer.name.ilike(p.customer_name.strip())).first()
+        c_name = str(p.customer_name).strip()
+        c_obj = db.query(DB_Customer).filter(DB_Customer.name.ilike(c_name)).first()
         if c_obj:
             curr_bu = (c_obj.business_unit or "infrastructure").lower()
             other_bu = "markee" if curr_bu == "infrastructure" else "infrastructure"
             other_c = db.query(DB_Customer).filter(
-                DB_Customer.name.ilike(p.customer_name.strip()),
+                DB_Customer.name.ilike(c_name),
                 DB_Customer.business_unit == other_bu
             ).first()
             if not other_c:
                 other_c = DB_Customer(
-                    name=p.customer_name.strip(),
+                    name=c_name,
                     description=c_obj.description,
                     business_unit=other_bu
                 )
@@ -607,36 +630,40 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     db.commit()
     db.refresh(p)
 
-    new_dict = {
-        "name": p.name,
-        "business": p.business,
-        "customer_name": p.customer_name,
-        "year": p.year,
-        "status": p.status,
-        "current_phase": p.current_phase,
-        "description": p.description,
-    }
-    field_labels = {
-        "name": "Tên dự án",
-        "business": "Workspace",
-        "customer_name": "Khách hàng",
-        "year": "Năm dự án",
-        "status": "Trạng thái",
-        "current_phase": "Giai đoạn hiện tại",
-        "description": "Mô tả dự án",
-    }
-    AuditService.record_diff(
-        db=db,
-        user_id=getattr(current_user, "id", None),
-        module="Project",
-        entity_type="Project",
-        entity_id=p.id,
-        old_dict=old_dict,
-        new_dict=new_dict,
-        project_id=p.id,
-        field_labels=field_labels,
-    )
-    db.commit()
+    try:
+        new_dict = {
+            "name": p.name,
+            "business": p.business,
+            "customer_name": p.customer_name,
+            "year": p.year,
+            "status": p.status,
+            "current_phase": p.current_phase,
+            "description": p.description,
+        }
+        field_labels = {
+            "name": "Tên dự án",
+            "business": "Workspace",
+            "customer_name": "Khách hàng",
+            "year": "Năm dự án",
+            "status": "Trạng thái",
+            "current_phase": "Giai đoạn hiện tại",
+            "description": "Mô tả dự án",
+        }
+        AuditService.record_diff(
+            db=db,
+            user_id=getattr(current_user, "id", None),
+            module="Project",
+            entity_type="Project",
+            entity_id=p.id,
+            old_dict=old_dict,
+            new_dict=new_dict,
+            project_id=p.id,
+            field_labels=field_labels,
+        )
+        db.commit()
+    except Exception as audit_err:
+        print(f"[update_project] Warning: Audit log failed, continuing: {audit_err}")
+
     return serialize_project(p, db)
 
 
