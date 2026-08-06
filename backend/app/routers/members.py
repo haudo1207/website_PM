@@ -13,6 +13,23 @@ from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
 from sqlalchemy import func, extract
 
+TEAM_POSITIONS = {
+  "Tech/Product": ["Product Manager", "UI/UX Designer", "Business Analyst", "Bridge Software Engineer (BrSE)", "Tester/QC"],
+  "Dev/DevOps": ["Frontend Developer", "Backend Developer", "Mobile Developer", "Fullstack Developer", "DevOps Engineer", "BA", "Frontend Developer", "Backend Developer", "Full-stack Developer", "DevOps / Platform", "Fullstack Developer"],
+  "Infrastructure": ["Network Engineer", "System Administrator", "IT Support/Helpdesk", "Cybersecurity Specialist", "Network Team", "System Team", "Security Team", "Hội nghị & Tổng đài", "Cloud & Datacenter"],
+  "AI": ["AI / ML Engineer", "Data Scientist", "Data Engineer", "Computer Vision Engineer", "NLP Engineer", "Data Analyst / Engineer", "AI Product / Research"],
+  "Marketing": ["Content Creator", "SEO Specialist", "Digital Marketer", "Media Designer", "Copywriter", "Content & Social", "Performance & Acquisition", "Marketing Ops"],
+  "Sales/Customer Care": ["Account Executive", "Sales Consultant", "Customer Support Representative", "Telemarketer", "B2B Sales", "Business Development", "Customer Success"],
+  "Content Production": ["Video Editor", "Graphic Designer", "Motion Designer", "Photographer"]
+}
+
+def get_primary_team(positions):
+    for team, team_positions in TEAM_POSITIONS.items():
+        if any(pos in team_positions for pos in positions):
+            return team
+    return "all"
+
+
 router = APIRouter()
 
 
@@ -455,6 +472,12 @@ def sync_candidate(
         # For fresher, lv3, core
         if team == "Dev/DevOps":
             mapped_team = "Dev"
+        elif team in ["Infrastructure", "AI"]:
+            mapped_team = "Technical"
+        elif team == "Marketing":
+            mapped_team = "Marketing"
+        elif team in ["Sales", "Sales/Customer Care"]:
+            mapped_team = "Sales"
         else:
             mapped_team = team
             
@@ -492,6 +515,8 @@ def sync_candidate(
             member.telegram_username = telegram_username
         if mapped_team:
             member.team = mapped_team
+        if team:
+            member.department = team
         if position:
             member.position = position
         if birth_date:
@@ -588,21 +613,7 @@ def sync_from_recruitment(
     SUPABASE_URL = "https://supabase.stratumconsultants.tech"
     SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UtbG9jYWwiLCJpYXQiOjE3NzgwNDM5NDUsImV4cCI6MjA5MzQwMzk0NX0.MLey0ChjN3lr8__Jc1lmiBw6xSbeW-mrXEXsxgkDywI"
     
-    TEAM_POSITIONS = {
-      "Tech/Product": ["Product Manager", "UI/UX Designer", "Business Analyst", "Bridge Software Engineer (BrSE)", "Tester/QC"],
-      "Dev/DevOps": ["Frontend Developer", "Backend Developer", "Mobile Developer", "Fullstack Developer", "DevOps Engineer"],
-      "Infrastructure": ["Network Engineer", "System Administrator", "IT Support/Helpdesk", "Cybersecurity Specialist"],
-      "AI": ["AI / ML Engineer", "Data Scientist", "Data Engineer", "Computer Vision Engineer", "NLP Engineer"],
-      "Marketing": ["Content Creator", "SEO Specialist", "Digital Marketer", "Media Designer", "Copywriter"],
-      "Sales/Customer Care": ["Account Executive", "Sales Consultant", "Customer Support Representative", "Telemarketer"],
-      "Content Production": ["Video Editor", "Graphic Designer", "Motion Designer", "Photographer"]
-    }
-    
-    def get_primary_team(positions):
-        for team, team_positions in TEAM_POSITIONS.items():
-            if any(pos in team_positions for pos in positions):
-                return team
-        return "all"
+    # Local TEAM_POSITIONS and get_primary_team removed to use global definitions
         
     def get_recruitment_meta(notes):
         raw = re.search(r"\[RECRUITMENT_META\]([\s\S]*?)\[/RECRUITMENT_META\]", notes or "")
@@ -748,6 +759,12 @@ def sync_from_recruitment(
             else:
                 if primary_team == "Dev/DevOps":
                     mapped_team = "Dev"
+                elif primary_team in ["Infrastructure", "AI"]:
+                    mapped_team = "Technical"
+                elif primary_team == "Marketing":
+                    mapped_team = "Marketing"
+                elif primary_team in ["Sales", "Sales/Customer Care"]:
+                    mapped_team = "Sales"
                 else:
                     mapped_team = primary_team
             mapped_team = mapped_team[:100]
@@ -770,6 +787,8 @@ def sync_from_recruitment(
                     member.telegram_username = telegram_username
                 if mapped_team:
                     member.team = mapped_team
+                if primary_team:
+                    member.department = primary_team
                 if position:
                     member.position = position
                 if birth_date:
