@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markee Work Portal — Tài liệu tích hợp Google Meet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#101B2B;
+  --ink-soft:#44536B;
+  --ink-faint:#7B879B;
+  --paper:#FFFFFF;
+  --wash:#F2F4F7;
+  --line:#DDE3EB;
+  --teal:#0E7A5F;
+  --teal-wash:#E4F2ED;
+  --coral:#D6412B;
+  --coral-wash:#FCEBE8;
+  --amber:#9A6206;
+  --amber-wash:#FDF1DC;
+  --violet:#5B45C4;
+  --violet-wash:#EEEBFB;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{
+  margin:0;
+  font-family:'Be Vietnam Pro',system-ui,sans-serif;
+  font-weight:400;
+  font-size:16px;
+  line-height:1.72;
+  color:var(--ink);
+  background:var(--wash);
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- shell ---------- */
+.shell{display:grid;grid-template-columns:264px minmax(0,1fr);gap:0;max-width:1320px;margin:0 auto;background:var(--paper)}
+.rail{
+  position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+  background:var(--ink);color:#fff;padding:32px 24px 40px;
+}
+.rail__brand{display:flex;align-items:center;gap:11px;margin-bottom:6px}
+.rail__mark{
+  width:34px;height:34px;border-radius:9px;background:var(--coral);
+  display:grid;place-items:center;font-weight:700;font-size:17px;color:#fff;flex:none;
+}
+.rail__name{font-weight:600;font-size:15px;letter-spacing:-.01em;line-height:1.25}
+.rail__sub{font-size:11.5px;color:#8695AC;letter-spacing:.02em}
+.rail__kicker{
+  margin:30px 0 12px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:#6F7F98;font-weight:600;
+}
+.rail nav{display:flex;flex-direction:column;gap:1px}
+.rail nav a{
+  display:flex;gap:11px;align-items:baseline;
+  color:#B8C4D6;text-decoration:none;font-size:13.5px;line-height:1.45;
+  padding:7px 10px;border-radius:7px;transition:background .13s,color .13s;
+}
+.rail nav a:hover{background:rgba(255,255,255,.07);color:#fff}
+.rail nav a b{font-family:var(--mono);font-size:11px;color:#5E6E88;font-weight:500;flex:none;width:16px}
+.rail__foot{margin-top:28px;padding-top:18px;border-top:1px solid rgba(255,255,255,.11);font-size:11.5px;color:#6F7F98;line-height:1.6}
+
+.main{padding:56px 60px 100px;min-width:0}
+
+/* ---------- masthead ---------- */
+.mast{border-bottom:2px solid var(--ink);padding-bottom:26px;margin-bottom:38px}
+.mast__eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--teal);font-weight:500;margin-bottom:14px;
+}
+.mast h1{
+  margin:0 0 14px;font-size:37px;line-height:1.16;font-weight:600;letter-spacing:-.026em;
+}
+.mast p{margin:0;font-size:17px;color:var(--ink-soft);max-width:66ch;line-height:1.66}
+.mast__meta{
+  display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:22px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);
+}
+.mast__meta span b{color:var(--ink-soft);font-weight:500}
+
+/* ---------- sections ---------- */
+section{margin-bottom:52px;scroll-margin-top:24px}
+.sec-head{display:flex;gap:16px;align-items:baseline;margin-bottom:20px;padding-top:10px;border-top:1px solid var(--line)}
+.sec-num{font-family:var(--mono);font-size:12.5px;color:var(--teal);font-weight:500;flex:none;padding-top:7px}
+.sec-head h2{margin:0;font-size:25px;line-height:1.28;font-weight:600;letter-spacing:-.02em}
+h3{font-size:17.5px;font-weight:600;margin:34px 0 12px;letter-spacing:-.012em}
+h4{font-size:15px;font-weight:600;margin:24px 0 9px}
+p{margin:0 0 14px;max-width:74ch}
+ul,ol{margin:0 0 16px;padding-left:22px;max-width:74ch}
+li{margin-bottom:7px}
+li::marker{color:var(--ink-faint)}
+strong{font-weight:600}
+a{color:var(--teal)}
+code{
+  font-family:var(--mono);font-size:.855em;background:var(--wash);
+  padding:2px 5px;border-radius:4px;color:var(--ink);border:1px solid var(--line);
+}
+.lead{font-size:17px;color:var(--ink-soft);max-width:70ch}
+
+/* ---------- code block ---------- */
+.code{position:relative;margin:0 0 20px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0E1826}
+.code__bar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 12px 8px 15px;background:#16233A;border-bottom:1px solid #22314C;
+}
+.code__label{font-family:var(--mono);font-size:11px;color:#8DA0BF;letter-spacing:.03em}
+.code__copy{
+  font-family:var(--mono);font-size:10.5px;color:#8DA0BF;background:transparent;
+  border:1px solid #33445F;border-radius:5px;padding:3px 9px;cursor:pointer;transition:.13s;
+}
+.code__copy:hover{color:#fff;border-color:#4E6casing}
+.code__copy:hover{color:#fff;border-color:#55708F}
+.code pre{margin:0;padding:15px 17px;overflow-x:auto;font-family:var(--mono);font-size:12.6px;line-height:1.68;color:#D5DEEC}
+.code pre .c{color:#6E819E}
+.code pre .k{color:#7FD6B4}
+.code pre .s{color:#E8B98A}
+.code pre .n{color:#9FC5F0}
+
+/* ---------- callouts ---------- */
+.note{border-left:3px solid;border-radius:0 8px 8px 0;padding:15px 18px;margin:0 0 20px;max-width:80ch}
+.note p:last-child{margin-bottom:0}
+.note__tag{
+  display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;font-weight:500;margin-bottom:6px;
+}
+.note--stop{background:var(--coral-wash);border-color:var(--coral)}
+.note--stop .note__tag{color:var(--coral)}
+.note--warn{background:var(--amber-wash);border-color:var(--amber)}
+.note--warn .note__tag{color:var(--amber)}
+.note--ok{background:var(--teal-wash);border-color:var(--teal)}
+.note--ok .note__tag{color:var(--teal)}
+.note--info{background:var(--violet-wash);border-color:var(--violet)}
+.note--info .note__tag{color:var(--violet)}
+
+/* ---------- table ---------- */
+.tbl{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:14.2px}
+.tbl th{
+  text-align:left;padding:9px 13px;background:var(--ink);color:#fff;font-weight:500;
+  font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;
+}
+.tbl td{padding:11px 13px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.6}
+.tbl tr:last-child td{border-bottom:none}
+.tbl code{font-size:12.4px}
+
+/* ---------- flow ---------- */
+.flow{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:0 0 22px}
+.flow__row{display:grid;grid-template-columns:44px 1fr;border-bottom:1px solid var(--line)}
+.flow__row:last-child{border-bottom:none}
+.flow__n{
+  background:var(--wash);display:flex;justify-content:center;padding-top:15px;
+  font-family:var(--mono);font-size:12px;color:var(--teal);font-weight:500;
+  border-right:1px solid var(--line);
+}
+.flow__body{padding:14px 18px}
+.flow__body h4{margin:0 0 5px;font-size:14.8px}
+.flow__body p{margin:0;font-size:14.2px;color:var(--ink-soft);line-height:1.62}
+.flow__body p + p{margin-top:7px}
+.flow__who{
+  display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;padding:2px 7px;border-radius:4px;margin-left:8px;vertical-align:2px;
+  background:var(--violet-wash);color:var(--violet);font-weight:500;
+}
+.flow__who--g{background:var(--teal-wash);color:var(--teal)}
+
+/* ---------- option cards ---------- */
+.opts{display:grid;gap:14px;margin:0 0 22px}
+.opt{border:1px solid var(--line);border-radius:11px;padding:18px 20px;background:var(--paper)}
+.opt--pick{border-color:var(--teal);border-width:1.5px;background:var(--teal-wash)}
+.opt--no{opacity:.72}
+.opt__top{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:9px}
+.opt__top h4{margin:0;font-size:16px}
+.badge{
+  font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;
+  padding:3px 8px;border-radius:5px;font-weight:500;
+}
+.badge--pick{background:var(--teal);color:#fff}
+.badge--alt{background:var(--violet-wash);color:var(--violet)}
+.badge--no{background:var(--coral-wash);color:var(--coral)}
+.opt p{margin:0 0 8px;font-size:14.4px;color:var(--ink-soft)}
+.opt p:last-child{margin-bottom:0}
+.opt ul{margin:8px 0 0;font-size:14.2px;color:var(--ink-soft)}
+
+/* ---------- checklist ---------- */
+.check{list-style:none;padding:0;margin:0 0 22px;max-width:80ch}
+.check li{
+  display:grid;grid-template-columns:26px 1fr;gap:2px;
+  padding:11px 0;border-bottom:1px solid var(--line);margin:0;font-size:14.6px;
+}
+.check li:last-child{border-bottom:none}
+.check li::before{
+  content:"";width:15px;height:15px;border:1.5px solid var(--ink-faint);
+  border-radius:4px;margin-top:5px;
+}
+.check b{font-weight:600;display:block}
+.check span{color:var(--ink-soft);font-size:13.8px;line-height:1.55}
+
+/* ---------- responsive ---------- */
+@media (max-width:1000px){
+  .shell{grid-template-columns:1fr}
+  .rail{position:static;height:auto;padding:26px 24px 30px}
+  .rail nav{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px}
+  .main{padding:36px 24px 70px}
+  .mast h1{font-size:29px}
+}
+@media print{
+  .rail{display:none}
+  .shell{display:block;max-width:none}
+  .main{padding:0}
+  body{background:#fff;font-size:11pt}
+  section{page-break-inside:avoid}
+  .code pre{white-space:pre-wrap;word-break:break-word}
+}
+:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<aside class="rail">
+  <div class="rail__brand">
+    <div class="rail__mark">M</div>
+    <div>
+      <div class="rail__name">Markee Work Portal</div>
+      <div class="rail__sub">Tài liệu kỹ thuật</div>
+    </div>
+  </div>
+
+  <div class="rail__kicker">Nội dung</div>
+  <nav>
+    <a href="#tomtat"><b>00</b>Tóm tắt cho dev</a>
+    <a href="#kientruc"><b>01</b>Kiến trúc &amp; nguyên tắc</a>
+    <a href="#setup"><b>02</b>Chuẩn bị Google Cloud</a>
+    <a href="#token"><b>03</b>Refresh token: không để chết</a>
+    <a href="#appsscript"><b>04</b>Phương án Apps Script</a>
+    <a href="#db"><b>05</b>Schema cơ sở dữ liệu</a>
+    <a href="#api"><b>06</b>API của portal</a>
+    <a href="#flow"><b>07</b>Flow tạo meeting</a>
+    <a href="#loi"><b>08</b>Xử lý lỗi</a>
+    <a href="#dongbo"><b>09</b>Đồng bộ &amp; thống kê</a>
+    <a href="#nghiemthu"><b>10</b>Checklist nghiệm thu</a>
+  </nav>
+
+  <div class="rail__foot">
+    Tài khoản vận hành:<br>
+    <code style="background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.14);color:#C6D2E4">mkt.szone@gmail.com</code>
+  </div>
+</aside>
+
+<main class="main">
+
+<header class="mast">
+  <div class="mast__eyebrow">Tài liệu bàn giao · Phase 1</div>
+  <h1>Tạo lịch họp Google Meet bằng một tài khoản dùng chung</h1>
+  <p>Người dùng bấm “Tạo meeting” trên portal, hệ thống sinh link Google Meet và gửi lời mời qua một tài khoản Google duy nhất, đồng thời ghi nhận chính xác ai là người tạo để phục vụ thống kê KPI.</p>
+  <div class="mast__meta">
+    <span><b>Phạm vi:</b> Backend + tích hợp Google Calendar</span>
+    <span><b>Scope OAuth:</b> calendar.events</span>
+    <span><b>Ước lượng:</b> 3–5 ngày công</span>
+  </div>
+</header>
+
+<!-- ============ 00 ============ -->
+<section id="tomtat">
+  <div class="sec-head"><div class="sec-num">00</div><h2>Tóm tắt cho dev</h2></div>
+
+  <p class="lead">Đọc phần này trước. Nếu nắm được ba ý dưới đây thì phần còn lại chỉ là chi tiết triển khai.</p>
+
+  <h4>Google không biết ai là người tạo</h4>
+  <p>Backend gọi Google bằng một tài khoản duy nhất, nên với Google mọi cuộc họp đều do <code>mkt.szone@gmail.com</code> tạo. Thông tin “ai tạo” chỉ tồn tại trong cơ sở dữ liệu của portal, lấy từ session đăng nhập tại thời điểm bấm nút. Không có API nào của Google trả về thông tin này.</p>
+
+  <h4>Một request Calendar làm cả hai việc</h4>
+  <p>Không cần gọi Google Meet API. Một lệnh <code>events.insert</code> kèm tham số <code>conferenceDataVersion=1</code> vừa tạo sự kiện trên lịch, vừa sinh link Meet, vừa gửi email mời cho toàn bộ người tham gia.</p>
+
+  <h4>Rủi ro lớn nhất là refresh token chết</h4>
+  <p>Toàn hệ thống phụ thuộc vào một refresh token duy nhất. Khi nó hỏng, chức năng tạo meeting dừng hoàn toàn và thường không ai phát hiện cho tới khi có người phàn nàn. Chương 03 dành riêng cho việc này và là chương quan trọng nhất của tài liệu.</p>
+
+  <div class="note note--stop">
+    <span class="note__tag">Không được làm</span>
+    <p>Không lấy <code>creator_id</code> từ request body. Client không bao giờ được quyền tự khai báo mình là ai — nếu không, bất kỳ ai cũng sửa được payload để ghi tên người khác và toàn bộ số liệu KPI trở thành vô nghĩa.</p>
+  </div>
+</section>
+
+<!-- ============ 01 ============ -->
+<section id="kientruc">
+  <div class="sec-head"><div class="sec-num">01</div><h2>Kiến trúc &amp; nguyên tắc</h2></div>
+
+  <p>Portal có nhiều danh tính người dùng, Google chỉ thấy một. Backend là chỗ nối hai thế giới đó, và bảng <code>meetings</code> là nơi duy nhất giữ mối nối.</p>
+
+  <table class="tbl">
+    <tr><th style="width:24%">Thành phần</th><th>Vai trò</th></tr>
+    <tr><td>Portal (frontend)</td><td>Hiển thị form tạo meeting, lịch tuần, thống kê. Không bao giờ chạm trực tiếp vào Google API.</td></tr>
+    <tr><td>Backend</td><td>Xác định người tạo từ session, ghi cơ sở dữ liệu, giữ credential Google, gọi Calendar API.</td></tr>
+    <tr><td>Google Calendar</td><td>Sinh link Meet, gửi email mời, giữ sự kiện trên lịch của tài khoản chung.</td></tr>
+    <tr><td>Cơ sở dữ liệu</td><td>Nguồn sự thật cho attribution và mọi báo cáo. Không query Google để dựng màn hình thống kê.</td></tr>
+  </table>
+
+  <h3>Ba nguyên tắc bắt buộc</h3>
+  <ol>
+    <li><strong>Danh tính lấy từ server.</strong> <code>creator_id</code> luôn đọc từ session, không bao giờ từ payload.</li>
+    <li><strong>Phân quyền ở tầng ứng dụng.</strong> Vì mọi thao tác dùng chung một token Google, phải tự kiểm tra quyền trước khi sửa hoặc xoá. Google sẽ cho phép mọi thao tác vì token đó là chủ sở hữu của tất cả sự kiện.</li>
+    <li><strong>Ghi cơ sở dữ liệu trước, gọi Google sau.</strong> Cần có <code>meeting_id</code> để nhúng vào tiêu đề sự kiện, và nếu Google lỗi thì vẫn còn dấu vết để thử lại.</li>
+  </ol>
+</section>
+
+<!-- ============ 02 ============ -->
+<section id="setup">
+  <div class="sec-head"><div class="sec-num">02</div><h2>Chuẩn bị Google Cloud</h2></div>
+
+  <p>Làm một lần duy nhất, toàn bộ thao tác thực hiện khi đang đăng nhập bằng tài khoản chung.</p>
+
+  <div class="flow">
+    <div class="flow__row">
+      <div class="flow__n">1</div>
+      <div class="flow__body">
+        <h4>Tạo project</h4>
+        <p>Vào <code>console.cloud.google.com</code>, tạo project mới tên <code>markee-work-portal</code>. Không cần thẻ tín dụng.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">2</div>
+      <div class="flow__body">
+        <h4>Bật Google Calendar API</h4>
+        <p>APIs &amp; Services → Library → tìm “Google Calendar API” → Enable. Chỉ cần đúng API này cho phạm vi tài liệu.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">3</div>
+      <div class="flow__body">
+        <h4>Cấu hình OAuth consent screen</h4>
+        <p>User Type chọn External. Điền tên ứng dụng, email hỗ trợ và email liên hệ. Ở mục Scopes chỉ thêm <code>.../auth/calendar.events</code> — xem cảnh báo bên dưới về việc thêm scope khác.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">4</div>
+      <div class="flow__body">
+        <h4>Publish sang Production</h4>
+        <p>Ngay tại màn hình consent screen, bấm “Publish app”. Đây là bước quyết định tuổi thọ của refresh token, giải thích chi tiết ở chương 03.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">5</div>
+      <div class="flow__body">
+        <h4>Tạo OAuth client ID</h4>
+        <p>Credentials → Create Credentials → OAuth client ID → Web application. Thêm redirect URI <code>https://developers.google.com/oauthplayground</code> để lấy token lần đầu, cộng thêm redirect URI của backend nếu muốn tự làm màn hình cấp quyền.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">6</div>
+      <div class="flow__body">
+        <h4>Lấy refresh token lần đầu</h4>
+        <p>Mở OAuth 2.0 Playground, bật “Use your own OAuth credentials”, dán client ID và secret. Nhập scope <code>https://www.googleapis.com/auth/calendar.events</code>, authorize bằng tài khoản chung, rồi đổi lấy token ở Step 2. Chép <code>refresh_token</code> vào secret manager.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="note note--warn">
+    <span class="note__tag">Cân nhắc kỹ trước khi thêm scope</span>
+    <p>Trong Cloud Console, mỗi scope có nhãn Sensitive hoặc Restricted ngay bên cạnh. <code>calendar.events</code> là Sensitive — publish Production bình thường, chỉ hiện màn hình cảnh báo ứng dụng chưa xác minh. Còn <code>drive.readonly</code> là <strong>Restricted</strong>, có thể bị Google yêu cầu đánh giá bảo mật CASA, tốn nhiều tuần và có thể tốn phí. Đừng thêm scope Restricted trừ khi thật sự cần.</p>
+  </div>
+</section>
+
+<!-- ============ 03 ============ -->
+<section id="token">
+  <div class="sec-head"><div class="sec-num">03</div><h2>Refresh token: cách làm để không bị chết</h2></div>
+
+  <p class="lead">Đây là chương quan trọng nhất. Refresh token là chìa khoá duy nhất để backend hành động thay mặt tài khoản chung. Nó chết thì chức năng tạo meeting dừng, và thường dừng im lặng.</p>
+
+  <h3>Sáu nguyên nhân làm token chết</h3>
+
+  <table class="tbl">
+    <tr><th style="width:32%">Nguyên nhân</th><th>Cách phòng</th></tr>
+    <tr>
+      <td><strong>Consent screen ở Testing</strong><br><span style="color:var(--coral);font-size:13px">Nguyên nhân số 1</span></td>
+      <td>Ứng dụng External ở trạng thái Testing chỉ cấp refresh token sống <strong>7 ngày</strong>. Bắt buộc publish sang Production.</td>
+    </tr>
+    <tr>
+      <td>Đổi mật khẩu tài khoản chung</td>
+      <td>Đổi mật khẩu Google sẽ thu hồi toàn bộ refresh token. Nếu buộc phải đổi, phải lấy lại token ngay sau đó.</td>
+    </tr>
+    <tr>
+      <td>Có người gỡ quyền thủ công</td>
+      <td>Ai đó vào <code>myaccount.google.com/permissions</code> và xoá ứng dụng. Hạn chế số người biết credential của tài khoản chung.</td>
+    </tr>
+    <tr>
+      <td>Vượt quá 100 refresh token</td>
+      <td>Google giới hạn khoảng 100 refresh token cho mỗi cặp client ID và tài khoản; vượt quá thì token cũ nhất bị vô hiệu lặng lẽ. Xảy ra khi code chạy lại OAuth flow mỗi lần deploy. <strong>Chỉ authorize một lần thủ công.</strong></td>
+    </tr>
+    <tr>
+      <td>Không dùng trong 6 tháng</td>
+      <td>Không phải rủi ro với hệ thống chạy hằng ngày, nhưng lưu ý với môi trường staging ít dùng.</td>
+    </tr>
+    <tr>
+      <td>Thêm scope Restricted</td>
+      <td>Xem cảnh báo ở chương 02.</td>
+    </tr>
+  </table>
+
+  <h3>Ba phương án lưu trữ credential</h3>
+
+  <div class="opts">
+    <div class="opt opt--pick">
+      <div class="opt__top"><h4>A · OAuth app publish Production</h4><span class="badge badge--pick">Khuyến nghị</span></div>
+      <p>Authorize một lần bằng tài khoản chung, lưu refresh token vào secret manager, backend tự đổi lấy access token khi cần. Chấp nhận màn hình “ứng dụng chưa được xác minh” lúc cấp quyền, và giới hạn 100 người dùng — không ảnh hưởng vì chỉ đúng một tài khoản cấp quyền.</p>
+      <ul>
+        <li>Logic Google nằm trong codebase chính, dễ test và review</li>
+        <li>Không phụ thuộc dịch vụ ngoài</li>
+        <li>Đổi lại: phải tự quản lý vòng đời token và cảnh báo khi hỏng</li>
+      </ul>
+    </div>
+
+    <div class="opt">
+      <div class="opt__top"><h4>B · Apps Script Web App làm proxy</h4><span class="badge badge--alt">Phương án né</span></div>
+      <p>Không có OAuth app, không có refresh token nào để hết hạn. Chi tiết ở chương 04. Chọn phương án này nếu đội ngũ không muốn vận hành credential Google.</p>
+    </div>
+
+    <div class="opt opt--no">
+      <div class="opt__top"><h4>C · Service account</h4><span class="badge badge--no">Không dùng được</span></div>
+      <p>Service account cần domain-wide delegation, mà thứ đó chỉ cấu hình được trong Admin console của một Google Workspace có tên miền riêng. Tài khoản chung hiện tại không vào được Admin console nên phương án này bị loại.</p>
+    </div>
+  </div>
+
+  <h3>Bảy quy tắc vận hành token</h3>
+
+  <ul class="check">
+    <li><b>Publish consent screen sang Production ngay từ đầu</b><span>Bỏ qua bước này là chắc chắn hỏng sau 7 ngày.</span></li>
+    <li><b>Chỉ chạy OAuth flow đúng một lần, bằng tay</b><span>Không bao giờ để code tự động authorize lại. Đây là nguyên nhân âm thầm làm vô hiệu token cũ.</span></li>
+    <li><b>Lưu refresh token trong secret manager, không đặt trong repo</b><span>Dùng biến môi trường hoặc dịch vụ quản lý bí mật, mã hoá at-rest.</span></li>
+    <li><b>Cache access token 55 phút</b><span>Access token sống 1 giờ. Cache lại để tránh gọi refresh mỗi request và chạm giới hạn API.</span></li>
+    <li><b>Bắt riêng lỗi <code>invalid_grant</code> và cảnh báo ngay</b><span>Đây là tín hiệu token đã chết. Gửi thông báo tới kênh vận hành, đừng chỉ ghi log.</span></li>
+    <li><b>Có endpoint kiểm tra sức khoẻ</b><span>Cron mỗi giờ gọi thử một API nhẹ để phát hiện sớm, thay vì đợi người dùng báo lỗi.</span></li>
+    <li><b>Ghi lại quy trình khôi phục ở nơi đội vận hành đọc được</b><span>Khi token chết lúc 9 giờ sáng, không nên có ai phải đi tìm tài liệu này.</span></li>
+  </ul>
+
+  <h3>Code lấy access token</h3>
+
+  <div class="code">
+    <div class="code__bar"><span class="code__label">python · google_auth.py</span><button class="code__copy" onclick="cp(this)">Sao chép</button></div>
+<pre><span class="c"># Cache access token 55 phút, chỉ gọi refresh khi hết hạn</span>
+<span class="k">import</span> time, requests, os
+
+_cache = {<span class="s">"token"</span>: <span class="k">None</span>, <span class="s">"exp"</span>: <span class="n">0</span>}
+
+<span class="k">class</span> <span class="n">GoogleTokenDead</span>(<span class="n">Exception</span>): <span class="k">pass</span>
+
+<span class="k">def</span> <span class="n">get_access_token</span>():
+    <span class="k">if</span> _cache[<span class="s">"token"</span>] <span class="k">and</span> time.time() &lt; _cache[<span class="s">"exp"</span>]:
+        <span class="k">return</span> _cache[<span class="s">"token"</span>]
+
+    r = requests.post(<span class="s">"https://oauth2.googleapis.com/token"</span>, data={
+        <span class="s">"client_id"</span>:     os.environ[<span class="s">"GOOGLE_CLIENT_ID"</span>],
+        <span class="s">"client_secret"</span>: os.environ[<span class="s">"GOOGLE_CLIENT_SECRET"</span>],
+        <span class="s">"refresh_token"</span>: os.environ[<span class="s">"GOOGLE_REFRESH_TOKEN"</span>],
+        <span class="s">"grant_type"</span>:    <span class="s">"refresh_token"</span>,
+    }, timeout=<span class="n">10</span>)
+
+    <span class="k">if</span> r.status_code == <span class="n">400</span> <span class="k">and</span> <span class="s">"invalid_grant"</span> <span class="k">in</span> r.text:
+        alert_ops(<span class="s">"Refresh token Google da chet - xem runbook chuong 03"</span>)
+        <span class="k">raise</span> GoogleTokenDead()
+
+    r.raise_for_status()
+    d = r.json()
+    _cache[<span class="s">"token"</span>] = d[<span class="s">"access_token"</span>]
+    _cache[<span class="s">"exp"</span>]   = time.time() + d[<span class="s">"expires_in"</span>] - <span class="n">300</span>
+    <span class="k">return</span> _cache[<span class="s">"token"</span>]</pre>
+  </div>
+
+  <h3>Runbook khi token chết</h3>
+  <p>Dán quy trình này vào wiki nội bộ. Thời gian khôi phục khoảng 10 phút.</p>
+  <ol>
+    <li>Xác nhận triệu chứng: log có <code>invalid_grant</code>, hoặc endpoint kiểm tra sức khoẻ trả về lỗi.</li>
+    <li>Đăng nhập tài khoản chung, mở OAuth 2.0 Playground, bật “Use your own OAuth credentials”, dán lại client ID và secret.</li>
+    <li>Authorize với scope <code>calendar.events</code>, đổi lấy token ở Step 2, chép <code>refresh_token</code> mới.</li>
+    <li>Cập nhật secret, khởi động lại service, gọi endpoint kiểm tra sức khoẻ để xác nhận.</li>
+    <li>Ghi lại nguyên nhân. Nếu là do đổi mật khẩu hoặc có người gỡ quyền, siết lại danh sách người biết credential.</li>
+  </ol>
+
+  <div class="note note--ok">
+    <span class="note__tag">Kiểm tra sức khoẻ</span>
+    <p>Endpoint <code>GET /internal/health/google</code> gọi <code>get_access_token()</code> rồi <code>calendarList.list</code> với <code>maxResults=1</code>. Trả về trạng thái lỗi kèm thời điểm gọi thành công gần nhất. Cho cron chạy mỗi giờ và gắn cảnh báo.</p>
+  </div>
+</section>
+
+<!-- ============ 04 ============ -->
+<section id="appsscript">
+  <div class="sec-head"><div class="sec-num">04</div><h2>Phương án Apps Script (không có token để chết)</h2></div>
+
+  <p>Deploy một Web App bằng Google Apps Script dưới chính tài khoản chung, đặt chế độ thực thi “Execute as: Me”. Google tự quản lý xác thực bên trong, backend chỉ gọi HTTP kèm một khoá bí mật dùng chung. Không có OAuth app, không publish, không refresh token.</p>
+
+  <div class="code">
+    <div class="code__bar"><span class="code__label">apps script · Code.gs</span><button class="code__copy" onclick="cp(this)">Sao chép</button></div>
+<pre><span class="k">function</span> <span class="n">doPost</span>(e) {
+  <span class="k">const</span> p = JSON.parse(e.postData.contents);
+  <span class="k">const</span> secret = PropertiesService.getScriptProperties().getProperty(<span class="s">'SECRET'</span>);
+  <span class="k">if</span> (p.secret !== secret) <span class="k">return</span> out({ error: <span class="s">'forbidden'</span> });
+
+  <span class="k">const</span> ev = Calendar.Events.insert({
+    summary: <span class="s">'[MK-'</span> + p.meeting_id + <span class="s">'] '</span> + p.title,
+    description: <span class="s">'Nguoi tao: '</span> + p.creator_name + <span class="s">' ('</span> + p.creator_email + <span class="s">')'</span>,
+    start: { dateTime: p.start, timeZone: <span class="s">'Asia/Ho_Chi_Minh'</span> },
+    end:   { dateTime: p.end,   timeZone: <span class="s">'Asia/Ho_Chi_Minh'</span> },
+    attendees: p.attendees.map(<span class="k">function</span>(a){ <span class="k">return</span> { email: a }; }),
+    conferenceData: {
+      createRequest: {
+        requestId: <span class="s">'mk-'</span> + p.meeting_id + <span class="s">'-'</span> + Utilities.getUuid().slice(<span class="n">0</span>, <span class="n">6</span>),
+        conferenceSolutionKey: { type: <span class="s">'hangoutsMeet'</span> }
+      }
+    },
+    extendedProperties: {
+      <span class="n">private</span>: {
+        markee_meeting_id: String(p.meeting_id),
+        markee_creator_id: String(p.creator_id)
+      }
+    }
+  }, <span class="s">'primary'</span>, { conferenceDataVersion: <span class="n">1</span>, sendUpdates: <span class="s">'all'</span> });
+
+  <span class="k">return</span> out({
+    event_id: ev.id,
+    meet_link: ev.conferenceData.entryPoints[<span class="n">0</span>].uri,
+    meeting_code: ev.conferenceData.conferenceId
+  });
+}
+
+<span class="k">function</span> <span class="n">out</span>(o) {
+  <span class="k">return</span> ContentService.createTextOutput(JSON.stringify(o))
+    .setMimeType(ContentService.MimeType.JSON);
+}</pre>
+  </div>
+
+  <p><strong>Cách deploy:</strong> mở <code>script.google.com</code> bằng tài khoản chung, tạo project mới, dán code. Vào Services thêm “Google Calendar API” dưới tên <code>Calendar</code>. Vào Project Settings → Script Properties thêm khoá <code>SECRET</code> với một chuỗi ngẫu nhiên dài. Cuối cùng Deploy → New deployment → Web app, chọn Execute as “Me” và Who has access “Anyone”, rồi chép URL.</p>
+
+  <table class="tbl">
+    <tr><th style="width:50%">Ưu</th><th>Nhược</th></tr>
+    <tr>
+      <td>Không có refresh token nào để hết hạn hay bị thu hồi. Không cần publish OAuth app, không màn hình cảnh báo, không lo scope Restricted.</td>
+      <td>Logic Google nằm ngoài codebase chính, khó test và review chung với backend. Giới hạn quota Apps Script thấp hơn (khoảng vài nghìn lệnh tạo sự kiện mỗi ngày, thừa cho quy mô hiện tại).</td>
+    </tr>
+  </table>
+
+  <div class="note note--warn">
+    <span class="note__tag">Bảo mật</span>
+    <p>URL Web App để “Anyone” nghĩa là ai biết URL đều gọi được. Khoá <code>SECRET</code> là lớp bảo vệ duy nhất — để nó đủ dài, chỉ lưu ở phía server, và không bao giờ đưa xuống frontend.</p>
+  </div>
+</section>
+
+<!-- ============ 05 ============ -->
+<section id="db">
+  <div class="sec-head"><div class="sec-num">05</div><h2>Schema cơ sở dữ liệu</h2></div>
+
+  <div class="code">
+    <div class="code__bar"><span class="code__label">sql · migration</span><button class="code__copy" onclick="cp(this)">Sao chép</button></div>
+<pre><span class="k">CREATE TABLE</span> meetings (
+  id                <span class="k">BIGSERIAL PRIMARY KEY</span>,
+  creator_user_id   <span class="k">BIGINT NOT NULL REFERENCES</span> users(id),
+  title             <span class="k">TEXT NOT NULL</span>,
+  project_id        <span class="k">BIGINT REFERENCES</span> projects(id),
+  platform          <span class="k">TEXT NOT NULL DEFAULT</span> <span class="s">'google_meet'</span>,
+  start_time        <span class="k">TIMESTAMPTZ NOT NULL</span>,
+  end_time          <span class="k">TIMESTAMPTZ NOT NULL</span>,
+  google_event_id   <span class="k">TEXT</span>,
+  meet_link         <span class="k">TEXT</span>,
+  meeting_code      <span class="k">TEXT</span>,        <span class="c">-- vd: vur-osrb-bmp</span>
+  ai_enabled        <span class="k">BOOLEAN NOT NULL DEFAULT</span> <span class="k">false</span>,
+  status            <span class="k">TEXT NOT NULL DEFAULT</span> <span class="s">'pending_link'</span>,
+  created_at        <span class="k">TIMESTAMPTZ NOT NULL DEFAULT</span> now(),
+  updated_at        <span class="k">TIMESTAMPTZ NOT NULL DEFAULT</span> now()
+);
+
+<span class="k">CREATE INDEX</span> idx_meetings_time    <span class="k">ON</span> meetings(start_time);
+<span class="k">CREATE INDEX</span> idx_meetings_creator <span class="k">ON</span> meetings(creator_user_id, start_time);
+<span class="k">CREATE UNIQUE INDEX</span> idx_meetings_event <span class="k">ON</span> meetings(google_event_id)
+  <span class="k">WHERE</span> google_event_id <span class="k">IS NOT NULL</span>;
+
+<span class="k">CREATE TABLE</span> meeting_attendees (
+  meeting_id <span class="k">BIGINT NOT NULL REFERENCES</span> meetings(id) <span class="k">ON DELETE CASCADE</span>,
+  user_id    <span class="k">BIGINT REFERENCES</span> users(id),
+  email      <span class="k">TEXT NOT NULL</span>,
+  <span class="k">PRIMARY KEY</span> (meeting_id, email)
+);</pre>
+  </div>
+
+  <table class="tbl">
+    <tr><th style="width:22%">Giá trị status</th><th>Ý nghĩa</th></tr>
+    <tr><td><code>pending_link</code></td><td>Đã ghi cơ sở dữ liệu, chưa gọi Google xong</td></tr>
+    <tr><td><code>scheduled</code></td><td>Có link Meet, đã gửi lời mời</td></tr>
+    <tr><td><code>link_failed</code></td><td>Google trả lỗi, hiện nút thử lại trên giao diện</td></tr>
+    <tr><td><code>completed</code></td><td>Đã qua giờ kết thúc</td></tr>
+    <tr><td><code>cancelled</code></td><td>Đã huỷ, sự kiện trên Google cũng đã xoá</td></tr>
+  </table>
+</section>
+
+<!-- ============ 06 ============ -->
+<section id="api">
+  <div class="sec-head"><div class="sec-num">06</div><h2>API của portal</h2></div>
+
+  <table class="tbl">
+    <tr><th style="width:36%">Endpoint</th><th>Mô tả</th></tr>
+    <tr><td><code>POST /api/meetings</code></td><td>Tạo meeting và sinh link. Không nhận <code>creator_id</code> từ body.</td></tr>
+    <tr><td><code>PATCH /api/meetings/:id</code></td><td>Sửa giờ hoặc người tham gia. Kiểm tra quyền trước.</td></tr>
+    <tr><td><code>DELETE /api/meetings/:id</code></td><td>Huỷ, đồng thời xoá sự kiện trên Google.</td></tr>
+    <tr><td><code>POST /api/meetings/:id/retry-link</code></td><td>Thử tạo lại link cho meeting ở trạng thái <code>link_failed</code>.</td></tr>
+    <tr><td><code>GET /api/meetings?from&amp;to&amp;user_id</code></td><td>Lịch tuần. Bỏ <code>user_id</code> để lấy lịch toàn team.</td></tr>
+    <tr><td><code>GET /api/meetings/stats?month</code></td><td>Số cuộc họp và tổng thời lượng theo từng người.</td></tr>
+    <tr><td><code>POST /api/meetings/sync</code></td><td>Đối chiếu với Google Calendar, cho nút “Đồng bộ lịch”.</td></tr>
+    <tr><td><code>GET /internal/health/google</code></td><td>Kiểm tra credential Google còn sống. Chỉ nội bộ.</td></tr>
+  </table>
+
+  <div class="code">
+    <div class="code__bar"><span class="code__label">http · request tạo meeting</span><button class="code__copy" onclick="cp(this)">Sao chép</button></div>
+<pre>POST /api/meetings
+Cookie: session=...
+
+{
+  <span class="s">"title"</span>: <span class="s">"Review Markee App with MKT team"</span>,
+  <span class="s">"start_time"</span>: <span class="s">"2026-08-10T10:25:00+07:00"</span>,
+  <span class="s">"duration_minutes"</span>: <span class="n">60</span>,
+  <span class="s">"platform"</span>: <span class="s">"google_meet"</span>,
+  <span class="s">"project_id"</span>: <span class="n">7</span>,
+  <span class="s">"attendee_ids"</span>: [<span class="n">42</span>, <span class="n">15</span>, <span class="n">23</span>],
+  <span class="s">"ai_enabled"</span>: <span class="k">true</span>
+}</pre>
+  </div>
+</section>
+
+<!-- ============ 07 ============ -->
+<section id="flow">
+  <div class="sec-head"><div class="sec-num">07</div><h2>Flow tạo meeting</h2></div>
+
+  <div class="flow">
+    <div class="flow__row">
+      <div class="flow__n">1</div>
+      <div class="flow__body">
+        <h4>Xác định người tạo<span class="flow__who">Backend</span></h4>
+        <p><code>creator_id = session.user.id</code>. Đọc từ session, không đọc từ body. Trả 401 nếu không có session hợp lệ.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">2</div>
+      <div class="flow__body">
+        <h4>Kiểm tra trùng lịch<span class="flow__who">Backend</span></h4>
+        <p>Query các meeting có khoảng thời gian giao nhau và chung người tham gia. Trả về cảnh báo để giao diện hỏi lại người dùng, không chặn cứng.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">3</div>
+      <div class="flow__body">
+        <h4>Ghi cơ sở dữ liệu<span class="flow__who">Backend</span></h4>
+        <p>Insert với <code>status = 'pending_link'</code>, lấy về <code>meeting_id</code>. Cần id này để nhúng mã <code>[MK-1234]</code> vào tiêu đề sự kiện.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">4</div>
+      <div class="flow__body">
+        <h4>Lấy access token<span class="flow__who">Backend</span></h4>
+        <p>Gọi <code>get_access_token()</code>, đã cache sẵn. Nếu ném <code>GoogleTokenDead</code> thì dừng, set <code>link_failed</code> và cảnh báo vận hành.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">5</div>
+      <div class="flow__body">
+        <h4>Gọi Calendar API<span class="flow__who flow__who--g">Google</span></h4>
+        <p><code>events.insert</code> với <code>conferenceDataVersion=1</code> và <code>sendUpdates=all</code>. Google sinh link Meet và gửi email mời cho toàn bộ người tham gia.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">6</div>
+      <div class="flow__body">
+        <h4>Đọc link từ response<span class="flow__who">Backend</span></h4>
+        <p>Link nằm ở <code>conferenceData.entryPoints[0].uri</code>, mã phòng ở <code>conferenceData.conferenceId</code>.</p>
+        <p>Nếu <code>createRequest.status.statusCode</code> trả về <code>pending</code> thì đợi 1–2 giây rồi GET lại sự kiện. Không trả link rỗng về giao diện.</p>
+      </div>
+    </div>
+    <div class="flow__row">
+      <div class="flow__n">7</div>
+      <div class="flow__body">
+        <h4>Cập nhật và trả kết quả<span class="flow__who">Backend</span></h4>
+        <p>Update <code>google_event_id</code>, <code>meet_link</code>, <code>meeting_code</code>, chuyển <code>status = 'scheduled'</code>, ghi bảng <code>meeting_attendees</code>, rồi trả về cho giao diện hiển thị nút “Tham gia cuộc họp”.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="code">
+    <div class="code__bar"><span class="code__label">python · create_meeting.py</span><button class="code__copy" onclick="cp(this)">Sao chép</button></div>
+<pre><span class="k">def</span> <span class="n">create_meeting</span>(session, payload):
+    creator_id = session.user.id              <span class="c"># KHONG lay tu payload</span>
+    creator    = db.users.get(creator_id)
+
+    start = parse_dt(payload[<span class="s">"start_time"</span>])
+    end   = start + timedelta(minutes=payload[<span class="s">"duration_minutes"</span>])
+
+    m = db.meetings.insert(
+        creator_user_id=creator_id, title=payload[<span class="s">"title"</span>],
+        project_id=payload.get(<span class="s">"project_id"</span>), start_time=start, end_time=end,
+        platform=payload[<span class="s">"platform"</span>], ai_enabled=payload[<span class="s">"ai_enabled"</span>],
+        status=<span class="s">"pending_link"</span>,
+    )
+
+    emails = [u.email <span class="k">for</span> u <span class="k">in</span> db.users.by_ids(payload[<span class="s">"attendee_ids"</span>])]
+
+    body = {
+        <span class="s">"summary"</span>: <span class="s">f"[MK-{m.id}] {payload['title']}"</span>,
+        <span class="s">"description"</span>: <span class="s">f"Nguoi tao: {creator.name} ({creator.email})\n"</span>
+                       <span class="s">f"Tao tu Markee Work Portal"</span>,
+        <span class="s">"start"</span>: {<span class="s">"dateTime"</span>: start.isoformat(), <span class="s">"timeZone"</span>: <span class="s">"Asia/Ho_Chi_Minh"</span>},
+        <span class="s">"end"</span>:   {<span class="s">"dateTime"</span>: end.isoformat(),   <span class="s">"timeZone"</span>: <span class="s">"Asia/Ho_Chi_Minh"</span>},
+        <span class="s">"attendees"</span>: [{<span class="s">"email"</span>: e} <span class="k">for</span> e <span class="k">in</span> emails],
+        <span class="s">"conferenceData"</span>: {<span class="s">"createRequest"</span>: {
+            <span class="s">"requestId"</span>: <span class="s">f"mk-{m.id}-{uuid4().hex[:6]}"</span>,
+            <span class="s">"conferenceSolutionKey"</span>: {<span class="s">"type"</span>: <span class="s">"hangoutsMeet"</span>},
+        }},
+        <span class="s">"extendedProperties"</span>: {<span class="s">"private"</span>: {
+            <span class="s">"markee_meeting_id"</span>: <span class="n">str</span>(m.id),
+            <span class="s">"markee_creator_id"</span>: <span class="n">str</span>(creator_id),
+        }},
+    }
+
+    r = requests.post(
+        <span class="s">"https://www.googleapis.com/calendar/v3/calendars/primary/events"</span>,
+        params={<span class="s">"conferenceDataVersion"</span>: <span class="n">1</span>, <span class="s">"sendUpdates"</span>: <span class="s">"all"</span>},
+        headers={<span class="s">"Authorization"</span>: <span class="s">f"Bearer {get_access_token()}"</span>},
+        json=body, timeout=<span class="n">15</span>,
+    )
+
+    <span class="k">if</span> <span class="k">not</span> r.ok:
+        db.meetings.update(m.id, status=<span class="s">"link_failed"</span>)
+        log.error(<span class="s">"calendar insert failed"</span>, meeting=m.id, body=r.text)
+        <span class="k">raise</span> MeetingLinkError()
+
+    ev = r.json()
+
+    <span class="c"># Link doi khi chua san sang ngay lap tuc</span>
+    <span class="k">if</span> ev[<span class="s">"conferenceData"</span>][<span class="s">"createRequest"</span>][<span class="s">"status"</span>][<span class="s">"statusCode"</span>] != <span class="s">"success"</span>:
+        time.sleep(<span class="n">2</span>)
+        ev = get_event(ev[<span class="s">"id"</span>])
+
+    entry = ev[<span class="s">"conferenceData"</span>][<span class="s">"entryPoints"</span>][<span class="n">0</span>]
+    db.meetings.update(m.id, status=<span class="s">"scheduled"</span>, google_event_id=ev[<span class="s">"id"</span>],
+                       meet_link=entry[<span class="s">"uri"</span>],
+                       meeting_code=ev[<span class="s">"conferenceData"</span>][<span class="s">"conferenceId"</span>])
+    db.meeting_attendees.bulk_insert(m.id, emails)
+    <span class="k">return</span> db.meetings.get(m.id)</pre>
+  </div>
+
+  <h3>Ba chỗ lưu thông tin người tạo</h3>
+  <table class="tbl">
+    <tr><th style="width:30%">Chỗ lưu</th><th>Dùng để làm gì</th></tr>
+    <tr><td>Cột <code>creator_user_id</code></td><td>Nguồn sự thật. Mọi báo cáo và thống kê chạy trên đây.</td></tr>
+    <tr><td><code>extendedProperties.private</code></td><td>Bản sao trên Google, để đối chiếu ngược khi ai đó sửa sự kiện trực tiếp trên Calendar.</td></tr>
+    <tr><td>Dòng trong <code>description</code></td><td>Để người nhận lời mời nhìn thấy ai đặt lịch, vì trên Calendar mọi sự kiện đều mang tên tài khoản chung.</td></tr>
+  </table>
+  <p>Mã <code>[MK-1234]</code> trong tiêu đề là lớp dự phòng cuối: tên file bản ghi và tên thư mục trên Drive đều lấy theo tên cuộc họp, nên vẫn tìm về được bằng biểu thức chính quy <code>\[MK-(\d+)\]</code> khi mọi cách khác thất bại.</p>
+</section>
+
+<!-- ============ 08 ============ -->
+<section id="loi">
+  <div class="sec-head"><div class="sec-num">08</div><h2>Xử lý lỗi</h2></div>
+
+  <table class="tbl">
+    <tr><th style="width:26%">Tình huống</th><th>Cách xử lý</th></tr>
+    <tr>
+      <td>Thiếu <code>conferenceDataVersion=1</code></td>
+      <td>Sự kiện tạo thành công nhưng không có link Meet và API <strong>không báo lỗi</strong>. Đây là lỗi phổ biến nhất. Viết test khẳng định response luôn có <code>conferenceData</code>.</td>
+    </tr>
+    <tr>
+      <td><code>statusCode = "pending"</code></td>
+      <td>Link chưa sẵn sàng. Đợi 1–2 giây rồi GET lại sự kiện. Thử tối đa 3 lần rồi mới báo lỗi.</td>
+    </tr>
+    <tr>
+      <td><code>invalid_grant</code></td>
+      <td>Refresh token đã chết. Cảnh báo ngay tới kênh vận hành và chạy runbook ở chương 03. Đây là sự cố toàn hệ thống, không phải lỗi của một cuộc họp.</td>
+    </tr>
+    <tr>
+      <td><code>403 rateLimitExceeded</code></td>
+      <td>Thử lại với thời gian chờ tăng dần. Ở quy mô hiện tại gần như không gặp.</td>
+    </tr>
+    <tr>
+      <td>Người dùng không có quyền sửa</td>
+      <td>Trả 403 từ tầng ứng dụng. Google sẽ cho phép mọi thao tác vì token thuộc chủ sở hữu sự kiện, nên backend phải tự chặn.</td>
+    </tr>
+    <tr>
+      <td><code>requestId</code> trùng</td>
+      <td>Google trả về link cũ thay vì tạo mới. Luôn ghép <code>meeting_id</code> với một chuỗi ngẫu nhiên.</td>
+    </tr>
+  </table>
+
+  <div class="note note--info">
+    <span class="note__tag">Ghi log</span>
+    <p>Với mọi lỗi từ Google, ghi lại đầy đủ <code>meeting_id</code>, mã trạng thái HTTP và nguyên văn response body. Thông báo lỗi của Calendar API khá rõ ràng, nhưng nếu chỉ log “calendar failed” thì lúc điều tra sẽ không còn gì để đọc.</p>
+  </div>
+</section>
+
+<!-- ============ 09 ============ -->
+<section id="dongbo">
+  <div class="sec-head"><div class="sec-num">09</div><h2>Đồng bộ &amp; thống kê</h2></div>
+
+  <h3>Nút “Đồng bộ lịch”</h3>
+  <p>Bắt các sự kiện bị sửa giờ hoặc xoá thẳng trên Google Calendar mà portal chưa biết. Query theo nhãn riêng để chỉ lấy sự kiện do portal tạo:</p>
+
+  <div class="code">
+    <div class="code__bar"><span class="code__label">http · đồng bộ</span><button class="code__copy" onclick="cp(this)">Sao chép</button></div>
+<pre>GET https://www.googleapis.com/calendar/v3/calendars/primary/events
+    ?privateExtendedProperty=markee_meeting_id
+    &amp;timeMin=2026-08-01T00:00:00%2B07:00
+    &amp;timeMax=2026-08-31T23:59:59%2B07:00
+    &amp;showDeleted=true
+    &amp;maxResults=250</pre>
+  </div>
+
+  <p>Với mỗi sự kiện trả về, đọc <code>extendedProperties.private.markee_meeting_id</code> để tìm bản ghi tương ứng, so sánh <code>start</code> và <code>end</code>, cập nhật nếu lệch. Sự kiện có <code>status = "cancelled"</code> thì chuyển bản ghi sang <code>cancelled</code>.</p>
+
+  <h3>Truy vấn cho màn hình thống kê</h3>
+  <p>Toàn bộ chạy trên cơ sở dữ liệu, không gọi Google.</p>
+
+  <div class="code">
+    <div class="code__bar"><span class="code__label">sql · báo cáo</span><button class="code__copy" onclick="cp(this)">Sao chép</button></div>
+<pre><span class="c">-- Lich tuan cua team</span>
+<span class="k">SELECT</span> * <span class="k">FROM</span> meetings
+<span class="k">WHERE</span> start_time &gt;= :from <span class="k">AND</span> start_time &lt; :to
+  <span class="k">AND</span> status <span class="k">NOT IN</span> (<span class="s">'cancelled'</span>)
+<span class="k">ORDER BY</span> start_time;
+
+<span class="c">-- Lich ca nhan: nguoi tao hoac nguoi duoc moi</span>
+<span class="k">SELECT DISTINCT</span> m.* <span class="k">FROM</span> meetings m
+<span class="k">LEFT JOIN</span> meeting_attendees a <span class="k">ON</span> a.meeting_id = m.id
+<span class="k">WHERE</span> (m.creator_user_id = :uid <span class="k">OR</span> a.user_id = :uid)
+  <span class="k">AND</span> m.start_time &gt;= :from <span class="k">AND</span> m.start_time &lt; :to;
+
+<span class="c">-- Thong ke KPI theo nguoi tao</span>
+<span class="k">SELECT</span> u.name,
+       <span class="k">COUNT</span>(*) <span class="k">AS</span> so_cuoc_hop,
+       <span class="k">SUM</span>(<span class="k">EXTRACT</span>(<span class="k">EPOCH FROM</span> (m.end_time - m.start_time)) / <span class="n">60</span>) <span class="k">AS</span> tong_phut
+<span class="k">FROM</span> meetings m <span class="k">JOIN</span> users u <span class="k">ON</span> u.id = m.creator_user_id
+<span class="k">WHERE</span> m.start_time &gt;= :month_start <span class="k">AND</span> m.start_time &lt; :month_end
+  <span class="k">AND</span> m.status &lt;&gt; <span class="s">'cancelled'</span>
+<span class="k">GROUP BY</span> u.id, u.name
+<span class="k">ORDER BY</span> so_cuoc_hop <span class="k">DESC</span>;</pre>
+  </div>
+
+  <div class="note note--warn">
+    <span class="note__tag">Không dùng freebusy</span>
+    <p>Đừng gọi Calendar <code>freebusy.query</code> để kiểm tra trùng lịch. Người tham gia dùng tài khoản Gmail cá nhân, hệ thống không có quyền đọc lịch của họ. Kiểm tra giao nhau trên chính bảng <code>meetings</code> vừa chính xác hơn vừa nhanh hơn cho phạm vi công việc.</p>
+  </div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="nghiemthu">
+  <div class="sec-head"><div class="sec-num">10</div><h2>Checklist nghiệm thu</h2></div>
+
+  <h3>Cấu hình</h3>
+  <ul class="check">
+    <li><b>OAuth consent screen ở trạng thái Production</b><span>Vào Cloud Console kiểm tra bằng mắt, không tin vào trí nhớ.</span></li>
+    <li><b>Danh sách scope chỉ có <code>calendar.events</code></b><span>Không có scope nào mang nhãn Restricted.</span></li>
+    <li><b>Refresh token nằm trong secret manager</b><span>Grep toàn repo để chắc chắn không có token nào bị commit.</span></li>
+  </ul>
+
+  <h3>Chức năng</h3>
+  <ul class="check">
+    <li><b>Tạo meeting sinh ra link Meet hợp lệ</b><span>Mở link, xác nhận vào được phòng.</span></li>
+    <li><b>Người tham gia nhận được email mời</b><span>Kiểm tra với ít nhất một tài khoản Gmail cá nhân bên ngoài.</span></li>
+    <li><b>Người tham gia dùng Gmail cá nhân vào được không cần gõ cửa</b><span>Chỉ đúng nếu họ nằm trong danh sách attendees.</span></li>
+    <li><b>Tên người tạo hiển thị đúng trên portal</b><span>Thử với hai tài khoản khác nhau, không phải chỉ tài khoản admin.</span></li>
+    <li><b>Sửa và huỷ meeting đồng bộ sang Google</b><span>Kiểm tra trên Google Calendar của tài khoản chung.</span></li>
+    <li><b>Người khác không sửa được meeting không phải của mình</b><span>Gọi thẳng API bằng curl với session của người khác, phải nhận 403.</span></li>
+    <li><b>Sửa <code>creator_id</code> trong payload không có tác dụng</b><span>Đây là bài kiểm tra bảo mật quan trọng nhất.</span></li>
+  </ul>
+
+  <h3>Vận hành</h3>
+  <ul class="check">
+    <li><b>Endpoint kiểm tra sức khoẻ chạy và có cron gọi định kỳ</b><span>Thử bằng cách cố tình đặt refresh token sai, xác nhận cảnh báo được gửi.</span></li>
+    <li><b>Lỗi <code>invalid_grant</code> bắn cảnh báo tới kênh vận hành</b><span>Không chỉ ghi log.</span></li>
+    <li><b>Runbook khôi phục token đã nằm trong wiki nội bộ</b><span>Người trực có thể tự làm mà không cần hỏi dev.</span></li>
+    <li><b>Meeting ở trạng thái <code>link_failed</code> hiện nút thử lại</b><span>Không để người dùng mắc kẹt với một dòng lỗi.</span></li>
+  </ul>
+
+  <div class="note note--stop">
+    <span class="note__tag">Bảo mật tài khoản chung</span>
+    <p>Giới hạn số người biết mật khẩu tài khoản chung, bật xác thực hai lớp và lưu mã dự phòng trong trình quản lý mật khẩu của nhóm thay vì gửi qua tin nhắn. Cập nhật số điện thoại khôi phục. Mất quyền truy cập tài khoản này đồng nghĩa với mất toàn bộ lịch họp và kho bản ghi.</p>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+function cp(btn){
+  var code = btn.closest('.code').querySelector('pre').innerText;
+  navigator.clipboard.writeText(code).then(function(){
+    var old = btn.textContent;
+    btn.textContent = 'Đã chép';
+    setTimeout(function(){ btn.textContent = old; }, 1600);
+  });
+}
+</script>
+</body>
+</html>

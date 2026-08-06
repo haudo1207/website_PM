@@ -782,3 +782,41 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
 
     db.commit()
     return {"success": True, "pushed_count": pushed_count, "message": f"Đã push {pushed_count} task vào Project thành công!"}
+
+
+# ─── INTERNAL GOOGLE HEALTH CHECK ENDPOINT (SPEC CHAPTER 06) ───
+@router.get("/internal/health/google")
+def google_health_check(db: Session = Depends(get_db)):
+    """Health check endpoint to monitor Google Refresh Token & API access status per Spec Chapter 06."""
+    from ..services.meeting_sync import get_shared_google_access_token
+    try:
+        token = get_shared_google_access_token(db)
+        import requests
+        resp = requests.get(
+            "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5
+        )
+        if resp.ok:
+            return {"status": "ok", "message": "Google Calendar API token is active and healthy."}
+        return {"status": "error", "message": f"Google Calendar API returned status code {resp.status_code}"}
+    except Exception as e:
+        return {"status": "error", "message": f"Google token health check failed: {str(e)}"}
+
+
+# ─── RETRY LINK CREATION ENDPOINT (SPEC CHAPTER 06) ───────────
+@router.post("/{id}/retry-link")
+def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Retry creating Google Meet link for a meeting that failed link creation."""
+    m = db.query(Meeting).filter(Meeting.id == id).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy cuộc họp")
+
+    from ..services.meeting_sync import create_google_meet_link
+    link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", m.meeting_date.isoformat() if m.meeting_date else "")
+    if link_data and link_data.get("join_url"):
+        m.meeting_link = link_data["join_url"]
+        db.commit()
+        return {"success": True, "meeting_link": m.meeting_link}
+
+    raise HTTPException(500, "Không thể tạo lại link Google Meet")

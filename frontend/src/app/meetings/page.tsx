@@ -167,8 +167,8 @@ export default function MeetingsPage() {
             <span className="text-xs font-bold text-[#0b1c30]">Quản lý Meetings</span>
           </div>}
           <div className="flex items-center gap-3">
-            <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-1.5 bg-white hover:bg-[#f0f2f5] border border-[#c2c6d6] text-[#565e74] text-xs font-bold px-3 py-2 rounded-lg transition-colors">
-              <Sparkles size={14} className="text-emerald-500" />Cấu hình AI
+            <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-1.5 bg-white hover:bg-[#f0f2f5] border border-[#c2c6d6] text-[#565e74] text-xs font-bold px-3 py-2 rounded-lg transition-colors shadow-2xs">
+              <Sparkles size={14} className="text-emerald-500" />Cấu hình AI & Google Admin
             </button>
             <button onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }} className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm">
               <span className="material-symbols-outlined text-[16px]">add</span>Tạo meeting
@@ -248,20 +248,6 @@ export default function MeetingsPage() {
                     Tuần sau ›
                   </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleConnectGoogle}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors border shadow-xs flex items-center gap-1.5 ${
-                    googleConnected
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                      : 'bg-[#0058be] hover:bg-[#004297] text-white border-transparent'
-                  }`}
-                  title="Kết nối tài khoản Google để tự động đồng bộ Google Meet & Transcript"
-                >
-                  <Sparkles size={13} />
-                  <span>{googleConnected ? '✓ Đã kết nối Google' : 'Kết nối Google Meet'}</span>
-                </button>
 
                 <button
                   type="button"
