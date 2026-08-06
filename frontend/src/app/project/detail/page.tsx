@@ -559,6 +559,60 @@ function ProjectDetailContent() {
     }
   };
 
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const loadMeetings = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await getMeetings({ project_id: Number(id) });
+      if (data && data.success && Array.isArray(data.data)) {
+        setMeetings(data.data);
+      } else if (Array.isArray(data)) {
+        setMeetings(data);
+      }
+    } catch (err) {
+      console.error('Lỗi khi tải danh sách cuộc họp dự án:', err);
+    }
+  }, [id]);
+
+  const currentWeekInfo = useMemo(() => {
+    const now = new Date();
+    const currentDay = now.getDay();
+    const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
+
+    const days = [];
+    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6'];
+
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const formattedDate = `${dd}/${mm}`;
+      const isoDate = `${yyyy}-${mm}-${dd}`;
+
+      days.push({
+        label: `${dayNames[i]} · ${formattedDate}`,
+        formattedDate,
+        isoDate,
+        dayNum: dd,
+        yearNum: yyyy,
+        fullDate: d
+      });
+    }
+
+    const startFormatted = days[0].formattedDate;
+    const endFormatted = days[4].formattedDate;
+    const weekTitle = `LỊCH HỌP DỰ ÁN TUẦN ${startFormatted}–${endFormatted}`;
+
+    return { days, weekTitle, startFormatted, endFormatted };
+  }, [weekOffset]);
+
   const loadProject = useCallback(async () => {
     try {
       const found = await getProject(Number(id));
@@ -655,23 +709,6 @@ function ProjectDetailContent() {
     return () => clearInterval(timer);
   }, [id, loadChatData]);
 
-  const loadMeetings = useCallback(async () => {
-    if (!project?.name) return;
-    try {
-      const data = await getMeetings();
-      if (data.success) {
-        const filtered = data.data.filter((m: any) => m.project === project.name);
-        setMeetings(filtered);
-      }
-    } catch (error) {
-      console.error("Failed to fetch meetings", error);
-    }
-  }, [project?.name]);
-
-  useEffect(() => {
-    loadMeetings();
-  }, [project?.name, loadMeetings]);
-
   // Load chats from localStorage
   useEffect(() => {
     if (!id) return;
@@ -693,7 +730,8 @@ function ProjectDetailContent() {
     reloadAll();
     loadChatData();
     loadProjectMembers();
-  }, [id, loadProject, reloadAll, loadChatData, loadProjectMembers]);
+    loadMeetings();
+  }, [id, loadProject, reloadAll, loadChatData, loadProjectMembers, loadMeetings]);
 
   // Load members, customers and categories
   useEffect(() => {
@@ -4638,28 +4676,154 @@ value={editValue}
                 </div>
               )}
 
-              {/* TAB 2: MEETINGS */}
+              {/* TAB 2: MEETINGS FOR THIS PROJECT */}
               {activeMainTab === 'meetings' && (
-                <div>
+                <div className="space-y-6">
                   {/* Header */}
-                  <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-sm font-bold text-[#0b1c30]">Lịch họp dự án</h2>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-bold text-[#0b1c30]">Quản lý Cuộc họp & Schedule (Dự án: {project?.name || ''})</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">Theo dõi lịch họp tuần, biên bản tóm tắt AI và push task khuyến nghị cho riêng dự án này.</p>
+                    </div>
                     <button
-                      onClick={() => { setEditingMeeting(null); setShowMeetingModal(true); }}
+                      onClick={() => {
+                        setEditingMeeting({ project: project?.name || '' });
+                        setShowMeetingModal(true);
+                      }}
                       className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all"
                     >
                       <span className="material-symbols-outlined text-[16px]">add</span>
-                      Tạo meeting
+                      Tạo meeting dự án
                     </button>
                   </div>
 
-                  {/* Meeting Cards */}
+                  {/* WEEKLY SCHEDULE CALENDAR FOR THIS PROJECT */}
+                  <div className="bg-white rounded-xl border border-[#e2e8f0] shadow-sm p-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4">
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wide">
+                            {currentWeekInfo.weekTitle}
+                          </h3>
+                          {weekOffset !== 0 && (
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[11px] font-bold rounded-md">
+                              {weekOffset < 0 ? `Quá khứ (${Math.abs(weekOffset)} tuần trước)` : `Tương lai (+${weekOffset} tuần)`}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#64748b] mt-0.5">
+                          Cuộc họp bật AI sẽ tự động tạo Summary & đề xuất task sau khi kết thúc
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Week Controls */}
+                        <div className="flex items-center bg-[#f1f5f9] p-0.5 rounded-lg border border-[#cbd5e1]">
+                          <button
+                            type="button"
+                            onClick={() => setWeekOffset(prev => prev - 1)}
+                            className="px-2.5 py-1 text-xs font-semibold text-[#0b1c30] hover:bg-white rounded-md transition-colors"
+                          >
+                            ‹ Tuần trước
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWeekOffset(0)}
+                            className={`px-2.5 py-1 text-xs font-bold rounded-md transition-colors ${weekOffset === 0 ? 'bg-white text-[#0058be] shadow-xs' : 'text-[#64748b] hover:bg-white'}`}
+                          >
+                            Hôm nay
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWeekOffset(prev => prev + 1)}
+                            className="px-2.5 py-1 text-xs font-semibold text-[#0b1c30] hover:bg-white rounded-md transition-colors"
+                          >
+                            Tuần sau ›
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={loadMeetings}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#0b1c30] text-xs font-semibold rounded-lg transition-colors border border-[#cbd5e1] shadow-xs flex items-center gap-1.5"
+                        >
+                          <span>↻</span>
+                          <span>Đồng bộ lịch</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 5-Day Weekly Calendar Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 mt-2">
+                      {currentWeekInfo.days.map((d, i) => {
+                        const dayMeetings = meetings.filter(m => {
+                          if (!m || !m.date) return false;
+                          const dateStr = String(m.date).trim();
+                          if (dateStr.startsWith(d.isoDate)) return true;
+                          const fullFormattedDate = `${d.formattedDate}/${d.yearNum}`;
+                          if (dateStr === fullFormattedDate || dateStr.startsWith(fullFormattedDate)) return true;
+                          if (dateStr === d.formattedDate) return true;
+                          try {
+                            const meetingDateObj = new Date(dateStr);
+                            if (!isNaN(meetingDateObj.getTime())) {
+                              return meetingDateObj.getFullYear() === d.fullDate.getFullYear() &&
+                                     meetingDateObj.getMonth() === d.fullDate.getMonth() &&
+                                     meetingDateObj.getDate() === d.fullDate.getDate();
+                            }
+                          } catch (e) {}
+                          return false;
+                        });
+
+                        return (
+                          <div key={i} className="bg-white border border-[#e2e8f0] rounded-xl p-3.5 min-h-[160px]">
+                            <h4 className="text-[13px] font-bold text-[#0b1c30] mb-3">{d.label}</h4>
+                            {dayMeetings.length > 0 ? (
+                              dayMeetings.map(item => {
+                                const timeVal = String(item.time || '').toLowerCase();
+                                let isPM = timeVal.includes('pm') || timeVal.includes('chiều') || timeVal.includes('tối');
+                                if (!isPM && !timeVal.includes('am') && !timeVal.includes('sáng')) {
+                                  const hourMatch = timeVal.match(/(\d{1,2}):/);
+                                  if (hourMatch) isPM = parseInt(hourMatch[1], 10) >= 12;
+                                }
+                                const attendeeCount = item.members?.length || item.member_count || 0;
+                                const platformName = item.platform || 'Meet';
+
+                                return (
+                                  <div
+                                    key={item.id}
+                                    onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
+                                    className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${
+                                      isPM ? 'bg-[#fff7e8] border-l-[#f59e0b]' : 'bg-[#edf5ff] border-l-[#1769d2]'
+                                    }`}
+                                  >
+                                    <div className="text-[13px] font-medium text-[#0b1c30] leading-snug">
+                                      <span className="font-normal">{item.time || (isPM ? '14:00' : '09:00')}</span> {item.title}
+                                    </div>
+                                    <small className="block text-[11px] text-[#64748b] mt-1">
+                                      {platformName}{attendeeCount ? ` · ${attendeeCount} người` : ''} · <b className="text-[#0b1c30] font-bold">AI On</b>
+                                    </small>
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <div className="border border-dashed border-[#e2e8f0] rounded-xl p-4 text-center text-[12px] text-[#94a3b8] mt-1">
+                                Chưa có lịch họp
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Meeting Cards List */}
                   <div className="space-y-4">
+                    <h3 className="text-sm font-bold text-[#0b1c30]">Danh sách cuộc họp dự án ({meetings.length})</h3>
                     {meetings.length === 0 ? (
                       <div className="bg-white border border-[#c2c6d6]/60 rounded-xl py-16 text-center">
                         <span className="material-symbols-outlined text-slate-300 text-[48px] block mb-3">event</span>
-                        <p className="text-sm font-semibold text-slate-500">Chưa có cuộc họp nào</p>
-                        <p className="text-xs text-slate-400 mt-1">Nhấn "+ Tạo meeting" để thêm cuộc họp đầu tiên</p>
+                        <p className="text-sm font-semibold text-slate-500">Chưa có cuộc họp nào cho dự án này</p>
+                        <p className="text-xs text-slate-400 mt-1">Nhấn "+ Tạo meeting dự án" để tạo cuộc họp mới</p>
                       </div>
                     ) : (
                       meetings.map(m => (
@@ -6857,7 +7021,7 @@ value={editValue}
                 {/* Business */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Business <span className="text-rose-500 font-bold">*</span>
+                    Workspace <span className="text-rose-500 font-bold">*</span>
                   </label>
                   <select
                     required
@@ -6916,7 +7080,7 @@ value={editValue}
                   {editCustomerMismatch && (
                     <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
                       <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>
-                      Khách hàng hiện tại không thuộc Business đã chọn. Vui lòng chọn khách hàng khác.
+                      Khách hàng hiện tại không thuộc Workspace đã chọn. Vui lòng chọn khách hàng khác.
                     </p>
                   )}
 

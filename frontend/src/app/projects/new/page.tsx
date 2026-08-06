@@ -234,7 +234,7 @@ export default function NewProjectPage() {
                 {/* Business Selector */}
                 <div className="space-y-2">
                   <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Business <span className="text-rose-500 font-bold ml-0.5">*</span>
+                    Workspace <span className="text-rose-500 font-bold ml-0.5">*</span>
                   </label>
                   <select
                     required
@@ -743,7 +743,7 @@ export default function NewProjectPage() {
                 ) : (
                   <>
                     <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>add_circle</span>
-                    Tạo dự án mới
+                    Tạo dự án
                   </>
                 )}
               </button>

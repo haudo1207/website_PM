@@ -178,6 +178,7 @@ export const createMember = (data: object) => api.post('/members', data).then(r 
 export const updateMember = (id: number, data: object) => api.put(`/members/${id}`, data).then(r => r.data);
 export const deleteMember = (id: number) => api.delete(`/members/${id}`).then(r => r.data);
 export const syncFromRecruitment = () => api.post('/members/sync-from-recruitment').then(r => r.data);
+export const getLeaders = () => api.get('/members/meta/leaders').then(r => r.data);
 
 // Customers
 export const getCustomers = (businessUnit?: string) =>
@@ -231,6 +232,7 @@ export const generateMeetingLink = (data: { platform: string; title: string; dat
   api.post('/meetings/generate-link', data).then(r => r.data);
 export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);
 export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
+export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);
 
 
 
