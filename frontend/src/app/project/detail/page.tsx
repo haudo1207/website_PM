@@ -4067,22 +4067,8 @@ value={editValue}
                       <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
                       Chỉnh sửa dự án
                     </button>
-                    <button
-                      onClick={() => setShowDeleteModal(true)}
-                      className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
-                      Xóa dự án
-                    </button>
                   </>
                 )}
-                <button
-                  onClick={() => router.push(`/project`)}
-                  className="bg-white text-slate-800 px-4 py-2 rounded-lg text-[13px] font-medium flex items-center border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[18px] mr-2">arrow_back</span>
-                  Quay lại
-                </button>
               </div>
             </div>
           </div>
@@ -6836,7 +6822,30 @@ value={editValue}
               )}
 
               {activeMainTab === 'audit_logs' && (
-                <AuditLogsTab projectId={Number(id)} />
+                <AuditLogsTab
+                  projectId={Number(id)}
+                  onSelectTask={(taskCodeOrId) => {
+                    const found = items.find(t => t.task_code === taskCodeOrId || String(t.id) === String(taskCodeOrId));
+                    if (found) {
+                      setSelectedTask(found);
+                    } else {
+                      flash(`Không tìm thấy Task ${taskCodeOrId} trong danh sách hiện tại.`, true);
+                    }
+                  }}
+                  onSelectProject={() => {
+                    setShowEditProjectModal(true);
+                  }}
+                  onSelectPhase={(phId) => {
+                    const ph = phases.find(p => String(p.id) === String(phId));
+                    if (ph) {
+                      setActivePhase(ph.name);
+                      setActiveMainTab('tasks');
+                      flash(`Đã chuyển tới Phase '${ph.name}'`);
+                    } else {
+                      setActiveMainTab('tasks');
+                    }
+                  }}
+                />
               )}
             </div>
 
@@ -7437,26 +7446,76 @@ value={editValue}
             </div>
 
             {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditProjectModal(false);
+                  setShowDeleteModal(true);
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[16px]">delete</span>
+                Xóa dự án
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditProjectModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpdateProject}
+                  disabled={savingProject}
+                  className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {savingProject ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Đang lưu...
+                    </>
+                  ) : (
+                    <>Lưu thay đổi</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xác Nhận Xóa Dự Án */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-rose-600 mb-3">
+                <span className="material-symbols-outlined text-[28px]">warning</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">Xác nhận xóa dự án</h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Bạn có chắc chắn muốn xóa dự án <strong className="text-[#0b1c30]">"{project?.name || ''}"</strong>?
+              </p>
+              <p className="text-xs text-rose-500 mt-2 font-medium">⚠️ Hành động này sẽ xóa toàn bộ các Phase, Task và dữ liệu liên quan. Không thể hoàn tác!</p>
+            </div>
             <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
               <button
-                onClick={() => setShowEditProjectModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
               >
                 Hủy bỏ
               </button>
               <button
-                onClick={handleUpdateProject}
-                disabled={savingProject}
-                className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                type="button"
+                onClick={handleDeleteSheet}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition-colors shadow-sm cursor-pointer"
               >
-                {savingProject ? (
-                  <>
-                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Đang lưu...
-                  </>
-                ) : (
-                  <>Lưu thay đổi</>
-                )}
+                Xác nhận xóa
               </button>
             </div>
           </div>

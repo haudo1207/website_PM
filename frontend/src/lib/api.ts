@@ -285,6 +285,7 @@ export const syncAITasksFromChat = (projectId: number) =>
 // Audit Logs
 export interface AuditLogItem {
   id: number;
+  event_id?: string;
   project_id: number;
   module: string;
   entity_type: string;

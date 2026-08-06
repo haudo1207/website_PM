@@ -305,14 +305,32 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db)):
     db.add(tg)
     db.commit()
     db.refresh(tg)
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task Group",
+        entity_type="TaskGroup",
+        entity_id=tg.id,
+        action="CREATE",
+        project_id=phase.project_id,
+        description=f"Đã tạo Task Cha '{tg.name}'"
+    )
+    db.commit()
     return serialize_task_group(tg, db)
 
 
 @router.patch("/phases/{phid}/task-groups/{gid}")
-def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get_db)):
+def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
     if not tg:
         raise HTTPException(404, "Task group not found.")
+
+    old_dict = {
+        "name": tg.name,
+        "status": tg.status,
+        "manday_est": float(tg.manday_est) if tg.manday_est is not None else None,
+        "description": tg.description,
+    }
 
     old_status = tg.status
 
@@ -357,18 +375,57 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
 
     db.commit()
     db.refresh(tg)
+
+    new_dict = {
+        "name": tg.name,
+        "status": tg.status,
+        "manday_est": float(tg.manday_est) if tg.manday_est is not None else None,
+        "description": tg.description,
+    }
+    field_labels = {
+        "name": "Tên Task Cha",
+        "status": "Trạng thái Task Cha",
+        "manday_est": "Manday EST Task Cha",
+        "description": "Mô tả Task Cha",
+    }
+    project_id = tg.phase.project_id if tg.phase else None
+    AuditService.record_diff(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task Group",
+        entity_type="TaskGroup",
+        entity_id=tg.id,
+        old_dict=old_dict,
+        new_dict=new_dict,
+        project_id=project_id,
+        field_labels=field_labels,
+    )
+    db.commit()
     return serialize_task_group(tg, db)
 
 
 @router.delete("/phases/{phid}/task-groups/{gid}")
-def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db)):
+def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
     if not tg:
         raise HTTPException(404, "Task group not found.")
     task_count = db.query(Task).filter(Task.task_group_id == gid).count()
     if task_count > 0:
         raise HTTPException(400, f"Không thể xóa Task Group vì còn {task_count} Task. Hãy xóa hết Task trước.")
+    tg_name = tg.name
+    project_id = tg.phase.project_id if tg.phase else None
     db.delete(tg)
+    db.commit()
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task Group",
+        entity_type="TaskGroup",
+        entity_id=gid,
+        action="DELETE",
+        project_id=project_id,
+        description=f"Đã xóa Task Cha '{tg_name}'"
+    )
     db.commit()
     return {"ok": True}
 
@@ -751,6 +808,59 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     )
     db.commit()
     return serialize_task(task, db)
+
+
+@router.post("/task-groups/{gid}/tasks/{tid}/copy")
+def copy_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    source_task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not source_task:
+        raise HTTPException(404, "Source task not found.")
+
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    project_id = tg.phase.project_id if (tg and tg.phase) else None
+
+    # Calculate max sort order and next code
+    next_code = generate_next_task_code(gid, db)
+    max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == gid).scalar() or 0
+
+    new_task = Task(
+        task_group_id=gid,
+        task_code=next_code,
+        detail=f"{source_task.detail} (Copy)",
+        priority=source_task.priority,
+        manday_est=source_task.manday_est,
+        status="Waiting",
+        start_date=source_task.start_date,
+        assigned_id=source_task.assigned_id,
+        support_id=source_task.support_id,
+        kpi_ratio_assign=source_task.kpi_ratio_assign,
+        kpi_ratio_support=source_task.kpi_ratio_support,
+        skill_solution_id=source_task.skill_solution_id,
+        skill_vendor_id=source_task.skill_vendor_id,
+        ticket_id=source_task.ticket_id,
+        remark=source_task.remark,
+        send=source_task.send,
+        notes=source_task.notes,
+        sort_order=max_order + 1,
+    )
+    db.add(new_task)
+    db.flush()
+    new_task = recalculate_task(new_task, db)
+
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task",
+        entity_type="Task",
+        entity_id=new_task.id,
+        action="COPY",
+        project_id=project_id,
+        old_value=source_task.task_code,
+        new_value=new_task.task_code,
+        description=f"Đã sao chép Task '{source_task.detail}' ({source_task.task_code}) → '{new_task.detail}' ({new_task.task_code})"
+    )
+    db.commit()
+    return serialize_task(new_task, db)
 
 
 @router.patch("/task-groups/{gid}/tasks/{tid}")

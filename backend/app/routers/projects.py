@@ -472,6 +472,16 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     if not p:
         raise HTTPException(404, "Project not found.")
 
+    old_dict = {
+        "name": p.name,
+        "business": p.business,
+        "customer_name": p.customer_name,
+        "year": p.year,
+        "status": p.status,
+        "current_phase": p.current_phase,
+        "description": p.description,
+    }
+
     for field in ["name", "code", "customer_name", "customer_id", "year", "description", "status", "current_phase"]:
         if field in body:
             setattr(p, field, body[field])
@@ -596,6 +606,37 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
 
     db.commit()
     db.refresh(p)
+
+    new_dict = {
+        "name": p.name,
+        "business": p.business,
+        "customer_name": p.customer_name,
+        "year": p.year,
+        "status": p.status,
+        "current_phase": p.current_phase,
+        "description": p.description,
+    }
+    field_labels = {
+        "name": "Tên dự án",
+        "business": "Workspace",
+        "customer_name": "Khách hàng",
+        "year": "Năm dự án",
+        "status": "Trạng thái",
+        "current_phase": "Giai đoạn hiện tại",
+        "description": "Mô tả dự án",
+    }
+    AuditService.record_diff(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Project",
+        entity_type="Project",
+        entity_id=p.id,
+        old_dict=old_dict,
+        new_dict=new_dict,
+        project_id=p.id,
+        field_labels=field_labels,
+    )
+    db.commit()
     return serialize_project(p, db)
 
 
@@ -772,6 +813,17 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(409, f"Phase with name '{name}' already exists in this project, or another integrity constraint was violated.") from exc
     db.refresh(ph)
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Phase",
+        entity_type="Phase",
+        entity_id=ph.id,
+        action="CREATE",
+        project_id=pid,
+        description=f"Đã thêm Phase '{ph.name}'"
+    )
+    db.commit()
     return {
         "id": ph.id,
         "project_id": ph.project_id,
@@ -790,15 +842,29 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.patch("/projects/{pid}/phases/{phid}")
-def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db)):
+def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")
+    old_name = ph.name
+    old_status = ph.status
     for field in ["name", "description", "sort_order", "status"]:
         if field in body:
             setattr(ph, field, body[field])
     db.commit()
     db.refresh(ph)
+    AuditService.record_diff(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Phase",
+        entity_type="Phase",
+        entity_id=ph.id,
+        old_dict={"name": old_name, "status": old_status},
+        new_dict={"name": ph.name, "status": ph.status},
+        project_id=pid,
+        field_labels={"name": "Tên Phase", "status": "Trạng thái Phase"}
+    )
+    db.commit()
     return serialize_phase(ph, db)
 
 
@@ -810,7 +876,19 @@ def delete_phase(pid: int, phid: int, db: Session = Depends(get_db)):
     tg_count = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).count()
     if tg_count > 0:
         raise HTTPException(400, f"Không thể xóa Phase vì còn {tg_count} Task Group. Hãy xóa hết Task Group trước.")
+    phase_name = ph.name
     db.delete(ph)
+    db.commit()
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Phase",
+        entity_type="Phase",
+        entity_id=phid,
+        action="DELETE",
+        project_id=pid,
+        description=f"Đã xóa Phase '{phase_name}'"
+    )
     db.commit()
     return {"ok": True}
 
@@ -1041,13 +1119,14 @@ def export_project_audit_logs(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["ID", "Thời gian", "Người thực hiện", "Module", "Hành động", "Trường thay đổi", "Giá trị cũ", "Giá trị mới", "Mô tả"])
+    writer.writerow(["ID", "Event ID", "Thời gian", "Người thực hiện", "Module", "Hành động", "Trường thay đổi", "Giá trị cũ", "Giá trị mới", "Mô tả"])
 
     for log in logs:
         user_name = log.user.full_name or log.user.display_name or log.user.email if log.user else "System"
         created_str = log.created_at.strftime("%d/%m/%Y %H:%M:%S") if log.created_at else ""
         writer.writerow([
             log.id,
+            log.event_id or f"single-{log.id}",
             created_str,
             user_name,
             log.module,

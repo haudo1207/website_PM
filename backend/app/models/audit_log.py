@@ -11,6 +11,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String(50), nullable=True, index=True)       # Grouping UUID for multi-field updates
     business_unit = Column(String(50), nullable=True, index=True) # Infrastructure, Markee, All
     customer_id = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
@@ -48,6 +49,7 @@ class AuditLog(Base):
 
         return {
             "id": self.id,
+            "event_id": self.event_id or f"single-{self.id}",
             "business_unit": bu,
             "customer_id": self.customer_id,
             "project_id": self.project_id,
