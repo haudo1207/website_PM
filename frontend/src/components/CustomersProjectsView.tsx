@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin, isAdmin } from '@/lib/auth';
 import {
@@ -46,6 +47,12 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const [activeBU, setActiveBU] = useState<'infrastructure' | 'markee'>('infrastructure');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
+
+  // Mounted state for SSR-safe portal rendering
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Filter/Search states
   const [customerSearch, setCustomerSearch] = useState('');
@@ -100,14 +107,17 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const modalPhaseRef = React.useRef<HTMLDivElement>(null);
   const nameInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Body scroll lock effect when modal is active
+  // Body and HTML scroll lock effect when modal is active
   useEffect(() => {
     if (showProjectModal || showCustomerDeleteModal || showProjectDeleteModal) {
+      document.documentElement.style.overflow = 'hidden';
       document.body.style.overflow = 'hidden';
     } else {
+      document.documentElement.style.overflow = '';
       document.body.style.overflow = '';
     }
     return () => {
+      document.documentElement.style.overflow = '';
       document.body.style.overflow = '';
     };
   }, [showProjectModal, showCustomerDeleteModal, showProjectDeleteModal]);
@@ -563,7 +573,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 1: CUSTOMERS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[650px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">🏢 Khách hàng</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customers.length}</span>
@@ -691,7 +701,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 2: YEARS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[650px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📅 Năm</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customerYears.length}</span>
@@ -768,7 +778,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 3: PROJECTS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[650px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📁 Dự án</span>
             <div className="flex items-center gap-2">
@@ -893,8 +903,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       {/* ============================================================== */}
       {/* PROJECT CREATE/EDIT MODAL */}
       {/* ============================================================== */}
-      {showProjectModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center responsive-modal-overlay">
+      {showProjectModal && mounted && createPortal(
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-start justify-center responsive-modal-overlay">
           <div className="bg-white border border-slate-200 shadow-2xl flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
             
             {/* Header with Context Pill */}
@@ -1555,13 +1565,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ============================================================== */}
       {/* CUSTOMER DELETE CONFIRMATION MODAL */}
       {/* ============================================================== */}
-      {showCustomerDeleteModal && deletingCustomer && (
+      {showCustomerDeleteModal && deletingCustomer && mounted && createPortal(
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
             <div className="flex items-center gap-3 text-red-600 mb-3">
@@ -1643,13 +1654,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ============================================================== */}
       {/* PROJECT DELETE CONFIRMATION MODAL */}
       {/* ============================================================== */}
-      {showProjectDeleteModal && deletingProject && (
+      {showProjectDeleteModal && deletingProject && mounted && createPortal(
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
             <div className="flex items-center gap-3 text-red-600 mb-3">
@@ -1705,7 +1717,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>

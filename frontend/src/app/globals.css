@@ -65,17 +65,21 @@
      3. Compact Body     – viewport height <  600px → tighter spacing
    ================================================================ */
 @layer utilities {
-  /* --- Overlay --- */
+  /* --- Overlay (Enterprise Standard: Top-aligned with fallback scroll safety net) --- */
   .responsive-modal-overlay {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow-y: auto; /* Safety net scroll for extreme zoom levels (200%), font 150%, small laptops */
     padding: 0;
   }
 
-  /* --- Container (Fullscreen by default) --- */
+  /* --- Container (Dynamic Viewport Height dvh - Fullscreen by default) --- */
   .responsive-modal-container {
-    width: 100vw;
-    height: 100vh;
+    width: 100%;
+    height: 100dvh;
     max-width: 100vw;
-    max-height: 100vh;
+    max-height: 100dvh;
     border-radius: 0;
     display: flex;
     flex-direction: column;
@@ -147,17 +151,17 @@
 
   /* =============================================
      MODE: Desktop Modal (viewport height >= 700px)
-     Centered popup with rounded corners.
+     Top-aligned natural UX: flexible height up to max-height bound
      ============================================= */
   @media (min-height: 700px) {
     .responsive-modal-overlay {
-      padding: 1rem;
+      padding: max(24px, env(safe-area-inset-top, 24px)) 1rem max(24px, env(safe-area-inset-bottom, 24px)) 1rem;
     }
     .responsive-modal-container {
-      width: 90vw;
+      width: min(1000px, 90vw);
       max-width: 1000px;
-      height: 90vh;
-      max-height: 900px;
+      height: auto;
+      max-height: min(900px, calc(100dvh - 3rem));
       border-radius: 1rem;
       overflow: hidden; /* clip content to rounded corners in Desktop mode only */
     }
