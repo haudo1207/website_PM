@@ -23,7 +23,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const canAudit = isSuperAdmin();
-    const canOverview = isLeader() || isSuperAdmin();
+    const canOverview = true;
 
     const filtered = ALL_TABS.filter(t => {
       if (t.id === 'system-audit') return canAudit;
@@ -35,8 +35,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
     // Permission guard
     if (pathname.includes('/system-audit') && !canAudit) {
-      router.replace('/dashboard/report');
-    } else if (pathname.includes('/overview') && !canOverview) {
       router.replace('/dashboard/report');
     }
   }, [pathname, router]);
