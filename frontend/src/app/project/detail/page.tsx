@@ -937,6 +937,7 @@ function ProjectDetailContent() {
       reloadAll();
     } catch (err: any) {
       alert('Lỗi tạo phase: ' + (err.response?.data?.detail || err.message));
+      reloadAll();
     }
   };
 
@@ -985,6 +986,7 @@ function ProjectDetailContent() {
       reloadAll();
     } catch (err: any) {
       alert('Lỗi xóa phase: ' + (err.response?.data?.detail || err.message));
+      reloadAll();
     }
   };
 

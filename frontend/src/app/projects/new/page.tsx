@@ -163,7 +163,7 @@ export default function NewProjectPage() {
     try {
       const res = await createProject({
         name,
-        code: `${name}-${year}`,
+        code: `${name}-${year}`.slice(0, 50),
         year,
         customer_name: customerName || undefined,
         business,
