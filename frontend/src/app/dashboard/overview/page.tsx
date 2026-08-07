@@ -3,420 +3,390 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
-import { getName, getToken } from '@/lib/auth';
+import { getEmail, getName, getToken, getRole } from '@/lib/auth';
 import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
-import PieChartCard from '@/components/dashboard/PieChartCard';
+import BarChartCard from '@/components/dashboard/BarChartCard';
 import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
 
 let cachedOverviewData: any = null;
 
-export default function OverviewTab() {
-  const [selectedTeam, setSelectedTeam] = useState<string>('');
-  const [loading, setLoading] = useState(false);
-  const [showAllProjects, setShowAllProjects] = useState(false);
-  const [auditModuleFilter, setAuditModuleFilter] = useState('all');
+function getISOWeek(d: Date) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
+  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1)/7);
+}
 
-  // Raw data from APIs
+function isTaskInDateRange(task: any, filterType: string, date1: string, date2: string) {
+  if (filterType === 'all') return true;
+  const tDate = new Date(task.end_date_est || task.created_at || Date.now());
+  if (isNaN(tDate.getTime())) return true;
+  
+  if (filterType === 'month' && date1) {
+     const [y, m] = date1.split('-');
+     return tDate.getFullYear() === parseInt(y) && (tDate.getMonth() + 1) === parseInt(m);
+  }
+  if (filterType === 'year' && date1) {
+     return tDate.getFullYear() === parseInt(date1);
+  }
+  if (filterType === 'week' && date1) {
+     const [y, w] = date1.split('-W');
+     return tDate.getFullYear() === parseInt(y) && getISOWeek(tDate) === parseInt(w);
+  }
+  if (filterType === 'custom' && date1 && date2) {
+     const ds = new Date(date1);
+     const de = new Date(date2);
+     de.setHours(23, 59, 59, 999);
+     return tDate >= ds && tDate <= de;
+  }
+  return true;
+}
+
+export default function OverviewTab() {
+  const [loading, setLoading] = useState(false);
   const [rawMembers, setRawMembers] = useState<any[]>(cachedOverviewData?.rawMembers || []);
-  const [rawTasks, setRawTasks] = useState<any[]>(cachedOverviewData?.rawTasks || []);
   const [rawProjects, setRawProjects] = useState<any[]>(cachedOverviewData?.rawProjects || []);
-  const [rawAuditLogs, setRawAuditLogs] = useState<any[]>(cachedOverviewData?.rawAuditLogs || []);
-  const [currentUserProfile, setCurrentUserProfile] = useState<any>(cachedOverviewData?.currentUserProfile || null);
+  const [rawTasks, setRawTasks] = useState<any[]>(cachedOverviewData?.rawTasks || []);
+  
+  // Workspace Filter
+  const [selectedWorkspace, setSelectedWorkspace] = useState<string>('all');
+  
+  // Unified Date Filter
+  const [filterType, setFilterType] = useState<string>('all'); // all, week, month, year, custom
+  const [date1, setDate1] = useState<string>(''); 
+  const [date2, setDate2] = useState<string>('');
+
+  // Matrix Filter
+  const [matrixYear, setMatrixYear] = useState<number>(new Date().getFullYear());
 
   const fetchOverviewData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedOverviewData && cachedOverviewData.rawMembers?.length > 0) return;
-
+    if (!forceRefresh && cachedOverviewData) return;
     setLoading(true);
     const ts = Date.now();
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
 
     Promise.all([
-      axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } }))
-    ]).then(([userRes, membersRes, projRes, tasksRes, auditRes]) => {
-      const userProfile = userRes.data || {};
-      const members = membersRes.data || [];
-      const projects = projRes.data || [];
-      const tasks = tasksRes.data || [];
-      const logs = auditRes.data?.items || [];
-
-      setCurrentUserProfile(userProfile);
-      setRawMembers(members);
-      setRawProjects(projects);
-      setRawTasks(tasks);
-      setRawAuditLogs(logs);
-
+      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] }))
+    ]).then(([membersRes, projRes, tasksRes]) => {
+      setRawMembers(membersRes.data || []);
+      setRawProjects(projRes.data || []);
+      setRawTasks(tasksRes.data || []);
       cachedOverviewData = {
-        currentUserProfile: userProfile,
-        rawMembers: members,
-        rawProjects: projects,
-        rawTasks: tasks,
-        rawAuditLogs: logs
+        rawMembers: membersRes.data || [],
+        rawProjects: projRes.data || [],
+        rawTasks: tasksRes.data || []
       };
     }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    fetchOverviewData();
+    fetchOverviewData(false);
   }, [fetchOverviewData]);
 
-  // Derived data based on selectedDepartment and selectedTeam
-  const {
-    leaderCards,
-    depMembers,
-    realTaskStats,
-    techLeaderStats,
-    realProjects,
-    teamMembers,
-    topPerformer,
-    lowestPerformer,
-    teamAuditLogs,
-    activeLeader
+  // Derived Data
+  const { 
+    workspaces, 
+    activeTeamMembers, 
+    filteredTasks, 
+    pmStats, 
+    priorityStats, 
+    overdueTasksList, 
+    memberRanking,
+    activeProjects
   } = useMemo(() => {
-    // 1. Get all members
-    const depList = rawMembers;
-
-    // 2. Generate Leader Cards by grouping `leader_name`
-    const rawUniqueLeaders = Array.from(new Set(depList.map((m: any) => m.leader_name).filter(Boolean))) as string[];
-    const cards = rawUniqueLeaders.map(lName => {
-      const tMembers = depList.filter((m: any) => m.leader_name === lName);
-      let lId = null;
-      const leaderObj = rawMembers.find((m: any) => m.full_name === lName || m.display_name === lName);
-      if (leaderObj) lId = leaderObj.id;
-
-      return {
-        leaderName: lName,
-        leaderId: lId,
-        memberCount: tMembers.length
-      };
+    // 1. Get Workspaces (Teams)
+    const wsMap = new Map();
+    rawMembers.forEach(m => {
+      const wsName = m.team || m.department || 'Khác';
+      if (!wsMap.has(wsName)) wsMap.set(wsName, { name: wsName, count: 0 });
+      wsMap.get(wsName).count++;
     });
-
-    // Handle activeLeader fallback to first leader
-    let currentLeader = selectedTeam;
-    if (!currentLeader || currentLeader === 'All' || !rawUniqueLeaders.includes(currentLeader)) {
-      currentLeader = rawUniqueLeaders.length > 0 ? rawUniqueLeaders[0] : '';
-    }
-
-    // 3. Filter members by activeLeader
-    let activeTeamList = depList.filter((m: any) => m.leader_name === currentLeader);
-
-    // 4. Calculate Tech Leader Stats
-    let tlDone = 0, tlInProg = 0, tlOverdue = 0, tlTotal = 0;
-    let tlCritical = 0, tlHigh = 0, tlNormal = 0, tlInterrupt = 0;
-    let tlStats = { name: 'Chưa có Leader', total: 0, done: 0, inProgress: 0, overdue: 0, critical: 0, high: 0, normal: 0, interrupt: 0 };
+    const wList = Array.from(wsMap.values()).sort((a,b) => b.count - a.count);
     
-    const card = cards.find(c => c.leaderName === currentLeader);
-    if (card && card.leaderId) {
-      const tlTasks = rawTasks.filter((t: any) => t.assigned_id === card.leaderId || t.support_id === card.leaderId);
-      tlTotal = tlTasks.length;
-      tlTasks.forEach((t: any) => {
-        if (t.status === 'Done') tlDone++;
-        else { tlInProg++; if (t.days_late > 0) tlOverdue++; }
-
-        const prio = (t.priority || '').toLowerCase();
-        if (prio === 'critical') tlCritical++;
-        else if (prio === 'high') tlHigh++;
-        else if (prio === 'normal') tlNormal++;
-        else if (prio === 'interrupt') tlInterrupt++;
-      });
-      tlStats = { name: card.leaderName, total: tlTotal, done: tlDone, inProgress: tlInProg, overdue: tlOverdue, critical: tlCritical, high: tlHigh, normal: tlNormal, interrupt: tlInterrupt };
+    // Set default workspace if not set
+    if (selectedWorkspace === 'all' && wList.length > 0 && selectedWorkspace !== '') {
+       // if we want to default to the first one, uncomment:
+       // setSelectedWorkspace(wList[0].name);
     }
 
-    // 5. Calculate Team Stats for the 6 KPI boxes
-    const teamMemberIds = activeTeamList.map((m: any) => m.id);
-    const teamTasks = rawTasks.filter((t: any) => teamMemberIds.includes(t.assigned_id) || teamMemberIds.includes(t.support_id));
+    // 2. Filter Members by Workspace
+    let activeTeamList = rawMembers;
+    if (selectedWorkspace && selectedWorkspace !== 'all') {
+      activeTeamList = rawMembers.filter(m => (m.team || m.department || 'Khác') === selectedWorkspace);
+    }
+    const teamMemberIds = activeTeamList.map(m => m.id);
 
-    let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = teamTasks.length, pmManday = 0, pmKpi = 0;
-    teamTasks.forEach((t: any) => {
-      if (t.status === 'Done') pmDone++;
-      else { pmInProg++; if (t.days_late > 0) pmOverdue++; }
-      pmManday += (t.manday_actual || 0);
-    });
-    activeTeamList.forEach((m: any) => {
-      pmKpi += (m.kpi_total || 0);
+    // 3. Filter Tasks by Team & Date
+    let fTasks = rawTasks.filter(t => teamMemberIds.includes(t.assigned_id) || teamMemberIds.includes(t.support_id));
+    fTasks = fTasks.filter(t => isTaskInDateRange(t, filterType, date1, date2));
+
+    // 4. Calculate Stats (PM)
+    let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = fTasks.length, pmManday = 0, pmKpi = 0;
+    const pStats = { critical: 0, high: 0, normal: 0, interrupt: 0 };
+    const overdueList: any[] = [];
+
+    fTasks.forEach(t => {
+      pmManday += (t.manday_actual || t.manday_est || 0);
+      pmKpi += (t.kpi_base || 0); // approximation, actual KPI calculation might differ
+      const isDone = t.status === 'Done' || t.status === 'done';
+      const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+      const isOverdue = !isDone && !isCancel && (t.days_late > 0);
+
+      if (isDone) pmDone++;
+      else { 
+        pmInProg++; 
+        if (isOverdue) {
+          pmOverdue++;
+          overdueList.push({
+            id: t.id,
+            name: t.name,
+            assignee: t.assigned_name || 'Unassigned',
+            daysLate: t.days_late,
+            deadline: t.end_date_est || 'N/A'
+          });
+        }
+      }
+
+      const prio = (t.priority || '').toLowerCase();
+      if (prio === 'critical') pStats.critical++;
+      else if (prio === 'high') pStats.high++;
+      else if (prio === 'interrupt') pStats.interrupt++;
+      else pStats.normal++;
     });
 
-    const pmStats = { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: pmManday, kpi: pmKpi };
+    // 5. Ranking
+    let ranking = activeTeamList.map(m => {
+      const myTasks = fTasks.filter(t => t.assigned_id === m.id || t.support_id === m.id);
+      let d = 0, i = 0, o = 0, md = 0, k = 0;
+      myTasks.forEach(t => {
+        md += (t.manday_actual || t.manday_est || 0);
+        const done = t.status === 'Done' || t.status === 'done';
+        if (done) { d++; k += (t.kpi_base || 0); }
+        else {
+           i++;
+           if (t.days_late > 0) o++;
+        }
+      });
+      // Just an approximation for KPI if it's not pre-calculated
+      // If we want total kpi from db we'd use m.kpi_total but it's not date-filtered.
+      // So we use calculated k.
+      return { id: m.id, name: m.display_name || m.full_name, assigned: myTasks.length, done: d, inProgress: i, overdue: o, manday: md, kpi: k };
+    });
+    ranking.sort((a,b) => b.kpi - a.kpi);
+    ranking = ranking.map((r, idx) => ({...r, rank: idx + 1}));
 
     // 6. Active Projects
-    // (teamMemberIds and teamTasks already calculated above)
-    const projectIds = Array.from(new Set(teamTasks.map((t: any) => t.project_id).filter(Boolean)));
-    const activeProjects = rawProjects.filter((p: any) => projectIds.includes(p.id)).map((p: any) => {
-      const projTasks = rawTasks.filter((t: any) => t.project_id === p.id);
-      const total = projTasks.length;
-      const done = projTasks.filter((t: any) => t.status === 'Done').length;
-      const prog = total > 0 ? Math.round((done / total) * 100) : 0;
-      return { id: p.id, name: p.name, status: p.status || 'Developing', progress: prog, tasks: total, done };
-    });
-
-    // 7. Member KPI Ranking
-    const memberStats = activeTeamList.map((m: any) => {
-      const mTasks = rawTasks.filter((t: any) => t.assigned_id === m.id || t.support_id === m.id);
-      let done = 0, inProg = 0, overdue = 0;
-      let manday = 0;
-      mTasks.forEach((t: any) => {
-        if (t.status === 'Done') done++;
-        else { inProg++; if (t.days_late > 0) overdue++; }
-        manday += (t.manday_actual || 0);
-      });
+    const projectIds = Array.from(new Set(fTasks.map((t: any) => t.project_id).filter(Boolean)));
+    const aProjects = rawProjects.filter((p: any) => projectIds.includes(p.id)).map((p: any) => {
+      const pTasks = fTasks.filter(t => t.project_id === p.id);
+      const done = pTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
       return {
-        id: m.id,
-        name: m.full_name || m.display_name || 'No Name',
-        team: m.team || 'N/A',
-        assigned: mTasks.length,
-        done, inProgress: inProg, overdue, manday,
-        kpi: m.kpi_total || 0,
+        id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
+        progress: pTasks.length ? Math.round((done / pTasks.length) * 100) : 0,
+        totalTasks: pTasks.length, doneTasks: done
       };
-    }).sort((a: any, b: any) => b.kpi - a.kpi).map((m: any, idx: number) => ({ ...m, rank: idx + 1 }));
+    }).sort((a,b) => b.progress - a.progress);
 
-    let topP = null, lowP = null;
-    if (memberStats.length > 0) {
-      topP = memberStats[0];
-      lowP = memberStats[memberStats.length - 1];
-    }
-
-    return {
-      leaderCards: cards,
-      depMembers: depList,
-      realTaskStats: pmStats,
-      techLeaderStats: tlStats,
-      realProjects: activeProjects,
-      teamMembers: memberStats,
-      topPerformer: topP,
-      lowestPerformer: lowP,
-      teamAuditLogs: rawAuditLogs,
-      activeLeader: currentLeader
+    return { 
+      workspaces: wList, 
+      activeTeamMembers: activeTeamList, 
+      filteredTasks: fTasks,
+      pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday*10)/10, kpi: Math.round(pmKpi) },
+      priorityStats: pStats,
+      overdueTasksList: overdueList.sort((a,b) => b.daysLate - a.daysLate),
+      memberRanking: ranking,
+      activeProjects: aProjects
     };
-  }, [rawMembers, rawTasks, rawProjects, rawAuditLogs, selectedTeam, currentUserProfile]);
+  }, [rawMembers, rawProjects, rawTasks, selectedWorkspace, filterType, date1, date2]);
 
+  // KPI Matrices Generation
+  const { summaryMatrix, averageMatrix, bonusMatrix } = useMemo(() => {
+     let sumM: any[] = [];
+     let avgM: any[] = [];
+     let bonM: any[] = [];
+     
+     if(activeTeamMembers.length === 0) return { summaryMatrix: [], averageMatrix: [], bonusMatrix: [] };
 
-  const pmKpiCards = [
-    { label: 'Task Được Giao',   value: realTaskStats.total,  icon: 'user',      border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Tổng số task' },
-    { label: 'Đã Hoàn Thành',    value: realTaskStats.done,   icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: realTaskStats.total ? `${Math.round(realTaskStats.done/realTaskStats.total*100)}%` : '0%' },
-    { label: 'Đang Làm',      value: realTaskStats.inProgress,   icon: 'lightning', border: 'border-l-amber-500',   text: 'text-amber-600',  trend: realTaskStats.total ? `${Math.round(realTaskStats.inProgress/realTaskStats.total*100)}%` : '0%' },
-    { label: 'Trễ Hạn',       value: realTaskStats.overdue,   icon: 'alert',     border: 'border-l-red-500',     text: 'text-red-600',    trend: 'Cần chú ý' },
-    { label: 'Manday Thực Tế', value: Number(realTaskStats.manday).toFixed(1), icon: 'clock', border: 'border-l-cyan-500', text: 'text-cyan-600', trend: 'Ngày làm việc' },
-    { label: 'KPI Đạt',       value: Number(realTaskStats.kpi).toFixed(1), icon: 'trending-up', border: 'border-l-purple-500', text: 'text-purple-600', trend: 'Điểm tích lũy' },
-  ];
+     activeTeamMembers.forEach(m => {
+       const mSum: any = { name: m.display_name || m.full_name, total: 0 };
+       const mAvg: any = { name: m.display_name || m.full_name, total: 0 };
+       const mBon: any = { name: m.display_name || m.full_name, total: 0 };
+       
+       let grandKpi = 0;
+       let grandCount = 0;
 
-  const filteredAuditLogs = teamAuditLogs.filter(log => {
-    if (auditModuleFilter !== 'all') {
-      return log.module?.toLowerCase() === auditModuleFilter.toLowerCase();
-    }
-    return true;
-  });
+       for(let i=1; i<=12; i++) {
+         const mTasks = rawTasks.filter(t => (t.assigned_id === m.id || t.support_id === m.id) && t.status === 'Done');
+         let mkpi = 0;
+         let mcount = 0;
+         mTasks.forEach(t => {
+           const td = new Date(t.end_date_est || t.created_at || Date.now());
+           if(td.getFullYear() === matrixYear && (td.getMonth()+1) === i) {
+             mkpi += (t.kpi_base || 0);
+             mcount++;
+           }
+         });
+         mSum[\`m\${i}\`] = mkpi;
+         mAvg[\`m\${i}\`] = mcount > 0 ? (mkpi / mcount).toFixed(1) : 0;
+         // mock bonus logic: if kpi > 100 then bonus is (kpi - 100) * 0.1
+         const bonus = mkpi > 100 ? (mkpi - 100) * 0.1 : 0;
+         mBon[\`m\${i}\`] = bonus.toFixed(1);
 
-  const displayedProjects = realProjects;
+         grandKpi += mkpi;
+         grandCount += mcount;
+       }
+       mSum.total = grandKpi;
+       mAvg.total = grandCount > 0 ? (grandKpi / grandCount).toFixed(1) : 0;
+       sumM.push(mSum);
+       avgM.push(mAvg);
+       bonM.push(mBon);
+     });
+     
+     return { summaryMatrix: sumM, averageMatrix: avgM, bonusMatrix: bonM };
+  }, [rawTasks, activeTeamMembers, matrixYear]);
+
 
   return (
-    <div className="p-6 space-y-5">
-      {/* Overview Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tổng quan Team Leader</h3>
-          {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse ml-2">Đang cập nhật...</span>}
-        </div>
-        <button
-          onClick={() => fetchOverviewData(true)}
-          className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
-        >
-          <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
-          <span>Làm mới dữ liệu</span>
-        </button>
-      </div>
-
-      {/* Leader Selection Cards */}
-      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-        {leaderCards.map(c => (
-          <button
-            key={c.leaderName}
-            onClick={() => setSelectedTeam(c.leaderName)}
-            className={`flex-shrink-0 p-3 rounded-xl border text-left min-w-[140px] transition-all ${activeLeader === c.leaderName ? 'border-[#0058be] bg-blue-50 shadow-sm' : 'border-slate-200 bg-white hover:border-blue-300'}`}
-          >
-            <p className={`text-xs font-bold ${activeLeader === c.leaderName ? 'text-[#0058be]' : 'text-[#0b1c30]'}`}>{c.leaderName}</p>
-            <p className="text-[10px] text-slate-500 mt-1">{c.memberCount} member</p>
-          </button>
-        ))}
-      </div>
-
-
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {pmKpiCards.map(c => <KpiCard key={c.label} {...c} />)}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <PieChartCard title="Trạng thái Task (PM)" data={[
-          { name: 'Hoàn Thành', value: realTaskStats.done, fill: '#10b981' },
-          { name: 'Đang Làm', value: Math.max(0, realTaskStats.inProgress - realTaskStats.overdue), fill: '#f59e0b' },
-          { name: 'Trễ Hạn', value: realTaskStats.overdue, fill: '#ef4444' }
-        ]} />
-
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-blue-200 p-5 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
-              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Technical Leader — {activeLeader}</p>
-            </div>
-            <p className="text-sm font-extrabold text-[#0b1c30]">{techLeaderStats.name}</p>
-            <p className="text-xs text-slate-400 mt-0.5">Tổng task phụ trách: {techLeaderStats.total}</p>
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-4">
-            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-emerald-600">{techLeaderStats.done}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Đã Xong</p>
-            </div>
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-amber-600">{techLeaderStats.inProgress}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Đang làm</p>
-            </div>
-            <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-red-600">{techLeaderStats.overdue}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Trễ Hạn</p>
-            </div>
-          </div>
-          
-          <div className="mt-3 grid grid-cols-4 gap-2">
-            <div className="bg-purple-50 border border-purple-100 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-purple-600">{techLeaderStats.critical}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Critical</p>
-            </div>
-            <div className="bg-orange-50 border border-orange-100 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-orange-600">{techLeaderStats.high}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">High</p>
-            </div>
-            <div className="bg-blue-50 border border-blue-100 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-blue-600">{techLeaderStats.normal}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Normal</p>
-            </div>
-            <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-slate-600">{techLeaderStats.interrupt}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Interrupt</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Row: Active Projects */}
-      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5 flex flex-col justify-between">
+    <div className="p-6 space-y-6">
+      {/* HEADER & WORKSPACE SELECTOR */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div>
-          <div className="px-1 py-1 pb-4 border-b border-slate-100 flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
-              <SvgIcon name="folder" className="w-4 h-4 text-slate-700" />
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự Án Đang Triển Khai</h3>
-            </div>
+          <h2 className="text-lg font-extrabold text-[#0b1c30]">Dashboard Tổng Quan</h2>
+          <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI theo Workspace</p>
+        </div>
+        
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setSelectedWorkspace('all')}
+            className={\`px-4 py-2 rounded-xl text-xs font-bold border transition-all \${selectedWorkspace === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}\`}
+          >
+            Toàn Công Ty ({rawMembers.length} người)
+          </button>
+          {workspaces.map(ws => (
+            <button
+              key={ws.name}
+              onClick={() => setSelectedWorkspace(ws.name)}
+              className={\`px-4 py-2 rounded-xl text-xs font-bold border transition-all \${selectedWorkspace === ws.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}\`}
+            >
+              {ws.name} ({ws.count})
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* FILTER TOOLBAR */}
+      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2">
+          <SvgIcon name="filter" className="w-4 h-4 text-slate-400" />
+          <span className="text-xs font-bold text-slate-600">Bộ lọc thời gian:</span>
+        </div>
+        <select 
+          value={filterType} 
+          onChange={(e) => { setFilterType(e.target.value); setDate1(''); setDate2(''); }}
+          className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-400 cursor-pointer"
+        >
+          <option value="all">Tất cả thời gian</option>
+          <option value="week">Theo Tuần</option>
+          <option value="month">Theo Tháng</option>
+          <option value="year">Theo Năm</option>
+          <option value="custom">Tùy chọn khoảng ngày</option>
+        </select>
+
+        {filterType === 'week' && <input type="week" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />}
+        {filterType === 'month' && <input type="month" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />}
+        {filterType === 'year' && <input type="number" placeholder="YYYY" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none w-24 cursor-pointer" />}
+        {filterType === 'custom' && (
+          <div className="flex items-center gap-2">
+            <input type="date" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />
+            <span className="text-slate-400">-</span>
+            <input type="date" value={date2} onChange={e => setDate2(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-5 max-h-[400px] overflow-y-auto pr-2 pb-2 custom-scrollbar">
-            {displayedProjects.length === 0 ? (
-              <p className="col-span-4 text-center text-slate-400 text-xs py-4 font-semibold">Chưa có dự án nào đang hoạt động.</p>
+        )}
+      </div>
+
+      {/* KPI CARDS */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <KpiCard label="Tasks Phụ Trách" value={pmStats.total} icon="tasks" border="border-l-[#0058be]" text="text-[#0058be]" trend="Tổng" />
+        <KpiCard label="Đã Hoàn Thành" value={pmStats.done} icon="check" border="border-l-emerald-500" text="text-emerald-600" trend={pmStats.total ? \`\${Math.round(pmStats.done/pmStats.total*100)}%\` : '0%'} />
+        <KpiCard label="Đang Làm" value={Math.max(0, pmStats.inProgress - pmStats.overdue)} icon="lightning" border="border-l-amber-500" text="text-amber-600" trend="Trong tiến độ" />
+        <KpiCard label="Trễ Hạn" value={pmStats.overdue} icon="alert" border="border-l-red-500" text="text-red-600" trend="Cần xử lý" />
+        <KpiCard label="Manday Thực Tế" value={pmStats.manday} icon="clock" border="border-l-cyan-500" text="text-cyan-600" trend="Đã tiêu hao" />
+        <KpiCard label="KPI Đạt Được" value={pmStats.kpi} icon="trophy" border="border-l-purple-500" text="text-purple-600" trend="Tổng điểm" />
+      </div>
+
+      {/* CHARTS & LISTS */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* BAR CHART STATUS */}
+        <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm p-5 flex flex-col justify-between">
+           <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-4">Trạng thái Task</h3>
+           <BarChartCard 
+              title="" 
+              data={[
+                { name: 'Hoàn Thành', count: pmStats.done, fill: '#10b981' },
+                { name: 'Đang Làm', count: Math.max(0, pmStats.inProgress - pmStats.overdue), fill: '#f59e0b' },
+                { name: 'Trễ Hạn', count: pmStats.overdue, fill: '#ef4444' }
+              ]} 
+              bars={[{ key: 'count', name: 'Số lượng', fill: '#0058be' }]}
+              xKey="name"
+           />
+        </div>
+
+        {/* PRIORITY TABLE */}
+        <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 bg-slate-50">
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Mức Độ Ưu Tiên (Priority)</h3>
+          </div>
+          <div className="p-4 space-y-3">
+             {[
+               { label: 'Critical (Khẩn cấp)', val: priorityStats.critical, cls: 'bg-red-50 text-red-600 border-red-200' },
+               { label: 'High (Cao)', val: priorityStats.high, cls: 'bg-orange-50 text-orange-600 border-orange-200' },
+               { label: 'Normal (Bình thường)', val: priorityStats.normal, cls: 'bg-blue-50 text-blue-600 border-blue-200' },
+               { label: 'Interrupt (Phát sinh)', val: priorityStats.interrupt, cls: 'bg-purple-50 text-purple-600 border-purple-200' }
+             ].map(item => (
+                <div key={item.label} className={\`flex items-center justify-between p-3 rounded-xl border \${item.cls}\`}>
+                  <span className="text-xs font-bold">{item.label}</span>
+                  <span className="text-sm font-extrabold">{item.val} tasks</span>
+                </div>
+             ))}
+          </div>
+        </div>
+
+        {/* OVERDUE LIST */}
+        <div className="bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-red-100 bg-red-50/50 flex justify-between items-center">
+            <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">Task Trễ Hạn ({overdueTasksList.length})</h3>
+          </div>
+          <div className="p-4 overflow-y-auto max-h-[300px] space-y-2 custom-scrollbar">
+            {overdueTasksList.length === 0 ? (
+               <p className="text-xs text-slate-400 font-semibold text-center py-6">Không có task trễ hạn.</p>
             ) : (
-              displayedProjects.map(p => (
-                <Link
-                  key={p.id}
-                  href={`/project/detail?id=${p.id}`}
-                  className="group p-4 bg-slate-50/50 border border-slate-100 rounded-xl hover:border-blue-300 hover:bg-blue-50/30 hover:shadow-md transition-all flex flex-col justify-between cursor-pointer block"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-[#0b1c30] group-hover:text-blue-600 transition-colors truncate" title={p.name}>{p.name}</span>
-                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full ${projectStatusBadge[p.status] || 'bg-slate-100 text-slate-500'}`}>{p.status}</span>
-                  </div>
-                  <div className="mt-3">
-                    <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-slate-400'} height="h-2" />
-                    <p className="text-[10px] text-slate-400 mt-2 font-semibold">{p.done}/{p.tasks} tasks hoàn thành ({p.progress}%)</p>
-                  </div>
-                </Link>
-              ))
+               overdueTasksList.map((t, idx) => (
+                 <div key={idx} className="p-3 bg-white rounded-xl border border-red-100 hover:border-red-300">
+                    <p className="text-xs font-bold text-[#0b1c30] leading-snug">{t.name}</p>
+                    <div className="flex justify-between items-center mt-2">
+                       <span className="text-[10px] font-semibold text-slate-500">Phụ trách: <span className="text-slate-700">{t.assignee}</span></span>
+                       <span className="text-[10px] font-extrabold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">Trễ {t.daysLate} ngày</span>
+                    </div>
+                 </div>
+               ))
             )}
           </div>
         </div>
       </div>
 
-      {/* TEAM AUDIT LOG SECTION */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-white">
-          <div className="flex items-center gap-2">
-            <SvgIcon name="history" className="w-4 h-4 text-blue-600" />
-            <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Audit Log — {activeLeader}</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">Nhật ký hoạt động & thay đổi của các thành viên trong team</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={auditModuleFilter}
-              onChange={(e) => setAuditModuleFilter(e.target.value)}
-              className="text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-[#0058be]"
-            >
-              <option value="all">Tất cả Module</option>
-              <option value="task">Task</option>
-              <option value="project">Project</option>
-              <option value="phase">Phase</option>
-              <option value="setting">Setting</option>
-            </select>
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-slate-50/80 text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider">
-                <th className="px-4 py-3 text-left font-bold">Thời gian</th>
-                <th className="px-4 py-3 text-left font-bold">Thành viên</th>
-                <th className="px-4 py-3 text-center font-bold">Hành động</th>
-                <th className="px-4 py-3 text-center font-bold">Module</th>
-                <th className="px-5 py-3 text-left font-bold">Chi tiết thay đổi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {teamAuditLogs.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Đang tải nhật ký hoạt động...</td></tr>
-              ) : filteredAuditLogs.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Chưa có nhật ký hoạt động nào cho team này.</td></tr>
-              ) : (
-                filteredAuditLogs.slice(0, 8).map((log, idx) => (
-                  <tr key={log.id || idx} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${idx % 2 === 0 ? '' : 'bg-slate-50/30'}`}>
-                    <td className="px-4 py-3 text-slate-500 font-mono text-[11px]">
-                      {log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : 'Mới đây'}
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-[#0b1c30]">
-                      {log.user_name || 'Hệ thống'}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
-                        log.action === 'CREATE' ? 'bg-emerald-100 text-emerald-700' :
-                        log.action === 'UPDATE' ? 'bg-blue-100 text-blue-700' :
-                        log.action === 'DELETE' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
-                      }`}>{log.action}</span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{log.module}</span>
-                    </td>
-                    <td className="px-5 py-3 text-slate-600 leading-snug">
-                      {log.description || `${log.action} trên ${log.module}`}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Member KPI Ranking */}
+      {/* MEMBER KPI RANKING */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
-            <SvgIcon name="user" className="w-4 h-4 text-indigo-600" />
-            <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên — {activeLeader}</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">Dữ liệu thực tế</p>
-            </div>
+            <SvgIcon name="crown" className="w-4 h-4 text-indigo-600" />
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên</h3>
           </div>
-          <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-full border border-indigo-100">{teamMembers.length} thành viên</span>
         </div>
         <div className="max-h-[400px] overflow-y-auto overflow-x-auto custom-scrollbar">
           <table className="w-full text-xs relative">
@@ -430,32 +400,27 @@ export default function OverviewTab() {
                 <th className="px-4 py-3 text-center font-bold">Trễ</th>
                 <th className="px-4 py-3 text-center font-bold">Manday</th>
                 <th className="px-4 py-3 text-center font-bold text-[#0058be]">KPI</th>
-                <th className="px-4 py-3 font-bold min-w-[140px]">Tiến độ</th>
+                <th className="px-4 py-3 font-bold min-w-[140px]">Tiến Độ</th>
               </tr>
             </thead>
             <tbody>
-              {teamMembers.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td>
-                </tr>
+              {memberRanking.length === 0 ? (
+                <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
               ) : (
-                teamMembers.map((m, i) => {
+                memberRanking.map((m, i) => {
                   const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
                   return (
-                    <tr key={m.id} className={`border-b border-slate-50 hover:bg-indigo-50/30 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}>
+                    <tr key={m.id} className={\`border-b border-slate-50 hover:bg-indigo-50/30 transition-colors \${i % 2 === 0 ? '' : 'bg-slate-50/20'}\`}>
                       <td className="px-4 py-3.5 text-center">
-                        <span className={`text-xs font-bold ${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}`}>#{m.rank}</span>
+                        <span className={\`text-xs font-bold \${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}\`}>#{m.rank}</span>
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-400 to-blue-500 flex items-center justify-center text-white text-[10px] font-extrabold shrink-0">{m.name.split(' ').pop()?.charAt(0) || '?'}</div>
-                          <span className="font-semibold text-[#0b1c30]">{m.name}</span>
-                        </div>
+                        <span className="font-semibold text-[#0b1c30]">{m.name}</span>
                       </td>
                       <td className="px-4 py-3.5 text-center font-semibold text-slate-600">{m.assigned}</td>
                       <td className="px-4 py-3.5 text-center"><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{m.done}</span></td>
                       <td className="px-4 py-3.5 text-center font-semibold text-blue-600">{m.inProgress}</td>
-                      <td className="px-4 py-3.5 text-center">{m.overdue > 0 ? <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">{m.overdue}</span> : <span className="text-slate-300 font-bold">—</span>}</td>
+                      <td className="px-4 py-3.5 text-center">{m.overdue > 0 ? <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">{m.overdue}</span> : <span className="text-slate-300 font-bold">—</span>}</td>
                       <td className="px-4 py-3.5 text-center text-slate-500 tabular-nums">{m.manday.toFixed(1)}</td>
                       <td className="px-4 py-3.5 text-center font-extrabold text-[#0058be] text-[13px]">{m.kpi.toFixed(1)}</td>
                       <td className="px-4 py-3.5">
@@ -470,37 +435,89 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {topPerformer && lowestPerformer && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div className="bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl p-5 shadow-md text-white relative overflow-hidden">
-            <div className="absolute -right-4 -bottom-4 opacity-10 select-none">
-              <SvgIcon name="crown" className="w-32 h-32 text-white" />
-            </div>
-            <p className="text-[10px] font-bold uppercase tracking-widest opacity-80">Xuất Sắc Nhất</p>
-            <p className="text-lg font-extrabold mt-1">{topPerformer.name}</p>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {[{ label: 'KPI', value: topPerformer.kpi.toFixed(1) }, { label: 'Hoàn thành', value: topPerformer.done }, { label: 'Manday', value: topPerformer.manday.toFixed(1) }].map(s => (
-                <div key={s.label} className="bg-white/20 backdrop-blur rounded-xl p-2.5 text-center">
-                  <p className="text-base font-extrabold">{s.value}</p>
-                  <p className="text-[9px] font-semibold opacity-70 uppercase mt-0.5">{s.label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl border border-red-200 p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-red-500">⚠️ Cần Cải Thiện</p>
-            <p className="text-base font-extrabold mt-1 text-[#0b1c30]">{lowestPerformer.name}</p>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {[{ label: 'KPI', value: lowestPerformer.kpi.toFixed(1), cls: 'text-red-600' }, { label: 'Xong', value: lowestPerformer.done, cls: 'text-slate-600' }, { label: 'Trễ', value: lowestPerformer.overdue, cls: 'text-red-500' }].map(s => (
-                <div key={s.label} className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
-                  <p className={`text-base font-extrabold ${s.cls}`}>{s.value}</p>
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase mt-0.5">{s.label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* KPI MATRICES */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5 space-y-6">
+         <div className="flex flex-col sm:flex-row justify-between items-center border-b border-slate-100 pb-4 gap-4">
+           <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wider">Ma Trận KPI Thành Viên</h3>
+           <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-600">Lọc theo năm:</span>
+              <input type="number" value={matrixYear} onChange={e => setMatrixYear(parseInt(e.target.value))} className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 w-24 outline-none cursor-pointer" />
+           </div>
+         </div>
+
+         {/* 1. Summary Matrix */}
+         <div>
+           <h4 className="text-xs font-bold text-indigo-700 mb-2">1. Tổng Hợp KPI (Summary Matrix)</h4>
+           <div className="overflow-x-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse">
+               <thead>
+                 <tr className="bg-slate-100 text-slate-600 font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[120px]">Thành Viên</th>
+                   {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <th key={m} className="p-2 border border-slate-200">T{m}</th>)}
+                   <th className="p-2 border border-slate-200 bg-indigo-50 text-indigo-700">Tổng</th>
+                 </tr>
+               </thead>
+               <tbody>
+                 {summaryMatrix.map((r,i) => (
+                   <tr key={i} className="hover:bg-slate-50">
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
+                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[\`m\${m}\`]}</td>)}
+                     <td className="p-2 border border-slate-200 bg-indigo-50/30 font-extrabold text-indigo-700">{r.total}</td>
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+         </div>
+
+         {/* 2. Average Matrix */}
+         <div>
+           <h4 className="text-xs font-bold text-emerald-700 mb-2">2. Trung Bình KPI / Task (Average Matrix)</h4>
+           <div className="overflow-x-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse">
+               <thead>
+                 <tr className="bg-slate-100 text-slate-600 font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[120px]">Thành Viên</th>
+                   {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <th key={m} className="p-2 border border-slate-200">T{m}</th>)}
+                   <th className="p-2 border border-slate-200 bg-emerald-50 text-emerald-700">Trung bình</th>
+                 </tr>
+               </thead>
+               <tbody>
+                 {averageMatrix.map((r,i) => (
+                   <tr key={i} className="hover:bg-slate-50">
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
+                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[\`m\${m}\`]}</td>)}
+                     <td className="p-2 border border-slate-200 bg-emerald-50/30 font-extrabold text-emerald-700">{r.total}</td>
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+         </div>
+
+         {/* 3. Bonus Matrix */}
+         <div>
+           <h4 className="text-xs font-bold text-amber-700 mb-2">3. KPI Thưởng (Bonus Matrix)</h4>
+           <div className="overflow-x-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse">
+               <thead>
+                 <tr className="bg-slate-100 text-slate-600 font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[120px]">Thành Viên</th>
+                   {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <th key={m} className="p-2 border border-slate-200">T{m}</th>)}
+                 </tr>
+               </thead>
+               <tbody>
+                 {bonusMatrix.map((r,i) => (
+                   <tr key={i} className="hover:bg-slate-50">
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
+                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold text-amber-600">{r[\`m\${m}\`]}</td>)}
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+         </div>
+      </div>
     </div>
   );
 }
