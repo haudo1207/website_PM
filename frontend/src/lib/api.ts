@@ -423,6 +423,8 @@ export const exportSystemAuditLogs = (params?: {
   severity?: string;
   login_method?: string;
   source?: string;
+  category?: string;
+  ip_risk?: string;
   user_id?: number;
   search?: string;
   start_date?: string;
