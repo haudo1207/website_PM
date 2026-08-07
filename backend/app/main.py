@@ -187,6 +187,7 @@ def apply_schema_updates():
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id SERIAL PRIMARY KEY,
+                event_id VARCHAR(50),
                 project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
                 module VARCHAR(50) NOT NULL,
                 entity_type VARCHAR(50) NOT NULL,
@@ -206,6 +207,11 @@ def apply_schema_updates():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs (user_id);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at);"))
+        # event_id was added to the ORM after some production databases had
+        # already been created. Keep this idempotent migration before creating
+        # its index so old installs cannot fail every audited write.
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_id VARCHAR(50);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id);"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50);"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS customer_id INTEGER;"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(50);"))
