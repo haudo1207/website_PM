@@ -471,14 +471,16 @@ function ProjectDetailContent() {
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
 
+  const editWorkspaceCode = workspaces.find(w => w.name === editBusiness)?.code || editBusiness.toLowerCase();
   const editBusinessCustomers = editBusiness === 'All'
     ? dbCustomers
-    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editBusiness.toLowerCase());
+    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editWorkspaceCode);
+  const editWorkspaceCodes = new Set((workspaces || []).map(w => w.code));
   const selectedCustomerBu = (dbCustomers.find((c) => c.name === editCustomerName)?.business_unit || '').toLowerCase();
   const editCustomerMismatch = !!editCustomerName && (
     editBusiness === 'All'
-      ? !!selectedCustomerBu && selectedCustomerBu !== 'infrastructure' && selectedCustomerBu !== 'markee'
-      : selectedCustomerBu !== editBusiness.toLowerCase()
+      ? !!selectedCustomerBu && !editWorkspaceCodes.has(selectedCustomerBu)
+      : selectedCustomerBu !== editWorkspaceCode
   );
 
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -7052,6 +7054,7 @@ value={editValue}
                     {workspaces.map(ws => (
                       <option key={ws.code} value={ws.name}>{ws.name}</option>
                     ))}
+                    <option value="All">ALL (phạm vi tất cả team)</option>
                   </select>
                 </div>
 

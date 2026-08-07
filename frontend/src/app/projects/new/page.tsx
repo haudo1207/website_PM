@@ -127,6 +127,10 @@ export default function NewProjectPage() {
       .catch(() => {});
   }, []);
 
+  const businessCustomers = business === 'All'
+    ? dbCustomers
+    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === ((workspaces.find(w => w.name === business)?.code) || business.toLowerCase()));
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -261,6 +265,7 @@ export default function NewProjectPage() {
                     {workspaces.map(ws => (
                       <option key={ws.code} value={ws.name}>{ws.name}</option>
                     ))}
+                    <option value="All">ALL (phạm vi tất cả team)</option>
                   </select>
                 </div>
 
@@ -331,7 +336,7 @@ export default function NewProjectPage() {
                           Chọn khách hàng
                         </button>
 
-                        {dbCustomers
+                        {businessCustomers
                           .filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()))
                           .map((c) => (
                             <button
