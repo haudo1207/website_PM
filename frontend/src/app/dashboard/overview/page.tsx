@@ -161,7 +161,7 @@ export default function OverviewTab() {
     });
 
     // 5. Ranking
-    let ranking = activeTeamList.map(m => {
+    const initialRanking = activeTeamList.map(m => {
       const myTasks = fTasks.filter(t => t.assigned_id === m.id || t.support_id === m.id);
       let d = 0, i = 0, o = 0, md = 0, k = 0;
       myTasks.forEach(t => {
@@ -178,8 +178,8 @@ export default function OverviewTab() {
       // So we use calculated k.
       return { id: m.id, name: m.display_name || m.full_name, assigned: myTasks.length, done: d, inProgress: i, overdue: o, manday: md, kpi: k };
     });
-    ranking.sort((a,b) => b.kpi - a.kpi);
-    ranking = ranking.map((r, idx) => ({...r, rank: idx + 1}));
+    initialRanking.sort((a,b) => b.kpi - a.kpi);
+    const finalRanking = initialRanking.map((r, idx) => ({...r, rank: idx + 1}));
 
     // 6. Active Projects
     const projectIds = Array.from(new Set(fTasks.map((t: any) => t.project_id).filter(Boolean)));
@@ -200,7 +200,7 @@ export default function OverviewTab() {
       pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday*10)/10, kpi: Math.round(pmKpi) },
       priorityStats: pStats,
       overdueTasksList: overdueList.sort((a,b) => b.daysLate - a.daysLate),
-      memberRanking: ranking,
+      memberRanking: finalRanking,
       activeProjects: aProjects
     };
   }, [rawMembers, rawProjects, rawTasks, selectedWorkspace, filterType, date1, date2]);
