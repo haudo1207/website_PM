@@ -37,8 +37,17 @@ export const googleLogin = (credential: string) =>
 // ═══════════════════════════════════════════════════════════
 // PROJECTS (v5)
 // ═══════════════════════════════════════════════════════════
-export const getProjects = (businessUnit?: string) =>
-  api.get('/projects', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+export const getProjects = (params?: {
+  business_unit?: string;
+  search?: string;
+  customer?: string;
+  year?: number;
+  phase?: string;
+  pm_ids?: string;
+  sales_ids?: string;
+  member_ids?: string;
+  sort?: string;
+}) => api.get('/projects', { params }).then(r => r.data);
 export const getSidebarTree = (businessUnit?: string) =>
   api.get('/projects/sidebar-tree', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
 export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r.data);
@@ -333,13 +342,42 @@ export const exportProjectAuditLogs = (projectId: number, params?: { module?: st
   api.get(`/projects/${projectId}/audit-logs/export`, { params, responseType: 'blob' }).then(r => r.data);
 
 // System Audit (Global Admin)
+export interface SystemAuditChange {
+  field_name: string;
+  old_value: string;
+  new_value: string;
+  description: string;
+}
+
 export interface SystemAuditItem extends AuditLogItem {
   business_unit?: string;
   customer_id?: number;
   project_name?: string;
+  resource_name?: string;
+  severity?: 'INFO' | 'WARNING' | 'CRITICAL';
+  login_method?: string;
+  source?: string;
+  category?: 'Security' | 'Administration' | 'Configuration' | 'Integration' | 'System';
+  session_id?: string;
+  ip_risk?: 'Internal' | 'Trusted' | 'Unknown';
+  correlation_id?: string;
+  target_user_id?: number;
+  target_user_name?: string;
+  target_customer_id?: number;
+  target_department?: string;
+  snapshot_json?: string;
+  outcome?: 'SUCCESS' | 'FAILED' | 'PARTIAL';
+  duration_ms?: number;
+  browser?: string;
+  os?: string;
+  device_type?: string;
+  is_new_ip?: boolean;
+  is_new_device?: boolean;
   ip_address?: string;
   user_agent?: string;
   request_url?: string;
+  changes_count?: number;
+  changes?: SystemAuditChange[];
 }
 
 export interface SystemAuditStats {
@@ -360,6 +398,15 @@ export const getSystemAuditLogs = (params?: {
   project_id?: number;
   module?: string;
   action?: string;
+  severity?: string;
+  login_method?: string;
+  source?: string;
+  category?: string;
+  ip_risk?: string;
+  outcome?: string;
+  session_id?: string;
+  correlation_id?: string;
+  target_user_id?: number;
   user_id?: number;
   search?: string;
   start_date?: string;
@@ -373,11 +420,23 @@ export const exportSystemAuditLogs = (params?: {
   project_id?: number;
   module?: string;
   action?: string;
+  severity?: string;
+  login_method?: string;
+  source?: string;
   user_id?: number;
   search?: string;
   start_date?: string;
   end_date?: string;
 }) => api.get('/system-audit/export', { params, responseType: 'blob' }).then(r => r.data);
+
+export const exportSystemAuditLogsJSON = (params?: {
+  search?: string;
+  category?: string;
+  source?: string;
+}) => api.get('/system-audit/export-json', { params, responseType: 'blob' }).then(r => r.data);
+
+export const getSessionTimeline = (sessionId: string) =>
+  api.get<{ session_id: string; total_events: number; events: SystemAuditItem[] }>(`/system-audit/session-timeline/${sessionId}`).then(r => r.data);
 
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);

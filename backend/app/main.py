@@ -848,6 +848,7 @@ app.include_router(ai_review.router,            prefix="/api")
 app.include_router(lunch_router.router,         prefix="/api/lunch")
 app.include_router(chat_ai.router,              prefix="/api")
 app.include_router(project_templates_router.router, prefix="/api")
+app.include_router(system_audit.router,         prefix="/api")
 
 @app.get("/health")
 @app.get("/api/health")

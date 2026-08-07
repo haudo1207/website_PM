@@ -55,6 +55,7 @@ class Project(Base):
     data_scope            = Column(String(50), nullable=False, default="infrastructure", server_default="infrastructure", index=True)
     created_at            = Column(DateTime, server_default=func.now())
     updated_at            = Column(DateTime, onupdate=func.now())
+    last_activity_at      = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
 
     # AI Check Fields
     ai_status             = Column(String(50), default="NOT_CHECKED", nullable=False, server_default="NOT_CHECKED")

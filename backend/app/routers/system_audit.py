@@ -3,7 +3,8 @@ System Audit Router — Global System Audit Dashboard APIs for Admins.
 """
 import csv
 import io
-import datetime
+import json
+from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -72,6 +73,15 @@ def get_system_audit_logs(
     project_id: Optional[int] = None,
     module: Optional[str] = None,
     action: Optional[str] = None,
+    severity: Optional[str] = None,
+    login_method: Optional[str] = None,
+    source: Optional[str] = None,
+    category: Optional[str] = None,
+    ip_risk: Optional[str] = None,
+    outcome: Optional[str] = None,
+    session_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    target_user_id: Optional[int] = None,
     user_id: Optional[int] = None,
     search: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -80,8 +90,12 @@ def get_system_audit_logs(
     page_size: int = 25,
     db: Session = Depends(get_db)
 ):
-    """Returns paginated global system audit logs with rich multi-attribute filters."""
+    """Returns paginated global system audit logs with event grouping and multi-attribute filters."""
     q = db.query(AuditLog)
+
+    # System Audit Scope: Exclude operational project progress logs
+    if not module or module.strip().lower() == "all":
+        q = q.filter(AuditLog.module.not_in(["Project", "Phase", "Task Group", "Task", "Meeting"]))
 
     if business_unit and business_unit.strip().lower() != "all":
         bu = business_unit.strip().lower()
@@ -104,6 +118,24 @@ def get_system_audit_logs(
         q = q.filter(AuditLog.module.ilike(module.strip()))
     if action and action.strip().lower() != "all":
         q = q.filter(AuditLog.action.ilike(action.strip()))
+    if severity and severity.strip().lower() != "all":
+        q = q.filter(AuditLog.severity.ilike(severity.strip()))
+    if login_method and login_method.strip().lower() != "all":
+        q = q.filter(AuditLog.login_method.ilike(login_method.strip()))
+    if source and source.strip().lower() != "all":
+        q = q.filter(AuditLog.source.ilike(source.strip()))
+    if category and category.strip().lower() != "all":
+        q = q.filter(AuditLog.category.ilike(category.strip()))
+    if ip_risk and ip_risk.strip().lower() != "all":
+        q = q.filter(AuditLog.ip_risk.ilike(ip_risk.strip()))
+    if outcome and outcome.strip().lower() != "all":
+        q = q.filter(AuditLog.outcome.ilike(outcome.strip()))
+    if session_id and session_id.strip():
+        q = q.filter(AuditLog.session_id == session_id.strip())
+    if correlation_id and correlation_id.strip():
+        q = q.filter(AuditLog.correlation_id == correlation_id.strip())
+    if target_user_id:
+        q = q.filter(AuditLog.target_user_id == target_user_id)
     if user_id:
         q = q.filter(AuditLog.user_id == user_id)
     if search:
@@ -111,10 +143,17 @@ def get_system_audit_logs(
         q = q.filter(
             or_(
                 AuditLog.description.ilike(s),
+                AuditLog.resource_name.ilike(s),
                 AuditLog.field_name.ilike(s),
                 AuditLog.entity_type.ilike(s),
                 AuditLog.old_value.ilike(s),
                 AuditLog.new_value.ilike(s),
+                AuditLog.snapshot_json.ilike(s),
+                AuditLog.target_department.ilike(s),
+                AuditLog.browser.ilike(s),
+                AuditLog.os.ilike(s),
+                AuditLog.session_id.ilike(s),
+                AuditLog.correlation_id.ilike(s),
                 AuditLog.ip_address.ilike(s)
             )
         )
@@ -123,15 +162,53 @@ def get_system_audit_logs(
     if end_date:
         q = q.filter(AuditLog.created_at <= end_date + " 23:59:59")
 
-    total = q.count()
-    logs = q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    # Fetch logs ordered newest first
+    all_matching_logs = q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).all()
+
+    # Event Grouping: Group logs by event_id
+    grouped_events = []
+    seen_event_ids = set()
+
+    for log in all_matching_logs:
+        evt_key = log.event_id or f"single-{log.id}"
+        if evt_key in seen_event_ids:
+            continue
+        seen_event_ids.add(evt_key)
+
+        # Collect all diff rows belonging to this same event_id
+        same_event_logs = [l for l in all_matching_logs if (l.event_id or f"single-{l.id}") == evt_key]
+        
+        base_dict = log.to_dict()
+        changes = []
+        for l in same_event_logs:
+            if l.field_name or l.old_value or l.new_value:
+                changes.append({
+                    "field_name": l.field_name or "General",
+                    "old_value": l.old_value or "",
+                    "new_value": l.new_value or "",
+                    "description": l.description or ""
+                })
+
+        base_dict["changes_count"] = len(changes) if len(changes) > 0 else 1
+        base_dict["changes"] = changes
+        
+        # Build human readable summary with resource name
+        if len(changes) > 1:
+            base_dict["description"] = f"{log.user_name} đã cập nhật {log.module} '{log.resource_name or log.entity_id}' ({len(changes)} thay đổi)"
+
+        grouped_events.append(base_dict)
+
+    total = len(grouped_events)
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    paged_items = grouped_events[start_idx:end_idx]
 
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size if total > 0 else 1,
-        "items": [log.to_dict() for log in logs]
+        "items": paged_items
     }
 
 
@@ -141,6 +218,8 @@ def export_system_audit_logs(
     project_id: Optional[int] = None,
     module: Optional[str] = None,
     action: Optional[str] = None,
+    severity: Optional[str] = None,
+    login_method: Optional[str] = None,
     user_id: Optional[int] = None,
     search: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -166,6 +245,10 @@ def export_system_audit_logs(
         q = q.filter(AuditLog.module.ilike(module.strip()))
     if action and action.strip().lower() != "all":
         q = q.filter(AuditLog.action.ilike(action.strip()))
+    if severity and severity.strip().lower() != "all":
+        q = q.filter(AuditLog.severity.ilike(severity.strip()))
+    if login_method and login_method.strip().lower() != "all":
+        q = q.filter(AuditLog.login_method.ilike(login_method.strip()))
     if user_id:
         q = q.filter(AuditLog.user_id == user_id)
     if search:
@@ -182,7 +265,7 @@ def export_system_audit_logs(
     writer = csv.writer(output)
     writer.writerow([
         "ID", "Thời gian", "Người thực hiện", "Business Unit", "Project", "Module",
-        "Hành động", "Trường thay đổi", "Giá trị cũ", "Giá trị mới", "Mô tả", "IP Address", "Browser"
+        "Hành động", "Mức độ (Severity)", "Phương thức Login", "Trường thay đổi", "Giá trị cũ", "Giá trị mới", "Mô tả", "IP Address", "Browser"
     ])
 
     for log in logs:
@@ -197,6 +280,8 @@ def export_system_audit_logs(
             proj_name,
             log.module,
             log.action,
+            log.severity or "INFO",
+            log.login_method or "",
             log.field_name or "",
             log.old_value or "",
             log.new_value or "",
@@ -277,4 +362,48 @@ def get_system_audit_analytics(db: Session = Depends(get_db)):
         "top_updated_projects": top_projects,
         "top_ai_users": top_ai_users,
         "top_login_failures": top_failures
+    }
+
+
+@router.get("/export-json")
+def export_system_audit_logs_json(
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    source: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Export global system audit logs as structured JSON array for external SIEM/SOC forensic tools."""
+    q = db.query(AuditLog).filter(AuditLog.module.not_in(["Project", "Phase", "Task Group", "Task", "Meeting"]))
+    if category and category.strip().lower() != "all":
+        q = q.filter(AuditLog.category.ilike(category.strip()))
+    if source and source.strip().lower() != "all":
+        q = q.filter(AuditLog.source.ilike(source.strip()))
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(or_(AuditLog.description.ilike(s), AuditLog.resource_name.ilike(s)))
+
+    logs = q.order_by(AuditLog.created_at.desc()).limit(1000).all()
+    data = [l.to_dict() for l in logs]
+    
+    return Response(
+        content=json.dumps(data, indent=2, ensure_ascii=False),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=System_Audit_Logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"}
+    )
+
+
+@router.get("/session-timeline/{session_id}")
+def get_session_timeline(
+    session_id: str,
+    db: Session = Depends(get_db)
+):
+    """Returns chronological event timeline for a specific User Login Session ID."""
+    logs = db.query(AuditLog).filter(
+        AuditLog.session_id == session_id
+    ).order_by(AuditLog.created_at.asc()).all()
+
+    return {
+        "session_id": session_id,
+        "total_events": len(logs),
+        "events": [l.to_dict() for l in logs]
     }

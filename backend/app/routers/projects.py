@@ -165,16 +165,20 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "business_unit": business_unit_for_project(db, p),
         "year": p.year,
         "pm_id": p.pm_id,
-        "pm_name": ", ".join(m[1] for m in pms) or None,
+        "pm_name": ", ".join(m[1] for m in pms if m[1]) or None,
         "pm_ids": [m[0] for m in pms],
+        "pm_users": [{"id": m[0], "name": m[1]} for m in pms if m[1]],
         "technical_leader_id": p.technical_leader_id,
-        "technical_leader_name": ", ".join(m[1] for m in leaders) or None,
+        "technical_leader_name": ", ".join(m[1] for m in leaders if m[1]) or None,
         "technical_leader_ids": [m[0] for m in leaders],
+        "leader_users": [{"id": m[0], "name": m[1]} for m in leaders if m[1]],
         "sales_id": p.sales_id,
-        "sales_name": ", ".join(m[1] for m in sales) or None,
+        "sales_name": ", ".join(m[1] for m in sales if m[1]) or None,
         "sales_ids": [m[0] for m in sales],
+        "sales_users": [{"id": m[0], "name": m[1]} for m in sales if m[1]],
         "member_ids": [m[0] for m in members],
-        "member_names": ", ".join(m[1] for m in members),
+        "member_names": ", ".join(m[1] for m in members if m[1]),
+        "member_users": [{"id": m[0], "name": m[1]} for m in members if m[1]],
         "description": p.description,
         "status": p.status,
         "current_phase": p.current_phase,
@@ -190,11 +194,25 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "last_review_id": p.last_review_id,
         "created_at": str(p.created_at) if p.created_at else None,
         "updated_at": str(p.updated_at) if p.updated_at else None,
+        "last_activity_at": str(p.last_activity_at) if getattr(p, "last_activity_at", None) else (str(p.updated_at) if p.updated_at else str(p.created_at) if p.created_at else None),
     }
 
 
 @router.get("/projects")
-def list_projects(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def list_projects(
+    business: Optional[str] = None,
+    business_unit: Optional[str] = None,
+    search: Optional[str] = None,
+    customer: Optional[str] = None,
+    year: Optional[int] = None,
+    phase: Optional[str] = None,
+    pm_ids: Optional[str] = None,
+    sales_ids: Optional[str] = None,
+    member_ids: Optional[str] = None,
+    sort: Optional[str] = "activity_desc",
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
     q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
@@ -211,7 +229,61 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
             )
         else:
             q = q.filter(Project.id == -1)
-    projects = q.order_by(Project.id.desc()).all()
+
+    # Filter: pm_ids
+    if pm_ids:
+        p_id_list = [int(i.strip()) for i in pm_ids.split(",") if i.strip().isdigit()]
+        if p_id_list:
+            pm_subq = db.query(project_members.c.project_id).filter(
+                project_members.c.role == "PM",
+                project_members.c.member_id.in_(p_id_list)
+            )
+            q = q.filter(Project.id.in_(pm_subq))
+
+    # Filter: sales_ids
+    if sales_ids:
+        s_id_list = [int(i.strip()) for i in sales_ids.split(",") if i.strip().isdigit()]
+        if s_id_list:
+            sales_subq = db.query(project_members.c.project_id).filter(
+                project_members.c.role == "Sales",
+                project_members.c.member_id.in_(s_id_list)
+            )
+            q = q.filter(Project.id.in_(sales_subq))
+
+    # Filter: member_ids (Matches PM, Sales, Leader, or Member)
+    if member_ids:
+        m_id_list = [int(i.strip()) for i in member_ids.split(",") if i.strip().isdigit()]
+        if m_id_list:
+            member_subq = db.query(project_members.c.project_id).filter(
+                project_members.c.member_id.in_(m_id_list)
+            )
+            q = q.filter(Project.id.in_(member_subq))
+
+    # Filter: year
+    if year:
+        q = q.filter(Project.year == year)
+
+    # Filter: search
+    if search and search.strip():
+        kw = f"%{search.strip()}%"
+        q = q.filter(or_(Project.name.ilike(kw), Project.code.ilike(kw), Project.description.ilike(kw)))
+
+    # Filter: customer
+    if customer and customer.strip() and customer != "all":
+        q = q.filter(Project.customer_name.ilike(f"%{customer.strip()}%"))
+
+    # Sorting
+    s_mode = (sort or "activity_desc").strip().lower()
+    if s_mode == "created_desc":
+        q = q.order_by(Project.created_at.desc().nulls_last(), Project.id.desc())
+    elif s_mode == "name_asc":
+        q = q.order_by(Project.name.asc(), Project.id.desc())
+    elif s_mode == "name_desc":
+        q = q.order_by(Project.name.desc(), Project.id.desc())
+    else:  # activity_desc (DEFAULT)
+        q = q.order_by(Project.last_activity_at.desc().nulls_last(), Project.id.desc())
+
+    projects = q.all()
     project_ids = [p.id for p in projects]
     if not project_ids:
         return []

@@ -61,6 +61,19 @@ def create_user(body: dict, db: Session = Depends(get_db), _=Depends(require_adm
     db.add(u)
     db.commit()
     db.refresh(u)
+
+    from ..utils.audit_service import AuditService
+    AuditService.record(
+        db=db,
+        user_id=admin.id,
+        module="User",
+        entity_type="User",
+        entity_id=u.id,
+        action="CREATE_USER",
+        severity="INFO",
+        description=f"Tạo tài khoản mới '{u.email}' (Role: {u.role})",
+    )
+    db.commit()
     return {"id":u.id,"email":u.email,"role":u.role,"data_scope":u.data_scope}
 
 @router.put("/{uid}")
@@ -68,6 +81,9 @@ def update_user(uid: int, body: dict, db: Session = Depends(get_db), admin=Depen
     u = db.query(User).filter(User.id == uid).first()
     if not u:
         raise HTTPException(404)
+    old_role = u.role
+    old_active = u.is_active
+
     for k, v in body.items():
         if k == "password":
             password = str(v or "")
@@ -109,6 +125,59 @@ def update_user(uid: int, body: dict, db: Session = Depends(get_db), admin=Depen
             u.is_active = is_active
         elif hasattr(u, k) and k not in ["id", "hashed_pw", "member_id", "created_at"]:
             setattr(u, k, v)
+
+    from ..utils.audit_service import AuditService
+    admin_name = admin.full_name or admin.email or "Admin"
+    target_name = u.full_name or u.email or f"User #{u.id}"
+    evt_id = str(uuid.uuid4())
+
+    if "role" in body and body["role"] != old_role:
+        AuditService.record(
+            db=db,
+            user_id=admin.id,
+            module="Permission",
+            entity_type="User",
+            entity_id=u.id,
+            resource_name=target_name,
+            action="CHANGE_ROLE",
+            severity="CRITICAL",
+            field_name="role",
+            old_value=old_role,
+            new_value=u.role,
+            description=f"Admin {admin_name} đổi quyền {target_name}: {old_role} ➔ {u.role}",
+            event_id=evt_id
+        )
+    if "is_active" in body and body["is_active"] != old_active:
+        action_name = "LOCK_ACCOUNT" if not u.is_active else "UNLOCK_ACCOUNT"
+        AuditService.record(
+            db=db,
+            user_id=admin.id,
+            module="User",
+            entity_type="User",
+            entity_id=u.id,
+            resource_name=target_name,
+            action=action_name,
+            severity="CRITICAL" if not u.is_active else "INFO",
+            field_name="is_active",
+            old_value=str(old_active),
+            new_value=str(u.is_active),
+            description=f"Admin {admin_name} {'khóa' if not u.is_active else 'mở khóa'} tài khoản {target_name}",
+            event_id=evt_id
+        )
+    
+    AuditService.record(
+        db=db,
+        user_id=admin.id,
+        module="User",
+        entity_type="User",
+        entity_id=u.id,
+        resource_name=target_name,
+        action="UPDATE_USER",
+        severity="INFO",
+        description=f"Admin {admin_name} cập nhật thông tin tài khoản {target_name}",
+        event_id=evt_id
+    )
+
     db.commit()
     return {"message": "Updated"}
 
@@ -120,6 +189,21 @@ def delete_user(uid: int, db: Session = Depends(get_db), admin=Depends(require_a
     if admin.id == u.id:
         raise HTTPException(400, "You cannot delete your own account")
     ensure_superadmin_remains(db, u, deleting=True)
+
+    from ..utils.audit_service import AuditService
+    admin_name = admin.full_name or admin.email or "Admin"
+    target_name = u.full_name or u.email or f"User #{u.id}"
+    AuditService.record(
+        db=db,
+        user_id=admin.id,
+        module="User",
+        entity_type="User",
+        entity_id=u.id,
+        resource_name=target_name,
+        action="DELETE_USER",
+        severity="CRITICAL",
+        description=f"Admin {admin_name} đã xóa vĩnh viễn tài khoản {target_name}",
+    )
     db.delete(u)
     db.commit()
     return {"message": "Deleted"}

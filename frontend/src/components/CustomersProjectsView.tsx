@@ -32,6 +32,139 @@ const PROJECT_PHASES = [
   '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
 ];
 
+interface ComboboxOption {
+  id: number;
+  name: string;
+}
+
+interface SearchableComboboxProps {
+  label: string;
+  icon?: string;
+  options: ComboboxOption[];
+  selectedIds: number[];
+  onChange: (ids: number[]) => void;
+  placeholder?: string;
+}
+
+function SearchableCombobox({
+  label,
+  icon = '👤',
+  options,
+  selectedIds,
+  onChange,
+  placeholder = 'Tìm kiếm...'
+}: SearchableComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const removeDiacritics = (str: string) =>
+    (str || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+  const filteredOptions = useMemo(() => {
+    if (!search.trim()) return options;
+    const q = removeDiacritics(search);
+    return options.filter(opt => removeDiacritics(opt.name).includes(q));
+  }, [options, search]);
+
+  const toggleOption = (id: number) => {
+    if (selectedIds.includes(id)) {
+      onChange(selectedIds.filter(i => i !== id));
+    } else {
+      onChange([...selectedIds, id]);
+    }
+  };
+
+  const selectedCount = selectedIds.length;
+  const buttonText = selectedCount === 0
+    ? `Tất cả ${label}`
+    : selectedCount === 1
+    ? options.find(o => o.id === selectedIds[0])?.name || `${selectedCount} ${label}`
+    : `${selectedCount} ${label}`;
+
+  return (
+    <div className="relative min-w-[150px]" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`w-full px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center justify-between gap-1.5 transition-all bg-white text-slate-700 cursor-pointer ${
+          selectedCount > 0
+            ? 'border-blue-500 bg-blue-50/60 font-bold text-blue-900'
+            : 'border-slate-200 hover:border-slate-300'
+        }`}
+      >
+        <span className="truncate flex items-center gap-1">
+          <span>{icon}</span>
+          <span className="truncate">{buttonText}</span>
+        </span>
+        <span className="text-[10px] text-slate-400">▼</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+          <div className="p-2 border-b border-slate-100 bg-slate-50">
+            <input
+              type="text"
+              placeholder={placeholder}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full px-2.5 py-1 text-xs bg-white border border-slate-200 rounded-md outline-none focus:border-blue-500 font-medium"
+              autoFocus
+            />
+          </div>
+
+          <div className="max-h-48 overflow-y-auto p-1.5 divide-y divide-slate-50 text-xs">
+            {filteredOptions.length === 0 ? (
+              <p className="py-3 text-center text-slate-400 italic">Không tìm thấy người dùng</p>
+            ) : (
+              filteredOptions.map(opt => {
+                const checked = selectedIds.includes(opt.id);
+                return (
+                  <label
+                    key={opt.id}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-blue-50/70 cursor-pointer font-medium text-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleOption(opt.id)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="truncate">{opt.name}</span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          {selectedCount > 0 && (
+            <div className="p-1.5 border-t border-slate-100 bg-slate-50 flex justify-between items-center text-[10px]">
+              <span className="text-slate-500 font-semibold">{selectedCount} đã chọn</span>
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="text-blue-600 font-bold hover:underline"
+              >
+                Bỏ chọn tất cả
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CustomersProjectsView({ onFlash }: CustomersProjectsViewProps) {
   const router = useRouter();
 
@@ -59,6 +192,12 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
   // Filter/Search states
   const [customerSearch, setCustomerSearch] = useState('');
+
+  // V2 Filter & Sort States
+  const [selectedPmIds, setSelectedPmIds] = useState<number[]>([]);
+  const [selectedSalesIds, setSelectedSalesIds] = useState<number[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
+  const [sortMode, setSortMode] = useState<string>('activity_desc');
 
   // Customer Inline Form / Edit states
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -171,12 +310,23 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     loadData();
   }, [activeBU]);
 
+  // Trigger reloadProjects when V2 filter/sort options change
+  useEffect(() => {
+    reloadProjects();
+  }, [selectedPmIds, selectedSalesIds, selectedMemberIds, sortMode]);
+
   const loadData = async () => {
     setLoading(true);
     try {
       const [custs, projs, mems, mPhases, allCusts] = await Promise.all([
         getCustomers(activeBU).catch(e => { console.error('getCustomers error:', e); return []; }),
-        getProjects(activeBU).catch(e => { console.error('getProjects error:', e); return []; }),
+        getProjects({
+          business_unit: activeBU,
+          pm_ids: selectedPmIds.length > 0 ? selectedPmIds.join(',') : undefined,
+          sales_ids: selectedSalesIds.length > 0 ? selectedSalesIds.join(',') : undefined,
+          member_ids: selectedMemberIds.length > 0 ? selectedMemberIds.join(',') : undefined,
+          sort: sortMode
+        }).catch(e => { console.error('getProjects error:', e); return []; }),
         getMembers().catch(e => { console.error('getMembers error:', e); return []; }),
         getMasterPhases().catch(e => { console.error('getMasterPhases error:', e); return []; }),
         getCustomers().catch(e => { console.error('getCustomers all error:', e); return []; })
@@ -204,7 +354,13 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   // Safe reload for project updates without full loading state
   const reloadProjects = async () => {
     try {
-      const projs = await getProjects(activeBU);
+      const projs = await getProjects({
+        business_unit: activeBU,
+        pm_ids: selectedPmIds.length > 0 ? selectedPmIds.join(',') : undefined,
+        sales_ids: selectedSalesIds.length > 0 ? selectedSalesIds.join(',') : undefined,
+        member_ids: selectedMemberIds.length > 0 ? selectedMemberIds.join(',') : undefined,
+        sort: sortMode
+      });
       setProjects(projs || []);
     } catch (err) {
       console.error(err);
@@ -565,6 +721,16 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     );
   }
 
+  // Memoized options for SearchableCombobox
+  const memberOptions = useMemo<ComboboxOption[]>(() => {
+    return (members || [])
+      .map((m: any) => ({
+        id: m.id,
+        name: m.display_name || m.full_name || m.email || `Member #${m.id}`
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  }, [members]);
+
   return (
     <div className="space-y-6" style={{ contentVisibility: 'auto' }}>
       
@@ -594,6 +760,75 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
               </button>
             ))
           )}
+        </div>
+      </div>
+
+      {/* V2 FILTER & SORT TOOLBAR */}
+      <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-bold text-slate-500 uppercase tracking-wider text-[11px] shrink-0 flex items-center gap-1">
+            🔍 Bộ lọc:
+          </span>
+
+          {/* PM Filter */}
+          <SearchableCombobox
+            label="PM"
+            icon="👔"
+            options={memberOptions}
+            selectedIds={selectedPmIds}
+            onChange={setSelectedPmIds}
+            placeholder="Tìm PM..."
+          />
+
+          {/* Sales Filter */}
+          <SearchableCombobox
+            label="Sales"
+            icon="💼"
+            options={memberOptions}
+            selectedIds={selectedSalesIds}
+            onChange={setSelectedSalesIds}
+            placeholder="Tìm Sales..."
+          />
+
+          {/* Member Filter (Thành viên - Matches PM, Sales, Leader, Member) */}
+          <SearchableCombobox
+            label="Thành viên"
+            icon="👥"
+            options={memberOptions}
+            selectedIds={selectedMemberIds}
+            onChange={setSelectedMemberIds}
+            placeholder="Tìm Thành viên..."
+          />
+
+          {/* Clear Filters Button */}
+          {(selectedPmIds.length > 0 || selectedSalesIds.length > 0 || selectedMemberIds.length > 0) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedPmIds([]);
+                setSelectedSalesIds([]);
+                setSelectedMemberIds([]);
+              }}
+              className="text-blue-600 hover:text-blue-800 font-bold hover:underline text-[11px] cursor-pointer"
+            >
+              Xóa bộ lọc ✕
+            </button>
+          )}
+        </div>
+
+        {/* Right Sort Mode Dropdown */}
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-slate-500">Sắp xếp:</span>
+          <select
+            value={sortMode}
+            onChange={e => setSortMode(e.target.value)}
+            className="bg-white border border-slate-200 text-[#0f172a] rounded-lg px-3 py-1.5 font-bold outline-none focus:border-blue-500 cursor-pointer shadow-2xs"
+          >
+            <option value="activity_desc">⚡ Mới hoạt động nhất (Mặc định)</option>
+            <option value="created_desc">🆕 Mới tạo</option>
+            <option value="name_asc">🔤 Tên A-Z</option>
+            <option value="name_desc">🔤 Tên Z-A</option>
+          </select>
         </div>
       </div>
 
