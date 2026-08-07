@@ -110,7 +110,7 @@ export default function OverviewTab() {
     const wList = Array.from(wsMap.values()).sort((a,b) => b.count - a.count);
     
     // Set default workspace if not set
-    if (selectedWorkspace === 'all' && wList.length > 0 && selectedWorkspace !== '') {
+    if (selectedWorkspace === 'all' && wList.length > 0) {
        // if we want to default to the first one, uncomment:
        // setSelectedWorkspace(wList[0].name);
     }
