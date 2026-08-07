@@ -19,6 +19,7 @@ import {
   getWorkspaces,
   Workspace
 } from '@/lib/api';
+import SearchableSelect from './common/SearchableSelect';
 
 interface CustomersProjectsViewProps {
   onFlash: (msg: string, isError?: boolean) => void;

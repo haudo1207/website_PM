@@ -5,14 +5,16 @@ import {
   getSystemAuditStats,
   getSystemAuditLogs,
   exportSystemAuditLogs,
+  exportSystemAuditLogsJSON,
+  getSessionTimeline,
   getSystemAuditAnalytics,
   getProjects,
   getMembers,
   getWorkspaces,
   Workspace,
-  SystemAuditItem,
   SystemAuditStats
 } from '@/lib/api';
+import SearchableSelect from './common/SearchableSelect';
 
 export default function SystemAuditView() {
   // Stats Period State
@@ -619,89 +621,82 @@ export default function SystemAuditView() {
             </div>
 
             {/* Category Filter */}
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>Category:</span>
-              <select
-                value={categoryFilter}
-                onChange={e => setCategoryFilter(e.target.value)}
-                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
-              >
-                <option value="all">Tất cả Category</option>
-                <option value="Security">🛡️ Security</option>
-                <option value="Administration">👤 Administration</option>
-                <option value="Configuration">⚙️ Configuration</option>
-                <option value="Integration">🔌 Integration</option>
-                <option value="System">💻 System</option>
-              </select>
-            </div>
+            <SearchableSelect
+              label="Category"
+              icon="🏷️"
+              options={[
+                { id: 'Security', name: 'Security', icon: '🛡️' },
+                { id: 'Administration', name: 'Administration', icon: '👤' },
+                { id: 'Configuration', name: 'Configuration', icon: '⚙️' },
+                { id: 'Integration', name: 'Integration', icon: '🔌' },
+                { id: 'System', name: 'System', icon: '💻' }
+              ]}
+              value={categoryFilter}
+              onChange={val => setCategoryFilter(val)}
+              placeholder="🔍 Tìm Category..."
+            />
 
             {/* IP Risk Filter */}
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>IP Risk:</span>
-              <select
-                value={ipRiskFilter}
-                onChange={e => setIpRiskFilter(e.target.value)}
-                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
-              >
-                <option value="all">Tất cả IP Risk</option>
-                <option value="Internal">🛡️ Internal (Local/VPN)</option>
-                <option value="Trusted">🟢 Trusted (Office)</option>
-                <option value="Unknown">⚠️ Unknown (Public)</option>
-              </select>
-            </div>
+            <SearchableSelect
+              label="IP Risk"
+              icon="🛡️"
+              options={[
+                { id: 'Internal', name: 'Internal (Local/VPN)', icon: '🛡️' },
+                { id: 'Trusted', name: 'Trusted (Office)', icon: '🟢' },
+                { id: 'Unknown', name: 'Unknown (Public)', icon: '⚠️' }
+              ]}
+              value={ipRiskFilter}
+              onChange={val => setIpRiskFilter(val)}
+              placeholder="🔍 Tìm IP Risk..."
+            />
 
             {/* Outcome Filter */}
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>Outcome:</span>
-              <select
-                value={outcomeFilter}
-                onChange={e => setOutcomeFilter(e.target.value)}
-                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
-              >
-                <option value="all">Tất cả Kết quả</option>
-                <option value="SUCCESS">🟢 SUCCESS</option>
-                <option value="FAILED">🔴 FAILED</option>
-                <option value="PARTIAL">🟡 PARTIAL</option>
-              </select>
-            </div>
+            <SearchableSelect
+              label="Outcome"
+              icon="🎯"
+              options={[
+                { id: 'SUCCESS', name: 'SUCCESS', icon: '🟢' },
+                { id: 'FAILED', name: 'FAILED', icon: '🔴' },
+                { id: 'PARTIAL', name: 'PARTIAL', icon: '🟡' }
+              ]}
+              value={outcomeFilter}
+              onChange={val => setOutcomeFilter(val)}
+              placeholder="🔍 Tìm Kết quả..."
+            />
 
             {/* Action Filter */}
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>Action:</span>
-              <select
-                value={actionFilter}
-                onChange={e => setActionFilter(e.target.value)}
-                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
-              >
-                <option value="all">Tất cả Action</option>
-                <option value="LOGIN">LOGIN</option>
-                <option value="FAILED_LOGIN">FAILED_LOGIN</option>
-                <option value="LOGOUT">LOGOUT</option>
-                <option value="CREATE_USER">CREATE_USER</option>
-                <option value="UPDATE_USER">UPDATE_USER</option>
-                <option value="CHANGE_ROLE">CHANGE_ROLE</option>
-                <option value="LOCK_ACCOUNT">LOCK_ACCOUNT</option>
-                <option value="DELETE_USER">DELETE_USER</option>
-                <option value="CREATE">CREATE</option>
-                <option value="UPDATE">UPDATE</option>
-                <option value="DELETE">DELETE</option>
-              </select>
-            </div>
+            <SearchableSelect
+              label="Action"
+              icon="⚡"
+              options={[
+                { id: 'LOGIN', name: 'LOGIN' },
+                { id: 'FAILED_LOGIN', name: 'FAILED_LOGIN' },
+                { id: 'LOGOUT', name: 'LOGOUT' },
+                { id: 'CREATE_USER', name: 'CREATE_USER' },
+                { id: 'UPDATE_USER', name: 'UPDATE_USER' },
+                { id: 'CHANGE_ROLE', name: 'CHANGE_ROLE' },
+                { id: 'LOCK_ACCOUNT', name: 'LOCK_ACCOUNT' },
+                { id: 'DELETE_USER', name: 'DELETE_USER' },
+                { id: 'CREATE', name: 'CREATE' },
+                { id: 'UPDATE', name: 'UPDATE' },
+                { id: 'DELETE', name: 'DELETE' }
+              ]}
+              value={actionFilter}
+              onChange={val => setActionFilter(val)}
+              placeholder="🔍 Tìm Action..."
+              searchThreshold={6}
+            />
 
             {/* User Filter */}
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>User:</span>
-              <select
-                value={userFilter}
-                onChange={e => setUserFilter(e.target.value)}
-                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be] max-w-[140px] truncate"
-              >
-                <option value="all">All Users</option>
-                {usersList.map(u => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="User"
+              icon="👤"
+              options={usersList.map(u => ({ id: u.id, name: u.name }))}
+              value={userFilter}
+              onChange={val => setUserFilter(String(val))}
+              placeholder="🔍 Tìm người dùng..."
+              searchThreshold={5}
+            />
 
             {/* Date Filter */}
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
