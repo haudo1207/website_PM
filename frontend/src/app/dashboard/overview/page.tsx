@@ -293,7 +293,7 @@ export default function OverviewTab() {
         {filterType === 'week' && (
           <DatePicker 
              selected={date1} 
-             onChange={(d) => setDate1(d)} 
+             onChange={(d: any) => setDate1(d)} 
              showWeekPicker 
              placeholderText="Chọn tuần..."
              className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[140px]" 
@@ -302,7 +302,7 @@ export default function OverviewTab() {
         {filterType === 'month' && (
           <DatePicker 
              selected={date1} 
-             onChange={(d) => setDate1(d)} 
+             onChange={(d: any) => setDate1(d)} 
              showMonthYearPicker 
              dateFormat="MM/yyyy"
              placeholderText="Chọn tháng..."
@@ -312,7 +312,7 @@ export default function OverviewTab() {
         {filterType === 'year' && (
           <DatePicker 
              selected={date1} 
-             onChange={(d) => setDate1(d)} 
+             onChange={(d: any) => setDate1(d)} 
              showYearPicker 
              dateFormat="yyyy"
              placeholderText="Chọn năm..."
@@ -323,7 +323,7 @@ export default function OverviewTab() {
           <div className="flex items-center gap-2">
             <DatePicker 
                selected={date1} 
-               onChange={(d) => setDate1(d)} 
+               onChange={(d: any) => setDate1(d)} 
                selectsStart
                startDate={date1 || undefined}
                endDate={date2 || undefined}
@@ -334,7 +334,7 @@ export default function OverviewTab() {
             <span className="text-slate-400">-</span>
             <DatePicker 
                selected={date2} 
-               onChange={(d) => setDate2(d)} 
+               onChange={(d: any) => setDate2(d)} 
                selectsEnd
                startDate={date1 || undefined}
                endDate={date2 || undefined}
