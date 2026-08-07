@@ -232,11 +232,11 @@ export default function OverviewTab() {
              mcount++;
            }
          });
-         mSum[\`m\${i}\`] = mkpi;
-         mAvg[\`m\${i}\`] = mcount > 0 ? (mkpi / mcount).toFixed(1) : 0;
+         mSum[`m${i}`] = mkpi;
+         mAvg[`m${i}`] = mcount > 0 ? (mkpi / mcount).toFixed(1) : 0;
          // mock bonus logic: if kpi > 100 then bonus is (kpi - 100) * 0.1
          const bonus = mkpi > 100 ? (mkpi - 100) * 0.1 : 0;
-         mBon[\`m\${i}\`] = bonus.toFixed(1);
+         mBon[`m${i}`] = bonus.toFixed(1);
 
          grandKpi += mkpi;
          grandCount += mcount;
@@ -264,7 +264,7 @@ export default function OverviewTab() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setSelectedWorkspace('all')}
-            className={\`px-4 py-2 rounded-xl text-xs font-bold border transition-all \${selectedWorkspace === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}\`}
+            className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${selectedWorkspace === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
           >
             Toàn Công Ty ({rawMembers.length} người)
           </button>
@@ -272,7 +272,7 @@ export default function OverviewTab() {
             <button
               key={ws.name}
               onClick={() => setSelectedWorkspace(ws.name)}
-              className={\`px-4 py-2 rounded-xl text-xs font-bold border transition-all \${selectedWorkspace === ws.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}\`}
+              className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${selectedWorkspace === ws.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
               {ws.name} ({ws.count})
             </button>
@@ -313,7 +313,7 @@ export default function OverviewTab() {
       {/* KPI CARDS */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         <KpiCard label="Tasks Phụ Trách" value={pmStats.total} icon="tasks" border="border-l-[#0058be]" text="text-[#0058be]" trend="Tổng" />
-        <KpiCard label="Đã Hoàn Thành" value={pmStats.done} icon="check" border="border-l-emerald-500" text="text-emerald-600" trend={pmStats.total ? \`\${Math.round(pmStats.done/pmStats.total*100)}%\` : '0%'} />
+        <KpiCard label="Đã Hoàn Thành" value={pmStats.done} icon="check" border="border-l-emerald-500" text="text-emerald-600" trend={pmStats.total ? `${Math.round(pmStats.done/pmStats.total*100)}%` : '0%'} />
         <KpiCard label="Đang Làm" value={Math.max(0, pmStats.inProgress - pmStats.overdue)} icon="lightning" border="border-l-amber-500" text="text-amber-600" trend="Trong tiến độ" />
         <KpiCard label="Trễ Hạn" value={pmStats.overdue} icon="alert" border="border-l-red-500" text="text-red-600" trend="Cần xử lý" />
         <KpiCard label="Manday Thực Tế" value={pmStats.manday} icon="clock" border="border-l-cyan-500" text="text-cyan-600" trend="Đã tiêu hao" />
@@ -349,7 +349,7 @@ export default function OverviewTab() {
                { label: 'Normal (Bình thường)', val: priorityStats.normal, cls: 'bg-blue-50 text-blue-600 border-blue-200' },
                { label: 'Interrupt (Phát sinh)', val: priorityStats.interrupt, cls: 'bg-purple-50 text-purple-600 border-purple-200' }
              ].map(item => (
-                <div key={item.label} className={\`flex items-center justify-between p-3 rounded-xl border \${item.cls}\`}>
+                <div key={item.label} className={`flex items-center justify-between p-3 rounded-xl border ${item.cls}`}>
                   <span className="text-xs font-bold">{item.label}</span>
                   <span className="text-sm font-extrabold">{item.val} tasks</span>
                 </div>
@@ -410,9 +410,9 @@ export default function OverviewTab() {
                 memberRanking.map((m, i) => {
                   const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
                   return (
-                    <tr key={m.id} className={\`border-b border-slate-50 hover:bg-indigo-50/30 transition-colors \${i % 2 === 0 ? '' : 'bg-slate-50/20'}\`}>
+                    <tr key={m.id} className={`border-b border-slate-50 hover:bg-indigo-50/30 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}>
                       <td className="px-4 py-3.5 text-center">
-                        <span className={\`text-xs font-bold \${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}\`}>#{m.rank}</span>
+                        <span className={`text-xs font-bold ${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}`}>#{m.rank}</span>
                       </td>
                       <td className="px-4 py-3.5">
                         <span className="font-semibold text-[#0b1c30]">{m.name}</span>
@@ -461,7 +461,7 @@ export default function OverviewTab() {
                  {summaryMatrix.map((r,i) => (
                    <tr key={i} className="hover:bg-slate-50">
                      <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
-                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[\`m\${m}\`]}</td>)}
+                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[`m${m}`]}</td>)}
                      <td className="p-2 border border-slate-200 bg-indigo-50/30 font-extrabold text-indigo-700">{r.total}</td>
                    </tr>
                  ))}
@@ -486,7 +486,7 @@ export default function OverviewTab() {
                  {averageMatrix.map((r,i) => (
                    <tr key={i} className="hover:bg-slate-50">
                      <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
-                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[\`m\${m}\`]}</td>)}
+                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[`m${m}`]}</td>)}
                      <td className="p-2 border border-slate-200 bg-emerald-50/30 font-extrabold text-emerald-700">{r.total}</td>
                    </tr>
                  ))}
@@ -510,7 +510,7 @@ export default function OverviewTab() {
                  {bonusMatrix.map((r,i) => (
                    <tr key={i} className="hover:bg-slate-50">
                      <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
-                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold text-amber-600">{r[\`m\${m}\`]}</td>)}
+                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold text-amber-600">{r[`m${m}`]}</td>)}
                    </tr>
                  ))}
                </tbody>
