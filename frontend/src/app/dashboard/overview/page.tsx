@@ -9,6 +9,8 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 
 let cachedOverviewData: any = null;
 
@@ -20,24 +22,23 @@ function getISOWeek(d: Date) {
   return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1)/7);
 }
 
-function isTaskInDateRange(task: any, filterType: string, date1: string, date2: string) {
+function isTaskInDateRange(task: any, filterType: string, date1: Date | null, date2: Date | null) {
   if (filterType === 'all') return true;
   const tDate = new Date(task.end_date_est || task.created_at || Date.now());
   if (isNaN(tDate.getTime())) return true;
   
   if (filterType === 'month' && date1) {
-     const [y, m] = date1.split('-');
-     return tDate.getFullYear() === parseInt(y) && (tDate.getMonth() + 1) === parseInt(m);
+     return tDate.getFullYear() === date1.getFullYear() && tDate.getMonth() === date1.getMonth();
   }
   if (filterType === 'year' && date1) {
-     return tDate.getFullYear() === parseInt(date1);
+     return tDate.getFullYear() === date1.getFullYear();
   }
   if (filterType === 'week' && date1) {
-     const [y, w] = date1.split('-W');
-     return tDate.getFullYear() === parseInt(y) && getISOWeek(tDate) === parseInt(w);
+     return tDate.getFullYear() === date1.getFullYear() && getISOWeek(tDate) === getISOWeek(date1);
   }
   if (filterType === 'custom' && date1 && date2) {
      const ds = new Date(date1);
+     ds.setHours(0,0,0,0);
      const de = new Date(date2);
      de.setHours(23, 59, 59, 999);
      return tDate >= ds && tDate <= de;
@@ -56,8 +57,8 @@ export default function OverviewTab() {
   
   // Unified Date Filter
   const [filterType, setFilterType] = useState<string>('all'); // all, week, month, year, custom
-  const [date1, setDate1] = useState<string>(''); 
-  const [date2, setDate2] = useState<string>('');
+  const [date1, setDate1] = useState<Date | null>(null); 
+  const [date2, setDate2] = useState<Date | null>(null);
 
   // Matrix Filter
   const [matrixYear, setMatrixYear] = useState<number>(new Date().getFullYear());
@@ -244,7 +245,7 @@ export default function OverviewTab() {
   return (
     <div className="p-6 space-y-6">
       {/* HEADER & LEADER SELECTOR */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+      <div className="flex flex-col gap-4 border-b border-slate-100 pb-4">
         <div>
           <h2 className="text-lg font-extrabold text-[#0b1c30]">Dashboard Tổng Quan</h2>
           <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI của Team</p>
@@ -279,7 +280,7 @@ export default function OverviewTab() {
         </div>
         <select 
           value={filterType} 
-          onChange={(e) => { setFilterType(e.target.value); setDate1(''); setDate2(''); }}
+          onChange={(e) => { setFilterType(e.target.value); setDate1(null); setDate2(null); }}
           className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-400 cursor-pointer"
         >
           <option value="all">Tất cả thời gian</option>
@@ -289,14 +290,59 @@ export default function OverviewTab() {
           <option value="custom">Tùy chọn khoảng ngày</option>
         </select>
 
-        {filterType === 'week' && <input type="week" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />}
-        {filterType === 'month' && <input type="month" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />}
-        {filterType === 'year' && <input type="number" placeholder="YYYY" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none w-24 cursor-pointer" />}
+        {filterType === 'week' && (
+          <DatePicker 
+             selected={date1} 
+             onChange={(d) => setDate1(d)} 
+             showWeekPicker 
+             placeholderText="Chọn tuần..."
+             className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[140px]" 
+          />
+        )}
+        {filterType === 'month' && (
+          <DatePicker 
+             selected={date1} 
+             onChange={(d) => setDate1(d)} 
+             showMonthYearPicker 
+             dateFormat="MM/yyyy"
+             placeholderText="Chọn tháng..."
+             className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[140px]" 
+          />
+        )}
+        {filterType === 'year' && (
+          <DatePicker 
+             selected={date1} 
+             onChange={(d) => setDate1(d)} 
+             showYearPicker 
+             dateFormat="yyyy"
+             placeholderText="Chọn năm..."
+             className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[100px]" 
+          />
+        )}
         {filterType === 'custom' && (
           <div className="flex items-center gap-2">
-            <input type="date" value={date1} onChange={e => setDate1(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />
+            <DatePicker 
+               selected={date1} 
+               onChange={(d) => setDate1(d)} 
+               selectsStart
+               startDate={date1 || undefined}
+               endDate={date2 || undefined}
+               dateFormat="dd/MM/yyyy"
+               placeholderText="Từ ngày..."
+               className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[120px]" 
+            />
             <span className="text-slate-400">-</span>
-            <input type="date" value={date2} onChange={e => setDate2(e.target.value)} className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer" />
+            <DatePicker 
+               selected={date2} 
+               onChange={(d) => setDate2(d)} 
+               selectsEnd
+               startDate={date1 || undefined}
+               endDate={date2 || undefined}
+               minDate={date1 || undefined}
+               dateFormat="dd/MM/yyyy"
+               placeholderText="Đến ngày..."
+               className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[120px]" 
+            />
           </div>
         )}
       </div>
