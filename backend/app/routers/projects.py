@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy import case, or_, and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
@@ -299,6 +299,8 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     elif user_scope(current_user) != ALL_SCOPE:
         requested_scope = user_scope(current_user)
     project_code = body.get("project_code") or body.get("code")
+    if project_code:
+        project_code = str(project_code).strip()[:50]
     if project_code and db.query(Project.id).filter(Project.code == project_code).first():
         raise HTTPException(409, f"Project code '{project_code}' already exists.")
 
@@ -368,9 +370,9 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     db.add(p)
     try:
         db.flush()
-    except IntegrityError as exc:
+    except (IntegrityError, DataError) as exc:
         db.rollback()
-        raise HTTPException(409, f"Project code '{project_code}' already exists.") from exc
+        raise HTTPException(409, f"Project code '{project_code}' already exists or is invalid.") from exc
 
     # 1. Create default "Master" phase for new project
     db.add(Phase(
@@ -848,7 +850,7 @@ def list_phases(pid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/projects/{pid}/phases")
-def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
+def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(400, "Phase name is required.")
@@ -923,7 +925,7 @@ def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db),
 
 
 @router.delete("/projects/{pid}/phases/{phid}")
-def delete_phase(pid: int, phid: int, db: Session = Depends(get_db)):
+def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")

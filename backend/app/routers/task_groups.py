@@ -284,7 +284,7 @@ def list_task_groups(phid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/phases/{phid}/task-groups")
-def create_task_group(phid: int, body: dict, db: Session = Depends(get_db)):
+def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     phase = db.query(Phase).filter(Phase.id == phid).first()
     if not phase:
         raise HTTPException(404, "Phase not found.")
@@ -837,7 +837,8 @@ def copy_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=De
     project_id = tg.phase.project_id if (tg and tg.phase) else None
 
     # Calculate max sort order and next code
-    next_code = generate_next_task_code(gid, db)
+    group_index = get_group_index(tg, db)
+    next_code = get_next_task_code(group_index, gid, db)
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == gid).scalar() or 0
 
     new_task = Task(
