@@ -38,133 +38,7 @@ interface ComboboxOption {
   name: string;
 }
 
-interface SearchableComboboxProps {
-  label: string;
-  icon?: string;
-  options: ComboboxOption[];
-  selectedIds: number[];
-  onChange: (ids: number[]) => void;
-  placeholder?: string;
-}
 
-function SearchableCombobox({
-  label,
-  icon = '👤',
-  options,
-  selectedIds,
-  onChange,
-  placeholder = 'Tìm kiếm...'
-}: SearchableComboboxProps) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const removeDiacritics = (str: string) =>
-    (str || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-
-  const filteredOptions = useMemo(() => {
-    if (!search.trim()) return options;
-    const q = removeDiacritics(search);
-    return options.filter(opt => removeDiacritics(opt.name).includes(q));
-  }, [options, search]);
-
-  const toggleOption = (id: number) => {
-    if (selectedIds.includes(id)) {
-      onChange(selectedIds.filter(i => i !== id));
-    } else {
-      onChange([...selectedIds, id]);
-    }
-  };
-
-  const selectedCount = selectedIds.length;
-  const buttonText = selectedCount === 0
-    ? `Tất cả ${label}`
-    : selectedCount === 1
-    ? options.find(o => o.id === selectedIds[0])?.name || `${selectedCount} ${label}`
-    : `${selectedCount} ${label}`;
-
-  return (
-    <div className="relative min-w-[150px]" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={`w-full px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center justify-between gap-1.5 transition-all bg-white text-slate-700 cursor-pointer ${
-          selectedCount > 0
-            ? 'border-blue-500 bg-blue-50/60 font-bold text-blue-900'
-            : 'border-slate-200 hover:border-slate-300'
-        }`}
-      >
-        <span className="truncate flex items-center gap-1">
-          <span>{icon}</span>
-          <span className="truncate">{buttonText}</span>
-        </span>
-        <span className="text-[10px] text-slate-400">▼</span>
-      </button>
-
-      {open && (
-        <div className="absolute left-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-          <div className="p-2 border-b border-slate-100 bg-slate-50">
-            <input
-              type="text"
-              placeholder={placeholder}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full px-2.5 py-1 text-xs bg-white border border-slate-200 rounded-md outline-none focus:border-blue-500 font-medium"
-              autoFocus
-            />
-          </div>
-
-          <div className="max-h-48 overflow-y-auto p-1.5 divide-y divide-slate-50 text-xs">
-            {filteredOptions.length === 0 ? (
-              <p className="py-3 text-center text-slate-400 italic">Không tìm thấy người dùng</p>
-            ) : (
-              filteredOptions.map(opt => {
-                const checked = selectedIds.includes(opt.id);
-                return (
-                  <label
-                    key={opt.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-blue-50/70 cursor-pointer font-medium text-slate-700"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleOption(opt.id)}
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="truncate">{opt.name}</span>
-                  </label>
-                );
-              })
-            )}
-          </div>
-
-          {selectedCount > 0 && (
-            <div className="p-1.5 border-t border-slate-100 bg-slate-50 flex justify-between items-center text-[10px]">
-              <span className="text-slate-500 font-semibold">{selectedCount} đã chọn</span>
-              <button
-                type="button"
-                onClick={() => onChange([])}
-                className="text-blue-600 font-bold hover:underline"
-              >
-                Bỏ chọn tất cả
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function CustomersProjectsView({ onFlash }: CustomersProjectsViewProps) {
   const router = useRouter();
@@ -772,33 +646,36 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
           </span>
 
           {/* PM Filter */}
-          <SearchableCombobox
+          <SearchableSelect
             label="PM"
             icon="👔"
             options={memberOptions}
-            selectedIds={selectedPmIds}
+            value={selectedPmIds}
             onChange={setSelectedPmIds}
-            placeholder="Tìm PM..."
+            placeholder="🔍 Tìm PM..."
+            isMulti={true}
           />
 
           {/* Sales Filter */}
-          <SearchableCombobox
+          <SearchableSelect
             label="Sales"
             icon="💼"
             options={memberOptions}
-            selectedIds={selectedSalesIds}
+            value={selectedSalesIds}
             onChange={setSelectedSalesIds}
-            placeholder="Tìm Sales..."
+            placeholder="🔍 Tìm Sales..."
+            isMulti={true}
           />
 
           {/* Member Filter (Thành viên - Matches PM, Sales, Leader, Member) */}
-          <SearchableCombobox
+          <SearchableSelect
             label="Thành viên"
             icon="👥"
             options={memberOptions}
-            selectedIds={selectedMemberIds}
+            value={selectedMemberIds}
             onChange={setSelectedMemberIds}
-            placeholder="Tìm Thành viên..."
+            placeholder="🔍 Tìm Thành viên..."
+            isMulti={true}
           />
 
           {/* Clear Filters Button */}

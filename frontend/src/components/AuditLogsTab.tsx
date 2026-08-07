@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { getProjectAuditLogs, exportProjectAuditLogs, AuditLogItem } from '@/lib/api';
+import SearchableSelect from './common/SearchableSelect';
 
 interface AuditLogsTabProps {
   projectId: number;
@@ -396,54 +397,47 @@ export default function AuditLogsTab({
           </div>
 
           {/* Module Filter */}
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-            <span>Phân hệ:</span>
-            <select
-              value={moduleFilter}
-              onChange={e => setModuleFilter(e.target.value)}
-              className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
-            >
-              <option value="all">Tất cả Phân hệ</option>
-              <option value="Project">Project 📁</option>
-              <option value="Phase">Phase 🧩</option>
-              <option value="Task Group">Task Group 📂</option>
-              <option value="Task">Task ✅</option>
-              <option value="Meeting">Meeting 📅</option>
-              <option value="AI Check">AI Check 🤖</option>
-            </select>
-          </div>
+          <SearchableSelect
+            label="Phân hệ"
+            icon="📂"
+            options={[
+              { id: 'Project', name: 'Project 📁' },
+              { id: 'Phase', name: 'Phase 🧩' },
+              { id: 'Task Group', name: 'Task Group 📂' },
+              { id: 'Task', name: 'Task ✅' },
+              { id: 'Meeting', name: 'Meeting 📅' },
+              { id: 'AI Check', name: 'AI Check 🤖' }
+            ]}
+            value={moduleFilter}
+            onChange={val => setModuleFilter(String(val))}
+            placeholder="🔍 Tìm phân hệ..."
+          />
 
           {/* Action Filter */}
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-            <span>Hành động:</span>
-            <select
-              value={actionFilter}
-              onChange={e => setActionFilter(e.target.value)}
-              className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
-            >
-              <option value="all">Tất cả Hành động</option>
-              <option value="CREATE">Tạo mới (CREATE)</option>
-              <option value="UPDATE">Cập nhật (UPDATE)</option>
-              <option value="DELETE">Xóa (DELETE)</option>
-              <option value="COPY">Sao chép (COPY)</option>
-              <option value="CHECK">AI CHECK</option>
-            </select>
-          </div>
+          <SearchableSelect
+            label="Hành động"
+            icon="⚡"
+            options={[
+              { id: 'CREATE', name: 'Tạo mới (CREATE)' },
+              { id: 'UPDATE', name: 'Cập nhật (UPDATE)' },
+              { id: 'DELETE', name: 'Xóa (DELETE)' },
+              { id: 'COPY', name: 'Sao chép (COPY)' },
+              { id: 'CHECK', name: 'AI CHECK' }
+            ]}
+            value={actionFilter}
+            onChange={val => setActionFilter(String(val))}
+            placeholder="🔍 Tìm hành động..."
+          />
 
           {/* User Filter */}
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-            <span>Người dùng:</span>
-            <select
-              value={userFilter}
-              onChange={e => setUserFilter(e.target.value)}
-              className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be] max-w-[140px] truncate"
-            >
-              <option value="all">Tất cả người dùng</option>
-              {uniqueUsers.map(u => (
-                <option key={u.id} value={u.id}>{u.name}</option>
-              ))}
-            </select>
-          </div>
+          <SearchableSelect
+            label="Người dùng"
+            icon="👤"
+            options={uniqueUsers.map(u => ({ id: u.id, name: u.name }))}
+            value={userFilter}
+            onChange={val => setUserFilter(String(val))}
+            placeholder="🔍 Tìm người dùng..."
+          />
 
           {/* Date Filter */}
           <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
