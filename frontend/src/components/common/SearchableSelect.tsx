@@ -1,13 +1,15 @@
 'use client';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 
-export interface SelectOption {
+export interface SelectOptionItem {
   id: string | number;
   name: string;
   icon?: string;
   badge?: string;
   subtext?: string;
 }
+
+export type SelectOption = SelectOptionItem | string;
 
 export interface SearchableSelectProps {
   label: string;
@@ -19,6 +21,7 @@ export interface SearchableSelectProps {
   isMulti?: boolean;
   searchThreshold?: number; // Configurable threshold (Default 8)
   disabled?: boolean;
+  required?: boolean;
   className?: string;
 }
 
@@ -118,14 +121,24 @@ export default function SearchableSelect({
     return [value];
   }, [value]);
 
+  // Normalize options to object format
+  const parsedOptions = useMemo<SelectOptionItem[]>(() => {
+    return (options || []).map(opt => {
+      if (typeof opt === 'string' || typeof opt === 'number') {
+        return { id: opt, name: String(opt) };
+      }
+      return opt;
+    });
+  }, [options]);
+
   // Smart Search Filter Logic
   const filteredOptions = useMemo(() => {
-    if (!debouncedSearch.trim()) return options;
+    if (!debouncedSearch.trim()) return parsedOptions;
 
     const q = removeDiacritics(debouncedSearch);
     const words = q.split(/\s+/).filter(Boolean);
 
-    return options.filter(opt => {
+    return parsedOptions.filter(opt => {
       const optNameNorm = removeDiacritics(opt.name);
       const optSubtextNorm = removeDiacritics(opt.subtext || '');
       const initials = getInitials(opt.name);
@@ -136,7 +149,7 @@ export default function SearchableSelect({
         initials.includes(word)
       );
     });
-  }, [options, debouncedSearch]);
+  }, [parsedOptions, debouncedSearch]);
 
   // Always show search bar for 100% consistent Enterprise UX
   const showSearchBar = true;
@@ -229,15 +242,15 @@ export default function SearchableSelect({
       return `Tất cả ${label}`;
     }
     if (!isMulti) {
-      const found = options.find(o => String(o.id) === String(selectedValues[0]));
+      const found = parsedOptions.find(o => String(o.id) === String(selectedValues[0]));
       return found ? found.name : `Tất cả ${label}`;
     }
     if (selectedValues.length === 1) {
-      const found = options.find(o => String(o.id) === String(selectedValues[0]));
+      const found = parsedOptions.find(o => String(o.id) === String(selectedValues[0]));
       return found ? found.name : `1 ${label}`;
     }
     return `${selectedValues.length} ${label}`;
-  }, [selectedValues, options, label, isMulti]);
+  }, [selectedValues, parsedOptions, label, isMulti]);
 
   return (
     <div

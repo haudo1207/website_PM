@@ -12,6 +12,7 @@ import {
   getMembers,
   getWorkspaces,
   Workspace,
+  SystemAuditItem,
   SystemAuditStats
 } from '@/lib/api';
 import SearchableSelect from './common/SearchableSelect';
