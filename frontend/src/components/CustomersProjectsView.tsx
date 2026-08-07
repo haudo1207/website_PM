@@ -15,7 +15,9 @@ import {
   getMembers,
   getMasterPhases,
   getProjectTemplates,
-  applyProjectTemplate
+  applyProjectTemplate,
+  getWorkspaces,
+  Workspace
 } from '@/lib/api';
 
 interface CustomersProjectsViewProps {
@@ -38,13 +40,14 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   const [allCustomers, setAllCustomers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   
   // Loading states
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Selection states
-  const [activeBU, setActiveBU] = useState<'infrastructure' | 'markee'>('infrastructure');
+  const [activeBU, setActiveBU] = useState<string>('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
@@ -74,7 +77,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     name: '',
     year: new Date().getFullYear(),
     customerId: '' as string | number,
-    business: 'Infrastructure',
+    business: '',
     pmIds: [] as number[],
     leaderIds: [] as number[],
     salesIds: [] as number[],
@@ -155,6 +158,16 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
   // Fetch initial data
   useEffect(() => {
+    getWorkspaces()
+      .then(ws => {
+        setWorkspaces(ws || []);
+        setActiveBU(prev => prev || (ws?.[0]?.code || ''));
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!activeBU) return;
     loadData();
   }, [activeBU]);
 
@@ -205,18 +218,34 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     );
   }, [customers, customerSearch]);
 
+  // Workspace Master maps: code → display name and name → code
+  const wsNameByCode = useMemo(() => {
+    const m = new Map<string, string>();
+    (workspaces || []).forEach(w => m.set(w.code, w.name));
+    return m;
+  }, [workspaces]);
+
+  const wsCodeByName = useMemo(() => {
+    const m = new Map<string, string>();
+    (workspaces || []).forEach(w => m.set(w.name, w.code));
+    return m;
+  }, [workspaces]);
+
+  const wsCodes = useMemo(() => new Set((workspaces || []).map(w => w.code)), [workspaces]);
+
   // Business-filtered customers for the Project modal (mirrors Project Detail -> Edit Project)
   const modalBusinessCustomers = useMemo(() => {
+    const targetCode = wsCodeByName.get(projectForm.business) || projectForm.business.toLowerCase();
     return projectForm.business === 'All'
       ? allCustomers
-      : allCustomers.filter((c) => (c.business_unit || '').toLowerCase() === projectForm.business.toLowerCase());
-  }, [allCustomers, projectForm.business]);
+      : allCustomers.filter((c) => (c.business_unit || '').toLowerCase() === targetCode);
+  }, [allCustomers, projectForm.business, wsCodeByName]);
 
   const modalSelectedCustomerBu = (allCustomers.find((c) => c.id === Number(projectForm.customerId))?.business_unit || '').toLowerCase();
   const modalCustomerMismatch = !!projectForm.customerId && (
     projectForm.business === 'All'
-      ? !!modalSelectedCustomerBu && modalSelectedCustomerBu !== 'infrastructure' && modalSelectedCustomerBu !== 'markee'
-      : modalSelectedCustomerBu !== projectForm.business.toLowerCase()
+      ? !!modalSelectedCustomerBu && !wsCodes.has(modalSelectedCustomerBu)
+      : modalSelectedCustomerBu !== (wsCodeByName.get(projectForm.business) || projectForm.business.toLowerCase())
   );
 
   // Selected Customer details
@@ -363,7 +392,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       name: '',
       year: selectedYear || new Date().getFullYear(),
       customerId: selectedCustomerId || '',
-      business: activeBU === 'markee' ? 'Markee' : 'Infrastructure',
+      business: wsNameByCode.get(activeBU) || activeBU,
       pmIds: [],
       leaderIds: [],
       salesIds: [],
@@ -398,7 +427,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       name: proj.name || '',
       year: proj.year || new Date().getFullYear(),
       customerId: proj.customer_id || selectedCustomerId || '',
-      business: proj.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure'),
+      business: proj.business || wsNameByCode.get(activeBU) || activeBU,
       pmIds: pmIds.map(Number),
       leaderIds: leaderIds.map(Number),
       salesIds: salesIds.map(Number),
@@ -431,13 +460,15 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       const selectedCust = allCustomers.find(c => c.id === Number(projectForm.customerId));
       const cleanNameSlug = projectForm.name.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
       const safeCode = (cleanNameSlug.slice(0, 40) + `-${projectForm.year}`).slice(0, 50);
+      const bizName = projectForm.business || wsNameByCode.get(activeBU) || activeBU;
+      const bizCode = wsCodeByName.get(bizName) || bizName.toLowerCase();
       const payload = {
         name: projectForm.name.trim(),
         code: safeCode,
         customer_id: Number(projectForm.customerId),
         customer_name: selectedCust ? selectedCust.name : '',
-        business: projectForm.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure'),
-        data_scope: (projectForm.business || (activeBU === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase(),
+        business: bizName,
+        data_scope: bizCode,
         year: Number(projectForm.year),
         status: projectForm.status,
         description: projectForm.description,
@@ -544,28 +575,25 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
           <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Workspace</p>
         </div>
 
-        {/* Business Unit Selector Tabs */}
+        {/* Workspace Selector Tabs (from Workspace Master) */}
         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
-          <button
-            onClick={() => setActiveBU('infrastructure')}
-            className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-              activeBU === 'infrastructure'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-            }`}
-          >
-            <span>🛡️</span> Infrastructure
-          </button>
-          <button
-            onClick={() => setActiveBU('markee')}
-            className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-              activeBU === 'markee'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-            }`}
-          >
-            <span>🚀</span> Markee
-          </button>
+          {workspaces.length === 0 ? (
+            <span className="px-5 py-2 rounded-lg text-xs font-bold text-slate-400">No Workspaces</span>
+          ) : (
+            workspaces.map(ws => (
+              <button
+                key={ws.code}
+                onClick={() => setActiveBU(ws.code)}
+                className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                  activeBU === ws.code
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <span>🗂️</span> {ws.name}
+              </button>
+            ))
+          )}
         </div>
       </div>
 
@@ -916,7 +944,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                   <span>{modalMode === 'create' ? '➕ Tạo dự án' : '📝 Cập nhật dự án'}</span>
                 </h3>
                 <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 mt-0.5">
-                  <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">{projectForm.business || 'Infrastructure'}</span>
+                  <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">{projectForm.business || wsNameByCode.get(activeBU) || ''}</span>
                   <span>●</span>
                   <span className="text-slate-700 font-bold">
                     {projectForm.customerId 
@@ -1020,9 +1048,10 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                         onChange={e => setProjectForm({ ...projectForm, business: e.target.value })}
                         className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-bold text-blue-700"
                       >
-                        <option value="Infrastructure">Infrastructure</option>
-                        <option value="Markee">Markee</option>
-                        <option value="All">All (Cả 2 team)</option>
+                        {workspaces.map(ws => (
+                          <option key={ws.code} value={ws.name}>{ws.name}</option>
+                        ))}
+                        <option value="All">ALL (phạm vi tất cả team)</option>
                       </select>
                     </div>
                   </div>
@@ -1491,7 +1520,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                     <span>📊</span> Project Summary Preview
                   </span>
                   <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-extrabold uppercase">
-                    {projectForm.business || 'Infrastructure'}
+                    {projectForm.business || wsNameByCode.get(activeBU) || ''}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">

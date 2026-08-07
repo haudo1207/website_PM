@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.user import User
 from ..utils.auth import require_admin, hash_password, get_current_user
-from ..utils.access import VALID_DATA_SCOPES
+from ..utils.access import default_scope, is_valid_scope, valid_data_scopes
 from .accounts import (
     VALID_ROLES,
     ensure_superadmin_remains,
@@ -41,9 +41,9 @@ def create_user(body: dict, db: Session = Depends(get_db), _=Depends(require_adm
     role = body.get("role", "member")
     if role not in VALID_ROLES:
         raise HTTPException(400, f"Invalid role. Must be one of: {VALID_ROLES}")
-    data_scope = str(body.get("data_scope", "infrastructure")).strip().lower()
-    if data_scope not in VALID_DATA_SCOPES:
-        raise HTTPException(400, f"Invalid data_scope. Must be one of: {VALID_DATA_SCOPES}")
+    data_scope = str(body.get("data_scope") or default_scope(db)).strip().lower()
+    if not is_valid_scope(db, data_scope):
+        raise HTTPException(400, f"Invalid data_scope. Must be one of: {sorted(valid_data_scopes(db))}")
     
     from ..models.skill_master import Skill
     skills = body.get("skills", [])
@@ -79,8 +79,8 @@ def update_user(uid: int, body: dict, db: Session = Depends(get_db), admin=Depen
             u.skills = skill_objs
         elif k == "data_scope":
             value = str(v).strip().lower()
-            if value not in VALID_DATA_SCOPES:
-                raise HTTPException(400, f"Invalid data_scope. Must be one of: {VALID_DATA_SCOPES}")
+            if not is_valid_scope(db, value):
+                raise HTTPException(400, f"Invalid data_scope. Must be one of: {sorted(valid_data_scopes(db))}")
             u.data_scope = value
         elif k == "email":
             email = normalize_email(v)

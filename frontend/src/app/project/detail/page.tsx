@@ -17,6 +17,7 @@ import {
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
   getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks, getMasterPhases,
+  getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting
 } from '@/lib/api';
@@ -448,9 +449,10 @@ function ProjectDetailContent() {
   const [editProjectYear, setEditProjectYear] = useState<number>(new Date().getFullYear());
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCustomerId, setEditCustomerId] = useState<number | null>(null);
-  const [editBusiness, setEditBusiness] = useState<'Infrastructure' | 'Markee' | 'All'>('Infrastructure');
+  const [editBusiness, setEditBusiness] = useState<string>('');
   const [editCurrentPhase, setEditCurrentPhase] = useState('');
   const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
@@ -469,14 +471,16 @@ function ProjectDetailContent() {
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
 
+  const editWorkspaceCode = workspaces.find(w => w.name === editBusiness)?.code || editBusiness.toLowerCase();
   const editBusinessCustomers = editBusiness === 'All'
     ? dbCustomers
-    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editBusiness.toLowerCase());
+    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editWorkspaceCode);
+  const editWorkspaceCodes = new Set((workspaces || []).map(w => w.code));
   const selectedCustomerBu = (dbCustomers.find((c) => c.name === editCustomerName)?.business_unit || '').toLowerCase();
   const editCustomerMismatch = !!editCustomerName && (
     editBusiness === 'All'
-      ? !!selectedCustomerBu && selectedCustomerBu !== 'infrastructure' && selectedCustomerBu !== 'markee'
-      : selectedCustomerBu !== editBusiness.toLowerCase()
+      ? !!selectedCustomerBu && !editWorkspaceCodes.has(selectedCustomerBu)
+      : selectedCustomerBu !== editWorkspaceCode
   );
 
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -798,6 +802,14 @@ function ProjectDetailContent() {
       .catch((err) => {
         console.error('Error fetching master phases:', err);
       });
+
+    getWorkspaces()
+      .then((data) => {
+        setWorkspaces(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching workspaces:', err);
+      });
   }, []);
 
   useEffect(() => {
@@ -867,7 +879,7 @@ function ProjectDetailContent() {
         customer_name: editCustomerName.trim(),
         customer_id: editCustomerId,
         business: editBusiness,
-        data_scope: editBusiness.toLowerCase(),
+        data_scope: (workspaces.find(w => w.name === editBusiness)?.code) || editBusiness.toLowerCase(),
         current_phase: editCurrentPhase.trim(),
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
@@ -925,6 +937,7 @@ function ProjectDetailContent() {
       reloadAll();
     } catch (err: any) {
       alert('Lỗi tạo phase: ' + (err.response?.data?.detail || err.message));
+      reloadAll();
     }
   };
 
@@ -973,6 +986,7 @@ function ProjectDetailContent() {
       reloadAll();
     } catch (err: any) {
       alert('Lỗi xóa phase: ' + (err.response?.data?.detail || err.message));
+      reloadAll();
     }
   };
 
@@ -4052,7 +4066,7 @@ value={editValue}
                         setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
                         setEditCustomerName(project.customer_name || '');
                         setEditCustomerId(project.customer_id ?? null);
-                        setEditBusiness(project.business || 'Infrastructure');
+                        setEditBusiness(project.business || (workspaces[0]?.name || ''));
                         setEditCurrentPhase(project.current_phase || '');
 
                         setSelectedPms(project.pm_ids || (project.pm_id ? [project.pm_id] : []));
@@ -7035,12 +7049,14 @@ value={editValue}
                   <select
                     required
                     value={editBusiness}
-                    onChange={(e) => setEditBusiness(e.target.value as 'Infrastructure' | 'Markee' | 'All')}
+                    onChange={(e) => setEditBusiness(e.target.value)}
                     className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
                   >
-                    <option value="Infrastructure">Infrastructure</option>
-                    <option value="Markee">Markee</option>
-                    <option value="All">All (Cả 2 team)</option>
+                    {workspaces.length === 0 && <option value="">Đang tải...</option>}
+                    {workspaces.map(ws => (
+                      <option key={ws.code} value={ws.name}>{ws.name}</option>
+                    ))}
+                    <option value="All">ALL (phạm vi tất cả team)</option>
                   </select>
                 </div>
 

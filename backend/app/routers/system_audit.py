@@ -16,6 +16,7 @@ from ..models.project import Project
 from ..models.user import User
 from ..models.member import Member
 from ..utils.auth import get_current_user, require_admin
+from ..utils.access import get_workspaces, resolve_workspace
 
 router = APIRouter(prefix="/system-audit", tags=["system-audit"], dependencies=[Depends(require_admin)])
 
@@ -84,10 +85,19 @@ def get_system_audit_logs(
 
     if business_unit and business_unit.strip().lower() != "all":
         bu = business_unit.strip().lower()
-        if bu == "infrastructure":
-            q = q.filter(or_(AuditLog.business_unit.ilike("infrastructure"), AuditLog.business_unit.ilike("all"), AuditLog.business_unit.is_(None)))
-        elif bu == "markee":
-            q = q.filter(or_(AuditLog.business_unit.ilike("markee"), AuditLog.business_unit.ilike("all")))
+        ws = resolve_workspace(db, bu)
+        if ws is None:
+            q = q.filter(AuditLog.id == -1)
+        else:
+            bu_filters = [
+                AuditLog.business_unit.ilike(ws.code),
+                AuditLog.business_unit.ilike(ws.name),
+                AuditLog.business_unit.ilike("all"),
+            ]
+            workspaces = get_workspaces(db)
+            if workspaces and ws.id == workspaces[0].id:
+                bu_filters.append(AuditLog.business_unit.is_(None))
+            q = q.filter(or_(*bu_filters))
     if project_id:
         q = q.filter(AuditLog.project_id == project_id)
     if module and module.strip().lower() != "all":
@@ -141,7 +151,15 @@ def export_system_audit_logs(
     q = db.query(AuditLog)
 
     if business_unit and business_unit.strip().lower() != "all":
-        q = q.filter(AuditLog.business_unit.ilike(business_unit.strip()))
+        ws = resolve_workspace(db, business_unit.strip().lower())
+        if ws:
+            q = q.filter(or_(
+                AuditLog.business_unit.ilike(ws.code),
+                AuditLog.business_unit.ilike(ws.name),
+                AuditLog.business_unit.ilike("all"),
+            ))
+        else:
+            q = q.filter(AuditLog.id == -1)
     if project_id:
         q = q.filter(AuditLog.project_id == project_id)
     if module and module.strip().lower() != "all":

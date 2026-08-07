@@ -10,12 +10,16 @@ import {
   createMasterPhase,
   updateMasterPhase,
   reorderMasterPhases,
-  deleteMasterPhase
+  deleteMasterPhase,
+  createWorkspace,
+  updateWorkspace,
+  deleteWorkspace
 } from '@/lib/api';
 
 interface SystemCategoriesViewProps {
   departments: any[]; // Teams (Infrastructure, Markee, PMO, AI, HR)
   teams: any[];       // Levels (Intern, Fresher, Junior, Middle, Senior, Leader, PM)
+  workspaces: any[];  // Workspaces (INFRA, DEV, ...)
   onReload: () => void;
   onFlash: (msg: string) => void;
 }
@@ -23,10 +27,11 @@ interface SystemCategoriesViewProps {
 export default function SystemCategoriesView({
   departments,
   teams,
+  workspaces,
   onReload,
   onFlash
 }: SystemCategoriesViewProps) {
-  const [activeTab, setActiveTab] = useState<'teams' | 'levels' | 'phases'>('teams');
+  const [activeTab, setActiveTab] = useState<'teams' | 'levels' | 'phases' | 'workspaces'>('teams');
 
   // 1. TEAM STATES (formerly Departments)
   const [showAddTeam, setShowAddTeam] = useState(false);
@@ -52,6 +57,16 @@ export default function SystemCategoriesView({
   const [editingPhaseId, setEditingPhaseId] = useState<number | null>(null);
   const [editingPhaseName, setEditingPhaseName] = useState('');
   const [editingPhaseDesc, setEditingPhaseDesc] = useState('');
+
+  // 4. WORKSPACE STATES
+  const [showAddWorkspace, setShowAddWorkspace] = useState(false);
+  const [newWsName, setNewWsName] = useState('');
+  const [newWsCode, setNewWsCode] = useState('');
+  const [newWsDesc, setNewWsDesc] = useState('');
+  const [editingWsId, setEditingWsId] = useState<number | null>(null);
+  const [editingWsName, setEditingWsName] = useState('');
+  const [editingWsCode, setEditingWsCode] = useState('');
+  const [editingWsDesc, setEditingWsDesc] = useState('');
 
   useEffect(() => {
     loadMasterPhases();
@@ -199,11 +214,51 @@ export default function SystemCategoriesView({
     }
   };
 
+  // --- HANDLERS: WORKSPACES ---
+  const handleAddWorkspace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWsName.trim() || !newWsCode.trim()) return;
+    try {
+      await createWorkspace({ name: newWsName, code: newWsCode, description: newWsDesc });
+      setNewWsName('');
+      setNewWsCode('');
+      setNewWsDesc('');
+      setShowAddWorkspace(false);
+      onReload();
+      onFlash('Đã thêm Workspace mới thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi thêm Workspace');
+    }
+  };
+
+  const handleUpdateWorkspace = async (id: number) => {
+    if (!editingWsName.trim() || !editingWsCode.trim()) return;
+    try {
+      await updateWorkspace(id, { name: editingWsName, code: editingWsCode, description: editingWsDesc });
+      setEditingWsId(null);
+      onReload();
+      onFlash('Đã cập nhật Workspace thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi cập nhật Workspace');
+    }
+  };
+
+  const handleDeleteWorkspace = async (id: number, name: string) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa Workspace "${name}"?`)) return;
+    try {
+      await deleteWorkspace(id);
+      onReload();
+      onFlash('Đã xóa Workspace thành công');
+    } catch (err: any) {
+      onFlash(err.response?.data?.detail || 'Lỗi khi xóa Workspace');
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-12">
       <div>
         <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">DANH MỤC HỆ THỐNG</h1>
-        <p className="text-sm text-slate-500 mt-1">Quản lý các dữ liệu dùng chung của hệ thống: Team, Level cấp bậc và Giai đoạn dự án master</p>
+        <p className="text-sm text-slate-500 mt-1">Quản lý các dữ liệu dùng chung của hệ thống: Team, Level cấp bậc, Giai đoạn dự án master và Workspace</p>
       </div>
 
       {/* Navigation Sub-Tabs */}
@@ -237,6 +292,16 @@ export default function SystemCategoriesView({
           }`}
         >
           🚩 Giai đoạn dự án
+        </button>
+        <button
+          onClick={() => setActiveTab('workspaces')}
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'workspaces'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          🗂️ Workspace
         </button>
       </div>
 
@@ -578,6 +643,135 @@ export default function SystemCategoriesView({
                         </button>
                         <button
                           onClick={() => handleDeletePhase(mp.id, mp.name)}
+                          className="text-xs text-red-600 hover:underline font-semibold"
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: WORKSPACES (Master Data — Single Source of Truth) */}
+      {activeTab === 'workspaces' && (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
+                🗂️ Quản lý Workspace (Master Data)
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Nguồn dữ liệu duy nhất cho Workspace — dùng cho quyền truy cập dữ liệu, lọc dự án, khách hàng và audit log</p>
+            </div>
+            <button
+              onClick={() => setShowAddWorkspace(!showAddWorkspace)}
+              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg font-bold transition-all shadow-sm"
+            >
+              {showAddWorkspace ? 'Đóng' : '+ Thêm Workspace'}
+            </button>
+          </div>
+
+          {showAddWorkspace && (
+            <form onSubmit={handleAddWorkspace} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col md:flex-row gap-4 items-end">
+              <div className="flex-1 flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Workspace <span className="text-red-500">*</span></label>
+                <input
+                  required
+                  type="text"
+                  placeholder="Ví dụ: INFRA, DEV..."
+                  value={newWsName}
+                  onChange={e => setNewWsName(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex-1 flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mã Workspace <span className="text-red-500">*</span></label>
+                <input
+                  required
+                  type="text"
+                  placeholder="Ví dụ: infra, dev (chữ thường, không dấu, không khoảng trắng)"
+                  value={newWsCode}
+                  onChange={e => setNewWsCode(e.target.value.toLowerCase())}
+                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex-1 flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả (tùy chọn)</label>
+                <input
+                  type="text"
+                  placeholder="Mô tả workspace..."
+                  value={newWsDesc}
+                  onChange={e => setNewWsDesc(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                />
+              </div>
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shrink-0"
+              >
+                Lưu Workspace
+              </button>
+            </form>
+          )}
+
+          <div className="divide-y divide-slate-100">
+            {workspaces.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400">Chưa có Workspace nào được khởi tạo.</div>
+            ) : (
+              workspaces.map(w => (
+                <div key={w.id} className="p-4 px-6 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
+                  {editingWsId === w.id ? (
+                    <div className="flex-1 flex flex-col md:flex-row gap-3 items-center">
+                      <input
+                        type="text"
+                        value={editingWsName}
+                        onChange={e => setEditingWsName(e.target.value)}
+                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
+                      />
+                      <input
+                        type="text"
+                        value={editingWsCode}
+                        onChange={e => setEditingWsCode(e.target.value.toLowerCase())}
+                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
+                      />
+                      <input
+                        type="text"
+                        value={editingWsDesc}
+                        onChange={e => setEditingWsDesc(e.target.value)}
+                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => handleUpdateWorkspace(w.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
+                        <button onClick={() => setEditingWsId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <div className="text-xs font-bold text-[#0f172a] flex items-center gap-2">
+                          {w.name}
+                          <span className="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded font-mono font-bold">{w.code}</span>
+                        </div>
+                        {w.description && <div className="text-[11px] text-slate-500 mt-0.5">{w.description}</div>}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => {
+                            setEditingWsId(w.id);
+                            setEditingWsName(w.name);
+                            setEditingWsCode(w.code);
+                            setEditingWsDesc(w.description || '');
+                          }}
+                          className="text-xs text-blue-600 hover:underline font-semibold"
+                        >
+                          Sửa
+                        </button>
+                        <button
+                          onClick={() => handleDeleteWorkspace(w.id, w.name)}
                           className="text-xs text-red-600 hover:underline font-semibold"
                         >
                           Xóa

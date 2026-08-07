@@ -8,6 +8,8 @@ import {
   getSystemAuditAnalytics,
   getProjects,
   getMembers,
+  getWorkspaces,
+  Workspace,
   SystemAuditItem,
   SystemAuditStats
 } from '@/lib/api';
@@ -42,6 +44,7 @@ export default function SystemAuditView() {
   // Dropdown option lists
   const [projectsList, setProjectsList] = useState<{ id: number; name: string }[]>([]);
   const [usersList, setUsersList] = useState<{ id: number; name: string }[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
   // Selected Log for Detail Modal
   const [selectedLog, setSelectedLog] = useState<SystemAuditItem | null>(null);
@@ -59,6 +62,8 @@ export default function SystemAuditView() {
         setUsersList(mems.map((m: any) => ({ id: m.id, name: m.display_name || m.email })));
       }
     }).catch(() => {});
+
+    getWorkspaces().then(ws => setWorkspaces(ws || [])).catch(() => {});
 
     getSystemAuditAnalytics().then(setAnalytics).catch(() => {});
   }, []);
@@ -326,7 +331,7 @@ export default function SystemAuditView() {
               />
             </div>
 
-            {/* Business Filter */}
+            {/* Business Filter (dynamic from Workspace Master) */}
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>BU:</span>
               <select
@@ -335,8 +340,9 @@ export default function SystemAuditView() {
                 className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
                 <option value="all">All BU</option>
-                <option value="Infrastructure">Infrastructure</option>
-                <option value="Markee">Markee</option>
+                {workspaces.map(ws => (
+                  <option key={ws.code} value={ws.name}>{ws.name}</option>
+                ))}
               </select>
             </div>
 
@@ -483,11 +489,7 @@ export default function SystemAuditView() {
                       {log.user_name}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                        log.business_unit === 'Markee'
-                          ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
-                          : 'bg-blue-50 text-[#0058be] border border-blue-200/60'
-                      }`}>
+                      <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-blue-50 text-[#0058be] border border-blue-200/60">
                         {log.business_unit || 'All'}
                       </span>
                     </td>

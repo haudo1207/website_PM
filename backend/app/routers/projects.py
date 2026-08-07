@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy import case, or_, and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
@@ -21,7 +21,13 @@ from ..utils.audit_service import AuditService
 from sqlalchemy import func as sql_func
 from ..utils.access import (
     ALL_SCOPE,
-    VALID_DATA_SCOPES,
+    business_label_for_project,
+    business_unit_for_project,
+    default_workspace,
+    get_workspaces,
+    is_valid_scope,
+    resolve_workspace,
+    valid_data_scopes,
     ROLE_SUPER_ADMIN,
     ROLE_LEADER,
     ROLE_MEMBER,
@@ -108,8 +114,8 @@ def serialize_project(p, db):
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
-        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
-        "business_unit": p.customer.business_unit if p.customer else "infrastructure",
+        "business": business_label_for_project(db, p),
+        "business_unit": business_unit_for_project(db, p),
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": pm_names if pm_names else None,
@@ -140,7 +146,7 @@ def serialize_project(p, db):
     }
 
 
-def serialize_project_summary(p, phase_count, task_stats, role_members, all_members):
+def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members):
     """Serialize a project using list-level data loaded in a few batch queries."""
     pms = role_members.get("PM", [])
     leaders = role_members.get("Leader", [])
@@ -155,8 +161,8 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
-        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
-        "business_unit": p.customer.business_unit if p.customer else "infrastructure",
+        "business": business_label_for_project(db, p),
+        "business_unit": business_unit_for_project(db, p),
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": ", ".join(m[1] for m in pms) or None,
@@ -192,15 +198,19 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
     q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
-        b_val = "Markee" if target_b == "markee" else "Infrastructure"
-        q = q.filter(
-            or_(
-                Project.business == b_val,
-                Project.business == "All",
-                and_(Project.business.is_(None), Project.data_scope == target_b),
-                and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
+        ws = resolve_workspace(db, target_b)
+        if ws:
+            b_val = ws.name
+            q = q.filter(
+                or_(
+                    Project.business == b_val,
+                    Project.business == "All",
+                    and_(Project.business.is_(None), Project.data_scope == target_b),
+                    and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
+                )
             )
-        )
+        else:
+            q = q.filter(Project.id == -1)
     projects = q.order_by(Project.id.desc()).all()
     project_ids = [p.id for p in projects]
     if not project_ids:
@@ -254,6 +264,7 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
     return [
         serialize_project_summary(
             p,
+            db,
             phase_counts.get(p.id, 0),
             task_stats.get(p.id, (0, 0, 0)),
             role_members[p.id],
@@ -266,21 +277,30 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
 @router.post("/projects")
 def create_project(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     biz_input = str(body.get("business") or body.get("business_unit") or "").strip().lower()
-    if biz_input == "all":
+    scope_from_biz = None
+    if not biz_input:
+        d_ws = default_workspace(db)
+        biz_val = d_ws.name if d_ws else "All"
+    elif biz_input == "all":
         biz_val = "All"
-    elif biz_input == "markee":
-        biz_val = "Markee"
+        scope_from_biz = "all"
     else:
-        biz_val = "Infrastructure"
-    default_scope = biz_val.lower() if biz_input else user_scope(current_user)
+        ws = resolve_workspace(db, biz_input)
+        if ws is None:
+            raise HTTPException(400, f"Workspace '{biz_input}' không tồn tại.")
+        biz_val = ws.name
+        scope_from_biz = ws.code
+    default_scope = scope_from_biz if biz_input else user_scope(current_user)
     requested_scope = str(body.get("data_scope") or default_scope).strip().lower()
-    if requested_scope not in VALID_DATA_SCOPES:
-        raise HTTPException(400, "Invalid data scope.")
+    if not is_valid_scope(db, requested_scope):
+        raise HTTPException(400, f"Invalid data scope. Must be one of: {sorted(valid_data_scopes(db))}")
     if biz_val == "All":
         requested_scope = "all"
     elif user_scope(current_user) != ALL_SCOPE:
         requested_scope = user_scope(current_user)
     project_code = body.get("project_code") or body.get("code")
+    if project_code:
+        project_code = str(project_code).strip()[:50]
     if project_code and db.query(Project.id).filter(Project.code == project_code).first():
         raise HTTPException(409, f"Project code '{project_code}' already exists.")
 
@@ -291,15 +311,16 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == cust_id).first()
         if c_obj:
             cust_name = c_obj.name
-            # If business == "All", ensure customer exists in both Business Units
+            # If business == "All", ensure customer exists in every Workspace
             if biz_val == "All" and c_obj.name:
-                curr_bu = (c_obj.business_unit or "infrastructure").lower()
-                other_bu = "markee" if curr_bu == "infrastructure" else "infrastructure"
+                curr_bu = (c_obj.business_unit or "").lower()
+                other_ws = next((w for w in get_workspaces(db) if w.code != curr_bu), None)
+                other_bu = other_ws.code if other_ws else None
                 other_c = db.query(DB_Customer).filter(
                     DB_Customer.name.ilike(c_obj.name.strip()),
                     DB_Customer.business_unit == other_bu
                 ).first()
-                if not other_c:
+                if other_bu and not other_c:
                     other_c = DB_Customer(
                         name=c_obj.name.strip(),
                         description=c_obj.description,
@@ -349,9 +370,9 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     db.add(p)
     try:
         db.flush()
-    except IntegrityError as exc:
+    except (IntegrityError, DataError) as exc:
         db.rollback()
-        raise HTTPException(409, f"Project code '{project_code}' already exists.") from exc
+        raise HTTPException(409, f"Project code '{project_code}' already exists or is invalid.") from exc
 
     # 1. Create default "Master" phase for new project
     db.add(Phase(
@@ -411,7 +432,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         entity_id=p.id,
         action="CREATE",
         project_id=p.id,
-        description=f"Khởi tạo dự án '{p.name}' (Mã: {p.code or 'N/A'}, BU: {p.business or 'Infrastructure'})"
+        description=f"Khởi tạo dự án '{p.name}' (Mã: {p.code or 'N/A'}, BU: {p.business or business_label_for_project(db, p)})"
     )
     db.commit()
     return serialize_project(p, db)
@@ -424,10 +445,11 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
 
     years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
     b_input = (business or business_unit or "").strip().lower()
-    target_biz = "Markee" if b_input == "markee" else ("Infrastructure" if b_input else None)
+    ws = resolve_workspace(db, b_input) if b_input else None
+    target_biz = ws.name if ws else None
 
     for p in projects:
-        p_biz = p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure")
+        p_biz = business_label_for_project(db, p)
         if target_biz and p_biz != target_biz and p_biz != "All":
             continue
 
@@ -512,14 +534,17 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
 
     if "business" in body or "business_unit" in body:
         b_in = str(body.get("business") or body.get("business_unit") or "").strip().lower()
+        ws = None
         if b_in == "all":
             p.business = "All"
-        elif b_in == "markee":
-            p.business = "Markee"
         else:
-            p.business = "Infrastructure"
+            ws = resolve_workspace(db, b_in)
+            if b_in and ws is None:
+                raise HTTPException(400, f"Workspace '{b_in}' không tồn tại.")
+            if ws:
+                p.business = ws.name
         if "data_scope" not in body and (user_scope(current_user) == ALL_SCOPE or getattr(current_user, "role", None) in {"admin", "super_admin"}):
-            p.data_scope = b_in
+            p.data_scope = "all" if b_in == "all" else (ws.code if ws else p.data_scope)
     if p.customer_id:
         from ..models.system_category import Customer as DB_Customer
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == p.customer_id).first()
@@ -532,13 +557,14 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         c_name = str(p.customer_name).strip()
         c_obj = db.query(DB_Customer).filter(DB_Customer.name.ilike(c_name)).first()
         if c_obj:
-            curr_bu = (c_obj.business_unit or "infrastructure").lower()
-            other_bu = "markee" if curr_bu == "infrastructure" else "infrastructure"
+            curr_bu = (c_obj.business_unit or "").lower()
+            other_ws = next((w for w in get_workspaces(db) if w.code != curr_bu), None)
+            other_bu = other_ws.code if other_ws else None
             other_c = db.query(DB_Customer).filter(
                 DB_Customer.name.ilike(c_name),
                 DB_Customer.business_unit == other_bu
             ).first()
-            if not other_c:
+            if other_bu and not other_c:
                 other_c = DB_Customer(
                     name=c_name,
                     description=c_obj.description,
@@ -548,8 +574,8 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
                 db.flush()
     if "data_scope" in body:
         requested_scope = str(body["data_scope"]).strip().lower()
-        if requested_scope not in VALID_DATA_SCOPES:
-            raise HTTPException(400, "Invalid data scope.")
+        if not is_valid_scope(db, requested_scope):
+            raise HTTPException(400, f"Invalid data scope. Must be one of: {sorted(valid_data_scopes(db))}")
         if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) not in {"super_admin", "admin", "leader"}:
             raise HTTPException(403, "Only full-scope users can change project scope.")
         p.data_scope = requested_scope
@@ -824,7 +850,7 @@ def list_phases(pid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/projects/{pid}/phases")
-def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
+def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(400, "Phase name is required.")
@@ -899,7 +925,7 @@ def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db),
 
 
 @router.delete("/projects/{pid}/phases/{phid}")
-def delete_phase(pid: int, phid: int, db: Session = Depends(get_db)):
+def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")

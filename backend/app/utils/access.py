@@ -1,19 +1,18 @@
 import re
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import or_
+from sqlalchemy import or_, func as sql_func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.meeting import Meeting
 from ..models.phase import Phase
 from ..models.project import Project, project_members
+from ..models.system_category import Workspace
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from .auth import get_current_user
 
 ALL_SCOPE = "all"
-DEFAULT_SCOPE = "infrastructure"
-VALID_DATA_SCOPES = {ALL_SCOPE, DEFAULT_SCOPE, "markee"}
 
 # ── Role constants ──────────────────────────────────────────
 ROLE_SUPER_ADMIN = "super_admin"
@@ -22,12 +21,83 @@ ROLE_MEMBER = "member"
 ROLE_VIEWER = "viewer"
 VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER, "admin"}
 WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, "admin"}
-# Teams a Leader may be assigned to (Leader cannot use "all").
-LEADER_ALLOWED_SCOPES = {DEFAULT_SCOPE, "markee"}
+
+
+# ── Workspace Master (Single Source of Truth) ───────────────
+def get_workspaces(db: Session):
+    """Every Workspace must come from the Workspace Master table."""
+    return db.query(Workspace).order_by(Workspace.id.asc()).all()
+
+
+def resolve_workspace(db: Session, value):
+    """Resolve a Workspace by its code or case-insensitive display name."""
+    v = str(value or "").strip().lower()
+    if not v:
+        return None
+    ws = db.query(Workspace).filter(Workspace.code == v).first()
+    if not ws:
+        ws = db.query(Workspace).filter(sql_func.lower(Workspace.name) == v).first()
+    return ws
+
+
+def is_valid_scope(db: Session, scope) -> bool:
+    s = str(scope or "").strip().lower()
+    if s == ALL_SCOPE:
+        return True
+    return resolve_workspace(db, s) is not None
+
+
+def valid_data_scopes(db: Session):
+    return {ALL_SCOPE} | {w.code for w in get_workspaces(db)}
+
+
+def leader_allowed_scopes(db: Session):
+    return {w.code for w in get_workspaces(db)}
+
+
+def default_workspace(db: Session):
+    workspaces = get_workspaces(db)
+    return workspaces[0] if workspaces else None
+
+
+def default_scope(db: Session) -> str:
+    ws = default_workspace(db)
+    return ws.code if ws else "infrastructure"
+
+
+def scope_display_name(db: Session, scope) -> str:
+    """Map a scope code to its Workspace display name ('all' → 'All')."""
+    s = str(scope or "").strip().lower()
+    if s == ALL_SCOPE:
+        return "All"
+    ws = resolve_workspace(db, s)
+    return ws.name if ws else s
+
+
+def business_label_for_project(db: Session, project) -> str:
+    """Display name for a project: explicit business value or resolved from customer BU."""
+    if project.business:
+        return project.business
+    bu_code = project.customer.business_unit if project.customer else None
+    ws = resolve_workspace(db, bu_code or getattr(project, "data_scope", None))
+    return ws.name if ws else "All"
+
+
+def business_unit_for_project(db: Session, project) -> str:
+    """Workspace code for a project, resolved from the customer BU / data scope."""
+    if project.customer and project.customer.business_unit:
+        return project.customer.business_unit
+    ws = resolve_workspace(db, getattr(project, "data_scope", None))
+    return ws.code if ws else default_scope(db)
 
 
 def user_scope(user) -> str:
-    return (getattr(user, "data_scope", None) or DEFAULT_SCOPE).strip().lower()
+    return (getattr(user, "data_scope", None) or default_scope_guard()).strip().lower()
+
+
+def default_scope_guard() -> str:
+    """Legacy fallback only used before the Workspace Master is seeded."""
+    return "infrastructure"
 
 
 def project_query_for_user(db: Session, user):
@@ -46,13 +116,14 @@ def project_query_for_user(db: Session, user):
 
     if role == ROLE_LEADER:
         member_id = getattr(user, "member_id", None)
-        b_val = "Markee" if scope == "markee" else "Infrastructure"
+        ws = resolve_workspace(db, scope)
         filters = [
             Project.data_scope == scope,
             Project.data_scope == ALL_SCOPE,
             Project.business == "All",
-            Project.business == b_val,
         ]
+        if ws:
+            filters.append(Project.business == ws.name)
         if member_id:
             assigned_project_ids = (
                 db.query(project_members.c.project_id)

@@ -37,3 +37,10 @@ class Customer(Base):
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     business_unit = Column(String, nullable=False, default="infrastructure", index=True)
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False)
+    code = Column(String(50), unique=True, nullable=False)
+    description = Column(String, nullable=True)
