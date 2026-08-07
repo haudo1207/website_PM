@@ -82,8 +82,13 @@ class AuditService:
                 user_agent=ua[:255] if ua else None,
                 request_url=url[:255] if url else None
             )
-            db.add(log_entry)
-            db.flush()
+            # Audit logging must not poison the caller's transaction. A schema
+            # mismatch or an unavailable audit table should roll back only the
+            # audit insert, not leave the shared Session in PendingRollbackError
+            # and turn an otherwise successful API operation into a false 500.
+            with db.begin_nested():
+                db.add(log_entry)
+                db.flush([log_entry])
             return log_entry
         except Exception as err:
             print(f"[AuditService] Warning: Failed to record audit log: {err}")
