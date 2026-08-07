@@ -250,10 +250,10 @@ export default function OverviewTab() {
           <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI của Team</p>
         </div>
         
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
           <button
             onClick={() => setSelectedLeader('all')}
-            className={`px-4 py-2 rounded-xl border transition-all text-left ${selectedLeader === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            className={`shrink-0 min-w-[140px] px-4 py-2 rounded-xl border transition-all text-left ${selectedLeader === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
           >
             <div className="text-xs font-bold">Toàn bộ Leader</div>
             <div className="text-[10px] font-normal opacity-80">{leaders.length} team · {rawMembers.length} member</div>
@@ -262,10 +262,10 @@ export default function OverviewTab() {
             <button
               key={ld.name}
               onClick={() => setSelectedLeader(ld.name)}
-              className={`px-4 py-2 rounded-xl border transition-all text-left ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              className={`shrink-0 min-w-[140px] px-4 py-2 rounded-xl border transition-all text-left ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
-              <div className="text-xs font-bold">{ld.name}</div>
-              <div className="text-[10px] font-normal opacity-80">{ld.team} · {ld.count} member</div>
+              <div className="text-xs font-bold truncate">{ld.name}</div>
+              <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
             </button>
           ))}
         </div>
