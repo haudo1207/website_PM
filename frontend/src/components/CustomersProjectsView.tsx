@@ -1051,7 +1051,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                         {workspaces.map(ws => (
                           <option key={ws.code} value={ws.name}>{ws.name}</option>
                         ))}
-                        <option value="All">All (Cả 2 team)</option>
+                        <option value="All">ALL (phạm vi tất cả team)</option>
                       </select>
                     </div>
                   </div>
