@@ -51,8 +51,8 @@ export default function OverviewTab() {
   const [rawProjects, setRawProjects] = useState<any[]>(cachedOverviewData?.rawProjects || []);
   const [rawTasks, setRawTasks] = useState<any[]>(cachedOverviewData?.rawTasks || []);
   
-  // Workspace Filter
-  const [selectedWorkspace, setSelectedWorkspace] = useState<string>('all');
+  // Workspace/Leader Filter
+  const [selectedLeader, setSelectedLeader] = useState<string>('all');
   
   // Unified Date Filter
   const [filterType, setFilterType] = useState<string>('all'); // all, week, month, year, custom
@@ -91,7 +91,7 @@ export default function OverviewTab() {
 
   // Derived Data
   const { 
-    workspaces, 
+    leaders, 
     activeTeamMembers, 
     filteredTasks, 
     pmStats, 
@@ -100,25 +100,24 @@ export default function OverviewTab() {
     memberRanking,
     activeProjects
   } = useMemo(() => {
-    // 1. Get Workspaces (Teams)
-    const wsMap = new Map();
+    // 1. Get Leaders
+    const leaderMap = new Map();
     rawMembers.forEach(m => {
-      const wsName = m.team || m.department || 'Khác';
-      if (!wsMap.has(wsName)) wsMap.set(wsName, { name: wsName, count: 0 });
-      wsMap.get(wsName).count++;
+      const lName = m.leader_name || 'Không có Leader';
+      if (!leaderMap.has(lName)) leaderMap.set(lName, { name: lName, count: 0, team: m.team || m.department || 'Khác' });
+      leaderMap.get(lName).count++;
     });
-    const wList = Array.from(wsMap.values()).sort((a,b) => b.count - a.count);
+    const lList = Array.from(leaderMap.values()).sort((a,b) => b.count - a.count);
     
-    // Set default workspace if not set
-    if (selectedWorkspace === 'all' && wList.length > 0) {
-       // if we want to default to the first one, uncomment:
-       // setSelectedWorkspace(wList[0].name);
+    // Set default if not set
+    if (selectedLeader === 'all' && lList.length > 0) {
+       // setSelectedLeader(lList[0].name);
     }
 
-    // 2. Filter Members by Workspace
+    // 2. Filter Members by Leader
     let activeTeamList = rawMembers;
-    if (selectedWorkspace && selectedWorkspace !== 'all') {
-      activeTeamList = rawMembers.filter(m => (m.team || m.department || 'Khác') === selectedWorkspace);
+    if (selectedLeader && selectedLeader !== 'all') {
+      activeTeamList = rawMembers.filter(m => (m.leader_name || 'Không có Leader') === selectedLeader);
     }
     const teamMemberIds = activeTeamList.map(m => m.id);
 
@@ -133,7 +132,7 @@ export default function OverviewTab() {
 
     fTasks.forEach(t => {
       pmManday += (t.manday_actual || t.manday_est || 0);
-      pmKpi += (t.kpi_base || 0); // approximation, actual KPI calculation might differ
+      pmKpi += (t.kpi_base || 0);
       const isDone = t.status === 'Done' || t.status === 'done';
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
       const isOverdue = !isDone && !isCancel && (t.days_late > 0);
@@ -173,9 +172,6 @@ export default function OverviewTab() {
            if (t.days_late > 0) o++;
         }
       });
-      // Just an approximation for KPI if it's not pre-calculated
-      // If we want total kpi from db we'd use m.kpi_total but it's not date-filtered.
-      // So we use calculated k.
       return { id: m.id, name: m.display_name || m.full_name, assigned: myTasks.length, done: d, inProgress: i, overdue: o, manday: md, kpi: k };
     });
     initialRanking.sort((a,b) => b.kpi - a.kpi);
@@ -194,7 +190,7 @@ export default function OverviewTab() {
     }).sort((a,b) => b.progress - a.progress);
 
     return { 
-      workspaces: wList, 
+      leaders: lList, 
       activeTeamMembers: activeTeamList, 
       filteredTasks: fTasks,
       pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday*10)/10, kpi: Math.round(pmKpi) },
@@ -203,9 +199,9 @@ export default function OverviewTab() {
       memberRanking: finalRanking,
       activeProjects: aProjects
     };
-  }, [rawMembers, rawProjects, rawTasks, selectedWorkspace, filterType, date1, date2]);
+  }, [rawMembers, rawProjects, rawTasks, selectedLeader, filterType, date1, date2]);
 
-  // KPI Matrices Generation
+  // KPI Matrices Generation (Transposed: Months as Rows, Members as Columns)
   const { summaryMatrix, averageMatrix, bonusMatrix } = useMemo(() => {
      let sumM: any[] = [];
      let avgM: any[] = [];
@@ -213,40 +209,33 @@ export default function OverviewTab() {
      
      if(activeTeamMembers.length === 0) return { summaryMatrix: [], averageMatrix: [], bonusMatrix: [] };
 
-     activeTeamMembers.forEach(m => {
-       const mSum: any = { name: m.display_name || m.full_name, total: 0 };
-       const mAvg: any = { name: m.display_name || m.full_name, total: 0 };
-       const mBon: any = { name: m.display_name || m.full_name, total: 0 };
-       
-       let grandKpi = 0;
-       let grandCount = 0;
+     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-       for(let i=1; i<=12; i++) {
-         const mTasks = rawTasks.filter(t => (t.assigned_id === m.id || t.support_id === m.id) && t.status === 'Done');
-         let mkpi = 0;
-         let mcount = 0;
-         mTasks.forEach(t => {
-           const td = new Date(t.end_date_est || t.created_at || Date.now());
-           if(td.getFullYear() === matrixYear && (td.getMonth()+1) === i) {
-             mkpi += (t.kpi_base || 0);
-             mcount++;
-           }
+     for(let i=1; i<=12; i++) {
+         const rowSum: any = { month: `${monthNames[i-1]} - ${matrixYear}` };
+         const rowAvg: any = { month: `${monthNames[i-1]} - ${matrixYear}` };
+         const rowBon: any = { month: `${monthNames[i-1]} - ${matrixYear}` };
+
+         activeTeamMembers.forEach(m => {
+            const mTasks = rawTasks.filter(t => (t.assigned_id === m.id || t.support_id === m.id) && (t.status === 'Done' || t.status === 'done'));
+            let mkpi = 0;
+            let mcount = 0;
+            mTasks.forEach(t => {
+               const td = new Date(t.end_date_est || t.created_at || Date.now());
+               if(td.getFullYear() === matrixYear && (td.getMonth()+1) === i) {
+                 mkpi += (t.kpi_base || 0);
+                 mcount++;
+               }
+            });
+            rowSum[`m_${m.id}`] = mkpi;
+            rowAvg[`m_${m.id}`] = mcount > 0 ? (mkpi / mcount).toFixed(1) : 0;
+            const bonus = mkpi > 100 ? (mkpi - 100) * 0.1 : 0;
+            rowBon[`m_${m.id}`] = bonus.toFixed(1);
          });
-         mSum[`m${i}`] = mkpi;
-         mAvg[`m${i}`] = mcount > 0 ? (mkpi / mcount).toFixed(1) : 0;
-         // mock bonus logic: if kpi > 100 then bonus is (kpi - 100) * 0.1
-         const bonus = mkpi > 100 ? (mkpi - 100) * 0.1 : 0;
-         mBon[`m${i}`] = bonus.toFixed(1);
-
-         grandKpi += mkpi;
-         grandCount += mcount;
-       }
-       mSum.total = grandKpi;
-       mAvg.total = grandCount > 0 ? (grandKpi / grandCount).toFixed(1) : 0;
-       sumM.push(mSum);
-       avgM.push(mAvg);
-       bonM.push(mBon);
-     });
+         sumM.push(rowSum);
+         avgM.push(rowAvg);
+         bonM.push(rowBon);
+     }
      
      return { summaryMatrix: sumM, averageMatrix: avgM, bonusMatrix: bonM };
   }, [rawTasks, activeTeamMembers, matrixYear]);
@@ -254,27 +243,29 @@ export default function OverviewTab() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* HEADER & WORKSPACE SELECTOR */}
+      {/* HEADER & LEADER SELECTOR */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div>
           <h2 className="text-lg font-extrabold text-[#0b1c30]">Dashboard Tổng Quan</h2>
-          <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI theo Workspace</p>
+          <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI của Team</p>
         </div>
         
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => setSelectedWorkspace('all')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${selectedWorkspace === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            onClick={() => setSelectedLeader('all')}
+            className={`px-4 py-2 rounded-xl border transition-all text-left ${selectedLeader === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
           >
-            Toàn Công Ty ({rawMembers.length} người)
+            <div className="text-xs font-bold">Toàn bộ Leader</div>
+            <div className="text-[10px] font-normal opacity-80">{leaders.length} team · {rawMembers.length} member</div>
           </button>
-          {workspaces.map(ws => (
+          {leaders.map(ld => (
             <button
-              key={ws.name}
-              onClick={() => setSelectedWorkspace(ws.name)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${selectedWorkspace === ws.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              key={ld.name}
+              onClick={() => setSelectedLeader(ld.name)}
+              className={`px-4 py-2 rounded-xl border transition-all text-left ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
-              {ws.name} ({ws.count})
+              <div className="text-xs font-bold">{ld.name}</div>
+              <div className="text-[10px] font-normal opacity-80">{ld.team} · {ld.count} member</div>
             </button>
           ))}
         </div>
@@ -338,11 +329,11 @@ export default function OverviewTab() {
         </div>
 
         {/* PRIORITY TABLE */}
-        <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex flex-col">
           <div className="px-5 py-4 border-b border-slate-100 bg-slate-50">
             <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Mức Độ Ưu Tiên (Priority)</h3>
           </div>
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
              {[
                { label: 'Critical (Khẩn cấp)', val: priorityStats.critical, cls: 'bg-red-50 text-red-600 border-red-200' },
                { label: 'High (Cao)', val: priorityStats.high, cls: 'bg-orange-50 text-orange-600 border-orange-200' },
@@ -446,23 +437,27 @@ export default function OverviewTab() {
          </div>
 
          {/* 1. Summary Matrix */}
-         <div>
-           <h4 className="text-xs font-bold text-indigo-700 mb-2">1. Tổng Hợp KPI (Summary Matrix)</h4>
-           <div className="overflow-x-auto custom-scrollbar">
-             <table className="w-full text-[10px] text-center border-collapse">
-               <thead>
-                 <tr className="bg-slate-100 text-slate-600 font-bold">
-                   <th className="p-2 border border-slate-200 text-left min-w-[120px]">Thành Viên</th>
-                   {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <th key={m} className="p-2 border border-slate-200">T{m}</th>)}
-                   <th className="p-2 border border-slate-200 bg-indigo-50 text-indigo-700">Tổng</th>
+         <div className="w-full">
+           <h4 className="text-xs font-bold text-pink-700 mb-2">1. Tổng Hợp KPI (Summary Matrix)</h4>
+           <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
+               <thead className="sticky top-0 z-10">
+                 <tr className="bg-pink-500 text-white font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[100px] sticky left-0 bg-pink-600 z-20">Tháng</th>
+                   {activeTeamMembers.map(m => (
+                     <th key={m.id} className="p-2 border border-slate-200 min-w-[80px] bg-pink-500">{m.display_name?.split(' ').pop() || m.full_name?.split(' ').pop()}</th>
+                   ))}
                  </tr>
                </thead>
                <tbody>
                  {summaryMatrix.map((r,i) => (
                    <tr key={i} className="hover:bg-slate-50">
-                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
-                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[`m${m}`]}</td>)}
-                     <td className="p-2 border border-slate-200 bg-indigo-50/30 font-extrabold text-indigo-700">{r.total}</td>
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
+                     {activeTeamMembers.map(m => {
+                        const val = r[`m_${m.id}`];
+                        const bg = val > 100 ? 'bg-amber-300' : (val > 50 ? 'bg-amber-100' : 'bg-white');
+                        return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                     })}
                    </tr>
                  ))}
                </tbody>
@@ -471,23 +466,27 @@ export default function OverviewTab() {
          </div>
 
          {/* 2. Average Matrix */}
-         <div>
+         <div className="w-full">
            <h4 className="text-xs font-bold text-emerald-700 mb-2">2. Trung Bình KPI / Task (Average Matrix)</h4>
-           <div className="overflow-x-auto custom-scrollbar">
-             <table className="w-full text-[10px] text-center border-collapse">
-               <thead>
-                 <tr className="bg-slate-100 text-slate-600 font-bold">
-                   <th className="p-2 border border-slate-200 text-left min-w-[120px]">Thành Viên</th>
-                   {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <th key={m} className="p-2 border border-slate-200">T{m}</th>)}
-                   <th className="p-2 border border-slate-200 bg-emerald-50 text-emerald-700">Trung bình</th>
+           <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
+               <thead className="sticky top-0 z-10">
+                 <tr className="bg-emerald-500 text-white font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[100px] sticky left-0 bg-emerald-600 z-20">Tháng</th>
+                   {activeTeamMembers.map(m => (
+                     <th key={m.id} className="p-2 border border-slate-200 min-w-[80px] bg-emerald-500">{m.display_name?.split(' ').pop() || m.full_name?.split(' ').pop()}</th>
+                   ))}
                  </tr>
                </thead>
                <tbody>
                  {averageMatrix.map((r,i) => (
                    <tr key={i} className="hover:bg-slate-50">
-                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
-                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold">{r[`m${m}`]}</td>)}
-                     <td className="p-2 border border-slate-200 bg-emerald-50/30 font-extrabold text-emerald-700">{r.total}</td>
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
+                     {activeTeamMembers.map(m => {
+                        const val = r[`m_${m.id}`];
+                        const bg = val > 10 ? 'bg-green-200' : (val > 5 ? 'bg-green-100' : 'bg-white');
+                        return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                     })}
                    </tr>
                  ))}
                </tbody>
@@ -496,27 +495,34 @@ export default function OverviewTab() {
          </div>
 
          {/* 3. Bonus Matrix */}
-         <div>
-           <h4 className="text-xs font-bold text-amber-700 mb-2">3. KPI Thưởng (Bonus Matrix)</h4>
-           <div className="overflow-x-auto custom-scrollbar">
-             <table className="w-full text-[10px] text-center border-collapse">
-               <thead>
-                 <tr className="bg-slate-100 text-slate-600 font-bold">
-                   <th className="p-2 border border-slate-200 text-left min-w-[120px]">Thành Viên</th>
-                   {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <th key={m} className="p-2 border border-slate-200">T{m}</th>)}
+         <div className="w-full">
+           <h4 className="text-xs font-bold text-indigo-700 mb-2">3. KPI Thưởng (Bonus Matrix)</h4>
+           <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
+               <thead className="sticky top-0 z-10">
+                 <tr className="bg-indigo-500 text-white font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[100px] sticky left-0 bg-indigo-600 z-20">Tháng</th>
+                   {activeTeamMembers.map(m => (
+                     <th key={m.id} className="p-2 border border-slate-200 min-w-[80px] bg-indigo-500">{m.display_name?.split(' ').pop() || m.full_name?.split(' ').pop()}</th>
+                   ))}
                  </tr>
                </thead>
                <tbody>
                  {bonusMatrix.map((r,i) => (
                    <tr key={i} className="hover:bg-slate-50">
-                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30]">{r.name}</td>
-                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <td key={m} className="p-2 border border-slate-200 font-semibold text-amber-600">{r[`m${m}`]}</td>)}
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
+                     {activeTeamMembers.map(m => {
+                        const val = r[`m_${m.id}`];
+                        const bg = val > 0 ? 'bg-indigo-100 text-indigo-800' : 'bg-white text-slate-400';
+                        return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                     })}
                    </tr>
                  ))}
                </tbody>
              </table>
            </div>
          </div>
+
       </div>
     </div>
   );
