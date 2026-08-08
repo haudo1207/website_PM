@@ -585,6 +585,16 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     }
   };
 
+  // Memoized options for SearchableSelect
+  const memberOptions = useMemo<ComboboxOption[]>(() => {
+    return (members || [])
+      .map((m: any) => ({
+        id: m.id,
+        name: m.display_name || m.full_name || m.email || `Member #${m.id}`
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  }, [members]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -595,16 +605,6 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       </div>
     );
   }
-
-  // Memoized options for SearchableCombobox
-  const memberOptions = useMemo<ComboboxOption[]>(() => {
-    return (members || [])
-      .map((m: any) => ({
-        id: m.id,
-        name: m.display_name || m.full_name || m.email || `Member #${m.id}`
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
-  }, [members]);
 
   return (
     <div className="space-y-6" style={{ contentVisibility: 'auto' }}>

@@ -121,14 +121,22 @@ export default function SearchableSelect({
     return [value];
   }, [value]);
 
-  // Normalize options to object format
+  // Normalize options to object format with safety checks
   const parsedOptions = useMemo<SelectOptionItem[]>(() => {
-    return (options || []).map(opt => {
-      if (typeof opt === 'string' || typeof opt === 'number') {
-        return { id: opt, name: String(opt) };
-      }
-      return opt;
-    });
+    return (options || [])
+      .filter(Boolean)
+      .map(opt => {
+        if (typeof opt === 'string' || typeof opt === 'number') {
+          return { id: opt, name: String(opt) };
+        }
+        return {
+          id: opt?.id ?? '',
+          name: opt?.name || `Option #${opt?.id || ''}`,
+          icon: opt?.icon,
+          badge: opt?.badge,
+          subtext: opt?.subtext
+        };
+      });
   }, [options]);
 
   // Smart Search Filter Logic
