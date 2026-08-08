@@ -19,7 +19,6 @@ import {
   getWorkspaces,
   Workspace
 } from '@/lib/api';
-import SearchableSelect from './common/SearchableSelect';
 
 interface CustomersProjectsViewProps {
   onFlash: (msg: string, isError?: boolean) => void;
@@ -638,77 +637,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         </div>
       </div>
 
-      {/* V2 FILTER & SORT TOOLBAR */}
-      <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="font-bold text-slate-500 uppercase tracking-wider text-[11px] shrink-0 flex items-center gap-1">
-            🔍 Bộ lọc:
-          </span>
 
-          {/* PM Filter */}
-          <SearchableSelect
-            label="PM"
-            icon="👔"
-            options={memberOptions}
-            value={selectedPmIds}
-            onChange={setSelectedPmIds}
-            placeholder="Tìm PM..."
-            isMulti={true}
-          />
-
-          {/* Sales Filter */}
-          <SearchableSelect
-            label="Sales"
-            icon="💼"
-            options={memberOptions}
-            value={selectedSalesIds}
-            onChange={setSelectedSalesIds}
-            placeholder="Tìm Sales..."
-            isMulti={true}
-          />
-
-          {/* Member Filter (Thành viên - Matches PM, Sales, Leader, Member) */}
-          <SearchableSelect
-            label="Thành viên"
-            icon="👥"
-            options={memberOptions}
-            value={selectedMemberIds}
-            onChange={setSelectedMemberIds}
-            placeholder="Tìm Thành viên..."
-            isMulti={true}
-          />
-
-          {/* Clear Filters Button */}
-          {(selectedPmIds.length > 0 || selectedSalesIds.length > 0 || selectedMemberIds.length > 0) && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedPmIds([]);
-                setSelectedSalesIds([]);
-                setSelectedMemberIds([]);
-              }}
-              className="text-blue-600 hover:text-blue-800 font-bold hover:underline text-[11px] cursor-pointer"
-            >
-              Xóa bộ lọc ✕
-            </button>
-          )}
-        </div>
-
-        {/* Right Sort Mode Dropdown */}
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-slate-500">Sắp xếp:</span>
-          <select
-            value={sortMode}
-            onChange={e => setSortMode(e.target.value)}
-            className="bg-white border border-slate-200 text-[#0f172a] rounded-lg px-3 py-1.5 font-bold outline-none focus:border-blue-500 cursor-pointer shadow-2xs"
-          >
-            <option value="activity_desc">⚡ Mới hoạt động nhất (Mặc định)</option>
-            <option value="created_desc">🆕 Mới tạo</option>
-            <option value="name_asc">🔤 Tên A-Z</option>
-            <option value="name_desc">🔤 Tên Z-A</option>
-          </select>
-        </div>
-      </div>
 
       {/* 3-Column Portfolio UI Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
