@@ -242,7 +242,7 @@ export default function MembersView({ onFlash }: Props) {
               options={teams.map(t => ({ id: t.name, name: t.name }))}
               value={filterTeam}
               onChange={val => setFilterTeam(val === 'all' ? '' : String(val))}
-              placeholder="🔍 Tìm Level..."
+              placeholder="Tìm Level..."
             />
 
             <SearchableSelect
@@ -251,7 +251,7 @@ export default function MembersView({ onFlash }: Props) {
               options={departments.map(d => ({ id: d.name, name: d.name }))}
               value={filterDepartment}
               onChange={val => setFilterDepartment(val === 'all' ? '' : String(val))}
-              placeholder="🔍 Tìm Team..."
+              placeholder="Tìm Team..."
             />
 
             {(filterTeam || filterPosition || filterDepartment || search) && (

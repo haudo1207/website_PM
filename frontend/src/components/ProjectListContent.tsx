@@ -274,7 +274,7 @@ export default function ProjectListContent() {
               options={PROJECT_PHASES.map(ph => ({ id: ph, name: ph }))}
               value={phaseFilter}
               onChange={val => { setPhaseFilter(String(val)); setPage(1); }}
-              placeholder="🔍 Tìm giai đoạn..."
+              placeholder="Tìm giai đoạn..."
             />
 
             <SearchableSelect
@@ -283,7 +283,7 @@ export default function ProjectListContent() {
               options={uniqueCustomers.map(cust => ({ id: cust, name: cust }))}
               value={customerFilter}
               onChange={val => { setCustomerFilter(String(val)); setPage(1); }}
-              placeholder="🔍 Tìm khách hàng..."
+              placeholder="Tìm khách hàng..."
             />
 
             <SearchableSelect
@@ -292,7 +292,7 @@ export default function ProjectListContent() {
               options={uniquePms.map(pm => ({ id: pm, name: pm }))}
               value={pmFilter}
               onChange={val => { setPmFilter(String(val)); setPage(1); }}
-              placeholder="🔍 Tìm PM..."
+              placeholder="Tìm PM..."
             />
 
             <SearchableSelect
@@ -301,7 +301,7 @@ export default function ProjectListContent() {
               options={uniqueSales.map(s => ({ id: s, name: s }))}
               value={salesFilter}
               onChange={val => { setSalesFilter(String(val)); setPage(1); }}
-              placeholder="🔍 Tìm Sales..."
+              placeholder="Tìm Sales..."
             />
 
             <SearchableSelect
@@ -310,7 +310,7 @@ export default function ProjectListContent() {
               options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
               value={businessFilter}
               onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
-              placeholder="🔍 Tìm Workspace..."
+              placeholder="Tìm Workspace..."
             />
 
             <SearchableSelect
@@ -319,7 +319,7 @@ export default function ProjectListContent() {
               options={uniqueYears.map(yr => ({ id: String(yr), name: String(yr) }))}
               value={yearFilter}
               onChange={val => { setYearFilter(String(val)); setPage(1); }}
-              placeholder="🔍 Tìm năm..."
+              placeholder="Tìm năm..."
             />
 
             <button onClick={handleResetFilters} className="flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors flex-shrink-0 h-[34px]">

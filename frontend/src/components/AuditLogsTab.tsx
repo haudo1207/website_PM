@@ -410,7 +410,7 @@ export default function AuditLogsTab({
             ]}
             value={moduleFilter}
             onChange={val => setModuleFilter(String(val))}
-            placeholder="🔍 Tìm phân hệ..."
+            placeholder="Tìm phân hệ..."
           />
 
           {/* Action Filter */}
@@ -426,7 +426,7 @@ export default function AuditLogsTab({
             ]}
             value={actionFilter}
             onChange={val => setActionFilter(String(val))}
-            placeholder="🔍 Tìm hành động..."
+            placeholder="Tìm hành động..."
           />
 
           {/* User Filter */}
@@ -436,7 +436,7 @@ export default function AuditLogsTab({
             options={uniqueUsers.map(u => ({ id: u.id, name: u.name }))}
             value={userFilter}
             onChange={val => setUserFilter(String(val))}
-            placeholder="🔍 Tìm người dùng..."
+            placeholder="Tìm người dùng..."
           />
 
           {/* Date Filter */}

@@ -302,12 +302,12 @@ export default function SearchableSelect({
                 <input
                   ref={searchInputRef}
                   type="text"
-                  placeholder={placeholder || `🔍 Tìm ${label.toLowerCase()}...`}
+                  placeholder={(placeholder || `Tìm ${label.toLowerCase()}...`).replace(/^[🔍🔎]\s*/, '')}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   className="w-full pl-7 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be]/20 font-medium"
                 />
-                <span className="absolute left-2.5 top-2 text-[12px] text-slate-400">🔍</span>
+                <span className="absolute left-2.5 top-2 text-[12px] text-slate-400 pointer-events-none">🔍</span>
               </div>
             </div>
           )}

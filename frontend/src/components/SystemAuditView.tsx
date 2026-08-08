@@ -634,7 +634,7 @@ export default function SystemAuditView() {
               ]}
               value={categoryFilter}
               onChange={val => setCategoryFilter(val)}
-              placeholder="🔍 Tìm Category..."
+              placeholder="Tìm Category..."
             />
 
             {/* IP Risk Filter */}
@@ -648,7 +648,7 @@ export default function SystemAuditView() {
               ]}
               value={ipRiskFilter}
               onChange={val => setIpRiskFilter(val)}
-              placeholder="🔍 Tìm IP Risk..."
+              placeholder="Tìm IP Risk..."
             />
 
             {/* Outcome Filter */}
@@ -662,7 +662,7 @@ export default function SystemAuditView() {
               ]}
               value={outcomeFilter}
               onChange={val => setOutcomeFilter(val)}
-              placeholder="🔍 Tìm Kết quả..."
+              placeholder="Tìm Kết quả..."
             />
 
             {/* Action Filter */}
@@ -684,7 +684,7 @@ export default function SystemAuditView() {
               ]}
               value={actionFilter}
               onChange={val => setActionFilter(val)}
-              placeholder="🔍 Tìm Action..."
+              placeholder="Tìm Action..."
               searchThreshold={6}
             />
 
@@ -695,7 +695,7 @@ export default function SystemAuditView() {
               options={usersList.map(u => ({ id: u.id, name: u.name }))}
               value={userFilter}
               onChange={val => setUserFilter(String(val))}
-              placeholder="🔍 Tìm người dùng..."
+              placeholder="Tìm người dùng..."
               searchThreshold={5}
             />
 

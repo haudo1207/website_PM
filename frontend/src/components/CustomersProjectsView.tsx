@@ -652,7 +652,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
             options={memberOptions}
             value={selectedPmIds}
             onChange={setSelectedPmIds}
-            placeholder="🔍 Tìm PM..."
+            placeholder="Tìm PM..."
             isMulti={true}
           />
 
@@ -663,7 +663,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
             options={memberOptions}
             value={selectedSalesIds}
             onChange={setSelectedSalesIds}
-            placeholder="🔍 Tìm Sales..."
+            placeholder="Tìm Sales..."
             isMulti={true}
           />
 
@@ -674,7 +674,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
             options={memberOptions}
             value={selectedMemberIds}
             onChange={setSelectedMemberIds}
-            placeholder="🔍 Tìm Thành viên..."
+            placeholder="Tìm Thành viên..."
             isMulti={true}
           />
 
