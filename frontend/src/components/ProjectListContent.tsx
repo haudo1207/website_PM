@@ -275,7 +275,6 @@ export default function ProjectListContent() {
               value={phaseFilter}
               onChange={val => { setPhaseFilter(String(val)); setPage(1); }}
               placeholder="Tìm giai đoạn..."
-              maxChips={1}
             />
 
             <SearchableSelect
@@ -285,7 +284,6 @@ export default function ProjectListContent() {
               value={customerFilter}
               onChange={val => { setCustomerFilter(String(val)); setPage(1); }}
               placeholder="Tìm khách hàng..."
-              maxChips={1}
             />
 
             <SearchableSelect
@@ -295,7 +293,6 @@ export default function ProjectListContent() {
               value={pmFilter}
               onChange={val => { setPmFilter(String(val)); setPage(1); }}
               placeholder="Tìm PM..."
-              maxChips={1}
             />
 
             <SearchableSelect
@@ -305,7 +302,6 @@ export default function ProjectListContent() {
               value={salesFilter}
               onChange={val => { setSalesFilter(String(val)); setPage(1); }}
               placeholder="Tìm Sales..."
-              maxChips={1}
             />
 
             <SearchableSelect
@@ -315,7 +311,6 @@ export default function ProjectListContent() {
               value={businessFilter}
               onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
               placeholder="Tìm Workspace..."
-              maxChips={1}
             />
 
             <SearchableSelect
@@ -325,7 +320,6 @@ export default function ProjectListContent() {
               value={yearFilter}
               onChange={val => { setYearFilter(String(val)); setPage(1); }}
               placeholder="Tìm năm..."
-              maxChips={1}
             />
 
             <button onClick={handleResetFilters} className="flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors flex-shrink-0 h-[34px]">

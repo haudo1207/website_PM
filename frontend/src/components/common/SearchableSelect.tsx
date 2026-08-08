@@ -19,7 +19,6 @@ export interface SearchableSelectProps {
   onChange: (value: any) => void;
   placeholder?: string;
   isMulti?: boolean;
-  maxChips?: number; // Maximum visible chips before showing "+N" (Default 2)
   searchThreshold?: number; // Configurable threshold (Default 8)
   disabled?: boolean;
   required?: boolean;
@@ -27,7 +26,6 @@ export interface SearchableSelectProps {
 }
 
 export const DEFAULT_SEARCH_THRESHOLD = 8;
-export const DEFAULT_MAX_CHIPS = 2;
 
 // Remove Vietnamese diacritics for smart matching
 function removeDiacritics(str: string): string {
@@ -89,14 +87,11 @@ export default function SearchableSelect({
   onChange,
   placeholder,
   isMulti = false,
-  maxChips = DEFAULT_MAX_CHIPS,
   searchThreshold = DEFAULT_SEARCH_THRESHOLD,
   disabled = false,
-  required = false,
   className = ''
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
-  const [showOverflowPopover, setShowOverflowPopover] = useState(false);
   const [search, setSearch] = useState('');
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -111,7 +106,6 @@ export default function SearchableSelect({
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setOpen(false);
-        setShowOverflowPopover(false);
         setSearch('');
         setFocusedIndex(-1);
       }
@@ -188,15 +182,6 @@ export default function SearchableSelect({
     }
   }, [isMulti, selectedValues, onChange]);
 
-  const handleRemoveChip = (e: React.MouseEvent, optionId: string | number) => {
-    e.stopPropagation();
-    if (isMulti) {
-      onChange(selectedValues.filter(v => String(v) !== String(optionId)));
-    } else {
-      onChange('all');
-    }
-  };
-
   // Full Keyboard Navigation Handler (ArrowDown, ArrowUp, Enter, Escape)
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!open) {
@@ -238,7 +223,6 @@ export default function SearchableSelect({
       case 'Escape':
         e.preventDefault();
         setOpen(false);
-        setShowOverflowPopover(false);
         setSearch('');
         setFocusedIndex(-1);
         break;
@@ -252,19 +236,21 @@ export default function SearchableSelect({
     setFocusedIndex(-1);
   };
 
-  // Selected Option Objects
-  const selectedOptionObjects = useMemo(() => {
-    return selectedValues.map(val => {
-      const found = parsedOptions.find(o => String(o.id) === String(val));
-      return found || { id: val, name: String(val) };
-    });
-  }, [selectedValues, parsedOptions]);
-
-  // Visible vs Hidden Overflow Chips
-  const visibleChips = selectedOptionObjects.slice(0, maxChips);
-  const hiddenChips = selectedOptionObjects.slice(maxChips);
-
-  const cleanPlaceholderText = (placeholder || `Tìm ${label.toLowerCase()}...`).replace(/^[🔍🔎]\s*/, '');
+  // Button Trigger Label Text
+  const buttonText = useMemo(() => {
+    if (selectedValues.length === 0) {
+      return `Tất cả ${label}`;
+    }
+    if (!isMulti) {
+      const found = parsedOptions.find(o => String(o.id) === String(selectedValues[0]));
+      return found ? found.name : `Tất cả ${label}`;
+    }
+    if (selectedValues.length === 1) {
+      const found = parsedOptions.find(o => String(o.id) === String(selectedValues[0]));
+      return found ? found.name : `1 ${label}`;
+    }
+    return `${selectedValues.length} ${label}`;
+  }, [selectedValues, parsedOptions, label, isMulti]);
 
   return (
     <div
@@ -272,111 +258,30 @@ export default function SearchableSelect({
       ref={containerRef}
       onKeyDown={handleKeyDown}
     >
-      {/* Trigger Control Bar */}
-      <div
+      {/* Dropdown Trigger Button */}
+      <button
+        type="button"
+        disabled={disabled}
         onClick={() => setOpen(!open)}
-        className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-semibold border flex flex-wrap items-center justify-between gap-1.5 transition-all bg-white text-slate-700 cursor-pointer shadow-2xs min-h-[36px] ${
+        className={`w-full px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center justify-between gap-1.5 transition-all bg-white text-slate-700 cursor-pointer shadow-2xs ${
           disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-slate-300'
         } ${
           selectedValues.length > 0
-            ? 'border-[#0058be] bg-[#eff4ff]/40 font-medium'
+            ? 'border-[#0058be] bg-[#eff4ff]/60 font-bold text-[#0058be]'
             : 'border-[#c2c6d6]/60'
         }`}
       >
-        <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
-          {/* Default Label/Icon when empty */}
-          {selectedValues.length === 0 && (
-            <span className="truncate flex items-center gap-1.5 text-slate-500 font-semibold">
-              {icon && <span>{icon}</span>}
-              <span className="truncate">{`Tất cả ${label}`}</span>
-            </span>
-          )}
+        <span className="truncate flex items-center gap-1.5">
+          {icon && <span>{icon}</span>}
+          <span className="truncate max-w-[140px] text-left">{buttonText}</span>
+        </span>
 
-          {/* Render Selected Chips */}
-          {selectedValues.length > 0 && visibleChips.map(chip => (
-            <span
-              key={chip.id}
-              className="bg-[#0058be]/10 text-[#0058be] border border-[#0058be]/20 px-2 py-0.5 rounded-md font-bold text-[11px] flex items-center gap-1 shrink-0 transition-all hover:bg-[#0058be]/20"
-            >
-              {chip.icon && <span className="text-[10px]">{chip.icon}</span>}
-              <span className="truncate max-w-[110px]">{chip.name}</span>
-              <button
-                type="button"
-                onClick={e => handleRemoveChip(e, chip.id)}
-                className="text-[#0058be] hover:text-red-600 font-bold ml-0.5 rounded px-0.5 transition-colors"
-                title="Bỏ chọn"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-
-          {/* Overflow +N Badge button */}
-          {hiddenChips.length > 0 && (
-            <div className="relative inline-block">
-              <button
-                type="button"
-                onClick={e => {
-                  e.stopPropagation();
-                  setShowOverflowPopover(!showOverflowPopover);
-                }}
-                className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-md font-bold text-[10px] flex items-center gap-1 hover:bg-amber-100 transition-all cursor-pointer"
-                title="Xem danh sách đang ẩn"
-              >
-                <span>+{hiddenChips.length} người</span>
-                <span className="text-[8px]">▼</span>
-              </button>
-
-              {/* Overflow Hidden Chips Popover Sub-Menu */}
-              {showOverflowPopover && (
-                <div
-                  className="absolute left-0 top-full mt-1.5 w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-2 space-y-1 animate-in fade-in zoom-in-95 duration-100"
-                  onClick={e => e.stopPropagation()}
-                >
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-1 pb-1 border-b border-slate-100 flex items-center justify-between">
-                    <span>Đang ẩn ({hiddenChips.length})</span>
-                    <button
-                      type="button"
-                      onClick={() => setShowOverflowPopover(false)}
-                      className="text-slate-400 hover:text-slate-700 font-bold"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="max-h-40 overflow-y-auto space-y-1 p-0.5 divide-y divide-slate-50">
-                    {hiddenChips.map(chip => (
-                      <div
-                        key={chip.id}
-                        className="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-50 text-slate-700 text-xs font-semibold"
-                      >
-                        <span className="truncate max-w-[130px] flex items-center gap-1">
-                          {chip.icon && <span>{chip.icon}</span>}
-                          <span className="truncate">{chip.name}</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={e => handleRemoveChip(e, chip.id)}
-                          className="text-slate-400 hover:text-red-600 font-bold px-1 rounded transition-colors text-sm"
-                          title="Xóa khỏi danh sách"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Clear & Expand Arrow Icons */}
         <div className="flex items-center gap-1 shrink-0">
           {selectedValues.length > 0 && (
             <span
               onClick={handleClear}
-              className="text-slate-400 hover:text-red-600 p-0.5 rounded hover:bg-slate-200/60 font-bold"
-              title="Bỏ chọn tất cả"
+              className="text-slate-400 hover:text-slate-700 p-0.5 rounded hover:bg-slate-200/60"
+              title="Xóa lựa chọn"
             >
               ✕
             </span>
@@ -385,19 +290,19 @@ export default function SearchableSelect({
             {open ? '▲' : '▼'}
           </span>
         </div>
-      </div>
+      </button>
 
-      {/* Dropdown Popup Menu */}
+      {/* Popup Menu */}
       {open && (
         <div className="absolute left-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-          {/* Search Bar Input */}
+          {/* Search Bar Input (if threshold met) */}
           {showSearchBar && (
             <div className="p-2 border-b border-slate-100 bg-slate-50/80 sticky top-0 z-10">
               <div className="relative">
                 <input
                   ref={searchInputRef}
                   type="text"
-                  placeholder={cleanPlaceholderText}
+                  placeholder={(placeholder || `Tìm ${label.toLowerCase()}...`).replace(/^[🔍🔎]\s*/, '')}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   className="w-full pl-7 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be]/20 font-medium"
