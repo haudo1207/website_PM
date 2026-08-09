@@ -1,11 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
-from .database import engine, Base
+from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
 from .models import lunch_record as lunch_record_model
@@ -862,6 +863,70 @@ def health():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
+@app.get("/api/meetings/google/callback")
+def google_callback_public(code: str, state: str = None, db: Session = Depends(get_db)):
+    """Handle Google OAuth2 callback and save tokens (Public Route)."""
+    import os
+    import logging
+    from .config import settings
+    from google_auth_oauthlib.flow import Flow
+    from .services.meeting_sync import _save_google_tokens
+    from fastapi.responses import RedirectResponse
+
+    logger = logging.getLogger("google_callback")
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        redirect_uri=settings.GOOGLE_REDIRECT_URI,
+    )
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
+    user_id = int(state) if (state and state.isdigit()) else 1
+    _save_google_tokens(db, user_id, {
+        "access_token": creds.token,
+        "refresh_token": creds.refresh_token,
+    })
+    db.commit()
+
+    if creds.refresh_token:
+        settings.GOOGLE_REFRESH_TOKEN = creds.refresh_token
+        # Automatically update .env and env files on server
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        for env_filename in [".env", "env"]:
+            env_path = os.path.join(base_dir, env_filename)
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    updated = False
+                    new_lines = []
+                    for line in lines:
+                        if line.startswith("GOOGLE_REFRESH_TOKEN="):
+                            new_lines.append(f"GOOGLE_REFRESH_TOKEN={creds.refresh_token}\n")
+                            updated = True
+                        else:
+                            new_lines.append(line)
+                    if not updated:
+                        new_lines.append(f"\nGOOGLE_REFRESH_TOKEN={creds.refresh_token}\n")
+                    with open(env_path, "w", encoding="utf-8") as f:
+                        f.writelines(new_lines)
+                except Exception as e:
+                    logger.warning(f"Could not auto-write GOOGLE_REFRESH_TOKEN to {env_filename}: {e}")
+
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
+
 import asyncio
 
 @app.on_event("startup")
@@ -878,7 +943,7 @@ async def start_auto_sync_loop():
                 pass
             finally:
                 db.close()
-            await asyncio.sleep(60)
+            await asyncio.sleep(30)
 
     asyncio.create_task(_loop())
 

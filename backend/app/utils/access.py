@@ -210,6 +210,9 @@ def require_route_project_access(
     user=Depends(get_current_user),
 ):
     """Authorize project, phase, group, task, or meeting path parameters."""
+    if request.url.path.endswith("/google/callback") or "/health/google" in request.url.path:
+        return None
+
     params = request.path_params
     project_id = params.get("pid")
 

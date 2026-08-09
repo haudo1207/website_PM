@@ -104,24 +104,38 @@ def google_login(body: dict, request: Request, db: Session = Depends(get_db)):
     if not user:
         user = db.query(User).filter(User.email == email).first()
     if not user:
-        AuditService.record(
-            db=db,
-            user_id=None,
-            module="Authentication",
-            entity_type="User",
-            entity_id=email,
-            action="FAILED_LOGIN",
-            severity="WARNING",
-            login_method="Google OAuth",
-            description=f"Đăng nhập Google thất bại: Email '{email}' chưa được cấp quyền",
-            request=request
-        )
-        db.commit()
-        raise HTTPException(403, "This email has not been granted access.")
+        if email in settings.superadmin_emails:
+            user = User(
+                email=email,
+                full_name=claims.get("name") or email.split("@")[0],
+                google_sub=google_sub,
+                hashed_pw="!google-only!",
+                role="super_admin",
+                data_scope="all",
+                is_active=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        else:
+            AuditService.record(
+                db=db,
+                user_id=None,
+                module="Authentication",
+                entity_type="User",
+                entity_id=email,
+                action="FAILED_LOGIN",
+                severity="WARNING",
+                login_method="Google OAuth",
+                description=f"Đăng nhập Google thất bại: Email '{email}' chưa được cấp quyền",
+                request=request
+            )
+            db.commit()
+            raise HTTPException(403, "This email has not been granted access.")
     if user.google_sub and user.google_sub != google_sub:
-        raise HTTPException(403, "This email is linked to a different Google account.")
+        raise HTTPException(403, "Email này đã được liên kết với một tài khoản Google khác.")
     if not user.is_active:
-        raise HTTPException(403, "Account disabled.")
+        raise HTTPException(403, "Tài khoản đã bị vô hiệu hoá.")
 
     google_name = str(claims.get("name") or "").strip()
     google_avatar = str(claims.get("picture") or "").strip()
