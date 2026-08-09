@@ -83,44 +83,39 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
             {!hasApiKey && <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg flex items-start gap-2"><AlertTriangle size={18} className="mt-0.5 text-amber-600 flex-shrink-0" /><div><span className="font-bold">Cảnh báo:</span> Chưa tìm thấy GEMINI_API_KEY trong file .env.</div></div>}
             
             {/* Google Calendar & Drive Connection */}
-            <div className="p-4 bg-slate-50 border border-[#c2c6d6]/40 rounded-xl space-y-3 flex-shrink-0">
-              <div className="flex items-center justify-between">
+            <div className="p-4 bg-emerald-50/50 border border-emerald-200/80 rounded-xl space-y-3 flex-shrink-0">
+              <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-xs font-bold text-[#0b1c30]">Kết nối Google Calendar & Drive</h3>
-                  <p className="text-[11px] text-[#565e74]">Yêu cầu để tự động sinh link Google Meet và đồng bộ transcript từ Google Drive.</p>
+                  <h3 className="text-xs font-bold text-[#0b1c30]">Tài khoản Google Công ty (mkt.szone@gmail.com)</h3>
+                  <p className="text-[11px] text-[#565e74] mt-0.5">Tài khoản kết nối hệ thống cố định để tự động tạo link Google Meet Pro & đồng bộ biên bản ngầm. Tất cả người dùng vào sử dụng ngay mà không cần kết nối cá nhân.</p>
                 </div>
                 {isGoogleConnected ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    ĐÃ KẾT NỐI
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex-shrink-0">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    CỐ ĐỊNH NỘI BỘ (ĐÃ SẴN SÀNG)
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0">
                     CHƯA KẾT NỐI
                   </span>
                 )}
               </div>
               
-              <div className="flex flex-wrap items-center gap-2">
-                {!isGoogleConnected ? (
-                  <button
-                    type="button"
-                    onClick={handleConnectGoogle}
-                    className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
-                  >
-                    <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
-                    Kết nối tài khoản Google
-                  </button>
-                ) : (
-                  <div className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1">
-                    ✓ Google Calendar & Drive đã sẵn sàng!
-                  </div>
-                )}
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleConnectGoogle}
+                  className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-2xs"
+                >
+                  <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
+                  <span>{isGoogleConnected ? '🔄 Ủy quyền lại Google Admin (mkt.szone)' : '🔗 Kết nối tài khoản Google Công ty'}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={checkGoogleConnection}
                   disabled={isCheckingGoogle}
-                  className="p-2 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-slate-200/60 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-semibold"
+                  className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-slate-200/60 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-semibold"
                   title="Làm mới trạng thái kết nối"
                 >
                   <RefreshCw size={14} className={isCheckingGoogle ? 'animate-spin' : ''} />

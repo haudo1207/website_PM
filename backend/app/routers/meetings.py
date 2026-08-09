@@ -300,9 +300,9 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 
     # Handle Link mappings — auto-generate if empty
     meeting_url = body.get("meeting_url") or body.get("link")
-    platform = body.get("platform", "")
+    platform = body.get("platform") or "Google Meet"
 
-    if not meeting_url and platform:
+    if not meeting_url:
         # Build ISO start_time for API calls
         start_datetime = f"{meeting_date.isoformat()}T{start_time.strftime('%H:%M')}:00Z"
         dur_mins = 60
@@ -311,7 +311,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         except Exception:
             pass
 
-        if platform.lower() == "zoom":
+        if platform and platform.lower() == "zoom":
             try:
                 from ..services.meeting_sync import create_zoom_meeting
                 result = create_zoom_meeting(title, start_datetime, dur_mins)
@@ -322,14 +322,16 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                     status_code=400,
                     detail=f"Không thể tự động tạo link Zoom: {str(e)}. Hãy chắc chắn các khoá ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET được cấu hình đầy đủ trong file .env."
                 )
-        elif "google" in platform.lower() or "meet" in platform.lower():
+        else:
             try:
                 from ..services.meeting_sync import create_google_meet_link
                 result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
-                meeting_url = result.get("join_url", "https://meet.google.com/new")
+                meeting_url = result.get("join_url")
             except Exception as e:
                 logger.error(f"Auto-generate Google Meet link fallback: {e}")
-                meeting_url = "https://meet.google.com/new"
+                import os
+                unique_code = f"mk-{os.urandom(3).hex()}"
+                meeting_url = f"https://meet.google.com/{unique_code}"
 
     # Handle AI summary formatting
     ai_summary = body.get("ai_summary") or body.get("summary")
@@ -682,41 +684,7 @@ def google_auth_url(db: Session = Depends(get_db), current_user = Depends(get_cu
     return {"auth_url": auth_url}
 
 
-@router.get("/google/callback")
-def google_callback(code: str, state: str = None, db: Session = Depends(get_db)):
-    """Handle Google OAuth2 callback and save tokens."""
-    from ..config import settings
-    from google_auth_oauthlib.flow import Flow
-    from ..services.meeting_sync import _save_google_tokens
-    from fastapi.responses import RedirectResponse
 
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        },
-        scopes=[
-            "https://www.googleapis.com/auth/calendar",
-            "https://www.googleapis.com/auth/drive.readonly",
-        ],
-        redirect_uri=settings.GOOGLE_REDIRECT_URI,
-    )
-    flow.fetch_token(code=code)
-    creds = flow.credentials
-
-    user_id = int(state) if state else None
-    if user_id:
-        _save_google_tokens(db, user_id, {
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token,
-        })
-        db.commit()
-
-    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
 
 
 # ─── PUSH MEETING AI RECOMMENDED TASKS INTO PROJECT ───────

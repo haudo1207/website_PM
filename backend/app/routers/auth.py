@@ -83,11 +83,25 @@ def google_login(body: dict, db: Session = Depends(get_db)):
     if not user:
         user = db.query(User).filter(User.email == email).first()
     if not user:
-        raise HTTPException(403, "This email has not been granted access.")
+        if email in settings.superadmin_emails:
+            user = User(
+                email=email,
+                full_name=claims.get("name") or email.split("@")[0],
+                google_sub=google_sub,
+                hashed_pw="!google-only!",
+                role="super_admin",
+                data_scope="all",
+                is_active=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        else:
+            raise HTTPException(403, "Email Google này chưa được cấp quyền.")
     if user.google_sub and user.google_sub != google_sub:
-        raise HTTPException(403, "This email is linked to a different Google account.")
+        raise HTTPException(403, "Email này đã được liên kết với một tài khoản Google khác.")
     if not user.is_active:
-        raise HTTPException(403, "Account disabled.")
+        raise HTTPException(403, "Tài khoản đã bị vô hiệu hoá.")
 
     # Google is the identity source for profile fields. Roles, scopes and member
     # linkage remain controlled by the application admin.
