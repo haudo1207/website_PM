@@ -426,14 +426,14 @@ def list_teams(db: Session = Depends(get_db), _=Depends(get_current_user)):
 # ─── GET LEADERS (from Supabase/DB distinct list) ─────────
 @router.get("/meta/leaders")
 def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    # 1. Try to fetch recruitment leaders from Supabase
+    # 1. Try to fetch recruitment leaders from Supabase (only active leaders)
     SUPABASE_URL = "https://supabase.stratumconsultants.tech"
     SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UtbG9jYWwiLCJpYXQiOjE3NzgwNDM5NDUsImV4cCI6MjA5MzQwMzk0NX0.MLey0ChjN3lr8__Jc1lmiBw6xSbeW-mrXEXsxgkDywI"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}"
     }
-    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders"
+    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders?is_active=eq.true&order=name.asc"
     try:
         import requests
         import re
@@ -447,18 +447,9 @@ def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
                 email = l.get("email", "")
                 if raw_name:
                     clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_name).strip()
-                    # Apply abbreviation display name formula
-                    words = [w for w in clean_name.split() if w]
-                    if len(words) <= 2:
-                        display_name = " ".join(words)
-                    else:
-                        abbr = ".".join([w[0].upper() for w in words[:-2]])
-                        last_two = " ".join(words[-2:])
-                        display_name = f"{abbr} {last_two}"
-                    
-                    if display_name not in seen:
-                        seen.add(display_name)
-                        out.append({"name": display_name, "email": email or ""})
+                    if clean_name and clean_name not in seen:
+                        seen.add(clean_name)
+                        out.append({"name": clean_name, "email": email or ""})
             return sorted(out, key=lambda x: x["name"])
     except Exception:
         pass
@@ -468,7 +459,7 @@ def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
     out = []
     seen = set()
     for r in rows:
-        name = r[0].strip()
+        name = (r[0] or "").strip()
         if name and name not in seen:
             seen.add(name)
             out.append({"name": name, "email": r[1] or ""})
@@ -529,13 +520,7 @@ def sync_candidate(
     if raw_leader_name:
         import re
         clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(raw_leader_name)).strip()
-        words = [w for w in clean_leader_name.split() if w]
-        if len(words) <= 2:
-            leader_name = " ".join(words)
-        else:
-            abbr = ".".join([w[0].upper() for w in words[:-2]])
-            last_two = " ".join(words[-2:])
-            leader_name = f"{abbr} {last_two}"
+        leader_name = clean_leader_name if clean_leader_name else None
             
     leader_email = str(body.get("leader_email", "")).strip() or None
 
@@ -772,14 +757,13 @@ def sync_from_recruitment(
                 if raw_leader_name:
                     import re
                     clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_leader_name).strip()
-                    # Apply Display Name formula
-                    words = [w for w in clean_leader_name.split() if w]
-                    if len(words) <= 2:
-                        leader_name = " ".join(words)
-                    else:
-                        abbr = ".".join([w[0].upper() for w in words[:-2]])
-                        last_two = " ".join(words[-2:])
-                        leader_name = f"{abbr} {last_two}"
+                    leader_name = clean_leader_name if clean_leader_name else None
+            elif isinstance(leader_data, dict) and leader_data.get("name"):
+                raw_leader_name = str(leader_data.get("name", "")).strip()
+                import re
+                clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_leader_name).strip()
+                leader_name = clean_leader_name if clean_leader_name else None
+                leader_email = str(leader_data.get("email", "")).strip() or None
 
             if not full_name:
                 continue
