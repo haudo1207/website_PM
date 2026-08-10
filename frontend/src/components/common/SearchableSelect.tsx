@@ -22,6 +22,7 @@ export interface SearchableSelectProps {
   searchThreshold?: number; // Configurable threshold (Default 8)
   disabled?: boolean;
   required?: boolean;
+  align?: 'left' | 'right';
   className?: string;
 }
 
@@ -89,6 +90,7 @@ export default function SearchableSelect({
   isMulti = false,
   searchThreshold = DEFAULT_SEARCH_THRESHOLD,
   disabled = false,
+  align = 'left',
   className = ''
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
@@ -262,7 +264,7 @@ export default function SearchableSelect({
 
   return (
     <div
-      className={`relative inline-block text-xs ${open ? 'z-[60]' : ''} ${className}`}
+      className={`relative inline-block text-xs ${open ? 'z-[999]' : ''} ${className}`}
       ref={containerRef}
       onKeyDown={handleKeyDown}
     >
@@ -302,7 +304,7 @@ export default function SearchableSelect({
 
       {/* Popup Menu */}
       {open && (
-        <div className="absolute left-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
           {/* Search Bar Input (if threshold met) */}
           {showSearchBar && (
             <div className="p-2 border-b border-slate-100 bg-slate-50/80 sticky top-0 z-10">

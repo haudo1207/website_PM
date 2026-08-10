@@ -190,7 +190,7 @@ export default function MembersView({ onFlash }: Props) {
   // ─── Render ───────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      <div className="sticky top-[112px] z-30 bg-[#f8fafc]/95 backdrop-blur-sm">
+      <div className="sticky top-[112px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-8 py-6 space-y-6">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -222,7 +222,7 @@ export default function MembersView({ onFlash }: Props) {
           </div>
 
           {/* Search & Filters */}
-          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3 relative z-30">
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3 relative z-[100]">
             <div className="relative flex-1 min-w-[200px]">
               <svg className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -248,6 +248,7 @@ export default function MembersView({ onFlash }: Props) {
             <SearchableSelect
               label="Team"
               icon="👥"
+              align="right"
               options={departments.map(d => ({ id: d.name, name: d.name }))}
               value={filterDepartment}
               onChange={val => setFilterDepartment(val === 'all' ? '' : String(val))}
@@ -267,7 +268,7 @@ export default function MembersView({ onFlash }: Props) {
       </div>
 
       {/* Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-auto shadow-sm" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+      <div className="bg-white border border-slate-200 rounded-xl overflow-auto shadow-sm relative z-[1]" style={{ maxHeight: 'calc(100vh - 340px)' }}>
         <table className="w-full text-xs text-[#0f172a]">
             <thead>
               <tr className="border-b border-slate-200">
