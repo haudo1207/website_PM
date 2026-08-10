@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import MembersView from '@/components/MembersView';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import { useRouter } from 'next/navigation';
 import { isAdmin, isSuperAdmin, isLeader } from '@/lib/auth';
 import {
@@ -152,6 +153,35 @@ export default function AccountsPage() {
       return nameMatch && roleMatch && scopeMatch && statusMatch;
     });
   }, [accounts, searchName, filterRole, filterScope, filterStatus]);
+
+  const memberSelectOptions = useMemo(() => [
+    { id: 0, name: '— Không liên kết thành viên —' },
+    ...availableMembers.map(m => ({
+      id: m.id,
+      name: `${m.display_name} — ${m.full_name}${m.team ? ` (${m.team})` : ''}`
+    }))
+  ], [availableMembers]);
+
+  const editMemberSelectOptions = useMemo(() => {
+    const list: { id: number; name: string }[] = [
+      { id: 0, name: '— Không liên kết thành viên —' }
+    ];
+    if (editAccount?.member) {
+      list.push({
+        id: editAccount.member.id,
+        name: `${editAccount.member.display_name} — ${editAccount.member.full_name}${editAccount.member.team ? ` (${editAccount.member.team})` : ''}`
+      });
+    }
+    availableMembers.forEach(m => {
+      if (!editAccount?.member || m.id !== editAccount.member.id) {
+        list.push({
+          id: m.id,
+          name: `${m.display_name} — ${m.full_name}${m.team ? ` (${m.team})` : ''}`
+        });
+      }
+    });
+    return list;
+  }, [availableMembers, editAccount]);
 
   // Create
   const handleCreate = async (e: React.FormEvent) => {
@@ -467,16 +497,15 @@ export default function AccountsPage() {
               {/* Member Selection */}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên (tùy chọn)</label>
-                <select
-                  value={createForm.member_id}
-                  onChange={e => handleMemberSelect(Number(e.target.value))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  <option value={0}>— Không liên kết thành viên —</option>
-                  {availableMembers.map(m => (
-                    <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  label="thành viên"
+                  icon="👤"
+                  options={memberSelectOptions}
+                  value={createForm.member_id || 0}
+                  onChange={val => handleMemberSelect(Number(val) || 0)}
+                  placeholder="Tìm thành viên để liên kết..."
+                  className="w-full"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -586,23 +615,15 @@ export default function AccountsPage() {
               </div>
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên</label>
-                <select
-                  value={editForm.member_id}
-                  onChange={e => setEditForm(f => ({ ...f, member_id: Number(e.target.value) }))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  <option value={0}>— Không liên kết thành viên —</option>
-                  {editAccount.member && (
-                    <option value={editAccount.member.id}>
-                      {editAccount.member.display_name} — {editAccount.member.full_name}{editAccount.member.team ? ` (${editAccount.member.team})` : ''}
-                    </option>
-                  )}
-                  {availableMembers
-                    .filter(m => m.id !== editAccount.member?.id)
-                    .map(m => (
-                      <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
-                    ))}
-                </select>
+                <SearchableSelect
+                  label="thành viên"
+                  icon="👤"
+                  options={editMemberSelectOptions}
+                  value={editForm.member_id || 0}
+                  onChange={val => setEditForm(f => ({ ...f, member_id: Number(val) || 0 }))}
+                  placeholder="Tìm thành viên để liên kết..."
+                  className="w-full"
+                />
               </div>
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò</label>
