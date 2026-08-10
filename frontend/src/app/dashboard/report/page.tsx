@@ -21,8 +21,8 @@ function getWeekOfMonth(date: Date) {
 }
 
 export default function ReportTab() {
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
 
   const [searchTaskName, setSearchTaskName] = useState<string>('');
@@ -30,6 +30,10 @@ export default function ReportTab() {
   const [filterProject, setFilterProject] = useState<string>('all');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+
+  const [sortDeadline, setSortDeadline] = useState<'default'|'asc'|'desc'>('default');
+  const [sortKPI, setSortKPI] = useState<'default'|'desc'|'asc'>('default');
+  const [openFilter, setOpenFilter] = useState<string | null>(null);
 
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [realMemberData, setRealMemberData] = useState<any>(cachedReportData?.realMemberData || null);
@@ -125,9 +129,8 @@ export default function ReportTab() {
       const taskDate = new Date(t.end_date_est);
       if (isNaN(taskDate.getTime())) return true;
 
-      if (taskDate.getFullYear() !== selectedYear) return false;
-      const taskMonth = taskDate.getMonth() + 1;
-      if (taskMonth !== selectedMonth) return false;
+      if (selectedYear !== 'all' && taskDate.getFullYear() !== selectedYear) return false;
+      if (selectedMonth !== 'all' && (taskDate.getMonth() + 1) !== selectedMonth) return false;
 
       if (selectedWeek !== 'all') {
         const taskWeek = getWeekOfMonth(taskDate);
@@ -218,7 +221,7 @@ export default function ReportTab() {
   ];
 
   const tableTasks = useMemo(() => {
-    return myRealTasks.filter((t: any) => {
+    let filtered = myRealTasks.filter((t: any) => {
       if (searchTaskName && !t.name?.toLowerCase().includes(searchTaskName.toLowerCase())) return false;
       if (filterCustomer !== 'all' && (t.customerName || 'Không có') !== filterCustomer) return false;
       if (filterProject !== 'all' && (t.projectName || 'Không có') !== filterProject) return false;
@@ -226,7 +229,22 @@ export default function ReportTab() {
       if (filterStatus !== 'all' && (t.status || 'Chưa rõ') !== filterStatus) return false;
       return true;
     });
-  }, [myRealTasks, searchTaskName, filterCustomer, filterProject, filterPriority, filterStatus]);
+
+    if (sortDeadline !== 'default') {
+      filtered.sort((a: any, b: any) => {
+        const da = a.end_date_est ? new Date(a.end_date_est).getTime() : Infinity;
+        const db = b.end_date_est ? new Date(b.end_date_est).getTime() : Infinity;
+        return sortDeadline === 'asc' ? da - db : db - da;
+      });
+    } else if (sortKPI !== 'default') {
+      filtered.sort((a: any, b: any) => {
+        const ka = a.kpi_base || 0;
+        const kb = b.kpi_base || 0;
+        return sortKPI === 'desc' ? kb - ka : ka - kb;
+      });
+    }
+    return filtered;
+  }, [myRealTasks, searchTaskName, filterCustomer, filterProject, filterPriority, filterStatus, sortDeadline, sortKPI]);
 
   const uniqueCustomers = Array.from(new Set(myRealTasks.map((t: any) => t.customerName || 'Không có')));
   const uniqueProjects = Array.from(new Set(myRealTasks.map((t: any) => t.projectName || 'Không có')));
@@ -254,9 +272,10 @@ export default function ReportTab() {
               <span className="text-slate-500">Năm:</span>
               <select
                 value={selectedYear}
-                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
                 className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
               >
+                <option value="all">Tất cả</option>
                 {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
               </select>
             </div>
@@ -265,9 +284,10 @@ export default function ReportTab() {
               <span className="text-slate-500">Tháng:</span>
               <select
                 value={selectedMonth}
-                onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
                 className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
               >
+                <option value="all">Tất cả</option>
                 {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
               </select>
             </div>
@@ -322,44 +342,99 @@ export default function ReportTab() {
         <div className="overflow-x-auto overflow-y-auto max-h-[500px] custom-scrollbar relative">
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur shadow-sm">
-              <tr className="text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider">
-                <th className="px-5 py-3 text-left font-bold min-w-[200px]">Tên Task</th>
-                <th className="px-4 py-3 text-left font-bold">Khách hàng</th>
-                <th className="px-4 py-3 text-left font-bold">Dự Án</th>
-                <th className="px-4 py-3 text-center font-bold">Ưu Tiên</th>
-                <th className="px-4 py-3 text-center font-bold">Trạng Thái</th>
-                <th className="px-4 py-3 text-center font-bold">Deadline</th>
-                <th className="px-4 py-3 text-center font-bold">KPI</th>
-              </tr>
-              <tr className="bg-white/95 border-b border-slate-100">
-                <th className="px-2 py-1.5">
-                  <input type="text" placeholder="🔍 Tìm task..." value={searchTaskName} onChange={e => setSearchTaskName(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-2 py-1 outline-none focus:border-indigo-400" />
+              <tr className="text-slate-500 border-b border-slate-200 text-[10px] tracking-wider">
+                <th className="px-5 py-2 min-w-[200px] align-top bg-slate-100">
+                  <div className="flex flex-col gap-1">
+                    <button onClick={() => setOpenFilter(openFilter === 'name' ? null : 'name')} className="font-bold uppercase hover:text-[#0058be] transition-colors text-left flex items-center gap-1 w-full">
+                      Tên Task {searchTaskName && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
+                    </button>
+                    {openFilter === 'name' && (
+                      <input type="text" placeholder="Tìm task..." value={searchTaskName} onChange={e => setSearchTaskName(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1.5 py-1 outline-none focus:border-indigo-400 bg-white text-slate-700" autoFocus onBlur={() => !searchTaskName && setOpenFilter(null)} />
+                    )}
+                  </div>
                 </th>
-                <th className="px-2 py-1.5">
-                  <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
-                    <option value="all">Tất cả</option>
-                    {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                <th className="px-4 py-2 align-top bg-slate-100">
+                  <div className="flex flex-col gap-1">
+                    <button onClick={() => setOpenFilter(openFilter === 'customer' ? null : 'customer')} className="font-bold uppercase hover:text-[#0058be] transition-colors text-left flex items-center gap-1 w-full">
+                      Khách Hàng {filterCustomer !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
+                    </button>
+                    {openFilter === 'customer' && (
+                      <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} onBlur={() => filterCustomer === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
+                        <option value="all">Tất cả</option>
+                        {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    )}
+                  </div>
                 </th>
-                <th className="px-2 py-1.5">
-                  <select value={filterProject} onChange={e => setFilterProject(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
-                    <option value="all">Tất cả</option>
-                    {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                  </select>
+                <th className="px-4 py-2 align-top bg-slate-100">
+                  <div className="flex flex-col gap-1">
+                    <button onClick={() => setOpenFilter(openFilter === 'project' ? null : 'project')} className="font-bold uppercase hover:text-[#0058be] transition-colors text-left flex items-center gap-1 w-full">
+                      Dự Án {filterProject !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
+                    </button>
+                    {openFilter === 'project' && (
+                      <select value={filterProject} onChange={e => setFilterProject(e.target.value)} onBlur={() => filterProject === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
+                        <option value="all">Tất cả</option>
+                        {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    )}
+                  </div>
                 </th>
-                <th className="px-2 py-1.5">
-                  <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
-                    <option value="all">Tất cả</option>
-                    {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                  </select>
+                <th className="px-4 py-2 align-top w-[110px] bg-slate-100">
+                  <div className="flex flex-col gap-1 items-center">
+                    <button onClick={() => setOpenFilter(openFilter === 'priority' ? null : 'priority')} className="font-bold uppercase hover:text-[#0058be] transition-colors flex items-center gap-1">
+                      Ưu Tiên {filterPriority !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
+                    </button>
+                    {openFilter === 'priority' && (
+                      <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} onBlur={() => filterPriority === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
+                        <option value="all">Tất cả</option>
+                        {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    )}
+                  </div>
                 </th>
-                <th className="px-2 py-1.5">
-                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
-                    <option value="all">Tất cả</option>
-                    {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                <th className="px-4 py-2 align-top w-[110px] bg-slate-100">
+                  <div className="flex flex-col gap-1 items-center">
+                    <button onClick={() => setOpenFilter(openFilter === 'status' ? null : 'status')} className="font-bold uppercase hover:text-[#0058be] transition-colors flex items-center gap-1">
+                      Trạng Thái {filterStatus !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
+                    </button>
+                    {openFilter === 'status' && (
+                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} onBlur={() => filterStatus === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
+                        <option value="all">Tất cả</option>
+                        {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    )}
+                  </div>
                 </th>
-                <th colSpan={2}></th>
+                <th className="px-4 py-2 align-top text-center w-[100px] bg-slate-100">
+                  <button 
+                    onClick={() => {
+                      if (sortDeadline === 'default') { setSortDeadline('asc'); setSortKPI('default'); }
+                      else if (sortDeadline === 'asc') setSortDeadline('desc');
+                      else setSortDeadline('default');
+                    }}
+                    className="font-bold uppercase hover:text-[#0058be] transition-colors inline-flex items-center justify-center w-full gap-1 pt-0.5"
+                  >
+                    Deadline
+                    <span className="text-[12px] leading-none text-[#0058be]">
+                      {sortDeadline === 'asc' ? '↑' : sortDeadline === 'desc' ? '↓' : '↕'}
+                    </span>
+                  </button>
+                </th>
+                <th className="px-4 py-2 align-top text-center w-[80px] bg-slate-100">
+                  <button 
+                    onClick={() => {
+                      if (sortKPI === 'default') { setSortKPI('desc'); setSortDeadline('default'); }
+                      else if (sortKPI === 'desc') setSortKPI('asc');
+                      else setSortKPI('default');
+                    }}
+                    className="font-bold uppercase hover:text-[#0058be] transition-colors inline-flex items-center justify-center w-full gap-1 pt-0.5"
+                  >
+                    KPI
+                    <span className="text-[12px] leading-none text-[#0058be]">
+                      {sortKPI === 'desc' ? '↓' : sortKPI === 'asc' ? '↑' : '↕'}
+                    </span>
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>

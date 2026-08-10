@@ -32,8 +32,8 @@ export default function OverviewTab() {
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
   
   // Unified Date Filter
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
 
   // Matrix Filter
@@ -103,8 +103,8 @@ export default function OverviewTab() {
     fTasks = fTasks.filter(t => {
       const tDate = new Date(t.end_date_est || t.created_at || Date.now());
       if (isNaN(tDate.getTime())) return true;
-      if (tDate.getFullYear() !== selectedYear) return false;
-      if (tDate.getMonth() + 1 !== selectedMonth) return false;
+      if (selectedYear !== 'all' && tDate.getFullYear() !== selectedYear) return false;
+      if (selectedMonth !== 'all' && (tDate.getMonth() + 1) !== selectedMonth) return false;
       if (selectedWeek !== 'all' && getWeekOfMonth(tDate) !== selectedWeek) return false;
       return true;
     });
@@ -243,9 +243,10 @@ export default function OverviewTab() {
                 <span className="text-slate-500">Năm:</span>
                 <select
                   value={selectedYear}
-                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
                   className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
                 >
+                  <option value="all">Tất cả</option>
                   {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
                 </select>
               </div>
@@ -254,9 +255,10 @@ export default function OverviewTab() {
                 <span className="text-slate-500">Tháng:</span>
                 <select
                   value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                  onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
                   className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
                 >
+                  <option value="all">Tất cả</option>
                   {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
                 </select>
               </div>
@@ -333,10 +335,10 @@ export default function OverviewTab() {
           </div>
           <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
              {[
-               { label: 'Critical (Khẩn cấp)', val: priorityStats.critical, cls: 'bg-red-50 text-red-600 border-red-200' },
-               { label: 'High (Cao)', val: priorityStats.high, cls: 'bg-orange-50 text-orange-600 border-orange-200' },
-               { label: 'Normal (Bình thường)', val: priorityStats.normal, cls: 'bg-blue-50 text-blue-600 border-blue-200' },
-               { label: 'Interrupt (Phát sinh)', val: priorityStats.interrupt, cls: 'bg-purple-50 text-purple-600 border-purple-200' }
+               { label: 'Critical', val: priorityStats.critical, cls: 'bg-red-50 text-red-600 border-red-200' },
+               { label: 'High', val: priorityStats.high, cls: 'bg-orange-50 text-orange-600 border-orange-200' },
+               { label: 'Normal', val: priorityStats.normal, cls: 'bg-blue-50 text-blue-600 border-blue-200' },
+               { label: 'Interrupt', val: priorityStats.interrupt, cls: 'bg-purple-50 text-purple-600 border-purple-200' }
              ].map(item => (
                 <div key={item.label} className={`flex items-center justify-between p-3 rounded-xl border ${item.cls}`}>
                   <span className="text-xs font-bold">{item.label}</span>
@@ -436,7 +438,7 @@ export default function OverviewTab() {
 
          {/* 1. Summary Matrix */}
          <div className="w-full">
-           <h4 className="text-xs font-bold text-pink-700 mb-2">1. Tổng Hợp KPI (Summary Matrix)</h4>
+           <h4 className="text-xs font-bold text-pink-700 mb-2">1. Tổng Hợp KPI</h4>
            <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
              <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
                <thead className="sticky top-0 z-10">
@@ -465,7 +467,7 @@ export default function OverviewTab() {
 
          {/* 2. Average Matrix */}
          <div className="w-full">
-           <h4 className="text-xs font-bold text-emerald-700 mb-2">2. Trung Bình KPI / Task (Average Matrix)</h4>
+           <h4 className="text-xs font-bold text-emerald-700 mb-2">2. Trung Bình KPI / Task</h4>
            <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
              <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
                <thead className="sticky top-0 z-10">
@@ -494,7 +496,7 @@ export default function OverviewTab() {
 
          {/* 3. Bonus Matrix */}
          <div className="w-full">
-           <h4 className="text-xs font-bold text-indigo-700 mb-2">3. KPI Thưởng (Bonus Matrix)</h4>
+           <h4 className="text-xs font-bold text-indigo-700 mb-2">3. KPI Thưởng</h4>
            <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
              <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
                <thead className="sticky top-0 z-10">
