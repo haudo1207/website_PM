@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Google OAuth2 (for Google Meet & Google Drive)
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REFRESH_TOKEN: str = ""
     GOOGLE_CLIENT_EMAIL: str = ""
     GOOGLE_PRIVATE_KEY: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/meetings/google/callback"

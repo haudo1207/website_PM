@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy import case, or_, and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..models.project import Project, Platform, ProjectLink, project_members
@@ -21,7 +21,13 @@ from ..utils.audit_service import AuditService
 from sqlalchemy import func as sql_func
 from ..utils.access import (
     ALL_SCOPE,
-    VALID_DATA_SCOPES,
+    business_label_for_project,
+    business_unit_for_project,
+    default_workspace,
+    get_workspaces,
+    is_valid_scope,
+    resolve_workspace,
+    valid_data_scopes,
     ROLE_SUPER_ADMIN,
     ROLE_LEADER,
     ROLE_MEMBER,
@@ -74,23 +80,23 @@ def serialize_project(p, db):
 
     # Fetch PMs
     pms = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "PM").all()
-    pm_ids = [m.id for m in pms]
-    pm_names = ", ".join([m.display_name for m in pms])
+    pm_ids = [m.id for m in pms if m]
+    pm_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in pms if m])
 
     # Fetch Leaders
     leaders = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Leader").all()
-    leader_ids = [m.id for m in leaders]
-    leader_names = ", ".join([m.display_name for m in leaders])
+    leader_ids = [m.id for m in leaders if m]
+    leader_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in leaders if m])
 
     # Fetch Sales
     sales = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Sales").all()
-    sales_ids = [m.id for m in sales]
-    sales_names = ", ".join([m.display_name for m in sales])
+    sales_ids = [m.id for m in sales if m]
+    sales_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in sales if m])
 
     # Fetch Members
     members = db.query(Member).join(project_members, Member.id == project_members.c.member_id).filter(project_members.c.project_id == p.id, project_members.c.role == "Member").all()
-    member_ids = [m.id for m in members]
-    member_names = ", ".join([m.display_name for m in members])
+    member_ids = [m.id for m in members if m]
+    member_names = ", ".join([str(m.display_name or m.email or m.full_name or f"User #{m.id}") for m in members if m])
 
     # Combine all unique members for display
     all_members_query = (
@@ -99,7 +105,7 @@ def serialize_project(p, db):
         .filter(project_members.c.project_id == p.id)
         .all()
     )
-    members_list = [{"name": m_name, "email": m_email} for m_name, m_email in all_members_query]
+    members_list = [{"name": str(m_name or m_email or "Member"), "email": str(m_email or "")} for m_name, m_email in all_members_query]
 
     return {
         "id": p.id,
@@ -108,8 +114,8 @@ def serialize_project(p, db):
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
-        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
-        "business_unit": p.customer.business_unit if p.customer else "infrastructure",
+        "business": business_label_for_project(db, p),
+        "business_unit": business_unit_for_project(db, p),
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": pm_names if pm_names else None,
@@ -140,7 +146,7 @@ def serialize_project(p, db):
     }
 
 
-def serialize_project_summary(p, phase_count, task_stats, role_members, all_members):
+def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members):
     """Serialize a project using list-level data loaded in a few batch queries."""
     pms = role_members.get("PM", [])
     leaders = role_members.get("Leader", [])
@@ -155,20 +161,24 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
-        "business": p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure"),
-        "business_unit": p.customer.business_unit if p.customer else "infrastructure",
+        "business": business_label_for_project(db, p),
+        "business_unit": business_unit_for_project(db, p),
         "year": p.year,
         "pm_id": p.pm_id,
-        "pm_name": ", ".join(m[1] for m in pms) or None,
+        "pm_name": ", ".join(m[1] for m in pms if m[1]) or None,
         "pm_ids": [m[0] for m in pms],
+        "pm_users": [{"id": m[0], "name": m[1]} for m in pms if m[1]],
         "technical_leader_id": p.technical_leader_id,
-        "technical_leader_name": ", ".join(m[1] for m in leaders) or None,
+        "technical_leader_name": ", ".join(m[1] for m in leaders if m[1]) or None,
         "technical_leader_ids": [m[0] for m in leaders],
+        "leader_users": [{"id": m[0], "name": m[1]} for m in leaders if m[1]],
         "sales_id": p.sales_id,
-        "sales_name": ", ".join(m[1] for m in sales) or None,
+        "sales_name": ", ".join(m[1] for m in sales if m[1]) or None,
         "sales_ids": [m[0] for m in sales],
+        "sales_users": [{"id": m[0], "name": m[1]} for m in sales if m[1]],
         "member_ids": [m[0] for m in members],
-        "member_names": ", ".join(m[1] for m in members),
+        "member_names": ", ".join(m[1] for m in members if m[1]),
+        "member_users": [{"id": m[0], "name": m[1]} for m in members if m[1]],
         "description": p.description,
         "status": p.status,
         "current_phase": p.current_phase,
@@ -184,24 +194,96 @@ def serialize_project_summary(p, phase_count, task_stats, role_members, all_memb
         "last_review_id": p.last_review_id,
         "created_at": str(p.created_at) if p.created_at else None,
         "updated_at": str(p.updated_at) if p.updated_at else None,
+        "last_activity_at": str(p.last_activity_at) if getattr(p, "last_activity_at", None) else (str(p.updated_at) if p.updated_at else str(p.created_at) if p.created_at else None),
     }
 
 
 @router.get("/projects")
-def list_projects(business: Optional[str] = None, business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def list_projects(
+    business: Optional[str] = None,
+    business_unit: Optional[str] = None,
+    search: Optional[str] = None,
+    customer: Optional[str] = None,
+    year: Optional[int] = None,
+    phase: Optional[str] = None,
+    pm_ids: Optional[str] = None,
+    sales_ids: Optional[str] = None,
+    member_ids: Optional[str] = None,
+    sort: Optional[str] = "activity_desc",
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
     q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
-        b_val = "Markee" if target_b == "markee" else "Infrastructure"
-        q = q.filter(
-            or_(
-                Project.business == b_val,
-                Project.business == "All",
-                and_(Project.business.is_(None), Project.data_scope == target_b),
-                and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
+        ws = resolve_workspace(db, target_b)
+        if ws:
+            b_val = ws.name
+            q = q.filter(
+                or_(
+                    Project.business == b_val,
+                    Project.business == "All",
+                    and_(Project.business.is_(None), Project.data_scope == target_b),
+                    and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
+                )
             )
-        )
-    projects = q.order_by(Project.id.desc()).all()
+        else:
+            q = q.filter(Project.id == -1)
+
+    # Filter: pm_ids
+    if pm_ids:
+        p_id_list = [int(i.strip()) for i in pm_ids.split(",") if i.strip().isdigit()]
+        if p_id_list:
+            pm_subq = db.query(project_members.c.project_id).filter(
+                project_members.c.role == "PM",
+                project_members.c.member_id.in_(p_id_list)
+            )
+            q = q.filter(Project.id.in_(pm_subq))
+
+    # Filter: sales_ids
+    if sales_ids:
+        s_id_list = [int(i.strip()) for i in sales_ids.split(",") if i.strip().isdigit()]
+        if s_id_list:
+            sales_subq = db.query(project_members.c.project_id).filter(
+                project_members.c.role == "Sales",
+                project_members.c.member_id.in_(s_id_list)
+            )
+            q = q.filter(Project.id.in_(sales_subq))
+
+    # Filter: member_ids (Matches PM, Sales, Leader, or Member)
+    if member_ids:
+        m_id_list = [int(i.strip()) for i in member_ids.split(",") if i.strip().isdigit()]
+        if m_id_list:
+            member_subq = db.query(project_members.c.project_id).filter(
+                project_members.c.member_id.in_(m_id_list)
+            )
+            q = q.filter(Project.id.in_(member_subq))
+
+    # Filter: year
+    if year:
+        q = q.filter(Project.year == year)
+
+    # Filter: search
+    if search and search.strip():
+        kw = f"%{search.strip()}%"
+        q = q.filter(or_(Project.name.ilike(kw), Project.code.ilike(kw), Project.description.ilike(kw)))
+
+    # Filter: customer
+    if customer and customer.strip() and customer != "all":
+        q = q.filter(Project.customer_name.ilike(f"%{customer.strip()}%"))
+
+    # Sorting
+    s_mode = (sort or "activity_desc").strip().lower()
+    if s_mode == "created_desc":
+        q = q.order_by(Project.created_at.desc().nulls_last(), Project.id.desc())
+    elif s_mode == "name_asc":
+        q = q.order_by(Project.name.asc(), Project.id.desc())
+    elif s_mode == "name_desc":
+        q = q.order_by(Project.name.desc(), Project.id.desc())
+    else:  # activity_desc (DEFAULT)
+        q = q.order_by(Project.last_activity_at.desc().nulls_last(), Project.id.desc())
+
+    projects = q.all()
     project_ids = [p.id for p in projects]
     if not project_ids:
         return []
@@ -254,6 +336,7 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
     return [
         serialize_project_summary(
             p,
+            db,
             phase_counts.get(p.id, 0),
             task_stats.get(p.id, (0, 0, 0)),
             role_members[p.id],
@@ -266,21 +349,30 @@ def list_projects(business: Optional[str] = None, business_unit: Optional[str] =
 @router.post("/projects")
 def create_project(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     biz_input = str(body.get("business") or body.get("business_unit") or "").strip().lower()
-    if biz_input == "all":
+    scope_from_biz = None
+    if not biz_input:
+        d_ws = default_workspace(db)
+        biz_val = d_ws.name if d_ws else "All"
+    elif biz_input == "all":
         biz_val = "All"
-    elif biz_input == "markee":
-        biz_val = "Markee"
+        scope_from_biz = "all"
     else:
-        biz_val = "Infrastructure"
-    default_scope = biz_val.lower() if biz_input else user_scope(current_user)
+        ws = resolve_workspace(db, biz_input)
+        if ws is None:
+            raise HTTPException(400, f"Workspace '{biz_input}' không tồn tại.")
+        biz_val = ws.name
+        scope_from_biz = ws.code
+    default_scope = scope_from_biz if biz_input else user_scope(current_user)
     requested_scope = str(body.get("data_scope") or default_scope).strip().lower()
-    if requested_scope not in VALID_DATA_SCOPES:
-        raise HTTPException(400, "Invalid data scope.")
+    if not is_valid_scope(db, requested_scope):
+        raise HTTPException(400, f"Invalid data scope. Must be one of: {sorted(valid_data_scopes(db))}")
     if biz_val == "All":
         requested_scope = "all"
     elif user_scope(current_user) != ALL_SCOPE:
         requested_scope = user_scope(current_user)
     project_code = body.get("project_code") or body.get("code")
+    if project_code:
+        project_code = str(project_code).strip()[:50]
     if project_code and db.query(Project.id).filter(Project.code == project_code).first():
         raise HTTPException(409, f"Project code '{project_code}' already exists.")
 
@@ -291,15 +383,16 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         c_obj = db.query(DB_Customer).filter(DB_Customer.id == cust_id).first()
         if c_obj:
             cust_name = c_obj.name
-            # If business == "All", ensure customer exists in both Business Units
+            # If business == "All", ensure customer exists in every Workspace
             if biz_val == "All" and c_obj.name:
-                curr_bu = (c_obj.business_unit or "infrastructure").lower()
-                other_bu = "markee" if curr_bu == "infrastructure" else "infrastructure"
+                curr_bu = (c_obj.business_unit or "").lower()
+                other_ws = next((w for w in get_workspaces(db) if w.code != curr_bu), None)
+                other_bu = other_ws.code if other_ws else None
                 other_c = db.query(DB_Customer).filter(
                     DB_Customer.name.ilike(c_obj.name.strip()),
                     DB_Customer.business_unit == other_bu
                 ).first()
-                if not other_c:
+                if other_bu and not other_c:
                     other_c = DB_Customer(
                         name=c_obj.name.strip(),
                         description=c_obj.description,
@@ -349,9 +442,9 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     db.add(p)
     try:
         db.flush()
-    except IntegrityError as exc:
+    except (IntegrityError, DataError) as exc:
         db.rollback()
-        raise HTTPException(409, f"Project code '{project_code}' already exists.") from exc
+        raise HTTPException(409, f"Project code '{project_code}' already exists or is invalid.") from exc
 
     # 1. Create default "Master" phase for new project
     db.add(Phase(
@@ -411,7 +504,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         entity_id=p.id,
         action="CREATE",
         project_id=p.id,
-        description=f"Khởi tạo dự án '{p.name}' (Mã: {p.code or 'N/A'}, BU: {p.business or 'Infrastructure'})"
+        description=f"Khởi tạo dự án '{p.name}' (Mã: {p.code or 'N/A'}, BU: {p.business or business_label_for_project(db, p)})"
     )
     db.commit()
     return serialize_project(p, db)
@@ -424,10 +517,11 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
 
     years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
     b_input = (business or business_unit or "").strip().lower()
-    target_biz = "Markee" if b_input == "markee" else ("Infrastructure" if b_input else None)
+    ws = resolve_workspace(db, b_input) if b_input else None
+    target_biz = ws.name if ws else None
 
     for p in projects:
-        p_biz = p.business if p.business else ("Markee" if p.customer and p.customer.business_unit == 'markee' else "Infrastructure")
+        p_biz = business_label_for_project(db, p)
         if target_biz and p_biz != target_biz and p_biz != "All":
             continue
 
@@ -472,39 +566,79 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     if not p:
         raise HTTPException(404, "Project not found.")
 
-    for field in ["name", "code", "customer_name", "customer_id", "year", "description", "status", "current_phase"]:
+    old_dict = {
+        "name": p.name,
+        "business": p.business,
+        "customer_name": p.customer_name,
+        "year": p.year,
+        "status": p.status,
+        "current_phase": p.current_phase,
+        "description": p.description,
+    }
+
+    for field in ["name", "code", "customer_name", "description", "status", "current_phase"]:
         if field in body:
-            setattr(p, field, body[field])
+            val = body[field]
+            if field == "code" and val:
+                setattr(p, "code", str(val).strip()[:50])
+            else:
+                setattr(p, field, str(val).strip() if val is not None else None)
+
+    if "year" in body:
+        y_val = body["year"]
+        if y_val is None or y_val == "" or y_val == 0:
+            p.year = None
+        else:
+            try:
+                p.year = int(y_val)
+            except (ValueError, TypeError):
+                p.year = None
+
+    if "customer_id" in body:
+        c_val = body["customer_id"]
+        if c_val is None or c_val == "" or c_val == 0:
+            p.customer_id = None
+        else:
+            try:
+                p.customer_id = int(c_val)
+            except (ValueError, TypeError):
+                p.customer_id = None
+
     if "business" in body or "business_unit" in body:
         b_in = str(body.get("business") or body.get("business_unit") or "").strip().lower()
+        ws = None
         if b_in == "all":
             p.business = "All"
-        elif b_in == "markee":
-            p.business = "Markee"
         else:
-            p.business = "Infrastructure"
+            ws = resolve_workspace(db, b_in)
+            if b_in and ws is None:
+                raise HTTPException(400, f"Workspace '{b_in}' không tồn tại.")
+            if ws:
+                p.business = ws.name
         if "data_scope" not in body and (user_scope(current_user) == ALL_SCOPE or getattr(current_user, "role", None) in {"admin", "super_admin"}):
-            p.data_scope = b_in
-    if "customer_id" in body and body["customer_id"]:
+            p.data_scope = "all" if b_in == "all" else (ws.code if ws else p.data_scope)
+    if p.customer_id:
         from ..models.system_category import Customer as DB_Customer
-        c_obj = db.query(DB_Customer).filter(DB_Customer.id == body["customer_id"]).first()
+        c_obj = db.query(DB_Customer).filter(DB_Customer.id == p.customer_id).first()
         if c_obj:
             p.customer_name = c_obj.name
 
     # If project business is "All", ensure customer is synced across both Business Units
-    if p.business == "All" and p.customer_name:
+    if p.business == "All" and p.customer_name and str(p.customer_name).strip():
         from ..models.system_category import Customer as DB_Customer
-        c_obj = db.query(DB_Customer).filter(DB_Customer.name.ilike(p.customer_name.strip())).first()
+        c_name = str(p.customer_name).strip()
+        c_obj = db.query(DB_Customer).filter(DB_Customer.name.ilike(c_name)).first()
         if c_obj:
-            curr_bu = (c_obj.business_unit or "infrastructure").lower()
-            other_bu = "markee" if curr_bu == "infrastructure" else "infrastructure"
+            curr_bu = (c_obj.business_unit or "").lower()
+            other_ws = next((w for w in get_workspaces(db) if w.code != curr_bu), None)
+            other_bu = other_ws.code if other_ws else None
             other_c = db.query(DB_Customer).filter(
-                DB_Customer.name.ilike(p.customer_name.strip()),
+                DB_Customer.name.ilike(c_name),
                 DB_Customer.business_unit == other_bu
             ).first()
-            if not other_c:
+            if other_bu and not other_c:
                 other_c = DB_Customer(
-                    name=p.customer_name.strip(),
+                    name=c_name,
                     description=c_obj.description,
                     business_unit=other_bu
                 )
@@ -512,8 +646,8 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
                 db.flush()
     if "data_scope" in body:
         requested_scope = str(body["data_scope"]).strip().lower()
-        if requested_scope not in VALID_DATA_SCOPES:
-            raise HTTPException(400, "Invalid data scope.")
+        if not is_valid_scope(db, requested_scope):
+            raise HTTPException(400, f"Invalid data scope. Must be one of: {sorted(valid_data_scopes(db))}")
         if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) not in {"super_admin", "admin", "leader"}:
             raise HTTPException(403, "Only full-scope users can change project scope.")
         p.data_scope = requested_scope
@@ -596,6 +730,41 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
 
     db.commit()
     db.refresh(p)
+
+    try:
+        new_dict = {
+            "name": p.name,
+            "business": p.business,
+            "customer_name": p.customer_name,
+            "year": p.year,
+            "status": p.status,
+            "current_phase": p.current_phase,
+            "description": p.description,
+        }
+        field_labels = {
+            "name": "Tên dự án",
+            "business": "Workspace",
+            "customer_name": "Khách hàng",
+            "year": "Năm dự án",
+            "status": "Trạng thái",
+            "current_phase": "Giai đoạn hiện tại",
+            "description": "Mô tả dự án",
+        }
+        AuditService.record_diff(
+            db=db,
+            user_id=getattr(current_user, "id", None),
+            module="Project",
+            entity_type="Project",
+            entity_id=p.id,
+            old_dict=old_dict,
+            new_dict=new_dict,
+            project_id=p.id,
+            field_labels=field_labels,
+        )
+        db.commit()
+    except Exception as audit_err:
+        print(f"[update_project] Warning: Audit log failed, continuing: {audit_err}")
+
     return serialize_project(p, db)
 
 
@@ -753,7 +922,7 @@ def list_phases(pid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/projects/{pid}/phases")
-def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
+def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(400, "Phase name is required.")
@@ -772,6 +941,17 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(409, f"Phase with name '{name}' already exists in this project, or another integrity constraint was violated.") from exc
     db.refresh(ph)
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Phase",
+        entity_type="Phase",
+        entity_id=ph.id,
+        action="CREATE",
+        project_id=pid,
+        description=f"Đã thêm Phase '{ph.name}'"
+    )
+    db.commit()
     return {
         "id": ph.id,
         "project_id": ph.project_id,
@@ -790,27 +970,53 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.patch("/projects/{pid}/phases/{phid}")
-def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db)):
+def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")
+    old_name = ph.name
+    old_status = ph.status
     for field in ["name", "description", "sort_order", "status"]:
         if field in body:
             setattr(ph, field, body[field])
     db.commit()
     db.refresh(ph)
+    AuditService.record_diff(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Phase",
+        entity_type="Phase",
+        entity_id=ph.id,
+        old_dict={"name": old_name, "status": old_status},
+        new_dict={"name": ph.name, "status": ph.status},
+        project_id=pid,
+        field_labels={"name": "Tên Phase", "status": "Trạng thái Phase"}
+    )
+    db.commit()
     return serialize_phase(ph, db)
 
 
 @router.delete("/projects/{pid}/phases/{phid}")
-def delete_phase(pid: int, phid: int, db: Session = Depends(get_db)):
+def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")
     tg_count = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).count()
     if tg_count > 0:
         raise HTTPException(400, f"Không thể xóa Phase vì còn {tg_count} Task Group. Hãy xóa hết Task Group trước.")
+    phase_name = ph.name
     db.delete(ph)
+    db.commit()
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Phase",
+        entity_type="Phase",
+        entity_id=phid,
+        action="DELETE",
+        project_id=pid,
+        description=f"Đã xóa Phase '{phase_name}'"
+    )
     db.commit()
     return {"ok": True}
 
@@ -1041,13 +1247,14 @@ def export_project_audit_logs(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["ID", "Thời gian", "Người thực hiện", "Module", "Hành động", "Trường thay đổi", "Giá trị cũ", "Giá trị mới", "Mô tả"])
+    writer.writerow(["ID", "Event ID", "Thời gian", "Người thực hiện", "Module", "Hành động", "Trường thay đổi", "Giá trị cũ", "Giá trị mới", "Mô tả"])
 
     for log in logs:
         user_name = log.user.full_name or log.user.display_name or log.user.email if log.user else "System"
         created_str = log.created_at.strftime("%d/%m/%Y %H:%M:%S") if log.created_at else ""
         writer.writerow([
             log.id,
+            log.event_id or f"single-{log.id}",
             created_str,
             user_name,
             log.module,

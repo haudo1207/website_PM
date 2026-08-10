@@ -6,6 +6,7 @@ import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
+import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleAuthUrl, getGoogleStatus } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
@@ -21,9 +22,24 @@ export default function MeetingsPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [googleConnected, setGoogleConnected] = useState(false);
+
+  const handleCalendarMeetingClick = (item: any) => {
+    const statusUpper = String(item.status || '').toUpperCase();
+    const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED' || Boolean(item.executive_summary) || (Array.isArray(item.summary) && item.summary.length > 0);
+
+    if (isDone) {
+      setSummarizingMeeting(item);
+      setIsSummarizeOpen(true);
+    } else {
+      setDetailMeeting(item);
+      setIsDetailOpen(true);
+    }
+  };
 
   useEffect(() => {
     getGoogleStatus().then(res => {
@@ -167,8 +183,8 @@ export default function MeetingsPage() {
             <span className="text-xs font-bold text-[#0b1c30]">Quản lý Meetings</span>
           </div>}
           <div className="flex items-center gap-3">
-            <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-1.5 bg-white hover:bg-[#f0f2f5] border border-[#c2c6d6] text-[#565e74] text-xs font-bold px-3 py-2 rounded-lg transition-colors">
-              <Sparkles size={14} className="text-emerald-500" />Cấu hình AI
+            <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-1.5 bg-white hover:bg-[#f0f2f5] border border-[#c2c6d6] text-[#565e74] text-xs font-bold px-3 py-2 rounded-lg transition-colors shadow-2xs">
+              <Sparkles size={14} className="text-emerald-500" />Cấu hình AI & Google Admin
             </button>
             <button onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }} className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm">
               <span className="material-symbols-outlined text-[16px]">add</span>Tạo meeting
@@ -251,20 +267,6 @@ export default function MeetingsPage() {
 
                 <button
                   type="button"
-                  onClick={handleConnectGoogle}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors border shadow-xs flex items-center gap-1.5 ${
-                    googleConnected
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                      : 'bg-[#0058be] hover:bg-[#004297] text-white border-transparent'
-                  }`}
-                  title="Kết nối tài khoản Google để tự động đồng bộ Google Meet & Transcript"
-                >
-                  <Sparkles size={13} />
-                  <span>{googleConnected ? '✓ Đã kết nối Google' : 'Kết nối Google Meet'}</span>
-                </button>
-
-                <button
-                  type="button"
                   onClick={fetchMeetings}
                   className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#0b1c30] text-xs font-semibold rounded-lg transition-colors border border-[#cbd5e1] shadow-xs flex items-center gap-1.5"
                 >
@@ -328,7 +330,7 @@ export default function MeetingsPage() {
                         return (
                           <div
                             key={item.id}
-                            onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
+                            onClick={() => handleCalendarMeetingClick(item)}
                             className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${
                               isPM
                                 ? 'bg-[#fff7e8] border-l-[#f59e0b]'
@@ -401,6 +403,7 @@ export default function MeetingsPage() {
       {canManage && <CreateMeetingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
       {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => setMeetings(prev => prev.map(x => x.id === m.id ? m : x))} />}
+      <MeetingDetailModal isOpen={isDetailOpen} onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }} meeting={detailMeeting} onEdit={canManage ? (m => { setEditingMeeting(m); setIsModalOpen(true); }) : undefined} onSummarize={canManage ? (m => { setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined} />
 
       {/* Delete Confirm Modal */}
       {deleteConfirmId && (

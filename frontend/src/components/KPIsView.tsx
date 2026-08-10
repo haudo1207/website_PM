@@ -680,7 +680,7 @@ export default function KPIsView({ statuses = [], onReload, onFlash }: KPIsViewP
                               <span className={`text-[10px] font-mono font-bold ${
                                 isBonus ? 'text-emerald-700' : 'text-rose-700'
                               }`}>
-                                {pr.kpi > 0 ? `+${pr.kpi}` : pr.kpi} KPI
+                                {pr.kpi > 0 ? `${pr.kpi}` : pr.kpi} %
                               </span>
                             </div>
                           </div>

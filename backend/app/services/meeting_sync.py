@@ -14,6 +14,8 @@ import requests
 from typing import Optional
 
 from ..config import settings
+from ..models.google_token import GoogleToken
+from ..models.user import User
 
 logger = logging.getLogger("meeting_sync")
 
@@ -210,35 +212,14 @@ def sync_zoom_meeting(meeting_url: str, meeting_info: dict) -> dict:
 # GOOGLE MEET — OAuth + Calendar + Drive Transcript Sync
 # ═══════════════════════════════════════════════════════════
 
-def _get_google_credentials(db, user_id: int):
-    """Build Google OAuth2 credentials from stored tokens."""
+def _get_google_credentials(db, user_id: int = 1):
+    """
+    Get valid google.oauth2.credentials.Credentials.
+    Uses shared operational account (mkt.szone@gmail.com).
+    """
     from google.oauth2.credentials import Credentials
-
-    token_data = _load_google_tokens(db, user_id)
-    if not token_data:
-        raise ValueError(
-            "Google Calendar chưa được kết nối. "
-            "Vui lòng gọi API /api/meetings/google/auth để kết nối tài khoản Google trước."
-        )
-
-    creds = Credentials(
-        token=token_data.get("access_token"),
-        refresh_token=token_data.get("refresh_token"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=settings.GOOGLE_CLIENT_ID,
-        client_secret=settings.GOOGLE_CLIENT_SECRET,
-    )
-
-    # Auto-refresh if expired
-    if creds.expired and creds.refresh_token:
-        from google.auth.transport.requests import Request
-        creds.refresh(Request())
-        _save_google_tokens(db, user_id, {
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token,
-        })
-
-    return creds
+    token = get_shared_google_access_token(db)
+    return Credentials(token=token)
 
 
 def _load_google_tokens(db, user_id: int) -> Optional[dict]:
@@ -298,29 +279,141 @@ def _save_google_tokens(db, user_id: int, tokens: dict):
     db.commit()
 
 
+_google_token_cache = {"token": None, "exp": 0}
+
+class GoogleTokenDead(Exception):
+    """Raised when Google Refresh Token is invalid or revoked (invalid_grant)."""
+    pass
+
+def get_shared_google_access_token(db=None) -> str:
+    """
+    Get access token for the shared operational Google account (mkt.szone@gmail.com).
+    Caches the access token for 55 minutes per Spec Chapter 03.
+    Catches invalid_grant errors and alerts operators.
+    """
+    import time
+    if _google_token_cache["token"] and time.time() < _google_token_cache["exp"]:
+        return _google_token_cache["token"]
+
+    client_id = settings.GOOGLE_CLIENT_ID
+    client_secret = settings.GOOGLE_CLIENT_SECRET
+    refresh_token = settings.GOOGLE_REFRESH_TOKEN
+
+    # If GOOGLE_REFRESH_TOKEN is not set in settings, fallback to database tokens
+    if not refresh_token and db:
+        tok = db.query(GoogleToken).filter(GoogleToken.refresh_token != None, GoogleToken.refresh_token != "").order_by(GoogleToken.id.desc()).first()
+        if tok:
+            refresh_token = tok.refresh_token
+
+    if not client_id or not client_secret or not refresh_token:
+        logger.warning("Thiếu GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET hoặc GOOGLE_REFRESH_TOKEN trong .env")
+        raise ValueError("Thiếu cấu hình GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET hoặc GOOGLE_REFRESH_TOKEN trong .env")
+
+    resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        timeout=10
+    )
+
+    if resp.status_code == 400 and "invalid_grant" in resp.text:
+        logger.critical("GOOGLE REFRESH TOKEN DA CHET (invalid_grant) - Xem runbook chuong 03")
+        raise GoogleTokenDead("Refresh token Google đã hết hạn hoặc bị thu hồi (invalid_grant). Vui lòng cấp lại quyền.")
+
+    resp.raise_for_status()
+    data = resp.json()
+    token = data["access_token"]
+    expires_in = data.get("expires_in", 3600)
+    
+    _google_token_cache["token"] = token
+    _google_token_cache["exp"] = time.time() + expires_in - 300  # Cache 55 minutes
+    return token
+
+
+def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, creator_email: str, start_iso: str, end_iso: str, attendees_emails: list, db=None) -> dict:
+    """
+    Create Google Meet event using shared operational account (mkt.szone@gmail.com).
+    Calls Google Calendar API events.insert with conferenceDataVersion=1 & sendUpdates=all per Spec Chapter 07.
+    """
+    token = get_shared_google_access_token(db)
+
+    body = {
+        "summary": f"[MK-{meeting_id}] {title}",
+        "description": f"Người tạo: {creator_name} ({creator_email})\nTạo từ Markee Work Portal",
+        "start": {"dateTime": start_iso, "timeZone": "Asia/Ho_Chi_Minh"},
+        "end": {"dateTime": end_iso, "timeZone": "Asia/Ho_Chi_Minh"},
+        "attendees": [{"email": e} for e in attendees_emails if e],
+        "conferenceData": {
+            "createRequest": {
+                "requestId": f"mk-{meeting_id}-{os.urandom(3).hex()}",
+                "conferenceSolutionKey": {"type": "hangoutsMeet"}
+            }
+        },
+        "extendedProperties": {
+            "private": {
+                "markee_meeting_id": str(meeting_id)
+            }
+        }
+    }
+
+    resp = requests.post(
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        params={"conferenceDataVersion": 1, "sendUpdates": "all"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        },
+        json=body,
+        timeout=15
+    )
+
+    if not resp.ok:
+        logger.error(f"Google Calendar insert failed: status={resp.status_code}, body={resp.text}")
+        raise ValueError(f"Google Calendar insert failed: {resp.text}")
+
+    data = resp.json()
+    
+    # Handle pending statusCode per Spec Chapter 07
+    create_req_status = data.get("conferenceData", {}).get("createRequest", {}).get("status", {}).get("statusCode")
+    if create_req_status != "success":
+        import time
+        time.sleep(2)
+        event_id = data.get("id")
+        if event_id:
+            get_resp = requests.get(
+                f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10
+            )
+            if get_resp.ok:
+                data = get_resp.json()
+
+    entry_points = data.get("conferenceData", {}).get("entryPoints", [])
+    meet_link = entry_points[0].get("uri") if entry_points else ""
+    meeting_code = data.get("conferenceData", {}).get("conferenceId", "")
+
+    return {
+        "google_event_id": data.get("id"),
+        "meet_link": meet_link or f"https://meet.google.com/{meeting_code}" if meeting_code else "",
+        "meeting_code": meeting_code
+    }
+
+
 def is_google_connected(db, user_id: int) -> bool:
-    """Check if Google OAuth tokens or Google SSO login are available for the user."""
+    """Check if Google Calendar & Drive API connection is active."""
+    try:
+        get_shared_google_access_token(db)
+        return True
+    except Exception:
+        pass
+
     tokens = _load_google_tokens(db, user_id)
     if tokens and (tokens.get("refresh_token") or tokens.get("access_token")):
         return True
-
-    # Auto-detect if user logged in via Google SSO (has google_sub)
-    if user_id:
-        try:
-            from ..models.user import User
-            user = db.query(User).filter((User.id == user_id) | (User.member_id == user_id)).first()
-            if user and user.google_sub:
-                return True
-        except Exception:
-            pass
-
-    # System-wide check fallback: if any GoogleToken exists in database
-    try:
-        from ..models.google_token import GoogleToken
-        if db.query(GoogleToken).first():
-            return True
-    except Exception:
-        pass
 
     return False
 
@@ -328,46 +421,37 @@ def is_google_connected(db, user_id: int) -> bool:
 def create_google_meet_link(db, user_id: int, topic: str, start_time: str, duration_minutes: int = 60) -> dict:
     """
     Create a Google Calendar event with Google Meet link.
-    If Google OAuth is not connected or fails, fallback to instant Google Meet creation URL.
-    Returns { join_url, id }.
+    Uses shared operational account (mkt.szone@gmail.com).
+    Attributes creator_name and creator_email from current user in DB.
     """
+    creator_name = "Portal User"
+    creator_email = "user@company.com"
+    if db and user_id:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            creator_name = user.full_name or user.email.split("@")[0]
+            creator_email = user.email
+
     try:
-        if is_google_connected(db, user_id):
-            from googleapiclient.discovery import build
-
-            creds = _get_google_credentials(db, user_id)
-            calendar = build("calendar", "v3", credentials=creds)
-
-            start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-            end = start + datetime.timedelta(minutes=duration_minutes)
-
-            event = {
-                "summary": topic or "Cuộc họp mới",
-                "description": "Được tạo tự động từ hệ thống Meeting Logs",
-                "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
-                "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Ho_Chi_Minh"},
-                "conferenceData": {
-                    "createRequest": {
-                        "requestId": f"meet-{int(datetime.datetime.now().timestamp())}",
-                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                    }
-                },
-            }
-
-            response = calendar.events().insert(
-                calendarId="primary",
-                body=event,
-                conferenceDataVersion=1,
-            ).execute()
-
-            hangout_link = response.get("hangoutLink")
-            if hangout_link:
-                return {"join_url": hangout_link, "id": response.get("id")}
+        start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        end = start + datetime.timedelta(minutes=duration_minutes)
+        res = create_google_meet_shared(
+            meeting_id=int(datetime.datetime.now().timestamp()),
+            title=topic or "Cuộc họp mới",
+            creator_name=creator_name,
+            creator_email=creator_email,
+            start_iso=start.isoformat(),
+            end_iso=end.isoformat(),
+            attendees_emails=[creator_email] if creator_email else [],
+            db=db
+        )
+        if res.get("meet_link"):
+            return {"join_url": res["meet_link"], "id": res.get("google_event_id")}
+        else:
+            raise ValueError("Google Calendar không trả về meet_link hợp lệ")
     except Exception as e:
-        logger.warning(f"Google Calendar Meet creation fallback used due to: {e}")
-
-    # Fallback: Official instant Google Meet link
-    return {"join_url": "https://meet.google.com/new", "id": None}
+        logger.error(f"Google Calendar Meet creation failed: {e}")
+        raise ValueError(f"Không thể khởi tạo cuộc họp Google Meet qua tài khoản mkt.szone@gmail.com: {e}")
 
 
 def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> dict:
@@ -892,7 +976,11 @@ def auto_sync_all_ended_meetings(db):
                 if result.get("transcript"):
                     m.transcript = result["transcript"]
                 if result.get("summary"):
-                    m.ai_summary = result["summary"]
+                    if isinstance(result["summary"], dict):
+                        m.ai_summary = result["summary"].get("executive_summary") or str(result["summary"])
+                        m.recommended_tasks = result["summary"].get("recommended_tasks") or []
+                    else:
+                        m.ai_summary = result["summary"]
                 db.commit()
                 count_synced += 1
             elif needs_end_update:

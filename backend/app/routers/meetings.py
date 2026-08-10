@@ -217,10 +217,10 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
         try:
             from ..services.meeting_sync import create_google_meet_link
             result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
-            return {"success": True, "join_url": result.get("join_url", "https://meet.google.com/new"), "platform": "Google Meet"}
+            return {"success": True, "join_url": result["join_url"], "platform": "Google Meet"}
         except Exception as e:
-            logger.error(f"Generate Google Meet link fallback triggered: {e}")
-            return {"success": True, "join_url": "https://meet.google.com/new", "platform": "Google Meet"}
+            logger.error(f"Generate Google Meet link failed: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail=f"Nền tảng '{platform}' chưa hỗ trợ tự động tạo link.")
 
@@ -301,9 +301,9 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 
     # Handle Link mappings — auto-generate if empty
     meeting_url = body.get("meeting_url") or body.get("link")
-    platform = body.get("platform", "")
+    platform = body.get("platform") or "Google Meet"
 
-    if not meeting_url and platform:
+    if not meeting_url:
         # Build ISO start_time for API calls
         start_datetime = f"{meeting_date.isoformat()}T{start_time.strftime('%H:%M')}:00Z"
         dur_mins = 60
@@ -312,7 +312,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         except Exception:
             pass
 
-        if platform.lower() == "zoom":
+        if platform and platform.lower() == "zoom":
             try:
                 from ..services.meeting_sync import create_zoom_meeting
                 result = create_zoom_meeting(title, start_datetime, dur_mins)
@@ -323,14 +323,14 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                     status_code=400,
                     detail=f"Không thể tự động tạo link Zoom: {str(e)}. Hãy chắc chắn các khoá ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET được cấu hình đầy đủ trong file .env."
                 )
-        elif "google" in platform.lower() or "meet" in platform.lower():
+        else:
             try:
                 from ..services.meeting_sync import create_google_meet_link
                 result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
-                meeting_url = result.get("join_url", "https://meet.google.com/new")
+                meeting_url = result["join_url"]
             except Exception as e:
-                logger.error(f"Auto-generate Google Meet link fallback: {e}")
-                meeting_url = "https://meet.google.com/new"
+                logger.error(f"Auto-generate Google Meet link failed: {e}")
+                raise HTTPException(status_code=400, detail=str(e))
 
     # Handle AI summary formatting
     ai_summary = body.get("ai_summary") or body.get("summary")
@@ -695,41 +695,7 @@ def google_auth_url(db: Session = Depends(get_db), current_user = Depends(get_cu
     return {"auth_url": auth_url}
 
 
-@router.get("/google/callback")
-def google_callback(code: str, state: str = None, db: Session = Depends(get_db)):
-    """Handle Google OAuth2 callback and save tokens."""
-    from ..config import settings
-    from google_auth_oauthlib.flow import Flow
-    from ..services.meeting_sync import _save_google_tokens
-    from fastapi.responses import RedirectResponse
 
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        },
-        scopes=[
-            "https://www.googleapis.com/auth/calendar",
-            "https://www.googleapis.com/auth/drive.readonly",
-        ],
-        redirect_uri=settings.GOOGLE_REDIRECT_URI,
-    )
-    flow.fetch_token(code=code)
-    creds = flow.credentials
-
-    user_id = int(state) if state else None
-    if user_id:
-        _save_google_tokens(db, user_id, {
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token,
-        })
-        db.commit()
-
-    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
 
 
 # ─── PUSH MEETING AI RECOMMENDED TASKS INTO PROJECT ───────
@@ -795,3 +761,41 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
 
     db.commit()
     return {"success": True, "pushed_count": pushed_count, "message": f"Đã push {pushed_count} task vào Project thành công!"}
+
+
+# ─── INTERNAL GOOGLE HEALTH CHECK ENDPOINT (SPEC CHAPTER 06) ───
+@router.get("/internal/health/google")
+def google_health_check(db: Session = Depends(get_db)):
+    """Health check endpoint to monitor Google Refresh Token & API access status per Spec Chapter 06."""
+    from ..services.meeting_sync import get_shared_google_access_token
+    try:
+        token = get_shared_google_access_token(db)
+        import requests
+        resp = requests.get(
+            "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5
+        )
+        if resp.ok:
+            return {"status": "ok", "message": "Google Calendar API token is active and healthy."}
+        return {"status": "error", "message": f"Google Calendar API returned status code {resp.status_code}"}
+    except Exception as e:
+        return {"status": "error", "message": f"Google token health check failed: {str(e)}"}
+
+
+# ─── RETRY LINK CREATION ENDPOINT (SPEC CHAPTER 06) ───────────
+@router.post("/{id}/retry-link")
+def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Retry creating Google Meet link for a meeting that failed link creation."""
+    m = db.query(Meeting).filter(Meeting.id == id).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy cuộc họp")
+
+    from ..services.meeting_sync import create_google_meet_link
+    link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", m.meeting_date.isoformat() if m.meeting_date else "")
+    if link_data and link_data.get("join_url"):
+        m.meeting_link = link_data["join_url"]
+        db.commit()
+        return {"success": True, "meeting_link": m.meeting_link}
+
+    raise HTTPException(500, "Không thể tạo lại link Google Meet")

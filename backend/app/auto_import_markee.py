@@ -11,7 +11,7 @@ from app.database import SessionLocal
 from app.models.skill_master import Category, Group, Skill
 from app.models.member import Member
 from app.models.user import User
-from app.models.system_category import Customer
+from app.models.system_category import Customer, Workspace
 from app.models.phase import Phase
 from app.models.task_group import TaskGroup
 from app.models.task import Task
@@ -30,20 +30,27 @@ def run_import():
     imported_custs = 0
     imported_projs = 0
 
+    # Resolve the Workspace this brand maps to (DEV) from the Workspace Master
+    ws = (
+        db.query(Workspace).filter(Workspace.name.ilike('dev')).first()
+        or db.query(Workspace).order_by(Workspace.id.asc()).first()
+    )
+    bu_code = ws.code if ws else 'dev'
+
     try:
         for row in sheet.iter_rows(values_only=True):
             if not row or not row[0]:
                 continue
             cust_name = str(row[0]).strip()
 
-            # Find or create customer under 'markee' business unit
+            # Find or create customer under the resolved workspace code
             cust = db.query(Customer).filter(
                 Customer.name.ilike(cust_name),
-                Customer.business_unit == 'markee'
+                Customer.business_unit == bu_code
             ).first()
 
             if not cust:
-                cust = Customer(name=cust_name, business_unit='markee')
+                cust = Customer(name=cust_name, business_unit=bu_code)
                 db.add(cust)
                 db.commit()
                 db.refresh(cust)
@@ -73,7 +80,9 @@ def run_import():
                             customer_id=cust.id,
                             year=yr,
                             status='Planning',
-                            current_phase='1. Tư vấn'
+                            current_phase='1. Tư vấn',
+                            business=ws.name if ws else 'DEV',
+                            data_scope=bu_code
                         )
                         db.add(proj)
                         imported_projs += 1

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin } from '@/lib/auth';
 import { useState, useEffect, Suspense } from 'react';
-import { getSidebarTree, getProjects, getCustomers } from '@/lib/api';
+import { getSidebarTree, getProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { brand } from '@/lib/brand';
 
 interface CustomerNode {
@@ -25,28 +25,27 @@ function NavbarContent() {
   const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
 
-  const [activeBU, setActiveBU] = useState<'infrastructure' | 'markee'>('infrastructure');
-  const [expandedYearBU, setExpandedYearBU] = useState<Record<string, number | null>>({
-    infrastructure: null,
-    markee: null
-  });
-  const [customerSearchBU, setCustomerSearchBU] = useState<Record<string, string>>({
-    infrastructure: '',
-    markee: ''
-  });
-  const [treeDataBU, setTreeDataBU] = useState<Record<string, YearNode[]>>({
-    infrastructure: [],
-    markee: []
-  });
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeBU, setActiveBU] = useState<string>('');
+  const [expandedYearBU, setExpandedYearBU] = useState<Record<string, number | null>>({});
+  const [customerSearchBU, setCustomerSearchBU] = useState<Record<string, string>>({});
+  const [treeDataBU, setTreeDataBU] = useState<Record<string, YearNode[]>>({});
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setName(getName() ?? '');
     setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
+    getWorkspaces()
+      .then(ws => {
+        setWorkspaces(ws || []);
+        setActiveBU(prev => prev || (ws?.[0]?.code || ''));
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (!activeBU) return;
     getSidebarTree(activeBU)
       .then((data: YearNode[]) => {
         setTreeDataBU(prev => ({ ...prev, [activeBU]: data || [] }));
@@ -287,28 +286,25 @@ function NavbarContent() {
             </Link>
           </div>
 
-          {/* Business Unit Tabs Switcher */}
+          {/* Workspace Tabs Switcher (from Workspace Master) */}
           <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
-            <button
-              onClick={() => setActiveBU('infrastructure')}
-              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                activeBU === 'infrastructure'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Infrastructure
-            </button>
-            <button
-              onClick={() => setActiveBU('markee')}
-              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                activeBU === 'markee'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Markee
-            </button>
+            {workspaces.length === 0 ? (
+              <span className="flex-1 text-[10px] font-bold py-1 rounded-md text-slate-500 text-center">No Workspaces</span>
+            ) : (
+              workspaces.map(ws => (
+                <button
+                  key={ws.code}
+                  onClick={() => setActiveBU(ws.code)}
+                  className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                    activeBU === ws.code
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {ws.name}
+                </button>
+              ))
+            )}
           </div>
 
           {/* Quick Search Input */}
@@ -401,28 +397,25 @@ function NavbarContent() {
             </Link>
           </div>
 
-          {/* Mobile Business Unit Tabs Switcher */}
+          {/* Mobile Workspace Tabs Switcher */}
           <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
-            <button
-              onClick={() => setActiveBU('infrastructure')}
-              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                activeBU === 'infrastructure'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Infrastructure
-            </button>
-            <button
-              onClick={() => setActiveBU('markee')}
-              className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                activeBU === 'markee'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Markee
-            </button>
+            {workspaces.length === 0 ? (
+              <span className="flex-1 text-[10px] font-bold py-1 rounded-md text-slate-500 text-center">No Workspaces</span>
+            ) : (
+              workspaces.map(ws => (
+                <button
+                  key={ws.code}
+                  onClick={() => setActiveBU(ws.code)}
+                  className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
+                    activeBU === ws.code
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {ws.name}
+                </button>
+              ))
+            )}
           </div>
 
           <div className="relative px-1 mb-2">

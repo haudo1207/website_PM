@@ -5,12 +5,17 @@ import {
   getSystemAuditStats,
   getSystemAuditLogs,
   exportSystemAuditLogs,
+  exportSystemAuditLogsJSON,
+  getSessionTimeline,
   getSystemAuditAnalytics,
   getProjects,
   getMembers,
+  getWorkspaces,
+  Workspace,
   SystemAuditItem,
   SystemAuditStats
 } from '@/lib/api';
+import SearchableSelect from './common/SearchableSelect';
 
 export default function SystemAuditView() {
   // Stats Period State
@@ -25,6 +30,13 @@ export default function SystemAuditView() {
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [moduleFilter, setModuleFilter] = useState('all');
   const [actionFilter, setActionFilter] = useState('all');
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [loginMethodFilter, setLoginMethodFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [ipRiskFilter, setIpRiskFilter] = useState('all');
+  const [outcomeFilter, setOutcomeFilter] = useState('all');
+  const [viewMode, setViewMode] = useState<'table' | 'timeline'>('table');
   const [userFilter, setUserFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState('30');
   const [page, setPage] = useState(1);
@@ -37,11 +49,16 @@ export default function SystemAuditView() {
   const [loading, setLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [exportingJSON, setExportingJSON] = useState(false);
   const [analytics, setAnalytics] = useState<any>(null);
+
+  // Session Timeline Drill-down State
+  const [sessionTimelineEvents, setSessionTimelineEvents] = useState<SystemAuditItem[] | null>(null);
 
   // Dropdown option lists
   const [projectsList, setProjectsList] = useState<{ id: number; name: string }[]>([]);
   const [usersList, setUsersList] = useState<{ id: number; name: string }[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
   // Selected Log for Detail Modal
   const [selectedLog, setSelectedLog] = useState<SystemAuditItem | null>(null);
@@ -59,6 +76,8 @@ export default function SystemAuditView() {
         setUsersList(mems.map((m: any) => ({ id: m.id, name: m.display_name || m.email })));
       }
     }).catch(() => {});
+
+    getWorkspaces().then(ws => setWorkspaces(ws || [])).catch(() => {});
 
     getSystemAuditAnalytics().then(setAnalytics).catch(() => {});
   }, []);
@@ -114,6 +133,12 @@ export default function SystemAuditView() {
         project_id: projectFilter !== 'all' ? parseInt(projectFilter) : undefined,
         module: moduleFilter !== 'all' ? moduleFilter : undefined,
         action: actionFilter !== 'all' ? actionFilter : undefined,
+        severity: severityFilter !== 'all' ? severityFilter : undefined,
+        login_method: loginMethodFilter !== 'all' ? loginMethodFilter : undefined,
+        source: sourceFilter !== 'all' ? sourceFilter : undefined,
+        category: categoryFilter !== 'all' ? categoryFilter : undefined,
+        ip_risk: ipRiskFilter !== 'all' ? ipRiskFilter : undefined,
+        outcome: outcomeFilter !== 'all' ? outcomeFilter : undefined,
         user_id: userFilter !== 'all' ? parseInt(userFilter) : undefined,
         search: search.trim() || undefined,
         start_date: startDateStr,
@@ -130,7 +155,7 @@ export default function SystemAuditView() {
     } finally {
       setLoading(false);
     }
-  }, [businessFilter, projectFilter, moduleFilter, actionFilter, userFilter, search, dateFilter, customStart, customEnd, page]);
+  }, [businessFilter, projectFilter, moduleFilter, actionFilter, severityFilter, loginMethodFilter, sourceFilter, categoryFilter, ipRiskFilter, outcomeFilter, userFilter, search, dateFilter, customStart, customEnd, page]);
 
   useEffect(() => {
     fetchLogs();
@@ -138,9 +163,9 @@ export default function SystemAuditView() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, businessFilter, projectFilter, moduleFilter, actionFilter, userFilter, dateFilter, customStart, customEnd]);
+  }, [search, businessFilter, projectFilter, moduleFilter, actionFilter, severityFilter, loginMethodFilter, sourceFilter, categoryFilter, ipRiskFilter, outcomeFilter, userFilter, dateFilter, customStart, customEnd]);
 
-  // Export Handler
+  // Export Handlers
   const handleExportCSV = async () => {
     try {
       setExporting(true);
@@ -149,6 +174,11 @@ export default function SystemAuditView() {
         project_id: projectFilter !== 'all' ? parseInt(projectFilter) : undefined,
         module: moduleFilter !== 'all' ? moduleFilter : undefined,
         action: actionFilter !== 'all' ? actionFilter : undefined,
+        severity: severityFilter !== 'all' ? severityFilter : undefined,
+        login_method: loginMethodFilter !== 'all' ? loginMethodFilter : undefined,
+        source: sourceFilter !== 'all' ? sourceFilter : undefined,
+        category: categoryFilter !== 'all' ? categoryFilter : undefined,
+        ip_risk: ipRiskFilter !== 'all' ? ipRiskFilter : undefined,
         user_id: userFilter !== 'all' ? parseInt(userFilter) : undefined,
         search: search.trim() || undefined
       });
@@ -168,7 +198,189 @@ export default function SystemAuditView() {
     }
   };
 
+  const handleExportJSON = async () => {
+    try {
+      setExportingJSON(true);
+      const data = await exportSystemAuditLogsJSON({
+        category: categoryFilter !== 'all' ? categoryFilter : undefined,
+        source: sourceFilter !== 'all' ? sourceFilter : undefined,
+        search: search.trim() || undefined
+      });
+
+      const url = window.URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `System_Audit_Logs_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error('Failed to export JSON system audit logs:', err);
+      alert('Không thể xuất file JSON. Vui lòng thử lại sau.');
+    } finally {
+      setExportingJSON(false);
+    }
+  };
+
+  const handleLoadSessionTimeline = async (sessionId: string) => {
+    if (!sessionId) return;
+    try {
+      const data = await getSessionTimeline(sessionId);
+      setSessionTimelineEvents(data.events || []);
+    } catch (err) {
+      console.error('Failed to load session timeline:', err);
+      alert('Không thể tải dòng thời gian của Session này.');
+    }
+  };
+
+  // Module Icon Helper
+  const getModuleIcon = (moduleName?: string) => {
+    const mod = (moduleName || '').toLowerCase();
+    if (mod.includes('auth') || mod.includes('login')) return '🔒';
+    if (mod.includes('user') || mod.includes('member') || mod.includes('permission')) return '👤';
+    if (mod.includes('kpi')) return '📊';
+    if (mod.includes('ai')) return '🤖';
+    if (mod.includes('template')) return '📁';
+    if (mod.includes('customer')) return '🏢';
+    if (mod.includes('file') || mod.includes('attach')) return '📎';
+    if (mod.includes('export')) return '📤';
+    if (mod.includes('integration') || mod.includes('slack')) return '🔌';
+    if (mod.includes('security')) return '🚨';
+    return '⚙️';
+  };
+
+  // Category Badge Helper
+  const getCategoryBadge = (catName?: string) => {
+    const cat = catName || 'Administration';
+    switch (cat) {
+      case 'Security':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200/80">🛡️ Security</span>;
+      case 'Configuration':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200/80">⚙️ Config</span>;
+      case 'Integration':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200/80">🔌 Integration</span>;
+      case 'System':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200/80">💻 System</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200/80">👤 Admin</span>;
+    }
+  };
+
+  // IP Risk Badge Helper
+  const getIpRiskBadge = (ipRiskName?: string, ipAddress?: string) => {
+    const risk = ipRiskName || 'Internal';
+    switch (risk) {
+      case 'Internal':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/80" title={`IP nội bộ: ${ipAddress || 'Internal'}`}>
+            <span>🛡️</span> Internal ({ipAddress || '127.0.0.1'})
+          </span>
+        );
+      case 'Trusted':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200/80" title={`IP tin cậy: ${ipAddress || 'Trusted'}`}>
+            <span>🟢</span> Trusted ({ipAddress || 'Office'})
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/80" title={`IP công cộng: ${ipAddress || 'Unknown'}`}>
+            <span>⚠️</span> Unknown ({ipAddress || 'Public IP'})
+          </span>
+        );
+    }
+  };
+
+  // Source Badge Helper
+  const getSourceBadge = (sourceName?: string) => {
+    const src = (sourceName || 'WEB').toUpperCase();
+    switch (src) {
+      case 'GOOGLE_OAUTH':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/60">🌐 GOOGLE</span>;
+      case 'CRON':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/60">⏱️ CRON</span>;
+      case 'SYSTEM':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200/60">⚙️ SYSTEM</span>;
+      case 'AI':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200/60">🤖 AI</span>;
+      case 'API':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200/60">🔌 API</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200/60">💻 WEB</span>;
+    }
+  };
+
+  // Outcome Badge Helper
+  const getOutcomeBadge = (outcomeName?: string) => {
+    const out = (outcomeName || 'SUCCESS').toUpperCase();
+    switch (out) {
+      case 'FAILED':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300">🔴 FAILED</span>;
+      case 'PARTIAL':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">🟡 PARTIAL</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 SUCCESS</span>;
+    }
+  };
+
+  // Duration Helper
+  const getDurationBadge = (durationMs?: number) => {
+    if (!durationMs) return null;
+    const isSlow = durationMs > 3000;
+    return (
+      <span className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${isSlow ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse' : 'bg-slate-100 text-slate-600'}`}>
+        ⚡ {durationMs >= 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${durationMs}ms`}
+      </span>
+    );
+  };
+
+  // Device Badge Helper
+  const getDeviceBadge = (browser?: string, os?: string, deviceType?: string) => {
+    const b = browser || 'Browser';
+    const o = os || 'OS';
+    const icon = deviceType === 'Mobile' ? '📱' : deviceType === 'Tablet' ? '📱' : '💻';
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200" title={`${deviceType}: ${b} on ${o}`}>
+        <span>{icon}</span> {b} / {o}
+      </span>
+    );
+  };
+
+  // Security Flags Helper
+  const getSecurityFlags = (isNewIp?: boolean, isNewDev?: boolean) => {
+    return (
+      <div className="flex items-center gap-1">
+        {isNewIp && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-600 text-white animate-pulse">🚨 NEW IP</span>}
+        {isNewDev && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-purple-600 text-white">⚡ NEW DEVICE</span>}
+      </div>
+    );
+  };
+
   // Badge Helper
+  const getSeverityBadge = (severity?: string) => {
+    const sev = (severity || 'INFO').toUpperCase();
+    switch (sev) {
+      case 'CRITICAL':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300 tracking-wider">
+            <span>🔴</span> CRITICAL
+          </span>
+        );
+      case 'WARNING':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+            <span>⚠️</span> WARNING
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+            <span>ℹ️</span> INFO
+          </span>
+        );
+    }
+  };
+
   const getActionBadge = (action: string) => {
     const act = (action || '').toUpperCase();
     switch (act) {
@@ -326,7 +538,7 @@ export default function SystemAuditView() {
               />
             </div>
 
-            {/* Business Filter */}
+            {/* Business Filter (dynamic from Workspace Master) */}
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
               <span>BU:</span>
               <select
@@ -335,8 +547,9 @@ export default function SystemAuditView() {
                 className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
                 <option value="all">All BU</option>
-                <option value="Infrastructure">Infrastructure</option>
-                <option value="Markee">Markee</option>
+                {workspaces.map(ws => (
+                  <option key={ws.code} value={ws.name}>{ws.name}</option>
+                ))}
               </select>
             </div>
 
@@ -363,54 +576,128 @@ export default function SystemAuditView() {
                 onChange={e => setModuleFilter(e.target.value)}
                 className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
-                <option value="all">All Modules</option>
-                <option value="Customer">Customer</option>
-                <option value="Project">Project</option>
-                <option value="Phase">Phase</option>
-                <option value="Task Group">Task Group</option>
-                <option value="Task">Task</option>
-                <option value="Meeting">Meeting</option>
-                <option value="Member">Member</option>
-                <option value="AI Check">AI Check</option>
-                <option value="Prompt">Prompt</option>
-                <option value="Setting">Setting</option>
-                <option value="Permission">Permission</option>
+                <option value="all">Tất cả Module</option>
                 <option value="Authentication">Authentication</option>
+                <option value="User">User / Account</option>
+                <option value="Permission">Permission / Role</option>
+                <option value="Setting">Settings</option>
+                <option value="KPI Engine">KPI Engine</option>
+                <option value="AI Config">AI Configuration</option>
+                <option value="Template">Project Template</option>
+                <option value="Customer">Customer</option>
+                <option value="File">File System</option>
+                <option value="Export">Export CSV</option>
+                <option value="Integration">Integration</option>
+                <option value="Security">Security Alert</option>
               </select>
             </div>
 
-            {/* Action Filter */}
+            {/* Severity Filter */}
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>Action:</span>
+              <span>Mức độ (Severity):</span>
               <select
-                value={actionFilter}
-                onChange={e => setActionFilter(e.target.value)}
+                value={severityFilter}
+                onChange={e => setSeverityFilter(e.target.value)}
                 className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
-                <option value="all">All Actions</option>
-                <option value="CREATE">CREATE</option>
-                <option value="UPDATE">UPDATE</option>
-                <option value="DELETE">DELETE</option>
-                <option value="CHECK">AI CHECK</option>
-                <option value="LOGIN">LOGIN</option>
-                <option value="FAILED_LOGIN">FAILED LOGIN</option>
+                <option value="all">Tất cả Mức độ</option>
+                <option value="INFO">ℹ️ INFO</option>
+                <option value="WARNING">⚠️ WARNING</option>
+                <option value="CRITICAL">🔴 CRITICAL</option>
               </select>
             </div>
 
-            {/* User Filter */}
+            {/* Login Method Filter */}
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>User:</span>
+              <span>Phương thức Login:</span>
               <select
-                value={userFilter}
-                onChange={e => setUserFilter(e.target.value)}
-                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be] max-w-[140px] truncate"
+                value={loginMethodFilter}
+                onChange={e => setLoginMethodFilter(e.target.value)}
+                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be]"
               >
-                <option value="all">All Users</option>
-                {usersList.map(u => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
+                <option value="all">Tất cả Phương thức</option>
+                <option value="Password">🔑 Password</option>
+                <option value="Google OAuth">🌐 Google OAuth</option>
               </select>
             </div>
+
+            {/* Category Filter */}
+            <SearchableSelect
+              label="Category"
+              icon="🏷️"
+              options={[
+                { id: 'Security', name: 'Security', icon: '🛡️' },
+                { id: 'Administration', name: 'Administration', icon: '👤' },
+                { id: 'Configuration', name: 'Configuration', icon: '⚙️' },
+                { id: 'Integration', name: 'Integration', icon: '🔌' },
+                { id: 'System', name: 'System', icon: '💻' }
+              ]}
+              value={categoryFilter}
+              onChange={val => setCategoryFilter(val)}
+              placeholder="Tìm Category..."
+            />
+
+            {/* IP Risk Filter */}
+            <SearchableSelect
+              label="IP Risk"
+              icon="🛡️"
+              options={[
+                { id: 'Internal', name: 'Internal (Local/VPN)', icon: '🛡️' },
+                { id: 'Trusted', name: 'Trusted (Office)', icon: '🟢' },
+                { id: 'Unknown', name: 'Unknown (Public)', icon: '⚠️' }
+              ]}
+              value={ipRiskFilter}
+              onChange={val => setIpRiskFilter(val)}
+              placeholder="Tìm IP Risk..."
+            />
+
+            {/* Outcome Filter */}
+            <SearchableSelect
+              label="Outcome"
+              icon="🎯"
+              options={[
+                { id: 'SUCCESS', name: 'SUCCESS', icon: '🟢' },
+                { id: 'FAILED', name: 'FAILED', icon: '🔴' },
+                { id: 'PARTIAL', name: 'PARTIAL', icon: '🟡' }
+              ]}
+              value={outcomeFilter}
+              onChange={val => setOutcomeFilter(val)}
+              placeholder="Tìm Kết quả..."
+            />
+
+            {/* Action Filter */}
+            <SearchableSelect
+              label="Action"
+              icon="⚡"
+              options={[
+                { id: 'LOGIN', name: 'LOGIN' },
+                { id: 'FAILED_LOGIN', name: 'FAILED_LOGIN' },
+                { id: 'LOGOUT', name: 'LOGOUT' },
+                { id: 'CREATE_USER', name: 'CREATE_USER' },
+                { id: 'UPDATE_USER', name: 'UPDATE_USER' },
+                { id: 'CHANGE_ROLE', name: 'CHANGE_ROLE' },
+                { id: 'LOCK_ACCOUNT', name: 'LOCK_ACCOUNT' },
+                { id: 'DELETE_USER', name: 'DELETE_USER' },
+                { id: 'CREATE', name: 'CREATE' },
+                { id: 'UPDATE', name: 'UPDATE' },
+                { id: 'DELETE', name: 'DELETE' }
+              ]}
+              value={actionFilter}
+              onChange={val => setActionFilter(val)}
+              placeholder="Tìm Action..."
+              searchThreshold={6}
+            />
+
+            {/* User Filter */}
+            <SearchableSelect
+              label="User"
+              icon="👤"
+              options={usersList.map(u => ({ id: u.id, name: u.name }))}
+              value={userFilter}
+              onChange={val => setUserFilter(String(val))}
+              placeholder="Tìm người dùng..."
+              searchThreshold={5}
+            />
 
             {/* Date Filter */}
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
@@ -429,19 +716,55 @@ export default function SystemAuditView() {
             </div>
           </div>
 
-          {/* Export Button */}
-          <button
-            onClick={handleExportCSV}
-            disabled={exporting}
-            className="flex items-center gap-1.5 bg-[#eff4ff] hover:bg-[#0058be]/10 text-[#0058be] border border-[#c2c6d6]/60 font-bold text-xs px-3.5 py-1.5 rounded-lg transition-all shadow-sm disabled:opacity-50"
-          >
-            <span className="material-symbols-outlined text-[16px]">download</span>
-            <span>{exporting ? 'Exporting...' : 'Export CSV'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* View Mode Switcher */}
+            <div className="bg-[#eff4ff] p-1 rounded-lg border border-[#c2c6d6]/60 flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setViewMode('table')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                  viewMode === 'table' ? 'bg-[#0058be] text-white shadow-xs' : 'text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+                title="Chế độ Bảng Dữ liệu Tra cứu"
+              >
+                <span className="material-symbols-outlined text-[16px]">table_chart</span>
+                <span>Table</span>
+              </button>
+              <button
+                onClick={() => setViewMode('timeline')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                  viewMode === 'timeline' ? 'bg-[#0058be] text-white shadow-xs' : 'text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+                title="Chế độ Dòng Thời gian Theo Phút (Minute Timeline Mode)"
+              >
+                <span className="material-symbols-outlined text-[16px]">timeline</span>
+                <span>Timeline</span>
+              </button>
+            </div>
+
+            {/* Export CSV Button */}
+            <button
+              onClick={handleExportCSV}
+              disabled={exporting}
+              className="flex items-center gap-1.5 bg-[#eff4ff] hover:bg-[#0058be]/10 text-[#0058be] border border-[#c2c6d6]/60 font-bold text-xs px-3.5 py-1.5 rounded-lg transition-all shadow-sm disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[16px]">download</span>
+              <span>{exporting ? 'CSV...' : 'CSV'}</span>
+            </button>
+
+            {/* Export JSON Button */}
+            <button
+              onClick={handleExportJSON}
+              disabled={exportingJSON}
+              className="flex items-center gap-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold text-xs px-3.5 py-1.5 rounded-lg transition-all shadow-sm disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[16px]">code</span>
+              <span>{exportingJSON ? 'JSON...' : 'JSON'}</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* 3. SYSTEM AUDIT TABLE */}
+      {/* 3. SYSTEM AUDIT TABLE OR TIMELINE VIEW */}
       <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-xs text-[#565e74]">
@@ -454,19 +777,100 @@ export default function SystemAuditView() {
             <p className="text-sm font-bold text-[#0b1c30]">Không tìm thấy nhật ký thỏa mãn bộ lọc</p>
             <p className="text-xs text-[#565e74] mt-1">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm.</p>
           </div>
+        ) : viewMode === 'timeline' ? (
+          /* MINUTE TIMELINE MODE */
+          <div className="p-6 space-y-6">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <h3 className="text-xs font-bold text-[#565e74] uppercase tracking-wider flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[18px] text-[#0058be]">schedule</span>
+                Dòng Thời Gian Nhật Ký Theo Phút (Minute Incident Timeline)
+              </h3>
+              <span className="text-xs font-bold text-[#0058be] bg-[#eff4ff] px-2.5 py-1 rounded-full border border-[#0058be]/20">
+                {logs.length} sự kiện
+              </span>
+            </div>
+
+            <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-slate-200">
+              {logs.map((log) => (
+                <div
+                  key={log.id}
+                  onClick={() => setSelectedLog(log)}
+                  className="relative group cursor-pointer bg-slate-50 hover:bg-[#eff4ff]/50 p-4 rounded-xl border border-slate-200 hover:border-[#0058be]/40 transition-all shadow-2xs space-y-2.5"
+                >
+                  {/* Timeline Node Point */}
+                  <div className="absolute -left-[31px] top-4 w-3.5 h-3.5 rounded-full bg-white border-2 border-[#0058be] group-hover:scale-125 transition-transform" />
+
+                  {/* Header Row */}
+                  <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono font-bold text-[#0058be] bg-[#eff4ff] px-2 py-0.5 rounded border border-[#0058be]/20">
+                        ⏱️ {log.created_at ? new Date(log.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                      </span>
+                      <span className="font-bold text-[#0b1c30]">{log.user_name}</span>
+                      {getCategoryBadge(log.category)}
+                      {getSourceBadge(log.source)}
+                      {getActionBadge(log.action)}
+                      {getSeverityBadge(log.severity)}
+                    </div>
+                    <div>
+                      {getIpRiskBadge(log.ip_risk, log.ip_address)}
+                    </div>
+                  </div>
+
+                  {/* Resource Name & Description */}
+                  <div className="text-xs space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-[#0058be]">Target: {log.resource_name || log.entity_id || 'N/A'}</span>
+                      {log.changes_count && log.changes_count > 1 && (
+                        <span className="text-[10px] font-black bg-purple-100 text-purple-800 px-2 py-0.5 rounded border border-purple-200">
+                          {log.changes_count} thay đổi
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[#0b1c30] font-medium leading-relaxed bg-white p-2.5 rounded-lg border border-slate-200/70">
+                      {log.description}
+                    </p>
+                  </div>
+
+                  {/* GitHub-style Pill Diff Preview */}
+                  {log.changes && log.changes.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                      <span className="text-slate-400 font-bold">Thay đổi:</span>
+                      {log.changes.slice(0, 3).map((ch, idx) => (
+                        <span key={idx} className="inline-flex items-center gap-1 bg-white px-2 py-1 rounded border border-slate-200">
+                          <span className="font-mono text-slate-500 font-bold">{ch.field_name}:</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 line-through">{ch.old_value || 'NULL'}</span>
+                          <span className="text-slate-400 font-bold">➔</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">{ch.new_value || 'NULL'}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Tracing Links Footer */}
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono pt-1">
+                    <span>Correlation ID: {log.correlation_id || 'N/A'}</span>
+                    <span>Session ID: {log.session_id ? `${log.session_id.substring(0, 12)}...` : 'N/A'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : (
+          /* DATA TABLE MODE */
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-[#0b1c30]">
               <thead className="bg-[#eff4ff]/60 text-[#565e74] font-bold text-[11px] uppercase tracking-wider border-b border-[#c2c6d6]/60">
                 <tr>
-                  <th className="px-4 py-3 w-28">Time</th>
-                  <th className="px-4 py-3 w-36">User</th>
-                  <th className="px-4 py-3 w-28">Business</th>
-                  <th className="px-4 py-3 w-36">Project</th>
-                  <th className="px-4 py-3 w-28">Module</th>
-                  <th className="px-4 py-3 w-32">Action</th>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3 w-16 text-center">Detail</th>
+                  <th className="px-4 py-3 w-28">Thời gian</th>
+                  <th className="px-4 py-3 w-32">Người dùng</th>
+                  <th className="px-4 py-3 w-24">Category</th>
+                  <th className="px-4 py-3 w-24">Nguồn</th>
+                  <th className="px-4 py-3 w-28">Hành động</th>
+                  <th className="px-4 py-3 w-36">Đối tượng (Resource)</th>
+                  <th className="px-4 py-3 w-28">IP Risk</th>
+                  <th className="px-4 py-3">Mô tả diễn giải</th>
+                  <th className="px-4 py-3 w-16 text-center">Chi tiết</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -483,25 +887,29 @@ export default function SystemAuditView() {
                       {log.user_name}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                        log.business_unit === 'Markee'
-                          ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
-                          : 'bg-blue-50 text-[#0058be] border border-blue-200/60'
-                      }`}>
-                        {log.business_unit || 'All'}
-                      </span>
+                      {getCategoryBadge(log.category)}
                     </td>
-                    <td className="px-4 py-3 text-[#565e74] truncate max-w-[140px]" title={log.project_name || '--'}>
-                      {log.project_name || '--'}
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-[#565e74]">
-                      {log.module}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {getSourceBadge(log.source)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {getActionBadge(log.action)}
                     </td>
-                    <td className="px-4 py-3 text-[#0b1c30] max-w-xs truncate font-medium" title={log.description || ''}>
-                      {log.description}
+                    <td className="px-4 py-3 font-bold text-[#0058be] whitespace-nowrap truncate max-w-[140px]" title={log.resource_name || log.entity_id || ''}>
+                      {log.resource_name || log.entity_id || '—'}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {getIpRiskBadge(log.ip_risk, log.ip_address)}
+                    </td>
+                    <td className="px-4 py-3 text-[#0b1c30] max-w-xs font-medium" title={log.description || ''}>
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate">{log.description}</span>
+                        {log.changes_count && log.changes_count > 1 && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200 shrink-0">
+                            {log.changes_count} thay đổi
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button
@@ -616,87 +1024,198 @@ export default function SystemAuditView() {
         </div>
       )}
 
-      {/* 5. DETAIL MODAL */}
+      {/* 5. SLIDE-OUT DRAWER DETAIL VIEW */}
       {selectedLog && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
-            {/* Header */}
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-2.5 text-[#0058be]">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[999] flex justify-end">
+          <div
+            className="fixed inset-0"
+            onClick={() => setSelectedLog(null)}
+          />
+          <div className="relative w-full max-w-xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col z-10 animate-in slide-in-from-right duration-250">
+            {/* Drawer Header */}
+            <div className="p-5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3 text-[#0058be]">
                 <span className="material-symbols-outlined text-[24px]">shield</span>
                 <div>
-                  <h3 className="text-base font-bold text-[#0b1c30]">
-                    System Audit Detail #{selectedLog.id}
-                  </h3>
-                  <p className="text-xs text-[#565e74]">
-                    Module: <span className="text-[#0058be] font-bold">{selectedLog.module}</span> | Entity: {selectedLog.entity_type} #{selectedLog.entity_id || 'N/A'}
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-[#0b1c30]">
+                      Chi tiết Nhật ký #{selectedLog.id}
+                    </h3>
+                    {getSeverityBadge(selectedLog.severity)}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Module: <strong className="text-slate-800">{selectedLog.module}</strong> | Target: {selectedLog.entity_type} #{selectedLog.entity_id || 'N/A'}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setSelectedLog(null)}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
+                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-lg transition-colors cursor-pointer"
+                title="Đóng Drawer"
               >
-                <span className="material-symbols-outlined">close</span>
+                <span className="material-symbols-outlined text-[22px]">close</span>
               </button>
             </div>
 
-            {/* Content Body */}
-            <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
-              {/* Meta Rows */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-[#eff4ff]/60 p-3.5 rounded-xl border border-[#0058be]/10">
-                <div>
-                  <span className="text-[#565e74] text-[10px] block font-semibold">Hành động</span>
-                  <div className="mt-0.5">{getActionBadge(selectedLog.action)}</div>
+            {/* Drawer Scrollable Content */}
+            <div className="flex-1 p-6 space-y-5 overflow-y-auto text-xs">
+              {/* Event Meta Card */}
+              <div className="bg-[#eff4ff]/60 p-4 rounded-xl border border-[#0058be]/15 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Hành động & Kết quả</span>
+                    <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                      {getActionBadge(selectedLog.action)}
+                      {getOutcomeBadge(selectedLog.outcome)}
+                      {getDurationBadge(selectedLog.duration_ms)}
+                      {getSourceBadge(selectedLog.source)}
+                      {selectedLog.login_method && (
+                        <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
+                          {selectedLog.login_method}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Đối tượng (Resource Name)</span>
+                    <span className="font-bold text-[#0058be] text-xs mt-1 block truncate" title={selectedLog.resource_name || selectedLog.entity_id || ''}>
+                      {selectedLog.resource_name || selectedLog.entity_id || 'N/A'}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[#565e74] text-[10px] block font-semibold">Người thực hiện</span>
-                  <span className="font-bold text-[#0b1c30]">{selectedLog.user_name}</span>
+
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[#0058be]/10">
+                  <div>
+                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Người thực hiện (Actor)</span>
+                    <span className="font-bold text-[#0b1c30] text-xs mt-0.5 block">{selectedLog.user_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Thời gian phát sinh</span>
+                    <span className="font-mono text-slate-800 font-bold mt-0.5 block">
+                      {selectedLog.created_at ? new Date(selectedLog.created_at).toLocaleString('vi-VN') : '--'}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[#565e74] text-[10px] block font-semibold">Business Unit</span>
-                  <span className="font-bold text-[#0b1c30]">{selectedLog.business_unit || 'All'}</span>
-                </div>
-                <div>
-                  <span className="text-[#565e74] text-[10px] block font-semibold">Dự án</span>
-                  <span className="font-bold text-[#0b1c30]">{selectedLog.project_name || '--'}</span>
-                </div>
-                <div>
-                  <span className="text-[#565e74] text-[10px] block font-semibold">Thời gian</span>
-                  <span className="font-mono text-[#0b1c30] font-bold">{selectedLog.created_at ? new Date(selectedLog.created_at).toLocaleString('vi-VN') : '--'}</span>
-                </div>
-                <div>
-                  <span className="text-[#565e74] text-[10px] block font-semibold">Trường thay đổi</span>
-                  <span className="font-bold text-amber-700">{selectedLog.field_name || 'Tất cả'}</span>
-                </div>
+
+                {selectedLog.target_user_name && (
+                  <div className="pt-2 border-t border-[#0058be]/10">
+                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Target User</span>
+                    <span className="font-bold text-purple-800 text-xs mt-0.5 block">👤 {selectedLog.target_user_name}</span>
+                  </div>
+                )}
               </div>
 
               {/* Description */}
-              <div>
-                <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block mb-1">Mô tả diễn giải</span>
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-[#0b1c30] font-medium">
+              <div className="space-y-1.5">
+                <span className="text-slate-500 font-bold text-[11px] uppercase tracking-wider block">Mô tả diễn giải câu lệnh</span>
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-[#0b1c30] font-medium leading-relaxed">
                   {selectedLog.description}
                 </div>
               </div>
 
-              {/* Diff Values Comparison */}
-              {(selectedLog.old_value || selectedLog.new_value) && (
+              {/* Session Timeline Drill-down Button */}
+              {selectedLog.session_id && (
+                <div className="bg-gradient-to-r from-[#eff4ff] to-purple-50 p-3.5 rounded-xl border border-[#0058be]/20 flex items-center justify-between">
+                  <div>
+                    <span className="font-bold text-[#0b1c30] text-xs block">Truy vết Dòng thời gian Session này</span>
+                    <span className="font-mono text-[10px] text-slate-500 block truncate max-w-[280px]">Session: {selectedLog.session_id}</span>
+                  </div>
+                  <button
+                    onClick={() => handleLoadSessionTimeline(selectedLog.session_id!)}
+                    className="bg-[#0058be] hover:bg-[#004499] text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-sm transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">timeline</span>
+                    <span>Xem Timeline</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Session Timeline Drill-down Results Accordion */}
+              {sessionTimelineEvents && (
+                <div className="space-y-2 bg-slate-900 text-white p-4 rounded-xl border border-slate-700 max-h-72 overflow-y-auto font-mono text-[11px]">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-700">
+                    <span className="font-bold text-purple-300">⏱️ Chuỗi Hành Động Trong Session ({sessionTimelineEvents.length} sự kiện)</span>
+                    <button onClick={() => setSessionTimelineEvents(null)} className="text-slate-400 hover:text-white text-xs">✕ Đóng</button>
+                  </div>
+                  <div className="space-y-2 pt-2">
+                    {sessionTimelineEvents.map((evt, i) => (
+                      <div key={evt.id} className="bg-slate-800 p-2.5 rounded border border-slate-700 space-y-1">
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span>#{i + 1} {new Date(evt.created_at!).toLocaleTimeString('vi-VN')}</span>
+                          <span className="font-bold text-emerald-400">{evt.action}</span>
+                        </div>
+                        <p className="text-slate-200">{evt.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Full State Snapshot Viewer */}
+              {selectedLog.snapshot_json && (
+                <div className="space-y-1.5">
+                  <span className="text-slate-500 font-bold text-[11px] uppercase tracking-wider block flex items-center gap-1 text-purple-800">
+                    <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+                    Bản chụp JSON Trạng thái (Full State Snapshot JSON)
+                  </span>
+                  <pre className="bg-slate-900 text-emerald-400 p-3.5 rounded-xl font-mono text-[11px] max-h-60 overflow-y-auto border border-slate-800 leading-tight">
+                    {selectedLog.snapshot_json}
+                  </pre>
+                </div>
+              )}
+
+              {/* Grouped Changes Diff Comparison */}
+              {selectedLog.changes && selectedLog.changes.length > 0 ? (
+                <div className="space-y-3">
+                  <span className="text-slate-500 font-bold text-[11px] uppercase tracking-wider block flex items-center justify-between">
+                    <span>Danh sách Trường thay đổi (Diff List)</span>
+                    <span className="text-purple-700 font-bold">({selectedLog.changes.length} thay đổi)</span>
+                  </span>
+                  <div className="space-y-3">
+                    {selectedLog.changes.map((ch, idx) => (
+                      <div key={idx} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                        <span className="font-bold text-slate-800 text-[11px] block flex items-center justify-between">
+                          <span>Trường: <strong className="text-[#0058be] font-mono">{ch.field_name}</strong></span>
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="bg-rose-50/70 border border-rose-200 rounded-lg p-2">
+                            <span className="font-bold text-rose-800 text-[10px] uppercase block mb-1">
+                              - Cũ (Old)
+                            </span>
+                            <pre className="text-rose-900 whitespace-pre-wrap font-mono text-[10px] bg-white p-1.5 rounded border border-rose-100 max-h-32 overflow-y-auto">
+                              {ch.old_value || '(Trống)'}
+                            </pre>
+                          </div>
+                          <div className="bg-emerald-50/70 border border-emerald-200 rounded-lg p-2">
+                            <span className="font-bold text-emerald-800 text-[10px] uppercase block mb-1">
+                              + Mới (New)
+                            </span>
+                            <pre className="text-emerald-900 whitespace-pre-wrap font-mono text-[10px] bg-white p-1.5 rounded border border-emerald-100 max-h-32 overflow-y-auto">
+                              {ch.new_value || '(Trống)'}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (selectedLog.old_value || selectedLog.new_value) && (
                 <div className="space-y-2">
-                  <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block">So sánh Giá trị (Old vs New Diff)</span>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="bg-rose-50 border border-rose-200/60 rounded-xl p-3">
-                      <span className="font-bold text-rose-700 text-[11px] uppercase block mb-1">
-                        - Giá trị cũ (Old Value)
+                  <span className="text-slate-500 font-bold text-[11px] uppercase tracking-wider block">So sánh Giá trị (Old vs New Diff)</span>
+                  <div className="space-y-3">
+                    <div className="bg-rose-50/70 border border-rose-200 rounded-xl p-3">
+                      <span className="font-bold text-rose-800 text-[11px] uppercase block mb-1 flex items-center gap-1">
+                        <span>-</span> Giá trị cũ (Old Value)
                       </span>
-                      <pre className="text-rose-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2 rounded-lg border border-rose-100 max-h-44 overflow-y-auto">
+                      <pre className="text-rose-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2.5 rounded-lg border border-rose-100 max-h-48 overflow-y-auto">
                         {selectedLog.old_value || '(Trống / NULL)'}
                       </pre>
                     </div>
-                    <div className="bg-emerald-50 border border-emerald-200/60 rounded-xl p-3">
-                      <span className="font-bold text-emerald-700 text-[11px] uppercase block mb-1">
-                        + Giá trị mới (New Value)
+                    <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3">
+                      <span className="font-bold text-emerald-800 text-[11px] uppercase block mb-1 flex items-center gap-1">
+                        <span>+</span> Giá trị mới (New Value)
                       </span>
-                      <pre className="text-emerald-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2 rounded-lg border border-emerald-100 max-h-44 overflow-y-auto">
+                      <pre className="text-emerald-900 whitespace-pre-wrap font-mono text-[11px] bg-white p-2.5 rounded-lg border border-emerald-100 max-h-48 overflow-y-auto">
                         {selectedLog.new_value || '(Trống / NULL)'}
                       </pre>
                     </div>
@@ -705,26 +1224,50 @@ export default function SystemAuditView() {
               )}
 
               {/* Network / Client Metadata */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
-                <span className="text-[#565e74] font-bold text-[11px] uppercase tracking-wider block">Thông tin Kỹ thuật & Request</span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px]">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2.5">
+                <span className="text-slate-500 font-bold text-[11px] uppercase tracking-wider block">Thông tin Kỹ thuật & Network Tracing</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-[11px]">
                   <div>
-                    <span className="text-[#565e74] text-[10px] block font-semibold">Client IP</span>
-                    <span className="text-[#0058be] font-bold">{selectedLog.ip_address || 'N/A'}</span>
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">Client IP Address:</span>
+                    <div className="mt-0.5">{getIpRiskBadge(selectedLog.ip_risk, selectedLog.ip_address)}</div>
                   </div>
-                  <div className="sm:col-span-2">
-                    <span className="text-[#565e74] text-[10px] block font-semibold">Browser / User Agent</span>
-                    <span className="text-[#0b1c30] truncate block" title={selectedLog.user_agent || 'N/A'}>{selectedLog.user_agent || 'N/A'}</span>
+                  <div>
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">Event Category:</span>
+                    <div className="mt-0.5">{getCategoryBadge(selectedLog.category)}</div>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">Device & Browser:</span>
+                    <div className="mt-0.5">{getDeviceBadge(selectedLog.browser, selectedLog.os, selectedLog.device_type)}</div>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">Security Flags:</span>
+                    <div className="mt-0.5">{getSecurityFlags(selectedLog.is_new_ip, selectedLog.is_new_device)}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">Session ID (Tracing Lifecycle):</span>
+                    <span className="text-indigo-600 font-bold break-all">{selectedLog.session_id || 'N/A (Stateless Request)'}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">Correlation ID (Request X-ID):</span>
+                    <span className="text-slate-700 font-bold break-all">{selectedLog.correlation_id || 'N/A'}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">API Endpoint URL:</span>
+                    <span className="text-slate-700 break-all">{selectedLog.request_url || 'N/A'}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">Browser User Agent:</span>
+                    <span className="text-slate-600 break-all">{selectedLog.user_agent || 'N/A'}</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Footer */}
-            <div className="p-4 border-t border-slate-100 flex justify-end bg-slate-50/50">
+            {/* Drawer Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50/80 flex justify-end shrink-0">
               <button
                 onClick={() => setSelectedLog(null)}
-                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all"
+                className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 py-2 rounded-lg shadow-sm transition-all cursor-pointer"
               >
                 Đóng
               </button>

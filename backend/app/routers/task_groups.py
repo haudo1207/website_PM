@@ -92,7 +92,15 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
 
 
 def sync_group_actual_dates(tg, db):
-    """Sync TaskGroup end_date_actual (max) from child tasks, considering only 'Done' tasks."""
+    """Sync TaskGroup end_date_actual (max) from child tasks, considering only 'Done' tasks.
+    
+    If the TaskGroup status is 'Done' and end_date_actual has been auto-set
+    (from when the group was marked Done), keep it — do not override."""
+    # Nếu TaskGroup đang Done và đã có end_date_actual (tự động set khi chuyển Done),
+    # giữ nguyên, không ghi đè bởi task con
+    if tg.status and tg.status.strip().lower() == "done" and tg.end_date_actual:
+        return tg
+
     rows = db.query(Task.end_date_actual).filter(
         Task.task_group_id == tg.id,
         Task.status.in_(["Done", "done"]),  # Only consider tasks with status 'Done'
@@ -276,7 +284,7 @@ def list_task_groups(phid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/phases/{phid}/task-groups")
-def create_task_group(phid: int, body: dict, db: Session = Depends(get_db)):
+def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     phase = db.query(Phase).filter(Phase.id == phid).first()
     if not phase:
         raise HTTPException(404, "Phase not found.")
@@ -305,14 +313,32 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db)):
     db.add(tg)
     db.commit()
     db.refresh(tg)
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task Group",
+        entity_type="TaskGroup",
+        entity_id=tg.id,
+        action="CREATE",
+        project_id=phase.project_id,
+        description=f"Đã tạo Task Cha '{tg.name}'"
+    )
+    db.commit()
     return serialize_task_group(tg, db)
 
 
 @router.patch("/phases/{phid}/task-groups/{gid}")
-def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get_db)):
+def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
     if not tg:
         raise HTTPException(404, "Task group not found.")
+
+    old_dict = {
+        "name": tg.name,
+        "status": tg.status,
+        "manday_est": float(tg.manday_est) if tg.manday_est is not None else None,
+        "description": tg.description,
+    }
 
     old_status = tg.status
 
@@ -334,6 +360,15 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
     tg = recalculate_task_group_dates(tg, db)
 
     new_status = tg.status
+
+    # === END ACTUAL tự động khi TaskGroup chuyển sang Done ===
+    # Khi TaskGroup chuyển sang "Done" → set END ACTUAL = ngày hôm nay (ngày chuyển trạng thái)
+    if new_status and new_status.strip().lower() == "done":
+        if not tg.end_date_actual_override:
+            tg.end_date_actual = date.today()
+    # Khi TaskGroup không còn "Done" → xóa END ACTUAL tự động (giữ override nếu có)
+    elif old_status and old_status.strip().lower() == "done":
+        tg.end_date_actual = None
 
     # Recalculate progress
     tg.progress = Decimal(str(calc_group_progress(gid, db)))
@@ -357,18 +392,57 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
 
     db.commit()
     db.refresh(tg)
+
+    new_dict = {
+        "name": tg.name,
+        "status": tg.status,
+        "manday_est": float(tg.manday_est) if tg.manday_est is not None else None,
+        "description": tg.description,
+    }
+    field_labels = {
+        "name": "Tên Task Cha",
+        "status": "Trạng thái Task Cha",
+        "manday_est": "Manday EST Task Cha",
+        "description": "Mô tả Task Cha",
+    }
+    project_id = tg.phase.project_id if tg.phase else None
+    AuditService.record_diff(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task Group",
+        entity_type="TaskGroup",
+        entity_id=tg.id,
+        old_dict=old_dict,
+        new_dict=new_dict,
+        project_id=project_id,
+        field_labels=field_labels,
+    )
+    db.commit()
     return serialize_task_group(tg, db)
 
 
 @router.delete("/phases/{phid}/task-groups/{gid}")
-def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db)):
+def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
     if not tg:
         raise HTTPException(404, "Task group not found.")
     task_count = db.query(Task).filter(Task.task_group_id == gid).count()
     if task_count > 0:
         raise HTTPException(400, f"Không thể xóa Task Group vì còn {task_count} Task. Hãy xóa hết Task trước.")
+    tg_name = tg.name
+    project_id = tg.phase.project_id if tg.phase else None
     db.delete(tg)
+    db.commit()
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task Group",
+        entity_type="TaskGroup",
+        entity_id=gid,
+        action="DELETE",
+        project_id=project_id,
+        description=f"Đã xóa Task Cha '{tg_name}'"
+    )
     db.commit()
     return {"ok": True}
 
@@ -755,6 +829,60 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     return serialize_task(task, db)
 
 
+@router.post("/task-groups/{gid}/tasks/{tid}/copy")
+def copy_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    source_task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not source_task:
+        raise HTTPException(404, "Source task not found.")
+
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    project_id = tg.phase.project_id if (tg and tg.phase) else None
+
+    # Calculate max sort order and next code
+    group_index = get_group_index(tg, db)
+    next_code = get_next_task_code(group_index, gid, db)
+    max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == gid).scalar() or 0
+
+    new_task = Task(
+        task_group_id=gid,
+        task_code=next_code,
+        detail=f"{source_task.detail} (Copy)",
+        priority=source_task.priority,
+        manday_est=source_task.manday_est,
+        status="Waiting",
+        start_date=source_task.start_date,
+        assigned_id=source_task.assigned_id,
+        support_id=source_task.support_id,
+        kpi_ratio_assign=source_task.kpi_ratio_assign,
+        kpi_ratio_support=source_task.kpi_ratio_support,
+        skill_solution_id=source_task.skill_solution_id,
+        skill_vendor_id=source_task.skill_vendor_id,
+        ticket_id=source_task.ticket_id,
+        remark=source_task.remark,
+        send=source_task.send,
+        notes=source_task.notes,
+        sort_order=max_order + 1,
+    )
+    db.add(new_task)
+    db.flush()
+    new_task = recalculate_task(new_task, db)
+
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Task",
+        entity_type="Task",
+        entity_id=new_task.id,
+        action="COPY",
+        project_id=project_id,
+        old_value=source_task.task_code,
+        new_value=new_task.task_code,
+        description=f"Đã sao chép Task '{source_task.detail}' ({source_task.task_code}) → '{new_task.detail}' ({new_task.task_code})"
+    )
+    db.commit()
+    return serialize_task(new_task, db)
+
+
 @router.patch("/task-groups/{gid}/tasks/{tid}")
 def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
@@ -809,6 +937,16 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
                 raise HTTPException(400, "Manday EST must be a number.")
         task.manday_est = val
 
+    is_parent_being_set_to_done = False
+    if "status" in body and body["status"].strip().lower() == 'done':
+        # A task is a parent if it has children (tasks with a more specific task_code)
+        is_parent = db.query(Task).filter(
+            Task.task_group_id == gid,
+            Task.task_code.like(f"{task.task_code}.%")
+        ).first() is not None
+        if is_parent:
+            is_parent_being_set_to_done = True
+
     # Status
     if "status" in body:
         task.status = body["status"]
@@ -816,9 +954,14 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     # Dates
     if "start_date" in body:
         task.start_date = parse_date(body["start_date"])
-    if "end_date_actual" in body:
+    
+    if is_parent_being_set_to_done:
+        task.end_date_actual = date.today()
+    elif "end_date_actual" in body:
         if body["end_date_actual"]:
-            if task.status and task.status.strip().lower() not in ["done"]:
+            # The status might not have been updated yet if it's not in the body, so check body first
+            status_to_check = body.get("status", task.status)
+            if status_to_check and status_to_check.strip().lower() not in ["done"]:
                 raise HTTPException(400, "End Date Actual only available when Status = Done.")
         task.end_date_actual = parse_date(body["end_date_actual"])
 

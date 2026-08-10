@@ -17,8 +17,8 @@ PASSWORD_LOGIN_ENABLED=false
 AUTH_SUPERADMIN_EMAILS=a01204496068@gmail.com
 DEFAULT_ADMIN_EMAIL=admin@company.com
 DEFAULT_ADMIN_PASSWORD=
-GOOGLE_CLIENT_ID=1013840177963-i8nin4nd97n1qqqd58hk05v747clgo76.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=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
+GOOGLE_CLIENT_ID=780122821631-42d0p2cons73hn7eonrd605dcmnmemt1.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=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
 
 # Local frontend
 PORTAL_BRAND=markee
@@ -27,7 +27,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 FRONTEND_URL=http://localhost:3000
 
 # Google Meet / Drive
-GOOGLE_REDIRECT_URI=http://localhost:3000/api/meetings/google/callback
+GOOGLE_REDIRECT_URI=http://localhost:8000/api/meetings/google/callback
 GOOGLE_APPLICATION_CREDENTIALS=
 
 # Zoom Server-to-Server OAuth

@@ -1,11 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
-from .database import engine, Base
+from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
 from .models import lunch_record as lunch_record_model
@@ -187,6 +188,7 @@ def apply_schema_updates():
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id SERIAL PRIMARY KEY,
+                event_id VARCHAR(50),
                 project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
                 module VARCHAR(50) NOT NULL,
                 entity_type VARCHAR(50) NOT NULL,
@@ -206,6 +208,11 @@ def apply_schema_updates():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs (user_id);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at);"))
+        # event_id was added to the ORM after some production databases had
+        # already been created. Keep this idempotent migration before creating
+        # its index so old installs cannot fail every audited write.
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_id VARCHAR(50);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id);"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50);"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS customer_id INTEGER;"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(50);"))
@@ -235,6 +242,30 @@ def apply_schema_updates():
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('High', 12, '🟠 Cam') ON CONFLICT (name) DO NOTHING"))
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Critical', 20, '🔴 Đỏ') ON CONFLICT (name) DO NOTHING"))
         conn.execute(text("INSERT INTO task_priorities (name, kpi_base, color) VALUES ('Interrupt', 25, '🟣 Tím') ON CONFLICT (name) DO NOTHING"))
+
+        # ── Workspace Master (Single Source of Truth) ──
+        # Seed the Workspace Master and migrate every legacy hard-coded value
+        # (infrastructure / markee) to the centralized Workspace records.
+        conn.execute(text("""
+            INSERT INTO workspaces (name, code, description)
+            SELECT 'INFRA', 'infra', 'Workspace Infrastructure'
+            WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE LOWER(code) = 'infra' OR LOWER(name) = 'infra')
+        """))
+        conn.execute(text("""
+            INSERT INTO workspaces (name, code, description)
+            SELECT 'DEV', 'dev', 'Workspace Dev'
+            WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE LOWER(code) = 'dev' OR LOWER(name) = 'dev')
+        """))
+        conn.execute(text("UPDATE users SET data_scope = 'infra' WHERE LOWER(data_scope) = 'infrastructure'"))
+        conn.execute(text("UPDATE users SET data_scope = 'dev' WHERE LOWER(data_scope) = 'markee'"))
+        conn.execute(text("UPDATE projects SET data_scope = 'infra' WHERE LOWER(data_scope) = 'infrastructure'"))
+        conn.execute(text("UPDATE projects SET data_scope = 'dev' WHERE LOWER(data_scope) = 'markee'"))
+        conn.execute(text("UPDATE projects SET business = 'INFRA' WHERE LOWER(business) = 'infrastructure'"))
+        conn.execute(text("UPDATE projects SET business = 'DEV' WHERE LOWER(business) = 'markee'"))
+        conn.execute(text("UPDATE customers SET business_unit = 'infra' WHERE LOWER(business_unit) = 'infrastructure'"))
+        conn.execute(text("UPDATE customers SET business_unit = 'dev' WHERE LOWER(business_unit) = 'markee'"))
+        conn.execute(text("UPDATE audit_logs SET business_unit = 'INFRA' WHERE LOWER(business_unit) = 'infrastructure'"))
+        conn.execute(text("UPDATE audit_logs SET business_unit = 'DEV' WHERE LOWER(business_unit) = 'markee'"))
 
 try:
     apply_schema_updates()
@@ -818,6 +849,7 @@ app.include_router(ai_review.router,            prefix="/api")
 app.include_router(lunch_router.router,         prefix="/api/lunch")
 app.include_router(chat_ai.router,              prefix="/api")
 app.include_router(project_templates_router.router, prefix="/api")
+app.include_router(system_audit.router,         prefix="/api")
 
 @app.get("/health")
 @app.get("/api/health")
@@ -830,6 +862,70 @@ def health():
         "commit": os.environ.get("APP_COMMIT", "dev"),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+@app.get("/api/meetings/google/callback")
+def google_callback_public(code: str, state: str = None, db: Session = Depends(get_db)):
+    """Handle Google OAuth2 callback and save tokens (Public Route)."""
+    import os
+    import logging
+    from .config import settings
+    from google_auth_oauthlib.flow import Flow
+    from .services.meeting_sync import _save_google_tokens
+    from fastapi.responses import RedirectResponse
+
+    logger = logging.getLogger("google_callback")
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        redirect_uri=settings.GOOGLE_REDIRECT_URI,
+    )
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
+    user_id = int(state) if (state and state.isdigit()) else 1
+    _save_google_tokens(db, user_id, {
+        "access_token": creds.token,
+        "refresh_token": creds.refresh_token,
+    })
+    db.commit()
+
+    if creds.refresh_token:
+        settings.GOOGLE_REFRESH_TOKEN = creds.refresh_token
+        # Automatically update .env and env files on server
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        for env_filename in [".env", "env"]:
+            env_path = os.path.join(base_dir, env_filename)
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    updated = False
+                    new_lines = []
+                    for line in lines:
+                        if line.startswith("GOOGLE_REFRESH_TOKEN="):
+                            new_lines.append(f"GOOGLE_REFRESH_TOKEN={creds.refresh_token}\n")
+                            updated = True
+                        else:
+                            new_lines.append(line)
+                    if not updated:
+                        new_lines.append(f"\nGOOGLE_REFRESH_TOKEN={creds.refresh_token}\n")
+                    with open(env_path, "w", encoding="utf-8") as f:
+                        f.writelines(new_lines)
+                except Exception as e:
+                    logger.warning(f"Could not auto-write GOOGLE_REFRESH_TOKEN to {env_filename}: {e}")
+
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
 
 import asyncio
 
@@ -847,7 +943,7 @@ async def start_auto_sync_loop():
                 pass
             finally:
                 db.close()
-            await asyncio.sleep(60)
+            await asyncio.sleep(30)
 
     asyncio.create_task(_loop())
 

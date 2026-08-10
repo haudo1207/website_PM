@@ -96,7 +96,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         duration: formData.duration
       });
       if (data.success && data.join_url) {
-        setFormData(prev => ({ ...prev, link: data.join_url }));
+        const fullUrl = data.join_url.startsWith('http') ? data.join_url : `https://${data.join_url}`;
+        setFormData(prev => ({ ...prev, link: fullUrl }));
       } else {
         setError('Không thể tạo link meeting tự động');
       }
@@ -118,7 +119,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
     setIsLoading(true);
     try {
-      onSave({ ...formData });
+      onSave({ ...formData, meeting_url: formData.link });
     } catch (err: any) {
       setError(err.message || 'Có lỗi xảy ra');
     } finally {

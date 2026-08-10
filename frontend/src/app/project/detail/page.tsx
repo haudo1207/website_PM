@@ -17,6 +17,7 @@ import {
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
   getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks, getMasterPhases,
+  getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting
 } from '@/lib/api';
@@ -448,9 +449,10 @@ function ProjectDetailContent() {
   const [editProjectYear, setEditProjectYear] = useState<number>(new Date().getFullYear());
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCustomerId, setEditCustomerId] = useState<number | null>(null);
-  const [editBusiness, setEditBusiness] = useState<'Infrastructure' | 'Markee' | 'All'>('Infrastructure');
+  const [editBusiness, setEditBusiness] = useState<string>('');
   const [editCurrentPhase, setEditCurrentPhase] = useState('');
   const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
   const [selectedPms, setSelectedPms] = useState<number[]>([]);
   const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
@@ -469,14 +471,16 @@ function ProjectDetailContent() {
   const [membersList, setMembersList] = useState<any[]>([]);
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
 
+  const editWorkspaceCode = workspaces.find(w => w.name === editBusiness)?.code || editBusiness.toLowerCase();
   const editBusinessCustomers = editBusiness === 'All'
     ? dbCustomers
-    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editBusiness.toLowerCase());
+    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editWorkspaceCode);
+  const editWorkspaceCodes = new Set((workspaces || []).map(w => w.code));
   const selectedCustomerBu = (dbCustomers.find((c) => c.name === editCustomerName)?.business_unit || '').toLowerCase();
   const editCustomerMismatch = !!editCustomerName && (
     editBusiness === 'All'
-      ? !!selectedCustomerBu && selectedCustomerBu !== 'infrastructure' && selectedCustomerBu !== 'markee'
-      : selectedCustomerBu !== editBusiness.toLowerCase()
+      ? !!selectedCustomerBu && !editWorkspaceCodes.has(selectedCustomerBu)
+      : selectedCustomerBu !== editWorkspaceCode
   );
 
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -798,6 +802,14 @@ function ProjectDetailContent() {
       .catch((err) => {
         console.error('Error fetching master phases:', err);
       });
+
+    getWorkspaces()
+      .then((data) => {
+        setWorkspaces(data || []);
+      })
+      .catch((err) => {
+        console.error('Error fetching workspaces:', err);
+      });
   }, []);
 
   useEffect(() => {
@@ -867,7 +879,7 @@ function ProjectDetailContent() {
         customer_name: editCustomerName.trim(),
         customer_id: editCustomerId,
         business: editBusiness,
-        data_scope: editBusiness.toLowerCase(),
+        data_scope: (workspaces.find(w => w.name === editBusiness)?.code) || editBusiness.toLowerCase(),
         current_phase: editCurrentPhase.trim(),
         pm_ids: selectedPms,
         technical_leader_ids: selectedLeaders,
@@ -925,6 +937,7 @@ function ProjectDetailContent() {
       reloadAll();
     } catch (err: any) {
       alert('Lỗi tạo phase: ' + (err.response?.data?.detail || err.message));
+      reloadAll();
     }
   };
 
@@ -973,6 +986,7 @@ function ProjectDetailContent() {
       reloadAll();
     } catch (err: any) {
       alert('Lỗi xóa phase: ' + (err.response?.data?.detail || err.message));
+      reloadAll();
     }
   };
 
@@ -4052,7 +4066,7 @@ value={editValue}
                         setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
                         setEditCustomerName(project.customer_name || '');
                         setEditCustomerId(project.customer_id ?? null);
-                        setEditBusiness(project.business || 'Infrastructure');
+                        setEditBusiness(project.business || (workspaces[0]?.name || ''));
                         setEditCurrentPhase(project.current_phase || '');
 
                         setSelectedPms(project.pm_ids || (project.pm_id ? [project.pm_id] : []));
@@ -4067,22 +4081,8 @@ value={editValue}
                       <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
                       Chỉnh sửa dự án
                     </button>
-                    <button
-                      onClick={() => setShowDeleteModal(true)}
-                      className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-red-200 transition-colors shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
-                      Xóa dự án
-                    </button>
                   </>
                 )}
-                <button
-                  onClick={() => router.push(`/project`)}
-                  className="bg-white text-slate-800 px-4 py-2 rounded-lg text-[13px] font-medium flex items-center border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[18px] mr-2">arrow_back</span>
-                  Quay lại
-                </button>
               </div>
             </div>
           </div>
@@ -6836,7 +6836,30 @@ value={editValue}
               )}
 
               {activeMainTab === 'audit_logs' && (
-                <AuditLogsTab projectId={Number(id)} />
+                <AuditLogsTab
+                  projectId={Number(id)}
+                  onSelectTask={(taskCodeOrId) => {
+                    const found = items.find(t => t.task_code === taskCodeOrId || String(t.id) === String(taskCodeOrId));
+                    if (found) {
+                      setSelectedTask(found);
+                    } else {
+                      flash(`Không tìm thấy Task ${taskCodeOrId} trong danh sách hiện tại.`, true);
+                    }
+                  }}
+                  onSelectProject={() => {
+                    setShowEditProjectModal(true);
+                  }}
+                  onSelectPhase={(phId) => {
+                    const ph = phases.find(p => String(p.id) === String(phId));
+                    if (ph) {
+                      setActivePhase(ph.name);
+                      setActiveMainTab('tasks');
+                      flash(`Đã chuyển tới Phase '${ph.name}'`);
+                    } else {
+                      setActiveMainTab('tasks');
+                    }
+                  }}
+                />
               )}
             </div>
 
@@ -7026,12 +7049,14 @@ value={editValue}
                   <select
                     required
                     value={editBusiness}
-                    onChange={(e) => setEditBusiness(e.target.value as 'Infrastructure' | 'Markee' | 'All')}
+                    onChange={(e) => setEditBusiness(e.target.value)}
                     className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
                   >
-                    <option value="Infrastructure">Infrastructure</option>
-                    <option value="Markee">Markee</option>
-                    <option value="All">All (Cả 2 team)</option>
+                    {workspaces.length === 0 && <option value="">Đang tải...</option>}
+                    {workspaces.map(ws => (
+                      <option key={ws.code} value={ws.name}>{ws.name}</option>
+                    ))}
+                    <option value="All">ALL (phạm vi tất cả team)</option>
                   </select>
                 </div>
 
@@ -7437,26 +7462,76 @@ value={editValue}
             </div>
 
             {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditProjectModal(false);
+                  setShowDeleteModal(true);
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[16px]">delete</span>
+                Xóa dự án
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditProjectModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpdateProject}
+                  disabled={savingProject}
+                  className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {savingProject ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Đang lưu...
+                    </>
+                  ) : (
+                    <>Lưu thay đổi</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xác Nhận Xóa Dự Án */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-rose-600 mb-3">
+                <span className="material-symbols-outlined text-[28px]">warning</span>
+                <h3 className="text-base font-bold text-[#0b1c30]">Xác nhận xóa dự án</h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Bạn có chắc chắn muốn xóa dự án <strong className="text-[#0b1c30]">"{project?.name || ''}"</strong>?
+              </p>
+              <p className="text-xs text-rose-500 mt-2 font-medium">⚠️ Hành động này sẽ xóa toàn bộ các Phase, Task và dữ liệu liên quan. Không thể hoàn tác!</p>
+            </div>
             <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
               <button
-                onClick={() => setShowEditProjectModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
               >
                 Hủy bỏ
               </button>
               <button
-                onClick={handleUpdateProject}
-                disabled={savingProject}
-                className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                type="button"
+                onClick={handleDeleteSheet}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition-colors shadow-sm cursor-pointer"
               >
-                {savingProject ? (
-                  <>
-                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Đang lưu...
-                  </>
-                ) : (
-                  <>Lưu thay đổi</>
-                )}
+                Xác nhận xóa
               </button>
             </div>
           </div>

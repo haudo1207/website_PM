@@ -2,14 +2,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import json
+import re
 
 from sqlalchemy import func as sql_func
 from ..database import get_db
-from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer
+from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer, Workspace
 from ..models.master_phase import MasterPhase
 from ..models.user import User
 from ..models.task import Task
 from ..utils.auth import require_admin, get_current_user
+from ..utils.access import default_scope, is_valid_scope
 
 router = APIRouter()
 
@@ -354,7 +356,9 @@ def list_customers(business_unit: Optional[str] = None, db: Session = Depends(ge
 @router.post("/customers")
 def create_customer(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
     name = str(body.get("name", "")).strip()
-    bu = str(body.get("business_unit", "infrastructure")).strip().lower()
+    bu = str(body.get("business_unit") or default_scope(db)).strip().lower()
+    if not is_valid_scope(db, bu):
+        raise HTTPException(400, f"Business Unit '{bu}' không hợp lệ")
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
     if db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu).first():
@@ -371,7 +375,9 @@ def update_customer(id: int, body: dict, db: Session = Depends(get_db), _=Depend
     if not c:
         raise HTTPException(404, "Không tìm thấy khách hàng")
     name = str(body.get("name", "")).strip()
-    bu = str(body.get("business_unit", c.business_unit or "infrastructure")).strip().lower()
+    bu = str(body.get("business_unit") or c.business_unit or default_scope(db)).strip().lower()
+    if not is_valid_scope(db, bu):
+        raise HTTPException(400, f"Business Unit '{bu}' không hợp lệ")
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
     dup = db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu, Customer.id != id).first()
@@ -480,4 +486,85 @@ def delete_master_phase(id: int, db: Session = Depends(get_db), _=Depends(requir
     db.delete(mp)
     db.commit()
     return {"message": "Đã xóa giai đoạn thành công"}
+
+
+# ----------------- WORKSPACES -----------------
+@router.get("/workspaces")
+def list_workspaces(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return db.query(Workspace).order_by(Workspace.id.asc()).all()
+
+@router.post("/workspaces")
+def create_workspace(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    name = str(body.get("name", "")).strip()
+    code = str(body.get("code", "")).strip().lower()
+    if not name:
+        raise HTTPException(400, "Tên workspace không được để trống")
+    if not code:
+        raise HTTPException(400, "Mã workspace không được để trống")
+    if not re.match(r"^[a-z0-9_-]+$", code):
+        raise HTTPException(400, "Mã workspace chỉ được chứa chữ thường, số, gạch dưới hoặc gạch ngang")
+    if db.query(Workspace).filter(Workspace.name.ilike(name)).first():
+        raise HTTPException(400, f"Workspace '{name}' đã tồn tại")
+    if db.query(Workspace).filter(Workspace.code == code).first():
+        raise HTTPException(400, f"Mã workspace '{code}' đã tồn tại")
+    w = Workspace(name=name, code=code, description=body.get("description") or None)
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+    return w
+
+@router.put("/workspaces/{id}")
+def update_workspace(id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    w = db.query(Workspace).filter(Workspace.id == id).first()
+    if not w:
+        raise HTTPException(404, "Không tìm thấy workspace")
+    name = str(body.get("name", "")).strip()
+    code = str(body.get("code", "")).strip().lower()
+    if not name:
+        raise HTTPException(400, "Tên workspace không được để trống")
+    if not code:
+        raise HTTPException(400, "Mã workspace không được để trống")
+    if not re.match(r"^[a-z0-9_-]+$", code):
+        raise HTTPException(400, "Mã workspace chỉ được chứa chữ thường, số, gạch dưới hoặc gạch ngang")
+    if db.query(Workspace).filter(Workspace.name.ilike(name), Workspace.id != id).first():
+        raise HTTPException(400, f"Workspace '{name}' đã tồn tại")
+    if db.query(Workspace).filter(Workspace.code == code, Workspace.id != id).first():
+        raise HTTPException(400, f"Mã workspace '{code}' đã tồn tại")
+
+    old_name = w.name
+    old_code = w.code
+    w.name = name
+    w.code = code
+    w.description = body.get("description") or None
+
+    # Cascade changes to every entity that stores workspace values
+    if old_name.lower() != name.lower():
+        from ..models.project import Project
+        db.query(Project).filter(Project.business == old_name).update({Project.business: name}, synchronize_session=False)
+        from ..models.audit_log import AuditLog
+        db.query(AuditLog).filter(AuditLog.business_unit == old_name).update({AuditLog.business_unit: name}, synchronize_session=False)
+    if old_code != code:
+        db.query(User).filter(User.data_scope == old_code).update({User.data_scope: code}, synchronize_session=False)
+        from ..models.project import Project
+        db.query(Project).filter(Project.data_scope == old_code).update({Project.data_scope: code}, synchronize_session=False)
+        db.query(Customer).filter(Customer.business_unit == old_code).update({Customer.business_unit: code}, synchronize_session=False)
+    db.commit()
+    db.refresh(w)
+    return w
+
+@router.delete("/workspaces/{id}")
+def delete_workspace(id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    w = db.query(Workspace).filter(Workspace.id == id).first()
+    if not w:
+        raise HTTPException(404, "Không tìm thấy workspace")
+    from ..models.project import Project
+    if db.query(User).filter(User.data_scope == w.code).first():
+        raise HTTPException(400, f"Không thể xóa workspace '{w.name}' vì đang được sử dụng bởi một hoặc nhiều tài khoản")
+    if db.query(Project).filter(Project.data_scope == w.code).first():
+        raise HTTPException(400, f"Không thể xóa workspace '{w.name}' vì đang được sử dụng bởi một hoặc nhiều dự án")
+    if db.query(Customer).filter(Customer.business_unit == w.code).first():
+        raise HTTPException(400, f"Không thể xóa workspace '{w.name}' vì đang được sử dụng bởi một hoặc nhiều khách hàng")
+    db.delete(w)
+    db.commit()
+    return {"message": "Đã xóa workspace thành công"}
 

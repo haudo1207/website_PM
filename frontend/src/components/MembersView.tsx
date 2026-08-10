@@ -5,6 +5,7 @@ import {
   getTeams, getPositions, getDepartments, getCategories,
   syncFromRecruitment, getLeaders
 } from '@/lib/api';
+import SearchableSelect from './common/SearchableSelect';
 
 // ─── Types ─────────────────────────────────────────────────────────
 interface Skill { id: number; name: string; }
@@ -38,6 +39,8 @@ const EMPTY_FORM = {
 interface Props {
   onFlash: (msg: string) => void;
 }
+
+
 
 export default function MembersView({ onFlash }: Props) {
   const [members, setMembers] = useState<Member[]>([]);
@@ -113,6 +116,8 @@ export default function MembersView({ onFlash }: Props) {
     const t = setTimeout(loadMembers, 300);
     return () => clearTimeout(t);
   }, [loadMembers]);
+
+  // Redundant click outside handler removed
 
   // ─── Modal helpers ────────────────────────────────────────────────
   const openAdd = () => {
@@ -231,17 +236,23 @@ export default function MembersView({ onFlash }: Props) {
               />
             </div>
 
-            <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-              <option value="">Tất cả Level</option>
-              {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-            </select>
+            <SearchableSelect
+              label="Level"
+              icon="⭐"
+              options={teams.map(t => ({ id: t.name, name: t.name }))}
+              value={filterTeam}
+              onChange={val => setFilterTeam(val === 'all' ? '' : String(val))}
+              placeholder="Tìm Level..."
+            />
 
-            <select value={filterDepartment} onChange={e => setFilterDepartment(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-              <option value="">Tất cả Team</option>
-              {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-            </select>
+            <SearchableSelect
+              label="Team"
+              icon="👥"
+              options={departments.map(d => ({ id: d.name, name: d.name }))}
+              value={filterDepartment}
+              onChange={val => setFilterDepartment(val === 'all' ? '' : String(val))}
+              placeholder="Tìm Team..."
+            />
 
             {(filterTeam || filterPosition || filterDepartment || search) && (
               <button onClick={() => { setSearch(''); setFilterTeam(''); setFilterPosition(''); setFilterDepartment(''); }}
@@ -413,45 +424,35 @@ export default function MembersView({ onFlash }: Props) {
                   <span className="flex-1 border-t border-slate-100"></span>
                 </h3>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Level *</label>
-                    <select required value={form.team} onChange={e => setForm({ ...form, team: e.target.value })}
-                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all">
-                      <option value="">-- Chọn Level --</option>
-                      {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Team</label>
-                    <select value={form.department} onChange={e => setForm({ ...form, department: e.target.value })}
-                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all">
-                      <option value="">-- Chọn Team --</option>
-                      {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Leader</label>
-                    <select
-                      value={form.leader_name}
-                      onChange={e => {
-                        const selected = availableLeaders.find(l => l.name === e.target.value);
-                        setForm({
-                          ...form,
-                          leader_name: e.target.value,
-                          leader_email: selected ? selected.email : form.leader_email
-                        });
-                      }}
-                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all font-medium"
-                    >
-                      <option value="">-- Chọn Leader --</option>
-                      {availableLeaders.map(l => (
-                        <option key={l.name} value={l.name}>{l.name}</option>
-                      ))}
-                      {form.leader_name && !availableLeaders.some(l => l.name === form.leader_name) && (
-                        <option value={form.leader_name}>{form.leader_name}</option>
-                      )}
-                    </select>
-                  </div>
+                  <SearchableSelect
+                    label="Level"
+                    required
+                    value={form.team}
+                    onChange={val => setForm({ ...form, team: val })}
+                    options={teams.map(t => t.name)}
+                    placeholder="-- Chọn Level --"
+                  />
+                  <SearchableSelect
+                    label="Team"
+                    value={form.department}
+                    onChange={val => setForm({ ...form, department: val })}
+                    options={departments.map(d => d.name)}
+                    placeholder="-- Chọn Team --"
+                  />
+                  <SearchableSelect
+                    label="Tên Leader"
+                    value={form.leader_name}
+                    onChange={val => {
+                      const selected = availableLeaders.find(l => l.name === val);
+                      setForm({
+                        ...form,
+                        leader_name: val,
+                        leader_email: selected ? selected.email : form.leader_email
+                      });
+                    }}
+                    options={availableLeaders.map(l => l.name)}
+                    placeholder="-- Chọn Leader --"
+                  />
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email Leader</label>
                     <input type="email" value={form.leader_email} onChange={e => setForm({ ...form, leader_email: e.target.value })}

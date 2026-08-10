@@ -2,8 +2,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, getCustomers } from '@/lib/api';
+import { getProjects, deleteProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin, isSuperAdmin } from '@/lib/auth';
+import SearchableSelect from './common/SearchableSelect';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
   'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
@@ -87,6 +88,7 @@ export default function ProjectListContent() {
   const canManage = isAdmin();
   const [projects, setProjects] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState('All');
   const [phaseFilter, setPhaseFilter] = useState('All');
@@ -103,12 +105,14 @@ export default function ProjectListContent() {
 
   const reload = async () => {
     try {
-      const [projs, custs] = await Promise.all([
+      const [projs, custs, wss] = await Promise.all([
         getProjects(),
-        getCustomers()
+        getCustomers(),
+        getWorkspaces().catch(() => [])
       ]);
       setProjects(projs || []);
       setCustomers(custs || []);
+      setWorkspaces(wss || []);
     } catch {
       // Fallback safe load
     }
@@ -185,12 +189,19 @@ export default function ProjectListContent() {
     return Array.from(new Set(projects.map(p => p.year).filter(v => v !== null && v !== undefined))).sort((a, b) => (b as number) - (a as number));
   }, [projects]);
 
+  // Workspace code → display name map from the Workspace Master
+  const wsNameByCode = useMemo(() => {
+    const m = new Map<string, string>();
+    (workspaces || []).forEach(w => m.set(w.code, w.name));
+    return m;
+  }, [workspaces]);
+
   // Filter memoized
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
-      const pBiz = (p.business || (p.business_unit === 'markee' ? 'Markee' : 'Infrastructure')).toLowerCase();
+      const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
       const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all');
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
@@ -202,7 +213,7 @@ export default function ProjectListContent() {
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
       return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter, wsNameByCode]);
 
   // Sort memoized
   const sorted = useMemo(() => {
@@ -257,64 +268,59 @@ export default function ProjectListContent() {
                 className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none text-slate-700 focus:border-indigo-500 bg-slate-50/20" />
             </div>
             
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Giai đoạn</label>
-              <select value={phaseFilter} onChange={e => { setPhaseFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả giai đoạn</option>
-                {PROJECT_PHASES.map(ph => (
-                  <option key={ph} value={ph}>{ph}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="giai đoạn"
+              icon="🚩"
+              options={PROJECT_PHASES.map(ph => ({ id: ph, name: ph }))}
+              value={phaseFilter}
+              onChange={val => { setPhaseFilter(String(val)); setPage(1); }}
+              placeholder="Tìm giai đoạn..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Khách hàng</label>
-              <select value={customerFilter} onChange={e => { setCustomerFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả khách hàng</option>
-                {uniqueCustomers.map(cust => (
-                  <option key={cust} value={cust}>{cust}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="khách hàng"
+              icon="🏢"
+              options={uniqueCustomers.map(cust => ({ id: cust, name: cust }))}
+              value={customerFilter}
+              onChange={val => { setCustomerFilter(String(val)); setPage(1); }}
+              placeholder="Tìm khách hàng..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Quản lý (PM)</label>
-              <select value={pmFilter} onChange={e => { setPmFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả PM</option>
-                {uniquePms.map(pm => (
-                  <option key={pm} value={pm}>{pm}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="PM"
+              icon="👔"
+              options={uniquePms.map(pm => ({ id: pm, name: pm }))}
+              value={pmFilter}
+              onChange={val => { setPmFilter(String(val)); setPage(1); }}
+              placeholder="Tìm PM..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Sales</label>
-              <select value={salesFilter} onChange={e => { setSalesFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả Sales</option>
-                {uniqueSales.map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="Sales"
+              icon="💼"
+              options={uniqueSales.map(s => ({ id: s, name: s }))}
+              value={salesFilter}
+              onChange={val => { setSalesFilter(String(val)); setPage(1); }}
+              placeholder="Tìm Sales..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[140px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Workspace</label>
-              <select value={businessFilter} onChange={e => { setBusinessFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả Workspace</option>
-                <option value="Infrastructure">Infrastructure</option>
-                <option value="Markee">Markee</option>
-              </select>
-            </div>
+            <SearchableSelect
+              label="Workspace"
+              icon="🗂️"
+              options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
+              value={businessFilter}
+              onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
+              placeholder="Tìm Workspace..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[120px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Năm</label>
-              <select value={yearFilter} onChange={e => { setYearFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả năm</option>
-                {uniqueYears.map(yr => (
-                  <option key={yr} value={String(yr)}>{yr}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="năm"
+              icon="📅"
+              options={uniqueYears.map(yr => ({ id: String(yr), name: String(yr) }))}
+              value={yearFilter}
+              onChange={val => { setYearFilter(String(val)); setPage(1); }}
+              placeholder="Tìm năm..."
+            />
 
             <button onClick={handleResetFilters} className="flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors flex-shrink-0 h-[34px]">
               <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
