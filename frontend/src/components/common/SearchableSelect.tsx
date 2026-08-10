@@ -114,13 +114,19 @@ export default function SearchableSelect({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Determine selected items array (Filters out 'all', 'All', null, undefined, empty string)
+  // Helper to identify default/reset values (should NEVER display clear '✕' button)
+  const isDefaultValue = useCallback((v: any) => {
+    if (v === undefined || v === null || v === '' || v === 0 || v === '0') return true;
+    const str = String(v).trim().toLowerCase();
+    return str === 'all' || str.includes('không liên kết') || str.startsWith('—');
+  }, []);
+
+  // Determine selected items array (Filters out default reset values)
   const selectedValues = useMemo(() => {
-    const isAll = (v: any) => v === undefined || v === null || v === '' || String(v).toLowerCase() === 'all';
-    if (isAll(value)) return [];
-    if (Array.isArray(value)) return value.filter(v => !isAll(v));
+    if (isDefaultValue(value)) return [];
+    if (Array.isArray(value)) return value.filter(v => !isDefaultValue(v));
     return [value];
-  }, [value]);
+  }, [value, isDefaultValue]);
 
   // Normalize options to object format with safety checks
   const parsedOptions = useMemo<SelectOptionItem[]>(() => {
@@ -240,7 +246,9 @@ export default function SearchableSelect({
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onChange(isMulti ? [] : 'All');
+    const defaultOpt = parsedOptions.find(o => isDefaultValue(o.id) || o.name.startsWith('—'));
+    const resetVal = defaultOpt ? defaultOpt.id : (isMulti ? [] : 'All');
+    onChange(isMulti ? [] : resetVal);
     setSearch('');
     setFocusedIndex(-1);
   };
@@ -248,6 +256,8 @@ export default function SearchableSelect({
   // Button Trigger Label Text
   const buttonText = useMemo(() => {
     if (selectedValues.length === 0) {
+      const defaultOpt = parsedOptions.find(o => isDefaultValue(o.id) || o.name.startsWith('—'));
+      if (defaultOpt) return defaultOpt.name;
       return `Tất cả ${label}`;
     }
     if (!isMulti) {
@@ -259,7 +269,7 @@ export default function SearchableSelect({
       return found ? found.name : `1 ${label}`;
     }
     return `${selectedValues.length} ${label}`;
-  }, [selectedValues, parsedOptions, label, isMulti]);
+  }, [selectedValues, parsedOptions, label, isMulti, isDefaultValue]);
 
   return (
     <div
