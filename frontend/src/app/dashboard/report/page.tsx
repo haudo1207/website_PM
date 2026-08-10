@@ -21,8 +21,15 @@ function getWeekOfMonth(date: Date) {
 }
 
 export default function ReportTab() {
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
+
+  const [searchTaskName, setSearchTaskName] = useState<string>('');
+  const [filterCustomer, setFilterCustomer] = useState<string>('all');
+  const [filterProject, setFilterProject] = useState<string>('all');
+  const [filterPriority, setFilterPriority] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
 
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [realMemberData, setRealMemberData] = useState<any>(cachedReportData?.realMemberData || null);
@@ -107,6 +114,7 @@ export default function ReportTab() {
     let inProgressCount = 0;
     let overdueCount = 0;
     let mandayTotal = 0;
+    let dynamicKpi = 0;
     const upcoming: any[] = [];
     const overdueList: any[] = [];
     const acts: any[] = [];
@@ -117,6 +125,7 @@ export default function ReportTab() {
       const taskDate = new Date(t.end_date_est);
       if (isNaN(taskDate.getTime())) return true;
 
+      if (taskDate.getFullYear() !== selectedYear) return false;
       const taskMonth = taskDate.getMonth() + 1;
       if (taskMonth !== selectedMonth) return false;
 
@@ -138,6 +147,7 @@ export default function ReportTab() {
 
       if (isDone) {
         doneCount++;
+        dynamicKpi += (t.kpi_base || 0);
         acts.push({ action: `Hoàn thành: ${t.name}`, time: 'Đã hoàn thành', type: 'done' });
       } else if (isCancel) {
         acts.push({ action: `Đã hủy: ${t.name}`, time: 'Hủy tác vụ', type: 'cancel' });
@@ -148,6 +158,8 @@ export default function ReportTab() {
           overdueList.push({
             id: t.id,
             project: t.projectName,
+            customer: t.customerName,
+            year: t.year,
             name: t.name,
             deadline: t.end_date_est || 'Chưa có',
             daysLate: daysLateNum
@@ -170,10 +182,11 @@ export default function ReportTab() {
       done: doneCount,
       inProgress: inProgressCount,
       overdue: overdueCount,
-      manday: Math.round(mandayTotal * 10) / 10
+      manday: Math.round(mandayTotal * 10) / 10,
+      kpi: dynamicKpi
     };
 
-    const kpiPoints = realMemberData?.kpi_total || (doneCount * 6);
+    const kpiPoints = dynamicKpi;
 
     const wProg = [
       { name: 'Tuần 1', kpi: Math.round(kpiPoints * 0.25), tasks: Math.ceil(doneCount * 0.25) },
@@ -193,7 +206,7 @@ export default function ReportTab() {
       weeklyProgress: wProg,
       monthlyProgress: mProg
     };
-  }, [rawMyTasks, selectedMonth, selectedWeek, realMemberData]);
+  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, realMemberData]);
 
   const reportKpiCards = [
     { label: 'Tasks Được Giao', value: realTaskStats.total, icon: 'tasks',     border: 'border-l-[#0058be]', text: 'text-[#0058be]', trend: selectedWeek === 'all' ? 'Trong tháng' : 'Trong tuần' },
@@ -201,8 +214,24 @@ export default function ReportTab() {
     { label: 'Đang Làm', value: realTaskStats.inProgress, icon: 'lightning', border: 'border-l-amber-500', text: 'text-amber-600', trend: 'Đang triển khai' },
     { label: 'Trễ Hạn', value: realTaskStats.overdue, icon: 'alert',     border: 'border-l-red-500', text: 'text-red-600', trend: 'Cần xử lý' },
     { label: 'Manday Làm Việc', value: realTaskStats.manday, icon: 'clock',     border: 'border-l-cyan-500', text: 'text-cyan-600', trend: 'Số ngày tích lũy' },
-    { label: 'Điểm KPI', value: realMemberData?.kpi_total || 0, icon: 'trophy',    border: 'border-l-purple-500', text: 'text-purple-600', trend: 'Thành tích cá nhân' }
+    { label: 'Điểm KPI', value: realTaskStats.kpi || 0, icon: 'trophy',    border: 'border-l-purple-500', text: 'text-purple-600', trend: 'Trong kỳ đánh giá' }
   ];
+
+  const tableTasks = useMemo(() => {
+    return myRealTasks.filter((t: any) => {
+      if (searchTaskName && !t.name?.toLowerCase().includes(searchTaskName.toLowerCase())) return false;
+      if (filterCustomer !== 'all' && (t.customerName || 'Không có') !== filterCustomer) return false;
+      if (filterProject !== 'all' && (t.projectName || 'Không có') !== filterProject) return false;
+      if (filterPriority !== 'all' && (t.priority || 'Normal') !== filterPriority) return false;
+      if (filterStatus !== 'all' && (t.status || 'Chưa rõ') !== filterStatus) return false;
+      return true;
+    });
+  }, [myRealTasks, searchTaskName, filterCustomer, filterProject, filterPriority, filterStatus]);
+
+  const uniqueCustomers = Array.from(new Set(myRealTasks.map((t: any) => t.customerName || 'Không có')));
+  const uniqueProjects = Array.from(new Set(myRealTasks.map((t: any) => t.projectName || 'Không có')));
+  const uniquePriorities = Array.from(new Set(myRealTasks.map((t: any) => t.priority || 'Normal')));
+  const uniqueStatuses = Array.from(new Set(myRealTasks.map((t: any) => t.status || 'Chưa rõ')));
 
   return (
     <div className="p-6 space-y-5">
@@ -221,6 +250,17 @@ export default function ReportTab() {
           </button>
           
           <div className="flex gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">Năm:</span>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+              >
+                {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+              </select>
+            </div>
+            <div className="w-px h-4 bg-slate-200 self-center"></div>
             <div className="flex items-center gap-1">
               <span className="text-slate-500">Tháng:</span>
               <select
@@ -279,25 +319,56 @@ export default function ReportTab() {
           </div>
           <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full border border-indigo-100">{myRealTasks.length} task</span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[500px] custom-scrollbar relative">
           <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-slate-50/80 text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider">
-                <th className="px-5 py-3 text-left font-bold">Tên Task</th>
+            <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur shadow-sm">
+              <tr className="text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider">
+                <th className="px-5 py-3 text-left font-bold min-w-[200px]">Tên Task</th>
+                <th className="px-4 py-3 text-left font-bold">Khách hàng</th>
                 <th className="px-4 py-3 text-left font-bold">Dự Án</th>
                 <th className="px-4 py-3 text-center font-bold">Ưu Tiên</th>
                 <th className="px-4 py-3 text-center font-bold">Trạng Thái</th>
                 <th className="px-4 py-3 text-center font-bold">Deadline</th>
                 <th className="px-4 py-3 text-center font-bold">KPI</th>
               </tr>
+              <tr className="bg-white/95 border-b border-slate-100">
+                <th className="px-2 py-1.5">
+                  <input type="text" placeholder="🔍 Tìm task..." value={searchTaskName} onChange={e => setSearchTaskName(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-2 py-1 outline-none focus:border-indigo-400" />
+                </th>
+                <th className="px-2 py-1.5">
+                  <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
+                    <option value="all">Tất cả</option>
+                    {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </th>
+                <th className="px-2 py-1.5">
+                  <select value={filterProject} onChange={e => setFilterProject(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
+                    <option value="all">Tất cả</option>
+                    {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </th>
+                <th className="px-2 py-1.5">
+                  <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
+                    <option value="all">Tất cả</option>
+                    {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </th>
+                <th className="px-2 py-1.5">
+                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-200 rounded px-1 py-1 outline-none">
+                    <option value="all">Tất cả</option>
+                    {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </th>
+                <th colSpan={2}></th>
+              </tr>
             </thead>
             <tbody>
-              {myRealTasks.length === 0 ? (
+              {tableTasks.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-6 text-slate-400 font-semibold">Chưa có task nào phù hợp bộ lọc.</td>
+                  <td colSpan={7} className="text-center py-6 text-slate-400 font-semibold">Chưa có task nào phù hợp bộ lọc.</td>
                 </tr>
               ) : (
-                myRealTasks.map((t, i) => (
+                tableTasks.map((t: any, i: number) => (
                   <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/30'}`}>
                     <td className="px-5 py-3 font-semibold text-[#0b1c30]">
                       <div className="flex items-center gap-2">
@@ -305,6 +376,7 @@ export default function ReportTab() {
                         {t.name}
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-slate-500 font-semibold">{t.customerName || 'Không có'}</td>
                     <td className="px-4 py-3 text-slate-500 font-semibold">{t.projectName}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${
@@ -390,8 +462,11 @@ export default function ReportTab() {
             ) : (
               realOverdueTasks.map(t => (
                 <div key={t.id} className="p-4 bg-red-50 rounded-xl border border-red-100 hover:border-red-200 transition-colors">
-                  <span className="text-[9px] font-extrabold text-red-700 bg-red-100 px-2 py-0.5 rounded-full uppercase">{t.project}</span>
-                  <p className="text-xs font-bold text-[#0b1c30] mt-1.5 leading-snug">{t.name}</p>
+                  <div className="flex flex-wrap gap-1 mb-1.5">
+                    <span className="text-[9px] font-extrabold text-red-700 bg-red-100 px-2 py-0.5 rounded-full uppercase">{t.project} {t.year ? `(${t.year})` : ''}</span>
+                    <span className="text-[9px] font-extrabold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full uppercase">{t.customer || 'Không có'}</span>
+                  </div>
+                  <p className="text-xs font-bold text-[#0b1c30] leading-snug">{t.name}</p>
                   <div className="flex items-center justify-between mt-3 text-[11px]">
                     <span className="font-extrabold text-red-600 bg-white border border-red-200 px-2 py-0.5 rounded-md">Trễ {t.daysLate} ngày</span>
                     <span className="text-slate-400 font-semibold tabular-nums">Hạn: {t.deadline}</span>
