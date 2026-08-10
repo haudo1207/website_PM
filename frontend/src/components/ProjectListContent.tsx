@@ -248,10 +248,20 @@ export default function ProjectListContent() {
   // Sort memoized
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      if (sortBy === 'newest') return b.id - a.id;
-      if (sortBy === 'oldest') return a.id - b.id;
-      if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
-      if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
+      if (sortBy === 'newest') {
+        const timeA = new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
+        if (timeB !== timeA) return timeB - timeA;
+        return b.id - a.id;
+      }
+      if (sortBy === 'oldest') {
+        const timeA = new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return a.id - b.id;
+      }
+      if (sortBy === 'name_asc') return a.name.localeCompare(b.name, 'vi');
+      if (sortBy === 'name_desc') return b.name.localeCompare(a.name, 'vi');
       return 0;
     });
   }, [filtered, sortBy]);
