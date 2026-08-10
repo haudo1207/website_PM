@@ -114,10 +114,11 @@ export default function SearchableSelect({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Determine selected items array
+  // Determine selected items array (Filters out 'all', 'All', null, undefined, empty string)
   const selectedValues = useMemo(() => {
-    if (value === undefined || value === null || value === 'all' || value === '') return [];
-    if (Array.isArray(value)) return value;
+    const isAll = (v: any) => v === undefined || v === null || v === '' || String(v).toLowerCase() === 'all';
+    if (isAll(value)) return [];
+    if (Array.isArray(value)) return value.filter(v => !isAll(v));
     return [value];
   }, [value]);
 
@@ -239,7 +240,7 @@ export default function SearchableSelect({
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onChange(isMulti ? [] : 'all');
+    onChange(isMulti ? [] : 'All');
     setSearch('');
     setFocusedIndex(-1);
   };
