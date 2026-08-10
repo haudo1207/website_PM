@@ -352,103 +352,84 @@ export default function ReportTab() {
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur shadow-sm">
               <tr className="text-slate-500 border-b border-slate-200 text-[10px] tracking-wider">
-                <th className="px-4 py-2 min-w-[150px] max-w-[250px] w-1/4 align-top bg-slate-100">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="font-bold uppercase text-slate-500 text-left">Tên Task</span>
-                    <input 
-                      type="text" 
-                      placeholder="🔍 Tìm task..." 
-                      value={searchTaskName} 
-                      onChange={e => setSearchTaskName(e.target.value)} 
-                      className="w-full text-[11px] font-semibold border border-slate-300 rounded px-2 py-1 outline-none focus:border-[#0058be] bg-white text-slate-700" 
-                    />
-                  </div>
+                <th className="px-4 py-2.5 min-w-[150px] max-w-[250px] w-1/4 align-top bg-slate-100">
+                  <input 
+                    type="text" 
+                    placeholder="TÊN TASK (TÌM...)" 
+                    value={searchTaskName} 
+                    onChange={e => setSearchTaskName(e.target.value)} 
+                    className="w-full text-xs font-bold uppercase bg-transparent border-none outline-none text-[#0058be] placeholder:text-slate-500 focus:placeholder:text-slate-300" 
+                  />
                 </th>
-                <th className="px-4 py-2 align-top bg-slate-100">
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between group">
+                <th className="px-4 py-2.5 align-top bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors">
+                  <select 
+                    value={filterCustomer} 
+                    onChange={e => setFilterCustomer(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  >
+                    <option value="all">Tất cả Khách Hàng</option>
+                    {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="font-bold uppercase text-slate-500">Khách Hàng</span>
-                      <div className="relative">
-                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
-                          <SvgIcon name="filter" className={`w-3 h-3 ${filterCustomer !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
-                        </button>
-                        <select 
-                          value={filterCustomer} 
-                          onChange={e => setFilterCustomer(e.target.value)}
-                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                        >
-                          <option value="all">Tất cả</option>
-                          {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                      </div>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterCustomer !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
                     </div>
-                    {filterCustomer !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[120px]" title={filterCustomer}>{filterCustomer}</div>}
+                    {filterCustomer !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[120px] text-left">{filterCustomer}</span>}
                   </div>
                 </th>
-                <th className="px-4 py-2 align-top bg-slate-100">
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between group">
+                <th className="px-4 py-2.5 align-top bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors">
+                  <select 
+                    value={filterProject} 
+                    onChange={e => setFilterProject(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  >
+                    <option value="all">Tất cả Dự Án</option>
+                    {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="font-bold uppercase text-slate-500">Dự Án</span>
-                      <div className="relative">
-                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
-                          <SvgIcon name="filter" className={`w-3 h-3 ${filterProject !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
-                        </button>
-                        <select 
-                          value={filterProject} 
-                          onChange={e => setFilterProject(e.target.value)}
-                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                        >
-                          <option value="all">Tất cả</option>
-                          {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                      </div>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterProject !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
                     </div>
-                    {filterProject !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[120px]" title={filterProject}>{filterProject}</div>}
+                    {filterProject !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[120px] text-left">{filterProject}</span>}
                   </div>
                 </th>
-                <th className="px-4 py-2 align-top w-[110px] bg-slate-100">
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between group">
+                <th className="px-4 py-2.5 align-top w-[110px] bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors">
+                  <select 
+                    value={filterPriority} 
+                    onChange={e => setFilterPriority(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  >
+                    <option value="all">Tất cả Ưu Tiên</option>
+                    {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="font-bold uppercase text-slate-500">Ưu Tiên</span>
-                      <div className="relative">
-                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
-                          <SvgIcon name="filter" className={`w-3 h-3 ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
-                        </button>
-                        <select 
-                          value={filterPriority} 
-                          onChange={e => setFilterPriority(e.target.value)}
-                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                        >
-                          <option value="all">Tất cả</option>
-                          {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                      </div>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
                     </div>
-                    {filterPriority !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[100px]" title={filterPriority}>{filterPriority}</div>}
+                    {filterPriority !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-left">{filterPriority}</span>}
                   </div>
                 </th>
-                <th className="px-4 py-2 align-top w-[110px] bg-slate-100">
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between group">
+                <th className="px-4 py-2.5 align-top w-[110px] bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors">
+                  <select 
+                    value={filterStatus} 
+                    onChange={e => setFilterStatus(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  >
+                    <option value="all">Tất cả Trạng Thái</option>
+                    {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="font-bold uppercase text-slate-500">Trạng Thái</span>
-                      <div className="relative">
-                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
-                          <SvgIcon name="filter" className={`w-3 h-3 ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
-                        </button>
-                        <select 
-                          value={filterStatus} 
-                          onChange={e => setFilterStatus(e.target.value)}
-                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                        >
-                          <option value="all">Tất cả</option>
-                          {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      </div>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
                     </div>
-                    {filterStatus !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[100px]" title={filterStatus}>{filterStatus}</div>}
+                    {filterStatus !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-left">{filterStatus}</span>}
                   </div>
                 </th>
-                <th className="px-4 py-2 align-top text-center w-[100px] bg-slate-100">
+                <th className="px-4 py-2.5 align-top text-center w-[100px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
                   <button 
                     onClick={() => {
                       if (sortDeadline === 'default') { setSortDeadline('asc'); setSortKPI('default'); }
@@ -463,7 +444,7 @@ export default function ReportTab() {
                     </span>
                   </button>
                 </th>
-                <th className="px-4 py-2 align-top text-center w-[80px] bg-slate-100">
+                <th className="px-4 py-2.5 align-top text-center w-[80px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
                   <button 
                     onClick={() => {
                       if (sortKPI === 'default') { setSortKPI('desc'); setSortDeadline('default'); }
