@@ -217,10 +217,10 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
         try:
             from ..services.meeting_sync import create_google_meet_link
             result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
-            return {"success": True, "join_url": result.get("join_url", "https://meet.google.com/new"), "platform": "Google Meet"}
+            return {"success": True, "join_url": result["join_url"], "platform": "Google Meet"}
         except Exception as e:
-            logger.error(f"Generate Google Meet link fallback triggered: {e}")
-            return {"success": True, "join_url": "https://meet.google.com/new", "platform": "Google Meet"}
+            logger.error(f"Generate Google Meet link failed: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail=f"Nền tảng '{platform}' chưa hỗ trợ tự động tạo link.")
 
@@ -327,12 +327,10 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
             try:
                 from ..services.meeting_sync import create_google_meet_link
                 result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
-                meeting_url = result.get("join_url")
+                meeting_url = result["join_url"]
             except Exception as e:
-                logger.error(f"Auto-generate Google Meet link fallback: {e}")
-                import os
-                unique_code = f"mk-{os.urandom(3).hex()}"
-                meeting_url = f"https://meet.google.com/{unique_code}"
+                logger.error(f"Auto-generate Google Meet link failed: {e}")
+                raise HTTPException(status_code=400, detail=str(e))
 
     # Handle AI summary formatting
     ai_summary = body.get("ai_summary") or body.get("summary")

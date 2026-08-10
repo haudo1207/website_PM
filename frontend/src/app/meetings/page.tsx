@@ -6,6 +6,7 @@ import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
+import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleAuthUrl, getGoogleStatus } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
@@ -21,9 +22,24 @@ export default function MeetingsPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [googleConnected, setGoogleConnected] = useState(false);
+
+  const handleCalendarMeetingClick = (item: any) => {
+    const statusUpper = String(item.status || '').toUpperCase();
+    const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED' || Boolean(item.executive_summary) || (Array.isArray(item.summary) && item.summary.length > 0);
+
+    if (isDone) {
+      setSummarizingMeeting(item);
+      setIsSummarizeOpen(true);
+    } else {
+      setDetailMeeting(item);
+      setIsDetailOpen(true);
+    }
+  };
 
   useEffect(() => {
     getGoogleStatus().then(res => {
@@ -314,7 +330,7 @@ export default function MeetingsPage() {
                         return (
                           <div
                             key={item.id}
-                            onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
+                            onClick={() => handleCalendarMeetingClick(item)}
                             className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${
                               isPM
                                 ? 'bg-[#fff7e8] border-l-[#f59e0b]'
@@ -387,6 +403,7 @@ export default function MeetingsPage() {
       {canManage && <CreateMeetingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
       {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => setMeetings(prev => prev.map(x => x.id === m.id ? m : x))} />}
+      <MeetingDetailModal isOpen={isDetailOpen} onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }} meeting={detailMeeting} onEdit={canManage ? (m => { setEditingMeeting(m); setIsModalOpen(true); }) : undefined} onSummarize={canManage ? (m => { setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined} />
 
       {/* Delete Confirm Modal */}
       {deleteConfirmId && (

@@ -447,12 +447,11 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
         )
         if res.get("meet_link"):
             return {"join_url": res["meet_link"], "id": res.get("google_event_id")}
+        else:
+            raise ValueError("Google Calendar không trả về meet_link hợp lệ")
     except Exception as e:
-        logger.warning(f"Google Calendar Meet creation fallback used due to: {e}")
-
-    # Fallback: Generate a unique persistent meeting code instead of generic /new
-    unique_code = f"mk-{os.urandom(3).hex()}"
-    return {"join_url": f"https://meet.google.com/{unique_code}", "id": None}
+        logger.error(f"Google Calendar Meet creation failed: {e}")
+        raise ValueError(f"Không thể khởi tạo cuộc họp Google Meet qua tài khoản mkt.szone@gmail.com: {e}")
 
 
 def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> dict:
