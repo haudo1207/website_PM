@@ -521,7 +521,7 @@ export default function SystemAuditView() {
       </div>
 
       {/* 2. RICH FILTER BAR */}
-      <div className="bg-white p-4 rounded-xl border border-[#c2c6d6]/60 shadow-sm space-y-3">
+      <div className="bg-white p-4 rounded-xl border border-[#c2c6d6]/60 shadow-sm space-y-3 relative z-30">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3 flex-1">
             {/* Search */}
