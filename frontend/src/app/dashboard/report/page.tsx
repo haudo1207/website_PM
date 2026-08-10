@@ -43,6 +43,7 @@ export default function ReportTab() {
 
   const [sortDeadline, setSortDeadline] = useState<'default'|'asc'|'desc'>('default');
   const [sortKPI, setSortKPI] = useState<'default'|'desc'|'asc'>('default');
+  const [openFilterDropdown, setOpenFilterDropdown] = useState<string | null>(null);
 
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [realMemberData, setRealMemberData] = useState<any>(cachedReportData?.realMemberData || null);
@@ -268,51 +269,54 @@ export default function ReportTab() {
           {loadingReal && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật...</span>}
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
+            <div className="flex gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Năm:</span>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tất cả</option>
+                  {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+                </select>
+              </div>
+              <div className="w-px h-4 bg-slate-200 self-center"></div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Tháng:</span>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tất cả</option>
+                  {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+                </select>
+              </div>
+              <div className="w-px h-4 bg-slate-200 self-center"></div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Tuần:</span>
+                <select
+                  value={selectedWeek}
+                  onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tất cả</option>
+                  {[...Array(5)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+
           <button
             onClick={() => fetchReportData(true)}
             className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
           >
-            <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
-            <span>Làm mới dữ liệu</span>
+            <SvgIcon name="refresh" className={`w-3.5 h-3.5 ${loadingReal ? 'animate-spin text-[#0058be]' : 'text-slate-500'}`} />
+            LÀM MỚI
           </button>
-          
-          <div className="flex gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500">Năm:</span>
-              <select
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
-              >
-                <option value="all">Tất cả</option>
-                {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
-              </select>
-            </div>
-            <div className="w-px h-4 bg-slate-200 self-center"></div>
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500">Tháng:</span>
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
-              >
-                <option value="all">Tất cả</option>
-                {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
-              </select>
-            </div>
-            <div className="w-px h-4 bg-slate-200 self-center"></div>
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500">Tuần:</span>
-              <select
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
-              >
-                <option value="all">Tất cả</option>
-                {[...Array(5)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
-              </select>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -352,7 +356,7 @@ export default function ReportTab() {
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur shadow-sm">
               <tr className="text-slate-500 border-b border-slate-200 text-[10px] tracking-wider">
-                <th className="px-4 py-2.5 min-w-[200px] w-auto max-w-[300px] align-top bg-slate-100">
+                <th className="px-4 py-2.5 min-w-[150px] w-auto max-w-[220px] align-top bg-slate-100">
                   <input 
                     type="text" 
                     placeholder="TÊN TASK (TÌM...)" 
@@ -361,75 +365,147 @@ export default function ReportTab() {
                     className="w-full text-xs font-bold uppercase bg-transparent border-none outline-none text-[#0058be] placeholder:text-slate-500 focus:placeholder:text-slate-300" 
                   />
                 </th>
-                <th className="px-4 py-2.5 align-top bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors w-[15%] min-w-[120px]">
-                  <select 
-                    value={filterCustomer} 
-                    onChange={e => setFilterCustomer(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                <th 
+                  className="px-4 py-2.5 align-top bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors w-[15%] min-w-[120px]"
+                  onMouseLeave={() => setOpenFilterDropdown(null)}
+                >
+                  <div 
+                    className="flex flex-col gap-0.5 h-full w-full"
+                    onClick={() => setOpenFilterDropdown(openFilterDropdown === 'customer' ? null : 'customer')}
                   >
-                    <option value="all">Tất cả Khách Hàng</option>
-                    {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                  <div className="flex flex-col gap-0.5">
                     <div className="flex items-center justify-start gap-1.5">
-                      <span className="font-bold uppercase text-slate-500">Khách Hàng</span>
-                      <SvgIcon name="filter" className={`w-3 h-3 shrink-0 transition-colors ${filterCustomer !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
+                      <span className={`font-bold uppercase tracking-wider ${filterCustomer !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Khách Hàng</span>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterCustomer !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
                     </div>
                     {filterCustomer !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[120px] text-left">{filterCustomer}</span>}
                   </div>
+                  
+                  {openFilterDropdown === 'customer' && (
+                    <div className="absolute top-full left-0 mt-0 min-w-[140px] bg-white border border-slate-200 shadow-lg rounded-b-md z-50 py-1 text-left">
+                      <div 
+                        className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterCustomer === 'all' ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                        onClick={(e) => { e.stopPropagation(); setFilterCustomer('all'); setOpenFilterDropdown(null); }}
+                      >
+                        All
+                      </div>
+                      {uniqueCustomers.map((c: any) => (
+                        <div 
+                          key={c} 
+                          className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterCustomer === c ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                          onClick={(e) => { e.stopPropagation(); setFilterCustomer(c); setOpenFilterDropdown(null); }}
+                        >
+                          {c}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </th>
-                <th className="px-4 py-2.5 align-top bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors w-[15%] min-w-[120px]">
-                  <select 
-                    value={filterProject} 
-                    onChange={e => setFilterProject(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                <th 
+                  className="px-4 py-2.5 align-top bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors w-[15%] min-w-[120px]"
+                  onMouseLeave={() => setOpenFilterDropdown(null)}
+                >
+                  <div 
+                    className="flex flex-col gap-0.5 h-full w-full"
+                    onClick={() => setOpenFilterDropdown(openFilterDropdown === 'project' ? null : 'project')}
                   >
-                    <option value="all">Tất cả Dự Án</option>
-                    {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  <div className="flex flex-col gap-0.5">
                     <div className="flex items-center justify-start gap-1.5">
-                      <span className="font-bold uppercase text-slate-500">Dự Án</span>
-                      <SvgIcon name="filter" className={`w-3 h-3 shrink-0 transition-colors ${filterProject !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
+                      <span className={`font-bold uppercase tracking-wider ${filterProject !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Dự Án</span>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterProject !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
                     </div>
                     {filterProject !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[120px] text-left">{filterProject}</span>}
                   </div>
-                </th>
-                <th className="px-4 py-2.5 align-top w-[100px] bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors">
-                  <select 
-                    value={filterPriority} 
-                    onChange={e => setFilterPriority(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                  >
-                    <option value="all">Tất cả Ưu Tiên</option>
-                    {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  <div className="flex flex-col gap-0.5">
-                    <div className="flex items-center justify-center gap-1.5 text-center">
-                      <span className="font-bold uppercase text-slate-500">Ưu Tiên</span>
-                      <SvgIcon name="filter" className={`w-3 h-3 shrink-0 transition-colors ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
+
+                  {openFilterDropdown === 'project' && (
+                    <div className="absolute top-full left-0 mt-0 min-w-[160px] bg-white border border-slate-200 shadow-lg rounded-b-md z-50 py-1 text-left">
+                      <div 
+                        className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterProject === 'all' ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                        onClick={(e) => { e.stopPropagation(); setFilterProject('all'); setOpenFilterDropdown(null); }}
+                      >
+                        All
+                      </div>
+                      {uniqueProjects.map((p: any) => (
+                        <div 
+                          key={p} 
+                          className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterProject === p ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                          onClick={(e) => { e.stopPropagation(); setFilterProject(p); setOpenFilterDropdown(null); }}
+                        >
+                          {p}
+                        </div>
+                      ))}
                     </div>
-                    {filterPriority !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center">{filterPriority}</span>}
-                  </div>
+                  )}
                 </th>
-                <th className="px-4 py-2.5 align-top w-[110px] bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors">
-                  <select 
-                    value={filterStatus} 
-                    onChange={e => setFilterStatus(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                <th 
+                  className="px-4 py-2.5 align-top w-[140px] bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors"
+                  onMouseLeave={() => setOpenFilterDropdown(null)}
+                >
+                  <div 
+                    className="flex flex-col gap-0.5 h-full w-full"
+                    onClick={() => setOpenFilterDropdown(openFilterDropdown === 'priority' ? null : 'priority')}
                   >
-                    <option value="all">Tất cả Trạng Thái</option>
-                    {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <div className="flex flex-col gap-0.5">
                     <div className="flex items-center justify-center gap-1.5 text-center">
-                      <span className="font-bold uppercase text-slate-500">Trạng Thái</span>
-                      <SvgIcon name="filter" className={`w-3 h-3 shrink-0 transition-colors ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-slate-400 group-hover:text-slate-600'}`} />
+                      <span className={`font-bold uppercase tracking-wider ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Priority</span>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
                     </div>
-                    {filterStatus !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center">{filterStatus}</span>}
+                    {filterPriority !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center mx-auto">{filterPriority}</span>}
                   </div>
+
+                  {openFilterDropdown === 'priority' && (
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0 w-[140px] bg-white border border-slate-200 shadow-lg rounded-b-md z-50 py-1 text-left">
+                      <div 
+                        className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterPriority === 'all' ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                        onClick={(e) => { e.stopPropagation(); setFilterPriority('all'); setOpenFilterDropdown(null); }}
+                      >
+                        All
+                      </div>
+                      {uniquePriorities.map((p: any) => (
+                        <div 
+                          key={p} 
+                          className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterPriority === p ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                          onClick={(e) => { e.stopPropagation(); setFilterPriority(p); setOpenFilterDropdown(null); }}
+                        >
+                          {p}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </th>
-                <th className="px-4 py-2.5 align-top text-center w-[110px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
+                <th 
+                  className="px-4 py-2.5 align-top w-[140px] bg-slate-100 relative group cursor-pointer hover:bg-slate-200/50 transition-colors"
+                  onMouseLeave={() => setOpenFilterDropdown(null)}
+                >
+                  <div 
+                    className="flex flex-col gap-0.5 h-full w-full"
+                    onClick={() => setOpenFilterDropdown(openFilterDropdown === 'status' ? null : 'status')}
+                  >
+                    <div className="flex items-center justify-center gap-1.5 text-center">
+                      <span className={`font-bold uppercase tracking-wider ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Trạng Thái</span>
+                      <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
+                    </div>
+                    {filterStatus !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center mx-auto">{filterStatus}</span>}
+                  </div>
+
+                  {openFilterDropdown === 'status' && (
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0 w-[140px] bg-white border border-slate-200 shadow-lg rounded-b-md z-50 py-1 text-left">
+                      <div 
+                        className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterStatus === 'all' ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                        onClick={(e) => { e.stopPropagation(); setFilterStatus('all'); setOpenFilterDropdown(null); }}
+                      >
+                        All
+                      </div>
+                      {uniqueStatuses.map((s: any) => (
+                        <div 
+                          key={s} 
+                          className={`px-4 py-2 text-[13px] font-bold cursor-pointer hover:bg-slate-50 ${filterStatus === s ? 'text-[#0058be] bg-[#f8fafc]' : 'text-[#475569]'}`}
+                          onClick={(e) => { e.stopPropagation(); setFilterStatus(s); setOpenFilterDropdown(null); }}
+                        >
+                          {s}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </th>
+                <th className="px-4 py-2.5 align-top text-center w-[140px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
                   <button 
                     onClick={() => {
                       if (sortDeadline === 'default') { setSortDeadline('asc'); setSortKPI('default'); }
@@ -444,7 +520,7 @@ export default function ReportTab() {
                     </span>
                   </button>
                 </th>
-                <th className="px-4 py-2.5 align-top text-center w-[80px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
+                <th className="px-4 py-2.5 align-top text-center w-[110px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
                   <button 
                     onClick={() => {
                       if (sortKPI === 'default') { setSortKPI('desc'); setSortDeadline('default'); }

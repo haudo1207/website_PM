@@ -215,25 +215,29 @@ export default function SystemAuditTab() {
           {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật dữ liệu hệ thống...</span>}
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
+            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+              <span className="text-slate-500">Tháng:</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+              >
+                <option value="08/2026">08/2026</option>
+                <option value="07/2026">07/2026</option>
+                <option value="06/2026">06/2026</option>
+              </select>
+            </div>
+          </div>
+
           <button
             onClick={() => fetchSystemAuditData(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
           >
-            <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
-            <span>Làm mới dữ liệu</span>
+            <SvgIcon name="refresh" className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#0058be]' : 'text-slate-500'}`} />
+            LÀM MỚI
           </button>
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1 shadow-sm">
-            <span className="text-[11px] font-bold text-slate-500">Lọc Tháng:</span>
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="text-xs font-bold text-[#0058be] bg-transparent focus:outline-none cursor-pointer"
-            >
-              <option value="08/2026">Tháng 08/2026</option>
-              <option value="07/2026">Tháng 07/2026</option>
-              <option value="06/2026">Tháng 06/2026</option>
-            </select>
-          </div>
         </div>
       </div>
 
