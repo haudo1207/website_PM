@@ -7,6 +7,16 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import PieChartCard from '@/components/dashboard/PieChartCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
+
+const formatVNDate = (dStr: string) => {
+  if (!dStr) return '—';
+  const d = new Date(dStr);
+  if (isNaN(d.getTime())) return dStr;
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  return `${day}/${month}/${d.getFullYear()}`;
+};
+
 import { 
   priorityDot,
   statusStyle,
@@ -342,7 +352,7 @@ export default function ReportTab() {
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur shadow-sm">
               <tr className="text-slate-500 border-b border-slate-200 text-[10px] tracking-wider">
-                <th className="px-5 py-2 min-w-[200px] align-top bg-slate-100">
+                <th className="px-4 py-2 min-w-[150px] max-w-[250px] w-1/4 align-top bg-slate-100">
                   <div className="flex flex-col gap-1.5">
                     <span className="font-bold uppercase text-slate-500 text-left">Tên Task</span>
                     <input 
@@ -478,10 +488,10 @@ export default function ReportTab() {
               ) : (
                 tableTasks.map((t: any, i: number) => (
                   <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/30'}`}>
-                    <td className="px-5 py-3 font-semibold text-[#0b1c30]">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${priorityDot[t.priority] || 'bg-slate-400'}`} />
-                        {t.name}
+                    <td className="px-4 py-3 font-semibold text-[#0b1c30] whitespace-normal break-words max-w-[250px]">
+                      <div className="flex items-start gap-2">
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${priorityDot[t.priority] || 'bg-slate-400'}`} />
+                        <span className="leading-tight">{t.name}</span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-500 font-semibold">{t.customerName || 'Không có'}</td>
@@ -497,7 +507,7 @@ export default function ReportTab() {
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${statusStyle[t.status] || ''}`}>{t.status}</span>
                     </td>
-                    <td className="px-4 py-3 text-center text-slate-500 tabular-nums">{t.end_date_est || '—'}</td>
+                    <td className="px-4 py-3 text-center text-slate-500 tabular-nums">{formatVNDate(t.end_date_est)}</td>
                     <td className="px-4 py-3 text-center font-extrabold text-[#0058be]">{t.kpi_base || 0}</td>
                   </tr>
                 ))
@@ -525,7 +535,7 @@ export default function ReportTab() {
                   <span className="text-[9px] font-extrabold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full uppercase">{d.project}</span>
                   <p className="text-xs font-bold text-[#0b1c30] mt-1.5 leading-snug">{d.name}</p>
                   <div className="flex items-center justify-between mt-3 text-[11px] text-slate-500">
-                    <span className="font-semibold tabular-nums">Hạn: {d.deadline}</span>
+                    <span className="font-semibold tabular-nums">Hạn: {formatVNDate(d.deadline)}</span>
                     <span className="font-extrabold text-red-600">Còn {d.daysLeft} ngày</span>
                   </div>
                 </div>
@@ -577,7 +587,7 @@ export default function ReportTab() {
                   <p className="text-xs font-bold text-[#0b1c30] leading-snug">{t.name}</p>
                   <div className="flex items-center justify-between mt-3 text-[11px]">
                     <span className="font-extrabold text-red-600 bg-white border border-red-200 px-2 py-0.5 rounded-md">Trễ {t.daysLate} ngày</span>
-                    <span className="text-slate-400 font-semibold tabular-nums">Hạn: {t.deadline}</span>
+                    <span className="text-slate-400 font-semibold tabular-nums">Hạn: {formatVNDate(t.deadline)}</span>
                   </div>
                 </div>
               ))
