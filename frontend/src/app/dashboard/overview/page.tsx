@@ -229,9 +229,51 @@ export default function OverviewTab() {
     <div className="p-6 space-y-6">
       {/* HEADER & LEADER SELECTOR */}
       <div className="flex flex-col gap-4 border-b border-slate-100 pb-4">
-        <div>
-          <h2 className="text-lg font-extrabold text-[#0b1c30]">Dashboard Tổng Quan</h2>
-          <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI của Team</p>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-lg font-extrabold text-[#0b1c30]">Dashboard Tổng Quan</h2>
+            <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI của Team</p>
+          </div>
+          
+          {/* TIME FILTER */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
+            <div className="flex gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Năm:</span>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+                </select>
+              </div>
+              <div className="w-px h-4 bg-slate-200 self-center"></div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Tháng:</span>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+                </select>
+              </div>
+              <div className="w-px h-4 bg-slate-200 self-center"></div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Tuần:</span>
+                <select
+                  value={selectedWeek}
+                  onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tất cả</option>
+                  {[...Array(5)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
         
         <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
@@ -255,49 +297,7 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {/* FILTER TOOLBAR */}
-      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <SvgIcon name="filter" className="w-4 h-4 text-slate-400" />
-          <span className="text-xs font-bold text-slate-600">Bộ lọc thời gian:</span>
-        </div>
-        
-        <div className="flex gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
-          <div className="flex items-center gap-1">
-            <span className="text-slate-500">Năm:</span>
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
-            >
-              {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
-            </select>
-          </div>
-          <div className="w-px h-4 bg-slate-200 self-center"></div>
-          <div className="flex items-center gap-1">
-            <span className="text-slate-500">Tháng:</span>
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(Number(e.target.value))}
-              className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
-            >
-              {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
-            </select>
-          </div>
-          <div className="w-px h-4 bg-slate-200 self-center"></div>
-          <div className="flex items-center gap-1">
-            <span className="text-slate-500">Tuần:</span>
-            <select
-              value={selectedWeek}
-              onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-              className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
-            >
-              <option value="all">Tất cả</option>
-              {[...Array(5)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
-            </select>
-          </div>
-        </div>
-      </div>
+
 
       {/* KPI CARDS */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
