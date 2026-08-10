@@ -33,7 +33,6 @@ export default function ReportTab() {
 
   const [sortDeadline, setSortDeadline] = useState<'default'|'asc'|'desc'>('default');
   const [sortKPI, setSortKPI] = useState<'default'|'desc'|'asc'>('default');
-  const [openFilter, setOpenFilter] = useState<string | null>(null);
 
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [realMemberData, setRealMemberData] = useState<any>(cachedReportData?.realMemberData || null);
@@ -344,65 +343,99 @@ export default function ReportTab() {
             <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur shadow-sm">
               <tr className="text-slate-500 border-b border-slate-200 text-[10px] tracking-wider">
                 <th className="px-5 py-2 min-w-[200px] align-top bg-slate-100">
-                  <div className="flex flex-col gap-1">
-                    <button onClick={() => setOpenFilter(openFilter === 'name' ? null : 'name')} className="font-bold uppercase hover:text-[#0058be] transition-colors text-left flex items-center gap-1 w-full">
-                      Tên Task {searchTaskName && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
-                    </button>
-                    {openFilter === 'name' && (
-                      <input type="text" placeholder="Tìm task..." value={searchTaskName} onChange={e => setSearchTaskName(e.target.value)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1.5 py-1 outline-none focus:border-indigo-400 bg-white text-slate-700" autoFocus onBlur={() => !searchTaskName && setOpenFilter(null)} />
-                    )}
+                  <div className="flex flex-col gap-1.5">
+                    <span className="font-bold uppercase text-slate-500 text-left">Tên Task</span>
+                    <input 
+                      type="text" 
+                      placeholder="🔍 Tìm task..." 
+                      value={searchTaskName} 
+                      onChange={e => setSearchTaskName(e.target.value)} 
+                      className="w-full text-[11px] font-semibold border border-slate-300 rounded px-2 py-1 outline-none focus:border-[#0058be] bg-white text-slate-700" 
+                    />
                   </div>
                 </th>
                 <th className="px-4 py-2 align-top bg-slate-100">
                   <div className="flex flex-col gap-1">
-                    <button onClick={() => setOpenFilter(openFilter === 'customer' ? null : 'customer')} className="font-bold uppercase hover:text-[#0058be] transition-colors text-left flex items-center gap-1 w-full">
-                      Khách Hàng {filterCustomer !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
-                    </button>
-                    {openFilter === 'customer' && (
-                      <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} onBlur={() => filterCustomer === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
-                        <option value="all">Tất cả</option>
-                        {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    )}
+                    <div className="flex items-center justify-between group">
+                      <span className="font-bold uppercase text-slate-500">Khách Hàng</span>
+                      <div className="relative">
+                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
+                          <SvgIcon name="filter" className={`w-3 h-3 ${filterCustomer !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
+                        </button>
+                        <select 
+                          value={filterCustomer} 
+                          onChange={e => setFilterCustomer(e.target.value)}
+                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                        >
+                          <option value="all">Tất cả</option>
+                          {uniqueCustomers.map((c: any) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {filterCustomer !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[120px]" title={filterCustomer}>{filterCustomer}</div>}
                   </div>
                 </th>
                 <th className="px-4 py-2 align-top bg-slate-100">
                   <div className="flex flex-col gap-1">
-                    <button onClick={() => setOpenFilter(openFilter === 'project' ? null : 'project')} className="font-bold uppercase hover:text-[#0058be] transition-colors text-left flex items-center gap-1 w-full">
-                      Dự Án {filterProject !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
-                    </button>
-                    {openFilter === 'project' && (
-                      <select value={filterProject} onChange={e => setFilterProject(e.target.value)} onBlur={() => filterProject === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
-                        <option value="all">Tất cả</option>
-                        {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                      </select>
-                    )}
+                    <div className="flex items-center justify-between group">
+                      <span className="font-bold uppercase text-slate-500">Dự Án</span>
+                      <div className="relative">
+                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
+                          <SvgIcon name="filter" className={`w-3 h-3 ${filterProject !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
+                        </button>
+                        <select 
+                          value={filterProject} 
+                          onChange={e => setFilterProject(e.target.value)}
+                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                        >
+                          <option value="all">Tất cả</option>
+                          {uniqueProjects.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {filterProject !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[120px]" title={filterProject}>{filterProject}</div>}
                   </div>
                 </th>
                 <th className="px-4 py-2 align-top w-[110px] bg-slate-100">
-                  <div className="flex flex-col gap-1 items-center">
-                    <button onClick={() => setOpenFilter(openFilter === 'priority' ? null : 'priority')} className="font-bold uppercase hover:text-[#0058be] transition-colors flex items-center gap-1">
-                      Ưu Tiên {filterPriority !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
-                    </button>
-                    {openFilter === 'priority' && (
-                      <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} onBlur={() => filterPriority === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
-                        <option value="all">Tất cả</option>
-                        {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
-                      </select>
-                    )}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between group">
+                      <span className="font-bold uppercase text-slate-500">Ưu Tiên</span>
+                      <div className="relative">
+                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
+                          <SvgIcon name="filter" className={`w-3 h-3 ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
+                        </button>
+                        <select 
+                          value={filterPriority} 
+                          onChange={e => setFilterPriority(e.target.value)}
+                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                        >
+                          <option value="all">Tất cả</option>
+                          {uniquePriorities.map((p: any) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {filterPriority !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[100px]" title={filterPriority}>{filterPriority}</div>}
                   </div>
                 </th>
                 <th className="px-4 py-2 align-top w-[110px] bg-slate-100">
-                  <div className="flex flex-col gap-1 items-center">
-                    <button onClick={() => setOpenFilter(openFilter === 'status' ? null : 'status')} className="font-bold uppercase hover:text-[#0058be] transition-colors flex items-center gap-1">
-                      Trạng Thái {filterStatus !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]"></span>}
-                    </button>
-                    {openFilter === 'status' && (
-                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} onBlur={() => filterStatus === 'all' && setOpenFilter(null)} className="w-full text-[11px] font-semibold border border-slate-300 rounded px-1 py-1 outline-none bg-white text-slate-700">
-                        <option value="all">Tất cả</option>
-                        {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    )}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between group">
+                      <span className="font-bold uppercase text-slate-500">Trạng Thái</span>
+                      <div className="relative">
+                        <button className="p-1 rounded group-hover:bg-slate-200 transition-colors">
+                          <SvgIcon name="filter" className={`w-3 h-3 ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-slate-400'}`} />
+                        </button>
+                        <select 
+                          value={filterStatus} 
+                          onChange={e => setFilterStatus(e.target.value)}
+                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                        >
+                          <option value="all">Tất cả</option>
+                          {uniqueStatuses.map((s: any) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {filterStatus !== 'all' && <div className="text-[10px] text-[#0058be] font-semibold truncate max-w-[100px]" title={filterStatus}>{filterStatus}</div>}
                   </div>
                 </th>
                 <th className="px-4 py-2 align-top text-center w-[100px] bg-slate-100">
