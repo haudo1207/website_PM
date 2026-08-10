@@ -60,6 +60,32 @@ def ensure_system_department(db: Session, name: str):
         db.add(Department(name=name))
         db.flush()
 
+def make_unique_display_name(db: Session, base_name: str, member_id: Optional[int] = None, used_in_batch: Optional[set] = None) -> str:
+    name = (base_name or "").strip()[:50]
+    if not name:
+        return "Member"
+    candidate = name
+    counter = 1
+    
+    while True:
+        if used_in_batch is not None and candidate.lower() in used_in_batch:
+            counter += 1
+            candidate = f"{name} {counter}"[:50]
+            continue
+            
+        query = db.query(Member).filter(Member.display_name.ilike(candidate))
+        if member_id:
+            query = query.filter(Member.id != member_id)
+        exists = query.first()
+        
+        if not exists:
+            if used_in_batch is not None:
+                used_in_batch.add(candidate.lower())
+            return candidate
+            
+        counter += 1
+        candidate = f"{name} {counter}"[:50]
+
 
 router = APIRouter()
 
@@ -520,10 +546,12 @@ def sync_candidate(
     if not member:
         member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
         
+    final_display_name = make_unique_display_name(db, display_name, member_id=member.id if member else None)
+
     if member:
         # Update existing member
         member.full_name = full_name
-        member.display_name = display_name
+        member.display_name = final_display_name
         if email:
             member.email = email
         if phone:
@@ -547,7 +575,7 @@ def sync_candidate(
     else:
         # Create new member
         member = Member(
-            display_name=display_name,
+            display_name=final_display_name,
             full_name=full_name,
             email=email or None,
             phone=phone or None,
@@ -704,6 +732,7 @@ def sync_from_recruitment(
                 deleted_count += 1
         
         # 3. Đồng bộ/Cập nhật các ứng viên đã nhận hiện tại
+        used_display_names = set()
         for app_data in candidates:
             full_name = str(app_data.get("full_name", "")).strip()[:255]
             email = str(app_data.get("email", "")).strip().lower()[:255]
@@ -779,9 +808,11 @@ def sync_from_recruitment(
             if not member:
                 member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
                 
+            final_display_name = make_unique_display_name(db, display_name, member_id=member.id if member else None, used_in_batch=used_display_names)
+
             if member:
                 member.full_name = full_name
-                member.display_name = display_name
+                member.display_name = final_display_name
                 if email:
                     member.email = email
                 if phone:
@@ -804,7 +835,7 @@ def sync_from_recruitment(
                     member.leader_email = leader_email
             else:
                 member = Member(
-                    display_name=display_name,
+                    display_name=final_display_name,
                     full_name=full_name,
                     email=email or None,
                     phone=phone or None,
