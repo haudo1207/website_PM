@@ -9,41 +9,17 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
-import DatePicker from 'react-datepicker';
-import 'react-datepicker/dist/react-datepicker.css';
 
 let cachedOverviewData: any = null;
 
-function getISOWeek(d: Date) {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1)/7);
-}
-
-function isTaskInDateRange(task: any, filterType: string, date1: Date | null, date2: Date | null) {
-  if (filterType === 'all') return true;
-  const tDate = new Date(task.end_date_est || task.created_at || Date.now());
-  if (isNaN(tDate.getTime())) return true;
-  
-  if (filterType === 'month' && date1) {
-     return tDate.getFullYear() === date1.getFullYear() && tDate.getMonth() === date1.getMonth();
-  }
-  if (filterType === 'year' && date1) {
-     return tDate.getFullYear() === date1.getFullYear();
-  }
-  if (filterType === 'week' && date1) {
-     return tDate.getFullYear() === date1.getFullYear() && getISOWeek(tDate) === getISOWeek(date1);
-  }
-  if (filterType === 'custom' && date1 && date2) {
-     const ds = new Date(date1);
-     ds.setHours(0,0,0,0);
-     const de = new Date(date2);
-     de.setHours(23, 59, 59, 999);
-     return tDate >= ds && tDate <= de;
-  }
-  return true;
+function getWeekOfMonth(date: Date) {
+  const startWeekDayIndex = 1; 
+  const firstDate = new Date(date.getFullYear(), date.getMonth(), 1);
+  const firstDay = firstDate.getDay();
+  let offset = firstDay - startWeekDayIndex;
+  if (offset < 0) offset += 7;
+  const days = date.getDate() + offset;
+  return Math.ceil(days / 7);
 }
 
 export default function OverviewTab() {
@@ -56,9 +32,9 @@ export default function OverviewTab() {
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
   
   // Unified Date Filter
-  const [filterType, setFilterType] = useState<string>('all'); // all, week, month, year, custom
-  const [date1, setDate1] = useState<Date | null>(null); 
-  const [date2, setDate2] = useState<Date | null>(null);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
 
   // Matrix Filter
   const [matrixYear, setMatrixYear] = useState<number>(new Date().getFullYear());
@@ -124,7 +100,14 @@ export default function OverviewTab() {
 
     // 3. Filter Tasks by Team & Date
     let fTasks = rawTasks.filter(t => teamMemberIds.includes(t.assigned_id) || teamMemberIds.includes(t.support_id));
-    fTasks = fTasks.filter(t => isTaskInDateRange(t, filterType, date1, date2));
+    fTasks = fTasks.filter(t => {
+      const tDate = new Date(t.end_date_est || t.created_at || Date.now());
+      if (isNaN(tDate.getTime())) return true;
+      if (tDate.getFullYear() !== selectedYear) return false;
+      if (tDate.getMonth() + 1 !== selectedMonth) return false;
+      if (selectedWeek !== 'all' && getWeekOfMonth(tDate) !== selectedWeek) return false;
+      return true;
+    });
 
     // 4. Calculate Stats (PM)
     let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = fTasks.length, pmManday = 0, pmKpi = 0;
@@ -200,7 +183,7 @@ export default function OverviewTab() {
       memberRanking: finalRanking,
       activeProjects: aProjects
     };
-  }, [rawMembers, rawProjects, rawTasks, selectedLeader, filterType, date1, date2]);
+  }, [rawMembers, rawProjects, rawTasks, selectedLeader, selectedYear, selectedMonth, selectedWeek]);
 
   // KPI Matrices Generation (Transposed: Months as Rows, Members as Columns)
   const { summaryMatrix, averageMatrix, bonusMatrix } = useMemo(() => {
@@ -278,73 +261,42 @@ export default function OverviewTab() {
           <SvgIcon name="filter" className="w-4 h-4 text-slate-400" />
           <span className="text-xs font-bold text-slate-600">Bộ lọc thời gian:</span>
         </div>
-        <select 
-          value={filterType} 
-          onChange={(e) => { setFilterType(e.target.value); setDate1(null); setDate2(null); }}
-          className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-400 cursor-pointer"
-        >
-          <option value="all">Tất cả thời gian</option>
-          <option value="week">Theo Tuần</option>
-          <option value="month">Theo Tháng</option>
-          <option value="year">Theo Năm</option>
-          <option value="custom">Tùy chọn khoảng ngày</option>
-        </select>
-
-        {filterType === 'week' && (
-          <DatePicker 
-             selected={date1} 
-             onChange={(d: any) => setDate1(d)} 
-             showWeekPicker 
-             placeholderText="Chọn tuần..."
-             className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[140px]" 
-          />
-        )}
-        {filterType === 'month' && (
-          <DatePicker 
-             selected={date1} 
-             onChange={(d: any) => setDate1(d)} 
-             showMonthYearPicker 
-             dateFormat="MM/yyyy"
-             placeholderText="Chọn tháng..."
-             className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[140px]" 
-          />
-        )}
-        {filterType === 'year' && (
-          <DatePicker 
-             selected={date1} 
-             onChange={(d: any) => setDate1(d)} 
-             showYearPicker 
-             dateFormat="yyyy"
-             placeholderText="Chọn năm..."
-             className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[100px]" 
-          />
-        )}
-        {filterType === 'custom' && (
-          <div className="flex items-center gap-2">
-            <DatePicker 
-               selected={date1} 
-               onChange={(d: any) => setDate1(d)} 
-               selectsStart
-               startDate={date1 || undefined}
-               endDate={date2 || undefined}
-               dateFormat="dd/MM/yyyy"
-               placeholderText="Từ ngày..."
-               className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[120px]" 
-            />
-            <span className="text-slate-400">-</span>
-            <DatePicker 
-               selected={date2} 
-               onChange={(d: any) => setDate2(d)} 
-               selectsEnd
-               startDate={date1 || undefined}
-               endDate={date2 || undefined}
-               minDate={date1 || undefined}
-               dateFormat="dd/MM/yyyy"
-               placeholderText="Đến ngày..."
-               className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer w-[120px]" 
-            />
+        
+        <div className="flex gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500">Năm:</span>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+            >
+              {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+            </select>
           </div>
-        )}
+          <div className="w-px h-4 bg-slate-200 self-center"></div>
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500">Tháng:</span>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+            >
+              {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+            </select>
+          </div>
+          <div className="w-px h-4 bg-slate-200 self-center"></div>
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500">Tuần:</span>
+            <select
+              value={selectedWeek}
+              onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+            >
+              <option value="all">Tất cả</option>
+              {[...Array(5)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* KPI CARDS */}
