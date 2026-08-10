@@ -190,7 +190,7 @@ export default function MembersView({ onFlash }: Props) {
   // ─── Render ───────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      <div className="sticky top-[112px] z-20 bg-[#f8fafc]/95 backdrop-blur-sm">
+      <div className="sticky top-[112px] z-30 bg-[#f8fafc]/95 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-8 py-6 space-y-6">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -271,16 +271,16 @@ export default function MembersView({ onFlash }: Props) {
         <table className="w-full text-xs text-[#0f172a]">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-10">STT</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Họ tên</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Level</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Team</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Leader</th>
-                <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 w-16"></th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-10">STT</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Họ tên</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Level</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Team</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Leader</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 w-16"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

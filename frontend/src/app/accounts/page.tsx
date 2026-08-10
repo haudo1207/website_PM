@@ -309,7 +309,7 @@ export default function AccountsPage() {
               <div className="text-2xl font-bold text-red-500 mt-1">{accounts.filter(a => !a.is_active).length}</div>
             </div>
           </div>
-              <div className="sticky top-[104px] z-20 bg-[#f8fafc]/95 backdrop-blur-sm">
+              <div className="sticky top-[104px] z-30 bg-[#f8fafc]/95 backdrop-blur-sm">
               {/* Search & Filters */}
               <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
                 <div className="relative flex-1 min-w-[200px]">
@@ -365,14 +365,14 @@ export default function AccountsPage() {
                 <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-slate-200">
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Workspace</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Workspace</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
