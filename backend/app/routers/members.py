@@ -11,6 +11,7 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
+from ..utils.access import member_query_for_user
 from sqlalchemy import func, extract
 
 TEAM_POSITIONS = {
@@ -129,7 +130,7 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    current_user=Depends(get_current_user)
 ):
     # Subquery to calculate KPI from Tasks for each member
     # Using UNION ALL to combine assigned and support portions of the task
@@ -247,6 +248,10 @@ def list_members(
         q = q.filter(Member.department == department)
     if skill_id:
         q = q.filter(Member.skills.any(Skill.id == skill_id))
+
+    # Leader data scope: members are limited to the Leader's Workspace
+    # (linked account scope + members assigned to projects within scope).
+    q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()
     
