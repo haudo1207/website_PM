@@ -11,7 +11,7 @@ from ..models.master_phase import MasterPhase
 from ..models.user import User
 from ..models.task import Task
 from ..utils.auth import require_admin, get_current_user
-from ..utils.access import default_scope, is_valid_scope, user_scope, resolve_workspace, ALL_SCOPE, ROLE_LEADER
+from ..utils.access import default_scope, is_valid_scope, user_scope, resolve_workspace, ALL_SCOPE, WORKSPACE_SCOPED_ROLES
 
 router = APIRouter()
 
@@ -349,9 +349,10 @@ def delete_team(id: int, db: Session = Depends(get_db), _=Depends(require_admin)
 @router.get("/customers")
 def list_customers(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     q = db.query(Customer)
-    # Leader data scope: effective Workspace comes from the authenticated user,
-    # so the business_unit query parameter can never bypass the Leader's scope.
-    if getattr(current_user, "role", None) == ROLE_LEADER and user_scope(current_user) != ALL_SCOPE:
+    # Workspace data scope: for Leader, Member and Viewer the effective Workspace
+    # comes from the authenticated user, so the business_unit query parameter can
+    # never bypass the caller's assigned Workspace.
+    if getattr(current_user, "role", None) in WORKSPACE_SCOPED_ROLES and user_scope(current_user) != ALL_SCOPE:
         business_unit = user_scope(current_user)
     if business_unit:
         q = q.filter(Customer.business_unit == business_unit.lower().strip())
@@ -496,9 +497,10 @@ def delete_master_phase(id: int, db: Session = Depends(get_db), _=Depends(requir
 @router.get("/workspaces")
 def list_workspaces(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     q = db.query(Workspace).order_by(Workspace.id.asc())
-    # Leader data scope: only the Leader's own Workspace is returned, so the
-    # Sidebar / Customer Management can never switch to another Workspace.
-    if getattr(current_user, "role", None) == ROLE_LEADER and user_scope(current_user) != ALL_SCOPE:
+    # Workspace data scope: Leader, Member and Viewer only get their own assigned
+    # Workspace, so the Sidebar / Customer Management can never switch to another
+    # Workspace.
+    if getattr(current_user, "role", None) in WORKSPACE_SCOPED_ROLES and user_scope(current_user) != ALL_SCOPE:
         ws = resolve_workspace(db, user_scope(current_user))
         q = q.filter(Workspace.id == (ws.id if ws else -1))
     return q.all()
