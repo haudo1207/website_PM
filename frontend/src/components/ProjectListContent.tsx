@@ -95,6 +95,7 @@ export default function ProjectListContent() {
   const [customerFilter, setCustomerFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
   const [salesFilter, setSalesFilter] = useState('All');
+  const [memberFilter, setMemberFilter] = useState('All');
   const [yearFilter, setYearFilter] = useState('All');
   const [sortBy, setSortBy] = useState('newest');
 
@@ -161,6 +162,7 @@ export default function ProjectListContent() {
     setCustomerFilter('All');
     setPmFilter('All');
     setSalesFilter('All');
+    setMemberFilter('All');
     setYearFilter('All');
     setPage(1);
     router.push('/projects');
@@ -181,6 +183,24 @@ export default function ProjectListContent() {
     const names: string[] = [];
     projects.forEach(p => {
       (p.sales_name || '').split(',').map((s: string) => s.trim()).filter((s: string) => s).forEach((n: string) => names.push(n));
+    });
+    return Array.from(new Set(names)).sort();
+  }, [projects]);
+
+  const uniqueMembers = useMemo(() => {
+    const names: string[] = [];
+    projects.forEach(p => {
+      if (p.member_names) {
+        p.member_names.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
+      if (Array.isArray(p.members)) {
+        p.members.forEach((m: any) => { if (m?.name) names.push(m.name); });
+      }
+      if (p.pm_name) names.push(p.pm_name);
+      if (p.technical_leader_name) names.push(p.technical_leader_name);
+      if (p.sales_name) {
+        p.sales_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
     });
     return Array.from(new Set(names)).sort();
   }, [projects]);
@@ -210,10 +230,20 @@ export default function ProjectListContent() {
       const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
       const matchSales = salesFilter === 'All' ||
         (p.sales_name || '').split(',').map((s: string) => s.trim()).includes(salesFilter);
+      const matchMember = memberFilter === 'All' || (() => {
+        const mLower = memberFilter.toLowerCase();
+        const projMemberNames: string[] = [];
+        if (p.member_names) projMemberNames.push(...p.member_names.split(',').map((s: string) => s.trim()));
+        if (Array.isArray(p.members)) p.members.forEach((m: any) => { if (m?.name) projMemberNames.push(m.name); });
+        if (p.pm_name) projMemberNames.push(p.pm_name);
+        if (p.technical_leader_name) projMemberNames.push(p.technical_leader_name);
+        if (p.sales_name) projMemberNames.push(...p.sales_name.split(',').map((s: string) => s.trim()));
+        return projMemberNames.some(name => name.toLowerCase() === mLower);
+      })();
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
-      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchYear;
+      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter, wsNameByCode]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode]);
 
   // Sort memoized
   const sorted = useMemo(() => {
@@ -302,6 +332,15 @@ export default function ProjectListContent() {
               value={salesFilter}
               onChange={val => { setSalesFilter(String(val)); setPage(1); }}
               placeholder="Tìm Sales..."
+            />
+
+            <SearchableSelect
+              label="thành viên"
+              icon="👥"
+              options={uniqueMembers.map(m => ({ id: m, name: m }))}
+              value={memberFilter}
+              onChange={val => { setMemberFilter(String(val)); setPage(1); }}
+              placeholder="Tìm thành viên..."
             />
 
             <SearchableSelect
