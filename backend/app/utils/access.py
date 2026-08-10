@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.meeting import Meeting
+from ..models.member import Member
 from ..models.phase import Phase
 from ..models.project import Project, project_members
 from ..models.system_category import Workspace
 from ..models.task import Task
 from ..models.task_group import TaskGroup
+from ..models.user import User
 from .auth import get_current_user
 
 ALL_SCOPE = "all"
@@ -145,6 +147,48 @@ def project_query_for_user(db: Session, user):
         .subquery()
     )
     return query.filter(Project.id.in_(assigned_project_ids))
+
+
+def member_query_for_user(db: Session, user):
+    """Return a Member query filtered by the caller's role and Workspace scope.
+
+    - super_admin / scope=all: every member (unchanged).
+    - leader: members belonging to the leader's Workspace — i.e. members whose
+      linked account data_scope matches the Workspace, or members assigned to a
+      project within the leader's scope.
+    - member / viewer: unchanged (keeps existing behavior).
+    """
+    query = db.query(Member)
+    scope = user_scope(user)
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    if role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE:
+        return query
+    if role != ROLE_LEADER:
+        return query
+
+    scoped_user_member_ids = (
+        db.query(User.member_id)
+        .filter(
+            User.member_id.isnot(None),
+            or_(User.data_scope == scope, User.data_scope == ALL_SCOPE),
+        )
+        .subquery()
+    )
+    scoped_project_ids = (
+        project_query_for_user(db, user).with_entities(Project.id).subquery()
+    )
+    scoped_project_member_ids = (
+        db.query(project_members.c.member_id)
+        .filter(project_members.c.project_id.in_(scoped_project_ids))
+        .subquery()
+    )
+    return query.filter(
+        or_(
+            Member.id.in_(scoped_user_member_ids),
+            Member.id.in_(scoped_project_member_ids),
+        )
+    )
 
 
 def can_access_project(db: Session, user, project: Project) -> bool:
