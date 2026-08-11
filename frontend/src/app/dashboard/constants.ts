@@ -43,3 +43,29 @@ export const projectBarColor: Record<string, string> = {
   Archived: 'bg-slate-400',
   Planning: 'bg-amber-500',
 };
+
+// Company Fiscal Calendar Week Configuration per Month
+export const MONTH_WEEKS_COUNT: Record<number, number> = {
+  1: 4,
+  2: 5,
+  3: 4,
+  4: 4,
+  5: 5,
+  6: 4,
+  7: 4,
+  8: 5,
+  9: 4,
+  10: 5,
+  11: 4,
+  12: 4
+};
+
+export function getWeekOfMonth(date: Date) {
+  if (!date || isNaN(date.getTime())) return 1;
+  const day = date.getDate();
+  if (day <= 7) return 1;
+  if (day <= 14) return 2;
+  if (day <= 21) return 3;
+  if (day <= 28) return 4;
+  return 5;
+}

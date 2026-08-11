@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import MembersView from '@/components/MembersView';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import { useRouter } from 'next/navigation';
 import { isAdmin, isSuperAdmin, isLeader } from '@/lib/auth';
 import {
@@ -152,6 +153,35 @@ export default function AccountsPage() {
       return nameMatch && roleMatch && scopeMatch && statusMatch;
     });
   }, [accounts, searchName, filterRole, filterScope, filterStatus]);
+
+  const memberSelectOptions = useMemo(() => [
+    { id: 0, name: '— Không liên kết thành viên —' },
+    ...availableMembers.map(m => ({
+      id: m.id,
+      name: `${m.display_name} — ${m.full_name}${m.team ? ` (${m.team})` : ''}`
+    }))
+  ], [availableMembers]);
+
+  const editMemberSelectOptions = useMemo(() => {
+    const list: { id: number; name: string }[] = [
+      { id: 0, name: '— Không liên kết thành viên —' }
+    ];
+    if (editAccount?.member) {
+      list.push({
+        id: editAccount.member.id,
+        name: `${editAccount.member.display_name} — ${editAccount.member.full_name}${editAccount.member.team ? ` (${editAccount.member.team})` : ''}`
+      });
+    }
+    availableMembers.forEach(m => {
+      if (!editAccount?.member || m.id !== editAccount.member.id) {
+        list.push({
+          id: m.id,
+          name: `${m.display_name} — ${m.full_name}${m.team ? ` (${m.team})` : ''}`
+        });
+      }
+    });
+    return list;
+  }, [availableMembers, editAccount]);
 
   // Create
   const handleCreate = async (e: React.FormEvent) => {
@@ -309,9 +339,9 @@ export default function AccountsPage() {
               <div className="text-2xl font-bold text-red-500 mt-1">{accounts.filter(a => !a.is_active).length}</div>
             </div>
           </div>
-              <div className="sticky top-[104px] z-20 bg-[#f8fafc]/95 backdrop-blur-sm">
+              <div className="sticky top-[104px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
               {/* Search & Filters */}
-              <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
+              <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3 relative z-[100]">
                 <div className="relative flex-1 min-w-[200px]">
                   <svg className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -361,18 +391,18 @@ export default function AccountsPage() {
               </div>
 
               {/* Table */}
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-auto" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-auto relative z-[1]" style={{ maxHeight: 'calc(100vh - 340px)' }}>
                 <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-slate-200">
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Workspace</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
-                        <th className="sticky top-0 z-20 bg-slate-50 text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Workspace</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thành viên</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-right px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -467,16 +497,15 @@ export default function AccountsPage() {
               {/* Member Selection */}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên (tùy chọn)</label>
-                <select
-                  value={createForm.member_id}
-                  onChange={e => handleMemberSelect(Number(e.target.value))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  <option value={0}>— Không liên kết thành viên —</option>
-                  {availableMembers.map(m => (
-                    <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  label="thành viên"
+                  icon="👤"
+                  options={memberSelectOptions}
+                  value={createForm.member_id || 0}
+                  onChange={val => handleMemberSelect(Number(val) || 0)}
+                  placeholder="Tìm thành viên để liên kết..."
+                  className="w-full"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -586,23 +615,15 @@ export default function AccountsPage() {
               </div>
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên</label>
-                <select
-                  value={editForm.member_id}
-                  onChange={e => setEditForm(f => ({ ...f, member_id: Number(e.target.value) }))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  <option value={0}>— Không liên kết thành viên —</option>
-                  {editAccount.member && (
-                    <option value={editAccount.member.id}>
-                      {editAccount.member.display_name} — {editAccount.member.full_name}{editAccount.member.team ? ` (${editAccount.member.team})` : ''}
-                    </option>
-                  )}
-                  {availableMembers
-                    .filter(m => m.id !== editAccount.member?.id)
-                    .map(m => (
-                      <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
-                    ))}
-                </select>
+                <SearchableSelect
+                  label="thành viên"
+                  icon="👤"
+                  options={editMemberSelectOptions}
+                  value={editForm.member_id || 0}
+                  onChange={val => setEditForm(f => ({ ...f, member_id: Number(val) || 0 }))}
+                  placeholder="Tìm thành viên để liên kết..."
+                  className="w-full"
+                />
               </div>
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò</label>

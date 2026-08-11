@@ -379,7 +379,7 @@ export default function AuditLogsTab({
   return (
     <div className="space-y-4">
       {/* TOOLBAR & FILTERS */}
-      <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
+      <div className="bg-white border border-[#c2c6d6]/60 rounded-xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3 relative z-30">
         {/* Left Filter Controls */}
         <div className="flex flex-wrap items-center gap-3 flex-1">
           {/* Search Input */}

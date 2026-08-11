@@ -589,9 +589,9 @@ function ProjectDetailContent() {
     monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
 
     const days = [];
-    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6'];
+    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 7; i++) {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
 
@@ -607,12 +607,13 @@ function ProjectDetailContent() {
         isoDate,
         dayNum: dd,
         yearNum: yyyy,
-        fullDate: d
+        fullDate: d,
+        isWeekend: i >= 5
       });
     }
 
     const startFormatted = days[0].formattedDate;
-    const endFormatted = days[4].formattedDate;
+    const endFormatted = days[6].formattedDate;
     const weekTitle = `LỊCH HỌP DỰ ÁN TUẦN ${startFormatted}–${endFormatted}`;
 
     return { days, weekTitle, startFormatted, endFormatted };
@@ -4814,8 +4815,8 @@ value={editValue}
                       </div>
                     </div>
 
-                    {/* 5-Day Weekly Calendar Grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 mt-2">
+                    {/* 7-Day Weekly Calendar Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mt-2">
                       {currentWeekInfo.days.map((d, i) => {
                         const dayMeetings = meetings.filter(m => {
                           if (!m || !m.date) return false;
@@ -4836,7 +4837,7 @@ value={editValue}
                         });
 
                         return (
-                          <div key={i} className="bg-white border border-[#e2e8f0] rounded-xl p-3.5 min-h-[160px]">
+                          <div key={i} className={`border rounded-xl p-3.5 min-h-[160px] ${d.isWeekend ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-[#e2e8f0]'}`}>
                             <h4 className="text-[13px] font-bold text-[#0b1c30] mb-3">{d.label}</h4>
                             {dayMeetings.length > 0 ? (
                               dayMeetings.map(item => {

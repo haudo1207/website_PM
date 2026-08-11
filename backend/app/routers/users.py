@@ -210,4 +210,38 @@ def delete_user(uid: int, db: Session = Depends(get_db), admin=Depends(require_a
 
 @router.get("/me")
 def me(user=Depends(get_current_user)):
-    return {"id":user.id,"email":user.email,"full_name":user.full_name,"role":user.role,"data_scope":user.data_scope,"member_id":user.member_id}
+    member = user.member
+    skills = [s.name for s in user.skills] or ([s.name for s in member.skills] if member else [])
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "avatar_url": user.avatar_url,
+        "role": user.role,
+        "data_scope": user.data_scope,
+        "member_id": user.member_id,
+        "is_active": user.is_active,
+        "login_method": "Google OAuth" if user.google_sub else "Password",
+        "position": user.position or (member.position if member else None),
+        "department": user.department or (member.department if member else None),
+        "skills": skills,
+        "member": {
+            "display_name": member.display_name,
+            "team": member.team,
+            "phone": member.phone,
+            "experience_year": member.experience_year,
+            "leader_name": member.leader_name,
+        } if member else None,
+    }
+
+@router.get("/me/login-history")
+def my_login_history(limit: int = 20, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    from ..models.audit_log import AuditLog
+    logs = (
+        db.query(AuditLog)
+        .filter(AuditLog.module == "Authentication", AuditLog.user_id == user.id)
+        .order_by(AuditLog.created_at.desc())
+        .limit(min(limit, 50))
+        .all()
+    )
+    return [l.to_dict() for l in logs]
