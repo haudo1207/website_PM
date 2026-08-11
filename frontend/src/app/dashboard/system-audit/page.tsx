@@ -304,7 +304,7 @@ export default function SystemAuditTab() {
               </div>
               <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">{projectsAtRisk.length} rủi ro</span>
             </div>
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
               {projectsAtRisk.length === 0 ? (
                 <p className="text-xs text-slate-400 font-semibold text-center py-6">Tuyệt vời! Không có dự án nào bị rủi ro trễ hạn.</p>
               ) : (

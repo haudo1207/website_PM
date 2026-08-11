@@ -738,7 +738,7 @@ export default function ReportTab() {
             </div>
             <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full border border-amber-100">{realUpcomingDeadlines.length}</span>
           </div>
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
             {realUpcomingDeadlines.length === 0 ? (
               <p className="text-xs text-slate-400 font-semibold text-center py-6">Không có task nào sắp hết hạn.</p>
             ) : (
@@ -764,7 +764,7 @@ export default function ReportTab() {
             </div>
             <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{filteredActivities.length}</span>
           </div>
-          <div className="p-4 space-y-2.5">
+          <div className="p-4 space-y-2.5 overflow-y-auto max-h-[300px] custom-scrollbar">
             {filteredActivities.length === 0 ? (
               <p className="text-xs text-slate-400 font-semibold text-center py-6">Chưa có hoạt động gần đây.</p>
             ) : (
@@ -786,7 +786,7 @@ export default function ReportTab() {
             </div>
             <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">{realOverdueTasks.length}</span>
           </div>
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
             {realOverdueTasks.length === 0 ? (
               <p className="text-xs text-slate-400 font-semibold text-center py-6">Tuyệt vời! Không có task nào trễ hạn.</p>
             ) : (

@@ -255,7 +255,8 @@ export default function OverviewTab() {
   const [rawMembers, setRawMembers] = useState<any[]>(cachedOverviewData?.rawMembers || []);
   const [rawProjects, setRawProjects] = useState<any[]>(cachedOverviewData?.rawProjects || []);
   const [rawTasks, setRawTasks] = useState<any[]>(cachedOverviewData?.rawTasks || []);
-  
+  const [rawLeaders, setRawLeaders] = useState<any[]>(cachedOverviewData?.rawLeaders || []);
+
   // Team Audit Log states
   const [teamAuditLogs, setTeamAuditLogs] = useState<any[]>(cachedOverviewData?.teamAuditLogs || []);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -316,11 +317,13 @@ export default function OverviewTab() {
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } }))
-    ]).then(([membersRes, projRes, tasksRes, auditRes]) => {
+      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
+      axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] }))
+    ]).then(([membersRes, projRes, tasksRes, auditRes, leadersRes]) => {
       setRawMembers(membersRes.data || []);
       setRawProjects(projRes.data || []);
       setRawTasks(tasksRes.data || []);
+      setRawLeaders(leadersRes.data || []);
       
       const auditItems = auditRes.data?.items || [];
       setTeamAuditLogs(auditItems);
@@ -329,7 +332,8 @@ export default function OverviewTab() {
         rawMembers: membersRes.data || [],
         rawProjects: projRes.data || [],
         rawTasks: tasksRes.data || [],
-        teamAuditLogs: auditItems
+        teamAuditLogs: auditItems,
+        rawLeaders: leadersRes.data || []
       };
     }).finally(() => {
       setLoading(false);
@@ -338,10 +342,9 @@ export default function OverviewTab() {
   }, []);
 
   useEffect(() => {
-    fetchOverviewData(false);
+    fetchOverviewData(true);
   }, [fetchOverviewData]);
 
-  // Derived Data
   const { 
     leaders, 
     totalAllTasks,
@@ -359,12 +362,16 @@ export default function OverviewTab() {
     averageMatrix,
     bonusMatrix
   } = useMemo(() => {
-    
+    const isSameId = (a: any, b: any) => a != null && b != null && String(a) === String(b);
+    const isIdInList = (idList: any[], targetId: any) => targetId != null && idList.some(id => String(id) === String(targetId));
+
     // 1. Get Leaders
     const leaderMap = new Map();
     rawMembers.forEach(m => {
       const lName = m.leader_name || 'Không có Leader';
-      if (!leaderMap.has(lName)) leaderMap.set(lName, { name: lName, count: 0, team: m.team || m.department || 'Khác', memberIds: [] });
+      if (!leaderMap.has(lName)) {
+        leaderMap.set(lName, { name: lName, count: 0, team: m.team || m.department || 'Khác', memberIds: [] });
+      }
       const ld = leaderMap.get(lName);
       ld.count++;
       ld.memberIds.push(m.id);
@@ -372,7 +379,7 @@ export default function OverviewTab() {
     
     // Calculate tasks for leaders
     const lList = Array.from(leaderMap.values()).map(ld => {
-       const lTasks = rawTasks.filter(t => ld.memberIds.includes(t.assigned_id) || ld.memberIds.includes(t.support_id));
+       const lTasks = rawTasks.filter(t => isIdInList(ld.memberIds, t.assigned_id) || isIdInList(ld.memberIds, t.support_id));
        const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
        return { ...ld, totalTasks: lTasks.length, doneTasks: done };
     }).sort((a,b) => b.count - a.count);
@@ -388,9 +395,11 @@ export default function OverviewTab() {
     const teamMemberIds = activeTeamList.map(m => m.id);
 
     // 3. Filter Tasks by Team & Date
-    let fTasks = rawTasks.filter(t => teamMemberIds.includes(t.assigned_id) || teamMemberIds.includes(t.support_id));
+    let fTasks = rawTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => {
-      const tDate = new Date(t.end_date_est || t.created_at || Date.now());
+      const tDateStr = t.end_date_est || t.end_date_actual || t.created_at;
+      if (!tDateStr) return true;
+      const tDate = new Date(tDateStr);
       if (isNaN(tDate.getTime())) return true;
       if (selectedYear !== 'all' && tDate.getFullYear() !== selectedYear) return false;
       if (selectedMonth !== 'all' && (tDate.getMonth() + 1) !== selectedMonth) return false;
@@ -436,7 +445,7 @@ export default function OverviewTab() {
 
     // 5. Ranking
     const initialRanking = activeTeamList.map(m => {
-      const myTasks = fTasks.filter(t => t.assigned_id === m.id || t.support_id === m.id);
+      const myTasks = fTasks.filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
       let d = 0, i = 0, o = 0, md = 0, k = 0;
       myTasks.forEach(t => {
         md += (t.manday_actual || t.manday_est || 0);
@@ -450,25 +459,24 @@ export default function OverviewTab() {
       return { 
         id: m.id, 
         name: m.display_name || m.full_name, 
-        assigned: myTasks.length, 
-        done: d, 
-        inProgress: i, 
-        overdue: o, 
-        manday: md, 
-        kpi: k,
+        team: m.team || m.department || 'General',
+        position: m.position || 'Member', 
+        assigned: myTasks.length,
+        done: d,
+        inProgress: i,
+        overdue: o,
+        manday: Math.round(md * 10) / 10,
+        kpi: Math.round(k * 10) / 10,
         rawMember: m
       };
     });
-    initialRanking.sort((a,b) => b.kpi - a.kpi);
-    const finalRanking = initialRanking.map((r, idx) => ({...r, rank: idx + 1}));
-
+    const finalRanking = initialRanking.sort((a, b) => b.kpi - a.kpi).map((m, idx) => ({ ...m, rank: idx + 1 }));
     const topPerf = finalRanking.length > 0 && finalRanking[0].kpi > 0 ? finalRanking[0] : null;
     const lowestPerf = finalRanking.length > 1 ? finalRanking[finalRanking.length - 1] : null;
 
     // 6. Active Projects
-    const projectIds = Array.from(new Set(fTasks.map((t: any) => t.project_id).filter(Boolean)));
-    const aProjects = rawProjects.filter((p: any) => projectIds.includes(p.id)).map((p: any) => {
-      const pTasks = fTasks.filter(t => t.project_id === p.id);
+    const aProjects = rawProjects.map((p: any) => {
+      const pTasks = rawTasks.filter(t => isSameId(t.project_id, p.id));
       const done = pTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
@@ -489,12 +497,15 @@ export default function OverviewTab() {
         const rowBon: any = { month: `${monthNames[i-1]} - ${matrixYear}` };
 
         activeTeamList.forEach(m => {
-           const mTasks = rawTasks.filter(t => (t.assigned_id === m.id || t.support_id === m.id) && (t.status === 'Done' || t.status === 'done'));
+           const mTasks = rawTasks.filter(t => (isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id)) && (t.status === 'Done' || t.status === 'done'));
            let mkpi = 0;
            mTasks.forEach(t => {
-              const td = new Date(t.end_date_est || t.created_at || Date.now());
-              if(td.getFullYear() === matrixYear && (td.getMonth()+1) === i) {
-                mkpi += (t.kpi_base || 0);
+              const tdStr = t.end_date_est || t.end_date_actual || t.created_at;
+              if (tdStr) {
+                const td = new Date(tdStr);
+                if(td.getFullYear() === matrixYear && (td.getMonth()+1) === i) {
+                  mkpi += (t.kpi_base || 0);
+                }
               }
            });
            const weeksInMonth = MONTH_WEEKS_COUNT[i] || 4;
@@ -525,7 +536,7 @@ export default function OverviewTab() {
       averageMatrix: avgM,
       bonusMatrix: bonM
     };
-  }, [rawMembers, rawTasks, rawProjects, selectedLeader, selectedYear, selectedMonth, selectedWeek, matrixYear]);
+  }, [rawMembers, rawTasks, rawProjects, rawLeaders, selectedLeader, selectedYear, selectedMonth, selectedWeek, matrixYear]);
 
   const handleAiCheck = () => {
     setAiCheckStatus('Đang thực hiện AI Check dự án...');
@@ -671,28 +682,34 @@ export default function OverviewTab() {
             <button onClick={() => setAiCheckStatus(null)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
           </div>
         )}
-        <div className="p-5 flex gap-4 overflow-x-auto custom-scrollbar">
+        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[360px] overflow-y-auto custom-scrollbar">
           {activeProjects.length === 0 ? (
-             <p className="text-xs text-slate-400 font-semibold w-full text-center py-4">Chưa có dự án nào.</p>
-          ) : activeProjects.map((p: any) => (
-             <div key={p.id} className="min-w-[280px] max-w-[280px] p-4 rounded-xl border border-slate-100 shadow-sm bg-slate-50/50 hover:bg-white hover:border-slate-200 hover:shadow-md transition-all flex flex-col justify-between">
+            <p className="text-xs text-slate-400 font-semibold py-4 text-center col-span-full">Chưa có dự án nào.</p>
+          ) : (
+            activeProjects.map((p: any) => (
+              <div key={p.id} className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-slate-300 transition-all flex flex-col justify-between">
                 <div>
-                  <div className="flex justify-between items-start mb-4">
-                    <h4 className="text-sm font-bold text-[#0b1c30] truncate pr-2" title={p.name}>{p.name}</h4>
-                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${p.current_phase?.toLowerCase().includes('plan') ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
-                      {p.current_phase || 'Developing'}
+                  <div className="flex justify-between items-start mb-2 gap-2">
+                    <h4 className="text-xs font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</h4>
+                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
+                      {p.status || 'Developing'}
                     </span>
                   </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2 mb-2 overflow-hidden">
-                    <div className={`h-full rounded-full ${p.current_phase?.toLowerCase().includes('plan') ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, p.progress)}%` }} />
+                  <span className="text-[10px] text-slate-400 font-semibold block mb-3">{p.current_phase || '1. Tư vấn'}</span>
+                </div>
+                <div>
+                  <div className="flex justify-between text-[11px] mb-1.5 font-bold">
+                    <span className="text-slate-500">Tiến độ</span>
+                    <span className="text-[#0058be]">{p.progress}%</span>
+                  </div>
+                  <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-blue-600'} height="h-2" />
+                  <div className="flex justify-between text-[10px] text-slate-400 font-semibold mt-2">
+                    <span>Task: {p.doneTasks}/{p.totalTasks}</span>
                   </div>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-semibold text-slate-500">{p.doneTasks}/{p.totalTasks} tasks hoàn thành ({p.progress}%)</span>
-                  <span className="text-[11px] font-extrabold text-[#0b1c30]">{p.progress}%</span>
-                </div>
-             </div>
-          ))}
+              </div>
+            ))
+          )}
         </div>
       </div>
 
