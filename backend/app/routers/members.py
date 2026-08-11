@@ -284,8 +284,12 @@ def list_members(
     if skill_id:
         q = q.filter(Member.skills.any(Skill.id == skill_id))
 
-    # Leader data scope: members are limited to the Leader's Workspace
+    # Workspace data scope: members are limited to the caller's Workspace
     # (linked account scope + members assigned to projects within scope).
+    # Applies to Leader, Member and Viewer — the effective Workspace always
+    # comes from the authenticated user, so the workspace query parameter can
+    # never bypass the caller's assigned Workspace (super_admin / scope=all
+    # keep seeing every member, exactly as before).
     q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()

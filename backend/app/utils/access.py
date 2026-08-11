@@ -182,10 +182,11 @@ def member_query_for_user(db: Session, user):
     """Return a Member query filtered by the caller's role and Workspace scope.
 
     - super_admin / scope=all: every member (unchanged).
-    - leader: members belonging to the leader's Workspace — i.e. members whose
-      linked account data_scope matches the Workspace, or members assigned to a
-      project within the leader's scope.
-    - member / viewer: unchanged (keeps existing behavior).
+    - leader / member / viewer: members belonging to the caller's Workspace —
+      i.e. members whose linked account data_scope matches the Workspace, or
+      members assigned to a project within the caller's scope. The effective
+      Workspace always comes from the authoritative User data_scope, so the
+      caller can never bypass their assigned Workspace.
     """
     query = db.query(Member)
     scope = user_scope(user)
@@ -193,7 +194,7 @@ def member_query_for_user(db: Session, user):
 
     if role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE:
         return query
-    if role != ROLE_LEADER:
+    if role not in WORKSPACE_SCOPED_ROLES:
         return query
 
     scoped_user_member_ids = (
