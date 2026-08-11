@@ -11,8 +11,8 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
-from ..utils.access import member_query_for_user
-from sqlalchemy import func, extract
+from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name
+from sqlalchemy import func, extract, false
 
 TEAM_POSITIONS = {
   "Tech/Product": ["Product Manager", "UI/UX Designer", "Business Analyst", "Bridge Software Engineer (BrSE)", "Tester/QC"],
@@ -152,6 +152,7 @@ def list_members(
     team: Optional[str] = None,
     position: Optional[str] = None,
     department: Optional[str] = None,
+    workspace: Optional[str] = None,
     skill_id: Optional[int] = None,
     month: Optional[int] = None,
     year: Optional[int] = None,
@@ -274,6 +275,12 @@ def list_members(
         q = q.filter(Member.position == position)
     if department:
         q = q.filter(Member.department == department)
+    if workspace:
+        ws = resolve_workspace(db, workspace)
+        if ws:
+            q = q.filter(User.data_scope == ws.code)
+        else:
+            q = q.filter(false())
     if skill_id:
         q = q.filter(Member.skills.any(Skill.id == skill_id))
 
@@ -302,6 +309,7 @@ def list_members(
         d['manday_total'] = md_total
         d['manday_est_total'] = float(md_est_t)
         d['kpi_base_total'] = float(kpi_base_t)
+        d['workspace'] = scope_display_name(db, m.user.data_scope) if m.user else None
         
         out.append(d)
         
