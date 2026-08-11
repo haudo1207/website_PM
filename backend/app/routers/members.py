@@ -60,6 +60,18 @@ def ensure_system_department(db: Session, name: str):
         db.add(Department(name=name))
         db.flush()
 
+def format_display_name(name: str) -> str:
+    if not name:
+        return ""
+    import re
+    clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(name)).strip()
+    words = [w for w in clean_name.split() if w]
+    if len(words) <= 2:
+        return " ".join(words)[:50]
+    abbr = ".".join([w[0].upper() for w in words[:-2]])
+    last_two = " ".join(words[-2:])
+    return f"{abbr} {last_two}"[:50]
+
 def make_unique_display_name(db: Session, base_name: str, member_id: Optional[int] = None, used_in_batch: Optional[set] = None) -> str:
     name = (base_name or "").strip()[:50]
     if not name:
@@ -436,7 +448,6 @@ def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
     leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders?is_active=eq.true&order=name.asc"
     try:
         import requests
-        import re
         response = requests.get(leaders_url, headers=headers, timeout=5)
         if response.status_code == 200:
             leaders_list = response.json()
@@ -446,10 +457,10 @@ def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
                 raw_name = l.get("name", "")
                 email = l.get("email", "")
                 if raw_name:
-                    clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_name).strip()
-                    if clean_name and clean_name not in seen:
-                        seen.add(clean_name)
-                        out.append({"name": clean_name, "email": email or ""})
+                    display_name = format_display_name(raw_name)
+                    if display_name and display_name not in seen:
+                        seen.add(display_name)
+                        out.append({"name": display_name, "email": email or ""})
             return sorted(out, key=lambda x: x["name"])
     except Exception:
         pass
@@ -518,9 +529,7 @@ def sync_candidate(
     raw_leader_name = body.get("leader_name")
     leader_name = None
     if raw_leader_name:
-        import re
-        clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(raw_leader_name)).strip()
-        leader_name = clean_leader_name if clean_leader_name else None
+        leader_name = format_display_name(raw_leader_name) or None
             
     leader_email = str(body.get("leader_email", "")).strip() or None
 
@@ -755,14 +764,10 @@ def sync_from_recruitment(
                 raw_leader_name = str(leader_info.get("name", "")).strip()
                 leader_email = str(leader_info.get("email", "")).strip() or None
                 if raw_leader_name:
-                    import re
-                    clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_leader_name).strip()
-                    leader_name = clean_leader_name if clean_leader_name else None
+                    leader_name = format_display_name(raw_leader_name) or None
             elif isinstance(leader_data, dict) and leader_data.get("name"):
                 raw_leader_name = str(leader_data.get("name", "")).strip()
-                import re
-                clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_leader_name).strip()
-                leader_name = clean_leader_name if clean_leader_name else None
+                leader_name = format_display_name(raw_leader_name) or None
                 leader_email = str(leader_data.get("email", "")).strip() or None
 
             if not full_name:
