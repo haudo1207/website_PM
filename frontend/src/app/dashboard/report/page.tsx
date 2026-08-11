@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { getEmail, getName, getToken } from '@/lib/auth';
 import KpiCard from '@/components/dashboard/KpiCard';
@@ -25,8 +26,6 @@ import {
   getWeekOfMonth
 } from '@/app/dashboard/constants';
 
-let cachedReportData: any = null;
-
 export default function ReportTab() {
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
@@ -41,12 +40,6 @@ export default function ReportTab() {
   const [sortDeadline, setSortDeadline] = useState<'default'|'asc'|'desc'>('default');
   const [sortKPI, setSortKPI] = useState<'default'|'desc'|'asc'>('default');
   const [openFilterDropdown, setOpenFilterDropdown] = useState<string | null>(null);
-
-  const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
-  const [realMemberData, setRealMemberData] = useState<any>(cachedReportData?.realMemberData || null);
-  const [loadingReal, setLoadingReal] = useState(false);
-
-  const [rawMyTasks, setRawMyTasks] = useState<any[]>(cachedReportData?.rawMyTasks || []);
 
   const applyQuickFilter = (type: string) => {
     const now = new Date();
@@ -68,6 +61,66 @@ export default function ReportTab() {
       setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
     }
   };
+
+  const fetchReportData = useCallback(async () => {
+    const ts = Date.now();
+    const token = getToken();
+    const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+
+    const [userRes, membersRes, tasksRes] = await Promise.all([
+      axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
+      axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
+    ]);
+
+    const currentUser = userRes.data || {};
+    const currentEmail = (currentUser.email || getEmail() || '').toLowerCase().trim();
+    const currentName = (currentUser.full_name || getName() || '').toLowerCase().trim();
+    const memberIdFromAccount = currentUser.member_id;
+
+    const list = membersRes.data || [];
+    let matched = null;
+    if (memberIdFromAccount) matched = list.find((m: any) => m.id === memberIdFromAccount);
+    if (!matched && currentEmail) matched = list.find((m: any) => m.email?.toLowerCase() === currentEmail);
+    if (!matched && currentName) matched = list.find((m: any) =>
+      m.display_name?.toLowerCase() === currentName ||
+      m.full_name?.toLowerCase() === currentName
+    );
+
+    const memberId = matched?.id || memberIdFromAccount;
+    const memberDisplayName = (matched?.display_name || '').toLowerCase().trim();
+    const memberFullName = (matched?.full_name || '').toLowerCase().trim();
+
+    const allTasksCombined = tasksRes.data || [];
+
+    const myTasks = allTasksCombined.filter((t: any) => {
+      if (memberId && (t.assigned_id === memberId || t.support_id === memberId)) return true;
+      const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
+      const suppNameLow = (t.support_name || '').toLowerCase().trim();
+
+      if (assignNameLow || suppNameLow) {
+        if (memberDisplayName && (assignNameLow === memberDisplayName || suppNameLow === memberDisplayName)) return true;
+        if (memberFullName && (assignNameLow === memberFullName || suppNameLow === memberFullName)) return true;
+      }
+
+      return false;
+    });
+
+    return {
+      currentUserProfile: currentUser,
+      realMemberData: matched,
+      rawMyTasks: myTasks,
+    };
+  }, []);
+
+  const { data: reportData, isFetching: loadingReal, refetch: refetchReport } = useQuery({
+    queryKey: ['dashboard-report'],
+    queryFn: fetchReportData,
+  });
+
+  const currentUserProfile = reportData?.currentUserProfile ?? null;
+  const realMemberData = reportData?.realMemberData ?? null;
+  const rawMyTasks: any[] = reportData?.rawMyTasks || [];
 
   const { chartStats, chartWeeklyProgress, chartMonthlyProgress } = useMemo(() => {
     let dCount = 0, iCount = 0, oCount = 0, cKpi = 0;
@@ -116,66 +169,6 @@ export default function ReportTab() {
       chartMonthlyProgress: [{ name: selectedMonth !== 'all' ? `Tháng ${selectedMonth}` : 'Tất cả', kpi: Math.round(cKpi), tasks: cTasks.length }]
     };
   }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek]);
-
-  const fetchReportData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedReportData) return;
-    setLoadingReal(true);
-    const ts = Date.now();
-    const token = getToken();
-    const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
-    
-    Promise.all([
-      axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
-      axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] }))
-    ]).then(([userRes, membersRes, tasksRes]) => {
-      const currentUser = userRes.data || {};
-      setCurrentUserProfile(currentUser);
-      const currentEmail = (currentUser.email || getEmail() || '').toLowerCase().trim();
-      const currentName = (currentUser.full_name || getName() || '').toLowerCase().trim();
-      const memberIdFromAccount = currentUser.member_id;
-
-      const list = membersRes.data || [];
-      let matched = null;
-      if (memberIdFromAccount) matched = list.find((m: any) => m.id === memberIdFromAccount);
-      if (!matched && currentEmail) matched = list.find((m: any) => m.email?.toLowerCase() === currentEmail);
-      if (!matched && currentName) matched = list.find((m: any) => 
-        m.display_name?.toLowerCase() === currentName || 
-        m.full_name?.toLowerCase() === currentName
-      );
-
-      setRealMemberData(matched);
-      const memberId = matched?.id || memberIdFromAccount;
-      const memberDisplayName = (matched?.display_name || '').toLowerCase().trim();
-      const memberFullName = (matched?.full_name || '').toLowerCase().trim();
-
-      const allTasksCombined = tasksRes.data || [];
-
-      const myTasks = allTasksCombined.filter((t: any) => {
-        if (memberId && (t.assigned_id === memberId || t.support_id === memberId)) return true;
-        const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
-        const suppNameLow = (t.support_name || '').toLowerCase().trim();
-
-        if (assignNameLow || suppNameLow) {
-          if (memberDisplayName && (assignNameLow === memberDisplayName || suppNameLow === memberDisplayName)) return true;
-          if (memberFullName && (assignNameLow === memberFullName || suppNameLow === memberFullName)) return true;
-        }
-
-        return false;
-      });
-
-      setRawMyTasks(myTasks);
-
-      cachedReportData = {
-        realMemberData: matched,
-        rawMyTasks: myTasks,
-      };
-    }).finally(() => setLoadingReal(false));
-  }, []);
-
-  useEffect(() => {
-    fetchReportData(false);
-  }, [fetchReportData]);
 
   // Derived state based on filters
   const {
@@ -412,7 +405,7 @@ export default function ReportTab() {
           </div>
 
           <button
-            onClick={() => fetchReportData(true)}
+            onClick={() => refetchReport()}
             className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
           >
             <SvgIcon name="refresh" className={`w-3.5 h-3.5 ${loadingReal ? 'animate-spin text-[#0058be]' : 'text-slate-500'}`} />

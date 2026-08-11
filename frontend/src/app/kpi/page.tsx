@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
@@ -8,9 +9,8 @@ import { getMembers, getTeams, getDepartments, getWorkspaces, getMe } from '@/li
 export default function KPIPage() {
     const router = useRouter();
     const [authorized, setAuthorized] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
+    useEffect(() => { setAuthorized(true); }, []);
     const [activeTab, setActiveTab] = useState<'KPItotal' | 'KPIweek'>('KPItotal');
-    const [members, setMembers] = useState<any[]>([]);
     const [search, setSearch] = useState("");
     // Debounce ô tìm kiếm: gõ xong 400ms mới gọi API, không gọi theo từng ký tự.
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -74,8 +74,7 @@ export default function KPIPage() {
         }
     }, [isScopedUser, lockedWorkspaceName, workspace]);
 
-    useEffect(() => {
-        setAuthorized(true);
+    const memberParams = useMemo(() => {
         const params: any = {};
         const effectiveWorkspace = isScopedUser ? lockedWorkspaceName : workspace;
         if (activeTab === 'KPItotal') {
@@ -86,7 +85,7 @@ export default function KPIPage() {
             if (team) params.department = team;
             if (debouncedSearch) params.search = debouncedSearch;
         } else {
-            // KPI Tuần: gửi date range + các filter chung
+            // KPI Tuần: gửi date range thay vì tháng/năm
             if (startDate) params.start_date = startDate;
             if (endDate) params.end_date = endDate;
             if (level) params.team = level;
@@ -94,21 +93,13 @@ export default function KPIPage() {
             if (team) params.department = team;
             if (debouncedSearch) params.search = debouncedSearch;
         }
-        let active = true;
-        setIsLoading(true);
-        getMembers(params)
-            .then((data) => {
-                if (active) setMembers(data);
-            })
-            .catch(() => { })
-            .finally(() => {
-                if (active) setIsLoading(false);
-            });
-            
-        return () => {
-            active = false;
-        };
+        return params;
     }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName]);
+
+    const { data: members = [], isFetching: isLoading } = useQuery({
+        queryKey: ['kpi-members', memberParams],
+        queryFn: () => getMembers(memberParams),
+    });
 
     const sortedMembers = useMemo(() => {
         let sortableItems = [...members];

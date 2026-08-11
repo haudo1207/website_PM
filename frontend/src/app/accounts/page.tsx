@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import MembersView from '@/components/MembersView';
 import SearchableSelect from '@/components/common/SearchableSelect';
@@ -70,11 +71,7 @@ export default function AccountsPage() {
   const roleOptions = isLeaderUser ? ROLE_OPTIONS.filter(option => LEADER_MANAGED_ROLES.has(option.value)) : ROLE_OPTIONS;
   const canLeaderManageAccount = (account: Account) => !isLeaderUser || LEADER_MANAGED_ROLES.has(account.role);
   const [authorized, setAuthorized] = useState(false);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [availableMembers, setAvailableMembers] = useState<MemberInfo[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [saved, setSaved] = useState('');
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'accounts' | 'members'>('accounts');
 
   // filters
@@ -98,29 +95,32 @@ export default function AccountsPage() {
       router.push('/dashboard');
     } else {
       setAuthorized(true);
-      reload();
     }
   }, [router]);
 
-  const reload = async () => {
-    setLoading(true);
-    try {
+  const { data: accountsData, isFetching: loading, refetch: reload } = useQuery({
+    queryKey: ['accounts-list'],
+    queryFn: async () => {
       const [accs, members, wss] = await Promise.all([
         getAccounts(),
         getAvailableMembers(),
         getWorkspaces().catch(() => [])
       ]);
-      setAccounts(accs);
-      setAvailableMembers(members);
-      setWorkspaces(wss || []);
-      setCreateForm(f => ({ ...f, data_scope: f.data_scope || (wss?.[0]?.code || '') }));
-      setEditForm(f => ({ ...f, data_scope: f.data_scope || (wss?.[0]?.code || '') }));
-    } catch {
-      flash('Lỗi tải dữ liệu');
-    } finally {
-      setLoading(false);
-    }
-  };
+      return { accounts: accs, availableMembers: members, workspaces: wss || [] };
+    },
+    enabled: authorized,
+  });
+  const accounts: Account[] = accountsData?.accounts || [];
+  const availableMembers: MemberInfo[] = accountsData?.availableMembers || [];
+  const workspaces: Workspace[] = accountsData?.workspaces || [];
+
+  // Default data_scope for the create/edit forms once workspaces load —
+  // was previously set as a side effect inside reload() itself.
+  useEffect(() => {
+    if (workspaces.length === 0) return;
+    setCreateForm(f => ({ ...f, data_scope: f.data_scope || workspaces[0].code }));
+    setEditForm(f => ({ ...f, data_scope: f.data_scope || workspaces[0].code }));
+  }, [workspaces]);
 
   const flash = (msg: string) => {
     setSaved(msg);

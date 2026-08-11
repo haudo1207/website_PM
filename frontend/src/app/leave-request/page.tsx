@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import SummaryCard from '@/components/leave-request/SummaryCard';
@@ -447,7 +448,7 @@ export default function LeaveRequestPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const queryClient = useQueryClient();
   const [currentPage, setCurrentPage] = useState(1);
   const [toast, setToast] = useState('');
   const [viewingRequest, setViewingRequest] = useState<LeaveRequest | null>(null);
@@ -461,31 +462,22 @@ export default function LeaveRequestPage() {
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const actionBtnRef = useRef<HTMLElement | null>(null);
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
   // Calendar team filter
   const [calendarSelectedTeam, setCalendarSelectedTeam] = useState('All');
 
-  const editingId = useMemo(() => {
-    const idParam = searchParams.get('edit');
-    if (!idParam) return null;
-    const parsed = Number(idParam);
-    return Number.isFinite(parsed) ? parsed : null;
-  }, [searchParams]);
-
-  const editingRequest = useMemo(() => requests.find((item) => item.id === editingId) ?? null, [editingId, requests]);
-
-  // Fetch real data from API
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        // Fetch leave requests
-        const leaveData = await getLeaveRequests();
-        setRequests(leaveData);
+    const role = localStorage.getItem('role');
+    setIsAdmin(role === 'super_admin' || role === 'admin');
+  }, []);
 
-        // Fetch team members for calendar
+  const QUERY_KEY = ['leave-requests'] as const;
+
+  const { data: leaveData, isFetching: loading } = useQuery({
+    queryKey: QUERY_KEY,
+    queryFn: async () => {
+      try {
+        const leaveData = await getLeaveRequests();
         const membersData = await getMembers();
         const mapped: TeamMember[] = membersData.map((m: any) => ({
           id: m.id,
@@ -498,22 +490,36 @@ export default function LeaveRequestPage() {
           position: m.position,
           user_id: m.user_id,
         }));
-        setTeamMembers(mapped);
-
-        // Check if user is admin
-        const role = localStorage.getItem('role');
-        setIsAdmin(role === 'super_admin' || role === 'admin');
+        return { requests: leaveData as LeaveRequest[], teamMembers: mapped };
       } catch (error) {
         console.error('Error fetching data:', error);
         // Fallback to mock data
-        setRequests(mockLeaveRequests);
-      } finally {
-        setLoading(false);
+        return { requests: mockLeaveRequests, teamMembers: [] as TeamMember[] };
       }
-    };
+    },
+  });
 
-    fetchData();
-  }, []);
+  const requests: LeaveRequest[] = leaveData?.requests || [];
+  const teamMembers: TeamMember[] = leaveData?.teamMembers || [];
+
+  const editingId = useMemo(() => {
+    const idParam = searchParams.get('edit');
+    if (!idParam) return null;
+    const parsed = Number(idParam);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [searchParams]);
+
+  const editingRequest = useMemo(() => requests.find((item) => item.id === editingId) ?? null, [editingId, requests]);
+
+  // Same shape as the old setRequests(prev => ...) calls, just writing to the
+  // React Query cache instead of local state so the list stays in sync with
+  // whatever else reads the same ['leave-requests'] query.
+  const updateRequests = (updater: (prev: LeaveRequest[]) => LeaveRequest[]) => {
+    queryClient.setQueryData(QUERY_KEY, (prev: { requests: LeaveRequest[]; teamMembers: TeamMember[] } | undefined) => ({
+      requests: updater(prev?.requests || []),
+      teamMembers: prev?.teamMembers || [],
+    }));
+  };
 
   useEffect(() => {
     if (!toast) return;
@@ -646,7 +652,7 @@ export default function LeaveRequestPage() {
     if (!confirm('Are you sure you want to delete this leave request?')) return;
     try {
       await deleteLeaveRequest(id);
-      setRequests((prev) => prev.filter((item) => item.id !== id));
+      updateRequests((prev) => prev.filter((item) => item.id !== id));
       setToast('Leave request deleted.');
       setOpenActionId(null);
     } catch (error) {
@@ -675,11 +681,11 @@ export default function LeaveRequestPage() {
 
       if (editingId) {
         const updated = await updateLeaveRequest(editingId, payload);
-        setRequests((prev) => prev.map((item) => (item.id === editingId ? updated : item)));
+        updateRequests((prev) => prev.map((item) => (item.id === editingId ? updated : item)));
         setToast('Leave request updated successfully.');
       } else {
         const created = await createLeaveRequest(payload);
-        setRequests((prev) => [created, ...prev]);
+        updateRequests((prev) => [created, ...prev]);
         setToast('Leave request submitted successfully.');
       }
 
@@ -692,7 +698,7 @@ export default function LeaveRequestPage() {
   const handleApprove = async (id: number, status: 'Approved' | 'Rejected') => {
     try {
       const updated = await approveLeaveRequest(id, status);
-      setRequests((prev) => prev.map((item) => (item.id === id ? updated : item)));
+      updateRequests((prev) => prev.map((item) => (item.id === id ? updated : item)));
       setToast(`Leave request ${status.toLowerCase()}.`);
       setOpenActionId(null);
     } catch (error) {

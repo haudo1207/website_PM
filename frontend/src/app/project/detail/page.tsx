@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
@@ -62,8 +63,6 @@ function ProjectDetailContent() {
 
   const [project, setProject] = useState<any>(null);
   const [loadingProject, setLoadingProject] = useState(true);
-  const [items, setItems] = useState<any[]>([]);
-  const [taskGroups, setTaskGroups] = useState<any[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
   const [addingTaskGroupId, setAddingTaskGroupId] = useState<number | null>(null);
   const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
@@ -140,7 +139,6 @@ function ProjectDetailContent() {
   // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'
   const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'>('overview');
   const [activePhase, setActivePhase] = useState<string>('ALL');
-  const [phases, setPhases] = useState<any[]>([]);
   const [showPhaseModal, setShowPhaseModal] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
   const [editingPhaseId, setEditingPhaseId] = useState<number | null>(null);
@@ -382,6 +380,66 @@ function ProjectDetailContent() {
   const getDynamicColumns = () => {
     return TASK_COLUMNS;
   };
+
+  // Phases/task groups/tasks now live in the React Query cache instead of
+  // 3 separate useState — enabled:false because every fetch here has always
+  // been driven explicitly by reloadAll() (33 call sites, on mount and after
+  // every write), not by React's own mount/dependency tracking.
+  const { data: taskQueryData, refetch: refetchTasks } = useQuery({
+    queryKey: ['project-tasks', id],
+    queryFn: async () => {
+      let loadedTasks: any[] = [];
+      let allGroups: any[] = [];
+      let loadedPhases: any[] = [];
+      try {
+        const phs = await getPhases(Number(id));
+        loadedPhases = phs || [];
+
+        if (phs && phs.length > 0) {
+          for (const p of phs) {
+            try {
+              const grps = await getTaskGroups(p.id);
+              allGroups.push(...(grps || []));
+            } catch (e) {
+              console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error('Lỗi khi tải danh sách Phase dự án:', err);
+        flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      }
+
+      try {
+        const tsks = await getAllProjectTasks(Number(id));
+        loadedTasks = tsks || [];
+      } catch (err: any) {
+        console.error('Lỗi khi tải danh sách Task dự án:', err);
+        flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      }
+
+      return { phases: loadedPhases, groups: allGroups, tasks: loadedTasks };
+    },
+    enabled: false,
+  });
+
+  const phases: any[] = taskQueryData?.phases || [];
+  const taskGroups: any[] = taskQueryData?.groups || [];
+  const items: any[] = taskQueryData?.tasks || [];
+
+  // Thin wrapper kept so all 33 existing call sites (on mount + after every
+  // create/update/delete/move) don't need to change — same signature,
+  // same loadingTasks behavior, same { tasks, groups } return shape.
+  const reloadAll = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoadingTasks(true);
+    }
+    const result = await refetchTasks();
+    if (!silent) {
+      setLoadingTasks(false);
+    }
+    return { tasks: result.data?.tasks || [], groups: result.data?.groups || [] };
+  }, [refetchTasks]);
 
   const dynamicTabs = [
     { key: 'ALL', label: 'Master', is_master: true, id: undefined as any },
@@ -642,46 +700,6 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
-  const reloadAll = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoadingTasks(true);
-    }
-    let loadedTasks: any[] = [];
-    let allGroups: any[] = [];
-    try {
-      const phs = await getPhases(Number(id));
-      setPhases(phs || []);
-
-      if (phs && phs.length > 0) {
-        for (const p of phs) {
-          try {
-            const grps = await getTaskGroups(p.id);
-            allGroups.push(...(grps || []));
-          } catch (e) {
-            console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
-          }
-        }
-      }
-      setTaskGroups(allGroups);
-    } catch (err: any) {
-      console.error('Lỗi khi tải danh sách Phase dự án:', err);
-      flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
-    }
-
-    try {
-      const tsks = await getAllProjectTasks(Number(id));
-      loadedTasks = tsks || [];
-      setItems(loadedTasks);
-    } catch (err: any) {
-      console.error('Lỗi khi tải danh sách Task dự án:', err);
-      flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
-    }
-
-    if (!silent) {
-      setLoadingTasks(false);
-    }
-    return { tasks: loadedTasks, groups: allGroups };
-  }, [id]);
 
   const loadChatData = useCallback(async () => {
     if (!id) return;
