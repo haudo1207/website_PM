@@ -18,4 +18,4 @@ COPY Skill_Master_From_Sheet.xlsx .
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"]

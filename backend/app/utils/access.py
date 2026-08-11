@@ -34,11 +34,24 @@ def get_workspaces(db: Session):
     return db.query(Workspace).order_by(Workspace.id.asc()).all()
 
 
-def resolve_workspace(db: Session, value):
-    """Resolve a Workspace by its code or case-insensitive display name."""
+def preload_workspace_maps(db: Session):
+    """Workspace table is tiny and near-static (2-3 rows) — load it once for
+    an entire project list instead of resolve_workspace() re-querying it per
+    project inside business_label_for_project/business_unit_for_project."""
+    all_ws = db.query(Workspace).all()
+    by_code = {w.code.lower(): w for w in all_ws if w.code}
+    by_name = {w.name.lower(): w for w in all_ws if w.name}
+    return by_code, by_name
+
+
+def resolve_workspace(db: Session, value, by_code=None, by_name=None):
+    """Resolve a Workspace by its code or case-insensitive display name.
+    Pass by_code/by_name (from preload_workspace_maps) to avoid a query."""
     v = str(value or "").strip().lower()
     if not v:
         return None
+    if by_code is not None:
+        return by_code.get(v) or by_name.get(v)
     ws = db.query(Workspace).filter(Workspace.code == v).first()
     if not ws:
         ws = db.query(Workspace).filter(sql_func.lower(Workspace.name) == v).first()
@@ -79,20 +92,20 @@ def scope_display_name(db: Session, scope) -> str:
     return ws.name if ws else s
 
 
-def business_label_for_project(db: Session, project) -> str:
+def business_label_for_project(db: Session, project, by_code=None, by_name=None) -> str:
     """Display name for a project: explicit business value or resolved from customer BU."""
     if project.business:
         return project.business
     bu_code = project.customer.business_unit if project.customer else None
-    ws = resolve_workspace(db, bu_code or getattr(project, "data_scope", None))
+    ws = resolve_workspace(db, bu_code or getattr(project, "data_scope", None), by_code, by_name)
     return ws.name if ws else "All"
 
 
-def business_unit_for_project(db: Session, project) -> str:
+def business_unit_for_project(db: Session, project, by_code=None, by_name=None) -> str:
     """Workspace code for a project, resolved from the customer BU / data scope."""
     if project.customer and project.customer.business_unit:
         return project.customer.business_unit
-    ws = resolve_workspace(db, getattr(project, "data_scope", None))
+    ws = resolve_workspace(db, getattr(project, "data_scope", None), by_code, by_name)
     return ws.code if ws else default_scope(db)
 
 

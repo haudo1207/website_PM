@@ -12,6 +12,12 @@ export default function KPIPage() {
     const [activeTab, setActiveTab] = useState<'KPItotal' | 'KPIweek'>('KPItotal');
     const [members, setMembers] = useState<any[]>([]);
     const [search, setSearch] = useState("");
+    // Debounce ô tìm kiếm: gõ xong 400ms mới gọi API, không gọi theo từng ký tự.
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(search), 400);
+        return () => clearTimeout(timer);
+    }, [search]);
     const [month, setMonth] = useState("");
     const [year, setYear] = useState("");
     const [level, setLevel] = useState("");
@@ -58,7 +64,7 @@ export default function KPIPage() {
             if (level) params.team = level;
             if (workspace) params.workspace = workspace;
             if (team) params.department = team;
-            if (search) params.search = search;
+            if (debouncedSearch) params.search = debouncedSearch;
         } else {
             // KPI Tuần: gửi date range + các filter chung
             if (startDate) params.start_date = startDate;
@@ -66,7 +72,7 @@ export default function KPIPage() {
             if (level) params.team = level;
             if (workspace) params.workspace = workspace;
             if (team) params.department = team;
-            if (search) params.search = search;
+            if (debouncedSearch) params.search = debouncedSearch;
         }
         let active = true;
         setIsLoading(true);
@@ -82,7 +88,7 @@ export default function KPIPage() {
         return () => {
             active = false;
         };
-    }, [activeTab, month, year, level, workspace, team, search, startDate, endDate]);
+    }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate]);
 
     const sortedMembers = useMemo(() => {
         let sortableItems = [...members];

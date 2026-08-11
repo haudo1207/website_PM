@@ -18,9 +18,6 @@ from .models import project_template as project_template_model
 from .models import notification as notification_model
 from sqlalchemy import text
 
-# Create all tables (new v5 schema)
-Base.metadata.create_all(bind=engine)
-
 def apply_schema_updates():
     """Small idempotent migrations for existing installs without Alembic."""
     with engine.begin() as conn:
@@ -290,10 +287,12 @@ def apply_schema_updates():
         conn.execute(text("UPDATE audit_logs SET business_unit = 'INFRA' WHERE LOWER(business_unit) = 'infrastructure'"))
         conn.execute(text("UPDATE audit_logs SET business_unit = 'DEV' WHERE LOWER(business_unit) = 'markee'"))
 
-try:
-    apply_schema_updates()
-except Exception as e:
-    print(f"[!] Schema updates notice: {e}")
+        # Performance: index the tasks_v2 FK columns hit hardest by Dashboard
+        # Overview's per-member/per-skill JOIN and GROUP BY queries.
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_assigned_id ON tasks_v2 (assigned_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_support_id ON tasks_v2 (support_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_solution_id ON tasks_v2 (skill_solution_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_vendor_id ON tasks_v2 (skill_vendor_id)"))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -836,11 +835,46 @@ def init_db_defaults():
     finally:
         db.close()
 
-# Run database auto-seeding safely
-try:
-    init_db_defaults()
-except Exception as e:
-    print(f"[!] Database defaults notice: {e}")
+# With multiple uvicorn workers, each process runs this module at import
+# time. Migrations/seeding are idempotent (IF NOT EXISTS checks) but running
+# them concurrently from N processes can still race on DDL locks or
+# double-insert seed rows. A Postgres session-level advisory lock serializes
+# it: whichever process gets there first runs everything while holding the
+# lock; the rest wait, then find it already done.
+def run_startup_once():
+    # Base.metadata.create_all races the exact same way across processes —
+    # two workers creating the same table concurrently throws a Postgres
+    # catalog UniqueViolation. It has to be inside the same lock as the rest
+    # of startup, not run before it.
+    if not str(engine.url).startswith("postgresql"):
+        # No cross-process race on SQLite/local dev — just run in order.
+        Base.metadata.create_all(bind=engine)
+        try:
+            apply_schema_updates()
+        except Exception as e:
+            print(f"[!] Schema updates notice: {e}")
+        try:
+            init_db_defaults()
+        except Exception as e:
+            print(f"[!] Database defaults notice: {e}")
+        return
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text("SELECT pg_advisory_lock(727001)"))
+        try:
+            Base.metadata.create_all(bind=engine)
+            try:
+                apply_schema_updates()
+            except Exception as e:
+                print(f"[!] Schema updates notice: {e}")
+            try:
+                init_db_defaults()
+            except Exception as e:
+                print(f"[!] Database defaults notice: {e}")
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(727001)"))
+
+run_startup_once()
 
 
 app = FastAPI(
@@ -850,7 +884,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://kpi.markeeai.com",
+        "https://kpi.securityzone.vn",
+        "https://dev.kpi.markeeai.com",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -957,10 +996,10 @@ import asyncio
 async def start_auto_sync_loop():
     async def _loop():
         await asyncio.sleep(5)  # Allow FastAPI to complete startup first
-        from .database import SessionLocal
+        from .database import BackgroundSessionLocal
         from .services.meeting_sync import auto_sync_all_ended_meetings
         while True:
-            db = SessionLocal()
+            db = BackgroundSessionLocal()
             try:
                 await asyncio.to_thread(auto_sync_all_ended_meetings, db)
             except Exception as e:

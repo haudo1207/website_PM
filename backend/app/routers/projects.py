@@ -26,6 +26,7 @@ from ..utils.access import (
     default_workspace,
     get_workspaces,
     is_valid_scope,
+    preload_workspace_maps,
     resolve_workspace,
     valid_data_scopes,
     ROLE_SUPER_ADMIN,
@@ -146,7 +147,7 @@ def serialize_project(p, db):
     }
 
 
-def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members):
+def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members, by_code=None, by_name=None):
     """Serialize a project using list-level data loaded in a few batch queries."""
     pms = role_members.get("PM", [])
     leaders = role_members.get("Leader", [])
@@ -161,8 +162,8 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
-        "business": business_label_for_project(db, p),
-        "business_unit": business_unit_for_project(db, p),
+        "business": business_label_for_project(db, p, by_code, by_name),
+        "business_unit": business_unit_for_project(db, p, by_code, by_name),
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": ", ".join(m[1] for m in pms if m[1]) or None,
@@ -333,6 +334,7 @@ def list_projects(
         role_members[project_id][role].append(member)
         all_members[project_id].append(member)
 
+    by_code, by_name = preload_workspace_maps(db)
     return [
         serialize_project_summary(
             p,
@@ -341,6 +343,8 @@ def list_projects(
             task_stats.get(p.id, (0, 0, 0)),
             role_members[p.id],
             all_members[p.id],
+            by_code,
+            by_name,
         )
         for p in projects
     ]

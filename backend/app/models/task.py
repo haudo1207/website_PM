@@ -40,20 +40,20 @@ class Task(Base):
     start_date      = Column(Date, nullable=False)
 
     # Assigned (FK → members)
-    assigned_id     = Column(Integer, ForeignKey("members.id", ondelete="RESTRICT"), nullable=False)
+    assigned_id     = Column(Integer, ForeignKey("members.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     # Support (FK → members)
-    support_id      = Column(Integer, ForeignKey("members.id", ondelete="RESTRICT"), nullable=False)
+    support_id      = Column(Integer, ForeignKey("members.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     # KPI Ratio
     kpi_ratio_assign  = Column(Integer, default=90, nullable=False)
     kpi_ratio_support = Column(Integer, default=10, nullable=False)
 
     # Skill Solution (Group level)
-    skill_solution_id = Column(Integer, ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False)
+    skill_solution_id = Column(Integer, ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     # Skill Vendor (Skill level)
-    skill_vendor_id   = Column(Integer, ForeignKey("skills.id", ondelete="RESTRICT"), nullable=False)
+    skill_vendor_id   = Column(Integer, ForeignKey("skills.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     # Ticket ID
     ticket_id       = Column(Text, nullable=True)
