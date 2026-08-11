@@ -22,6 +22,7 @@ export interface SearchableSelectProps {
   searchThreshold?: number; // Configurable threshold (Default 8)
   disabled?: boolean;
   required?: boolean;
+  align?: 'left' | 'right';
   className?: string;
 }
 
@@ -89,6 +90,7 @@ export default function SearchableSelect({
   isMulti = false,
   searchThreshold = DEFAULT_SEARCH_THRESHOLD,
   disabled = false,
+  align = 'left',
   className = ''
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
@@ -114,12 +116,19 @@ export default function SearchableSelect({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Determine selected items array
+  // Helper to identify default/reset values (should NEVER display clear '✕' button)
+  const isDefaultValue = useCallback((v: any) => {
+    if (v === undefined || v === null || v === '' || v === 0 || v === '0') return true;
+    const str = String(v).trim().toLowerCase();
+    return str === 'all' || str.includes('không liên kết') || str.startsWith('—');
+  }, []);
+
+  // Determine selected items array (Filters out default reset values)
   const selectedValues = useMemo(() => {
-    if (value === undefined || value === null || value === 'all' || value === '') return [];
-    if (Array.isArray(value)) return value;
+    if (isDefaultValue(value)) return [];
+    if (Array.isArray(value)) return value.filter(v => !isDefaultValue(v));
     return [value];
-  }, [value]);
+  }, [value, isDefaultValue]);
 
   // Normalize options to object format with safety checks
   const parsedOptions = useMemo<SelectOptionItem[]>(() => {
@@ -239,7 +248,9 @@ export default function SearchableSelect({
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onChange(isMulti ? [] : 'all');
+    const defaultOpt = parsedOptions.find(o => isDefaultValue(o.id) || o.name.startsWith('—'));
+    const resetVal = defaultOpt ? defaultOpt.id : (isMulti ? [] : 'All');
+    onChange(isMulti ? [] : resetVal);
     setSearch('');
     setFocusedIndex(-1);
   };
@@ -247,6 +258,8 @@ export default function SearchableSelect({
   // Button Trigger Label Text
   const buttonText = useMemo(() => {
     if (selectedValues.length === 0) {
+      const defaultOpt = parsedOptions.find(o => isDefaultValue(o.id) || o.name.startsWith('—'));
+      if (defaultOpt) return defaultOpt.name;
       return `Tất cả ${label}`;
     }
     if (!isMulti) {
@@ -258,11 +271,11 @@ export default function SearchableSelect({
       return found ? found.name : `1 ${label}`;
     }
     return `${selectedValues.length} ${label}`;
-  }, [selectedValues, parsedOptions, label, isMulti]);
+  }, [selectedValues, parsedOptions, label, isMulti, isDefaultValue]);
 
   return (
     <div
-      className={`relative inline-block text-xs ${className}`}
+      className={`relative inline-block text-xs ${open ? 'z-[999]' : ''} ${className}`}
       ref={containerRef}
       onKeyDown={handleKeyDown}
     >
@@ -302,7 +315,7 @@ export default function SearchableSelect({
 
       {/* Popup Menu */}
       {open && (
-        <div className="absolute left-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
           {/* Search Bar Input (if threshold met) */}
           {showSearchBar && (
             <div className="p-2 border-b border-slate-100 bg-slate-50/80 sticky top-0 z-10">

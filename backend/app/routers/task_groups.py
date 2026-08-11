@@ -23,7 +23,7 @@ from ..models.task import Task
 from ..models.member import Member
 from ..models.project import Project, project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
-from ..utils.access import require_project, require_route_project_access
+from ..utils.access import require_project, require_route_project_access, project_query_for_user, user_scope, ALL_SCOPE, ROLE_LEADER
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
 # Đảm bảo có import date/datetime để tính ngày
@@ -594,20 +594,32 @@ def list_tasks(gid: int, db: Session = Depends(get_db)):
 
 
 @router.get("/all-tasks-global")
-def list_all_tasks_global(db: Session = Depends(get_db)):
+def list_all_tasks_global(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Get all tasks across all projects in 1 single query to prevent DB connection pool exhaustion."""
     from ..models.project import Project
     from ..models.phase import Phase
     from ..models.task_group import TaskGroup
     from ..models.task import Task
 
-    results = (
+    # Leader data scope: only tasks belonging to the Leader's Workspace.
+    leader_scoped = (
+        getattr(current_user, "role", None) == ROLE_LEADER
+        and user_scope(current_user) != ALL_SCOPE
+    )
+
+    base_query = (
         db.query(Task, TaskGroup, Phase, Project)
         .join(TaskGroup, Task.task_group_id == TaskGroup.id)
         .join(Phase, TaskGroup.phase_id == Phase.id)
         .join(Project, Phase.project_id == Project.id)
-        .all()
     )
+    if leader_scoped:
+        scoped_project_ids = (
+            project_query_for_user(db, current_user).with_entities(Project.id).subquery()
+        )
+        base_query = base_query.filter(Project.id.in_(scoped_project_ids))
+
+    results = base_query.all()
 
     members = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
 
@@ -641,17 +653,18 @@ def list_all_tasks_global(db: Session = Depends(get_db)):
             print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
 
     # Fallback for any standalone tasks
-    all_tasks = db.query(Task).all()
-    for task in all_tasks:
-        if task.id not in found_task_ids:
-            try:
-                t_dict = serialize_task(task, db)
-                t_dict["name"] = task.detail or f"Task #{task.id}"
-                t_dict["assigned_name"] = members.get(task.assigned_id, t_dict.get("assigned_name"))
-                t_dict["support_name"] = members.get(task.support_id, t_dict.get("support_name"))
-                output.append(t_dict)
-            except Exception:
-                pass
+    if not leader_scoped:
+        all_tasks = db.query(Task).all()
+        for task in all_tasks:
+            if task.id not in found_task_ids:
+                try:
+                    t_dict = serialize_task(task, db)
+                    t_dict["name"] = task.detail or f"Task #{task.id}"
+                    t_dict["assigned_name"] = members.get(task.assigned_id, t_dict.get("assigned_name"))
+                    t_dict["support_name"] = members.get(task.support_id, t_dict.get("support_name"))
+                    output.append(t_dict)
+                except Exception:
+                    pass
 
     return output
 

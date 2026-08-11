@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.meeting import Meeting
+from ..models.member import Member
 from ..models.phase import Phase
 from ..models.project import Project, project_members
 from ..models.system_category import Workspace
 from ..models.task import Task
 from ..models.task_group import TaskGroup
+from ..models.user import User
 from .auth import get_current_user
 
 ALL_SCOPE = "all"
@@ -21,6 +23,9 @@ ROLE_MEMBER = "member"
 ROLE_VIEWER = "viewer"
 VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER, "admin"}
 WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, "admin"}
+# Roles whose effective data scope is their assigned Workspace
+# (same Workspace-based data-scope mechanism shared by Leader, Member and Viewer).
+WORKSPACE_SCOPED_ROLES = {ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}
 
 
 # ── Workspace Master (Single Source of Truth) ───────────────
@@ -100,12 +105,31 @@ def default_scope_guard() -> str:
     return "infrastructure"
 
 
+def project_belongs_to_workspace(db: Session, scope: str):
+    """Return OR-conditions for projects belonging to the given Workspace scope.
+
+    Shared data-scope rule used by Leader, Member and Viewer: a project belongs
+    to the caller's Workspace when its scope/business matches the Workspace or
+    when it is global ('all' / 'All').
+    """
+    ws = resolve_workspace(db, scope)
+    filters = [
+        Project.data_scope == scope,
+        Project.data_scope == ALL_SCOPE,
+        Project.business == "All",
+    ]
+    if ws:
+        filters.append(Project.business == ws.name)
+    return filters
+
+
 def project_query_for_user(db: Session, user):
     """Return a Project query filtered by the caller's role and scope.
 
     - super_admin (scope=all): every project.
     - leader: projects matching data_scope, business==All/scope, or explicitly assigned.
-    - member / viewer: projects where the user's linked member_id is in project_members.
+    - member / viewer: projects where the user's linked member_id is in project_members
+      AND the project belongs to the user's assigned Workspace.
     """
     query = db.query(Project)
     scope = user_scope(user)
@@ -116,14 +140,7 @@ def project_query_for_user(db: Session, user):
 
     if role == ROLE_LEADER:
         member_id = getattr(user, "member_id", None)
-        ws = resolve_workspace(db, scope)
-        filters = [
-            Project.data_scope == scope,
-            Project.data_scope == ALL_SCOPE,
-            Project.business == "All",
-        ]
-        if ws:
-            filters.append(Project.business == ws.name)
+        filters = list(project_belongs_to_workspace(db, scope))
         if member_id:
             assigned_project_ids = (
                 db.query(project_members.c.project_id)
@@ -133,7 +150,7 @@ def project_query_for_user(db: Session, user):
             filters.append(Project.id.in_(assigned_project_ids))
         return query.filter(or_(*filters))
 
-    # member / viewer — restrict to assigned projects only.
+    # member / viewer — assigned projects, restricted to the user's Workspace.
     member_id = getattr(user, "member_id", None)
     if not member_id:
         # User has no linked member → they can see nothing.
@@ -144,7 +161,50 @@ def project_query_for_user(db: Session, user):
         .filter(project_members.c.member_id == member_id)
         .subquery()
     )
-    return query.filter(Project.id.in_(assigned_project_ids))
+    base = query.filter(Project.id.in_(assigned_project_ids))
+    return base.filter(or_(*project_belongs_to_workspace(db, scope)))
+
+
+def member_query_for_user(db: Session, user):
+    """Return a Member query filtered by the caller's role and Workspace scope.
+
+    - super_admin / scope=all: every member (unchanged).
+    - leader: members belonging to the leader's Workspace — i.e. members whose
+      linked account data_scope matches the Workspace, or members assigned to a
+      project within the leader's scope.
+    - member / viewer: unchanged (keeps existing behavior).
+    """
+    query = db.query(Member)
+    scope = user_scope(user)
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    if role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE:
+        return query
+    if role != ROLE_LEADER:
+        return query
+
+    scoped_user_member_ids = (
+        db.query(User.member_id)
+        .filter(
+            User.member_id.isnot(None),
+            or_(User.data_scope == scope, User.data_scope == ALL_SCOPE),
+        )
+        .subquery()
+    )
+    scoped_project_ids = (
+        project_query_for_user(db, user).with_entities(Project.id).subquery()
+    )
+    scoped_project_member_ids = (
+        db.query(project_members.c.member_id)
+        .filter(project_members.c.project_id.in_(scoped_project_ids))
+        .subquery()
+    )
+    return query.filter(
+        or_(
+            Member.id.in_(scoped_user_member_ids),
+            Member.id.in_(scoped_project_member_ids),
+        )
+    )
 
 
 def can_access_project(db: Session, user, project: Project) -> bool:
@@ -163,11 +223,20 @@ def can_access_project(db: Session, user, project: Project) -> bool:
             or _is_member_of_project(db, user, project.id)
         )
 
-    # member / viewer — must be an explicit project member.
+    # member / viewer — must be an explicit project member whose project
+    # belongs to the user's assigned Workspace.
     member_id = getattr(user, "member_id", None)
     if not member_id:
         return False
-    return _is_member_of_project(db, user, project.id)
+    if not _is_member_of_project(db, user, project.id):
+        return False
+    ws = resolve_workspace(db, scope)
+    return (
+        (project.data_scope == scope)
+        or (project.data_scope == ALL_SCOPE)
+        or (project.business == "All")
+        or (ws is not None and project.business == ws.name)
+    )
 
 
 def require_project(db: Session, user, project_id: int) -> Project:

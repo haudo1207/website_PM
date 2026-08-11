@@ -11,6 +11,7 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
+from ..utils.access import member_query_for_user
 from sqlalchemy import func, extract
 
 TEAM_POSITIONS = {
@@ -76,6 +77,44 @@ def ensure_system_department(db: Session, name: str):
         db.add(Department(name=name))
         db.flush()
 
+def format_display_name(name: str) -> str:
+    if not name:
+        return ""
+    import re
+    clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(name)).strip()
+    words = [w for w in clean_name.split() if w]
+    if len(words) <= 2:
+        return " ".join(words)[:50]
+    abbr = ".".join([w[0].upper() for w in words[:-2]])
+    last_two = " ".join(words[-2:])
+    return f"{abbr} {last_two}"[:50]
+
+def make_unique_display_name(db: Session, base_name: str, member_id: Optional[int] = None, used_in_batch: Optional[set] = None) -> str:
+    name = (base_name or "").strip()[:50]
+    if not name:
+        return "Member"
+    candidate = name
+    counter = 1
+    
+    while True:
+        if used_in_batch is not None and candidate.lower() in used_in_batch:
+            counter += 1
+            candidate = f"{name} {counter}"[:50]
+            continue
+            
+        query = db.query(Member).filter(Member.display_name.ilike(candidate))
+        if member_id:
+            query = query.filter(Member.id != member_id)
+        exists = query.first()
+        
+        if not exists:
+            if used_in_batch is not None:
+                used_in_batch.add(candidate.lower())
+            return candidate
+            
+        counter += 1
+        candidate = f"{name} {counter}"[:50]
+
 
 router = APIRouter()
 
@@ -119,7 +158,7 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    current_user=Depends(get_current_user)
 ):
     # Subquery to calculate KPI from Tasks for each member
     # Using UNION ALL to combine assigned and support portions of the task
@@ -237,6 +276,10 @@ def list_members(
         q = q.filter(Member.department == department)
     if skill_id:
         q = q.filter(Member.skills.any(Skill.id == skill_id))
+
+    # Leader data scope: members are limited to the Leader's Workspace
+    # (linked account scope + members assigned to projects within scope).
+    q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()
     
@@ -402,17 +445,16 @@ def list_teams(db: Session = Depends(get_db), _=Depends(get_current_user)):
 # ─── GET LEADERS (from Supabase/DB distinct list) ─────────
 @router.get("/meta/leaders")
 def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    # 1. Try to fetch recruitment leaders from Supabase
+    # 1. Try to fetch recruitment leaders from Supabase (only active leaders)
     SUPABASE_URL = "https://supabase.stratumconsultants.tech"
     SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UtbG9jYWwiLCJpYXQiOjE3NzgwNDM5NDUsImV4cCI6MjA5MzQwMzk0NX0.MLey0ChjN3lr8__Jc1lmiBw6xSbeW-mrXEXsxgkDywI"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}"
     }
-    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders"
+    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders?is_active=eq.true&order=name.asc"
     try:
         import requests
-        import re
         response = requests.get(leaders_url, headers=headers, timeout=5)
         if response.status_code == 200:
             leaders_list = response.json()
@@ -422,17 +464,8 @@ def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
                 raw_name = l.get("name", "")
                 email = l.get("email", "")
                 if raw_name:
-                    clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_name).strip()
-                    # Apply abbreviation display name formula
-                    words = [w for w in clean_name.split() if w]
-                    if len(words) <= 2:
-                        display_name = " ".join(words)
-                    else:
-                        abbr = ".".join([w[0].upper() for w in words[:-2]])
-                        last_two = " ".join(words[-2:])
-                        display_name = f"{abbr} {last_two}"
-                    
-                    if display_name not in seen:
+                    display_name = format_display_name(raw_name)
+                    if display_name and display_name not in seen:
                         seen.add(display_name)
                         out.append({"name": display_name, "email": email or ""})
             return sorted(out, key=lambda x: x["name"])
@@ -444,7 +477,7 @@ def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
     out = []
     seen = set()
     for r in rows:
-        name = r[0].strip()
+        name = (r[0] or "").strip()
         if name and name not in seen:
             seen.add(name)
             out.append({"name": name, "email": r[1] or ""})
@@ -503,15 +536,7 @@ def sync_candidate(
     raw_leader_name = body.get("leader_name")
     leader_name = None
     if raw_leader_name:
-        import re
-        clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", str(raw_leader_name)).strip()
-        words = [w for w in clean_leader_name.split() if w]
-        if len(words) <= 2:
-            leader_name = " ".join(words)
-        else:
-            abbr = ".".join([w[0].upper() for w in words[:-2]])
-            last_two = " ".join(words[-2:])
-            leader_name = f"{abbr} {last_two}"
+        leader_name = format_display_name(raw_leader_name) or None
             
     leader_email = str(body.get("leader_email", "")).strip() or None
 
@@ -522,10 +547,12 @@ def sync_candidate(
     if not member:
         member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
         
+    final_display_name = make_unique_display_name(db, display_name, member_id=member.id if member else None)
+
     if member:
         # Update existing member
         member.full_name = full_name
-        member.display_name = display_name
+        member.display_name = final_display_name
         if email:
             member.email = email
         if phone:
@@ -549,7 +576,7 @@ def sync_candidate(
     else:
         # Create new member
         member = Member(
-            display_name=display_name,
+            display_name=final_display_name,
             full_name=full_name,
             email=email or None,
             phone=phone or None,
@@ -706,6 +733,7 @@ def sync_from_recruitment(
                 deleted_count += 1
         
         # 3. Đồng bộ/Cập nhật các ứng viên đã nhận hiện tại
+        used_display_names = set()
         for app_data in candidates:
             full_name = str(app_data.get("full_name", "")).strip()[:255]
             email = str(app_data.get("email", "")).strip().lower()[:255]
@@ -743,16 +771,11 @@ def sync_from_recruitment(
                 raw_leader_name = str(leader_info.get("name", "")).strip()
                 leader_email = str(leader_info.get("email", "")).strip() or None
                 if raw_leader_name:
-                    import re
-                    clean_leader_name = re.sub(r"\s*\([^)]*\)\s*$", "", raw_leader_name).strip()
-                    # Apply Display Name formula
-                    words = [w for w in clean_leader_name.split() if w]
-                    if len(words) <= 2:
-                        leader_name = " ".join(words)
-                    else:
-                        abbr = ".".join([w[0].upper() for w in words[:-2]])
-                        last_two = " ".join(words[-2:])
-                        leader_name = f"{abbr} {last_two}"
+                    leader_name = format_display_name(raw_leader_name) or None
+            elif isinstance(leader_data, dict) and leader_data.get("name"):
+                raw_leader_name = str(leader_data.get("name", "")).strip()
+                leader_name = format_display_name(raw_leader_name) or None
+                leader_email = str(leader_data.get("email", "")).strip() or None
 
             if not full_name:
                 continue
@@ -781,9 +804,11 @@ def sync_from_recruitment(
             if not member:
                 member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
                 
+            final_display_name = make_unique_display_name(db, display_name, member_id=member.id if member else None, used_in_batch=used_display_names)
+
             if member:
                 member.full_name = full_name
-                member.display_name = display_name
+                member.display_name = final_display_name
                 if email:
                     member.email = email
                 if phone:
@@ -806,7 +831,7 @@ def sync_from_recruitment(
                     member.leader_email = leader_email
             else:
                 member = Member(
-                    display_name=display_name,
+                    display_name=final_display_name,
                     full_name=full_name,
                     email=email or None,
                     phone=phone or None,
