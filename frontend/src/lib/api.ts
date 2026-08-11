@@ -34,6 +34,46 @@ export const getAuthConfig = () => api.get<AuthConfig>('/auth/config').then(r =>
 export const googleLogin = (credential: string) =>
   api.post('/auth/google', { credential }).then(r => r.data);
 
+export interface MeProfile {
+  id: number;
+  email: string;
+  full_name: string;
+  avatar_url?: string | null;
+  role: string;
+  data_scope: string;
+  member_id?: number | null;
+  is_active: boolean;
+  login_method: string;
+  position?: string | null;
+  department?: string | null;
+  skills: string[];
+  member: {
+    display_name: string;
+    team?: string | null;
+    phone?: string | null;
+    experience_year?: number | null;
+    leader_name?: string | null;
+  } | null;
+}
+export const getMe = () => api.get<MeProfile>('/users/me').then(r => r.data);
+
+export interface LoginHistoryItem {
+  id: number;
+  action: string;
+  outcome: string;
+  login_method?: string | null;
+  browser?: string | null;
+  os?: string | null;
+  device_type?: string | null;
+  ip_address?: string | null;
+  ip_risk?: string | null;
+  is_new_ip: boolean;
+  is_new_device: boolean;
+  created_at: string | null;
+}
+export const getMyLoginHistory = (limit = 20) =>
+  api.get<LoginHistoryItem[]>('/users/me/login-history', { params: { limit } }).then(r => r.data);
+
 // ═══════════════════════════════════════════════════════════
 // PROJECTS (v5)
 // ═══════════════════════════════════════════════════════════
