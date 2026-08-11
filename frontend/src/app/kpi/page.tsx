@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
-import { getMembers, getTeams, getPositions, getDepartments } from '@/lib/api';
+import { getMembers, getTeams, getDepartments, getWorkspaces } from '@/lib/api';
 
 export default function KPIPage() {
     const router = useRouter();
@@ -14,14 +14,14 @@ export default function KPIPage() {
     const [search, setSearch] = useState("");
     const [month, setMonth] = useState("");
     const [year, setYear] = useState("");
+    const [level, setLevel] = useState("");
+    const [workspace, setWorkspace] = useState("");
     const [team, setTeam] = useState("");
-    const [position, setPosition] = useState("");
-    const [department, setDepartment] = useState("");
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
+    const [levelOptions, setLevelOptions] = useState<any[]>([]);
+    const [workspaceOptions, setWorkspaceOptions] = useState<any[]>([]);
     const [teamOptions, setTeamOptions] = useState<any[]>([]);
-    const [positionOptions, setPositionOptions] = useState<any[]>([]);
-    const [deptOptions, setDeptOptions] = useState<any[]>([]);
     const [sortConfig, setSortConfig] = useState({
         key: "kpi_total",
         direction: "desc",
@@ -44,9 +44,9 @@ export default function KPIPage() {
 };
 
     useEffect(() => {
-        getTeams().then(setTeamOptions).catch(() => {});
-        getPositions().then(setPositionOptions).catch(() => {});
-        getDepartments().then(setDeptOptions).catch(() => {});
+        getTeams().then(setLevelOptions).catch(() => {});
+        getWorkspaces().then(setWorkspaceOptions).catch(() => {});
+        getDepartments().then(setTeamOptions).catch(() => {});
     }, []);
 
     useEffect(() => {
@@ -55,17 +55,17 @@ export default function KPIPage() {
         if (activeTab === 'KPItotal') {
             if (month) params.month = parseInt(month);
             if (year) params.year = parseInt(year);
-            if (team) params.team = team;
-            if (position) params.position = position;
-            if (department) params.department = department;
+            if (level) params.team = level;
+            if (workspace) params.workspace = workspace;
+            if (team) params.department = team;
             if (search) params.search = search;
         } else {
             // KPI Tuần: gửi date range + các filter chung
             if (startDate) params.start_date = startDate;
             if (endDate) params.end_date = endDate;
-            if (team) params.team = team;
-            if (position) params.position = position;
-            if (department) params.department = department;
+            if (level) params.team = level;
+            if (workspace) params.workspace = workspace;
+            if (team) params.department = team;
             if (search) params.search = search;
         }
         let active = true;
@@ -82,7 +82,7 @@ export default function KPIPage() {
         return () => {
             active = false;
         };
-    }, [activeTab, month, year, team, position, department, search, startDate, endDate]);
+    }, [activeTab, month, year, level, workspace, team, search, startDate, endDate]);
 
     const sortedMembers = useMemo(() => {
         let sortableItems = [...members];
@@ -177,34 +177,34 @@ export default function KPIPage() {
                                         className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[200px] shadow-sm transition-all hover:border-blue-300"
                                     />
 
+                                    {/* Level */}
+                                    <select 
+                                        value={level} 
+                                        onChange={e => setLevel(e.target.value)}
+                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
+                                    >
+                                        <option value="">Tất cả Level</option>
+                                        {levelOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                                    </select>
+
+                                    {/* Workspace */}
+                                    <select 
+                                        value={workspace} 
+                                        onChange={e => setWorkspace(e.target.value)}
+                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
+                                    >
+                                        <option value="">Tất cả Workspace</option>
+                                        {workspaceOptions.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                                    </select>
+
                                     {/* Team */}
                                     <select 
                                         value={team} 
                                         onChange={e => setTeam(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                    >
-                                        <option value="">Tất cả Team</option>
-                                        {teamOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                                    </select>
-
-                                    {/* Position */}
-                                    <select 
-                                        value={position} 
-                                        onChange={e => setPosition(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                    >
-                                        <option value="">Tất cả Chức vụ</option>
-                                        {positionOptions.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                                    </select>
-
-                                    {/* Department */}
-                                    <select 
-                                        value={department} 
-                                        onChange={e => setDepartment(e.target.value)}
                                         className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[160px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
                                     >
-                                        <option value="">Tất cả Phòng ban</option>
-                                        {deptOptions.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                                        <option value="">Tất cả Team</option>
+                                        {teamOptions.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
                                     </select>
 
                                     {/* Month */}
@@ -232,8 +232,8 @@ export default function KPIPage() {
                                     </select>
 
                                     {/* Clear filter */}
-                                    {(month || year || search || team || position || department) && (
-                                        <button onClick={() => { setMonth(''); setYear(''); setSearch(''); setTeam(''); setPosition(''); setDepartment(''); }}
+                                    {(month || year || search || level || workspace || team) && (
+                                        <button onClick={() => { setMonth(''); setYear(''); setSearch(''); setLevel(''); setWorkspace(''); setTeam(''); }}
                                             className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all ml-auto bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
                                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -295,9 +295,9 @@ export default function KPIPage() {
                                             <tr className="divide-x divide-slate-200">
                                                 <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12 bg-slate-50">STT</th>
                                                 <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 min-w-[200px]">Display Name</th>
+                                                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Level</th>
+                                                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Workspace</th>
                                                 <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Team</th>
-                                                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Chức vụ</th>
-                                                <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">Phòng ban</th>
                                                 <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("manday_total")}>
                                                     Manday <span className="ml-1 opacity-60">{sortConfig.key === 'manday_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
                                                 </th>
@@ -322,7 +322,7 @@ export default function KPIPage() {
                                                         </div>
                                                     </td>
                                                     <td className="px-4 py-3 text-slate-600 font-medium">{m.team || '-'}</td>
-                                                    <td className="px-4 py-3 text-slate-600 font-medium">{m.position || '-'}</td>
+                                                    <td className="px-4 py-3 text-slate-600 font-medium">{m.workspace || '-'}</td>
                                                     <td className="px-4 py-3 text-slate-600 font-medium">{m.department || '-'}</td>
                                                     <td className={`px-4 py-3 text-center font-semibold tabular-nums ${(m.manday_total || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}>{(m.manday_total || 0).toFixed(1)}</td>
                                                     <td className={`px-4 py-3 text-center font-semibold tabular-nums ${(m.kpi_avg || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}>{m.kpi_avg || 0}</td>
