@@ -706,13 +706,19 @@ function ProjectDetailContent() {
   }, [id]);
 
   useEffect(() => {
+    // Chỉ poll khi đang ở tab Chat — trước đây poll suốt thời gian mở trang
+    // dự án dù chưa từng mở tab Chat.
+    if (activeMainTab !== 'chats') return;
+
     loadChatData();
-    // Real-time auto-sync: Poll AI Task Inbox every 5 seconds so new messages automatically display without refreshing!
     const timer = setInterval(() => {
-      loadChatData();
-    }, 5000);
+      // Không poll khi tab trình duyệt đang ở nền.
+      if (document.visibilityState === 'visible') {
+        loadChatData();
+      }
+    }, 20000); // 20s thay cho 5s
     return () => clearInterval(timer);
-  }, [id, loadChatData]);
+  }, [id, loadChatData, activeMainTab]);
 
   // Load chats from localStorage
   useEffect(() => {
