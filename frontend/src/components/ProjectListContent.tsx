@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
@@ -86,9 +87,6 @@ export default function ProjectListContent() {
   const paramYear = searchParams.get('year');
 
   const canManage = isAdmin();
-  const [projects, setProjects] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState('All');
   const [phaseFilter, setPhaseFilter] = useState('All');
@@ -104,21 +102,24 @@ export default function ProjectListContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
 
-  const reload = async () => {
-    try {
+  const { data: listData, refetch: reload } = useQuery({
+    queryKey: ['project-list'],
+    queryFn: async () => {
       const [projs, custs, wss] = await Promise.all([
         getProjects(),
         getCustomers(),
         getWorkspaces().catch(() => [])
       ]);
-      setProjects(projs || []);
-      setCustomers(custs || []);
-      setWorkspaces(wss || []);
-    } catch {
-      // Fallback safe load
-    }
-  };
-  useEffect(() => { reload(); }, []);
+      return {
+        projects: projs || [],
+        customers: custs || [],
+        workspaces: wss || [],
+      };
+    },
+  });
+  const projects: any[] = listData?.projects || [];
+  const customers: any[] = listData?.customers || [];
+  const workspaces: Workspace[] = listData?.workspaces || [];
 
   // Sync URL query params to filter states
   useEffect(() => {

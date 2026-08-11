@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -11,8 +12,6 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth } from '@/app/dashboard/constants';
-
-let cachedOverviewData: any = null;
 
 const getShortName = (name: string) => {
   if (!name) return 'Unknown';
@@ -342,14 +341,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
 };
 
 export default function OverviewTab() {
-  const [loading, setLoading] = useState(false);
-  const [rawMembers, setRawMembers] = useState<any[]>(cachedOverviewData?.rawMembers || []);
-  const [rawProjects, setRawProjects] = useState<any[]>(cachedOverviewData?.rawProjects || []);
-  const [rawTasks, setRawTasks] = useState<any[]>(cachedOverviewData?.rawTasks || []);
-  const [rawLeaders, setRawLeaders] = useState<any[]>(cachedOverviewData?.rawLeaders || []);
-
   // Team Audit Log states
-  const [teamAuditLogs, setTeamAuditLogs] = useState<any[]>(cachedOverviewData?.teamAuditLogs || []);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditModuleFilter, setAuditModuleFilter] = useState('all');
 
@@ -380,6 +372,46 @@ export default function OverviewTab() {
   const [selectedMemberModal, setSelectedMemberModal] = useState<any>(null);
   const [aiCheckStatus, setAiCheckStatus] = useState<string | null>(null);
 
+  const fetchOverview = useCallback(async () => {
+    const ts = Date.now();
+    const token = getToken();
+    const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+
+    // Fetch my-alerts in parallel — not part of the cached bundle below.
+    getMyAlerts().then(data => setMyAlerts(data)).catch(() => {});
+
+    const [membersRes, projRes, tasksRes, auditRes, leadersRes] = await Promise.all([
+      axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
+      axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] })),
+    ]);
+
+    return {
+      rawMembers: membersRes.data || [],
+      rawProjects: projRes.data || [],
+      rawTasks: tasksRes.data || [],
+      teamAuditLogs: auditRes.data?.items || [],
+      rawLeaders: leadersRes.data || [],
+    };
+  }, []);
+
+  // React Query: shows the last-cached bundle instantly on revisit (no
+  // loading flash), then silently refetches in the background — replaces
+  // the old module-level `cachedOverviewData` variable, which only lived
+  // until a full page reload and never refreshed itself automatically.
+  const { data: overviewData, isFetching: loading, refetch } = useQuery({
+    queryKey: ['dashboard-overview'],
+    queryFn: fetchOverview,
+  });
+
+  const rawMembers: any[] = overviewData?.rawMembers || [];
+  const rawProjects: any[] = overviewData?.rawProjects || [];
+  const rawTasks: any[] = overviewData?.rawTasks || [];
+  const rawLeaders: any[] = overviewData?.rawLeaders || [];
+  const teamAuditLogs: any[] = overviewData?.teamAuditLogs || [];
+
   const applyQuickFilter = (type: string) => {
     const now = new Date();
     if (type === 'Tuần trước') {
@@ -408,44 +440,6 @@ export default function OverviewTab() {
     return true;
   });
 
-  const fetchOverviewData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedOverviewData) return;
-    setLoading(true);
-    const ts = Date.now();
-    const token = getToken();
-    const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
-
-    // Fetch my-alerts in parallel
-    getMyAlerts().then(data => setMyAlerts(data)).catch(() => {});
-
-    Promise.all([
-      axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
-      axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] }))
-    ]).then(([membersRes, projRes, tasksRes, auditRes, leadersRes]) => {
-      setRawMembers(membersRes.data || []);
-      setRawProjects(projRes.data || []);
-      setRawTasks(tasksRes.data || []);
-      setRawLeaders(leadersRes.data || []);
-      
-      const auditItems = auditRes.data?.items || [];
-      setTeamAuditLogs(auditItems);
-      
-      cachedOverviewData = {
-        rawMembers: membersRes.data || [],
-        rawProjects: projRes.data || [],
-        rawTasks: tasksRes.data || [],
-        teamAuditLogs: auditItems,
-        rawLeaders: leadersRes.data || []
-      };
-    }).finally(() => {
-      setLoading(false);
-      setAuditLoading(false);
-    });
-  }, []);
-
   const fetchInbox = useCallback(() => {
     const role = getRole();
     if (role === 'super_admin' || role === 'leader') {
@@ -457,9 +451,8 @@ export default function OverviewTab() {
   }, []);
 
   useEffect(() => {
-    fetchOverviewData(false);
     fetchInbox();
-  }, [fetchOverviewData, fetchInbox]);
+  }, [fetchInbox]);
 
   // Close inbox popover on outside click
   useEffect(() => {
@@ -742,7 +735,7 @@ export default function OverviewTab() {
             </div>
 
             <button
-              onClick={() => fetchOverviewData(true)}
+              onClick={() => refetch()}
               className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
             >
               <SvgIcon name="refresh" className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#0058be]' : 'text-slate-500'}`} />
