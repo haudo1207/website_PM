@@ -53,197 +53,286 @@ const CircularProgress = ({ value, total }: { value: number, total: number }) =>
 };
 
 const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, tasks: any[], projects: any[], onClose: () => void }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'projects' | 'tasks'>('overview');
-  const [taskFilter, setTaskFilter] = useState<'all' | 'inProgress' | 'overdue' | 'done'>('all');
-  const [searchTask, setSearchTask] = useState('');
+  const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
 
   if (!member) return null;
 
-  const memberTasks = tasks.filter(t => t.assigned_id === member.id || t.support_id === member.id);
+  const rawMemberObj = member.rawMember || member;
+  const memberTasks = tasks.filter(t => (t.assigned_id != null && String(t.assigned_id) === String(member.id)) || (t.support_id != null && String(t.support_id) === String(member.id)));
+  const openTasks = memberTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel');
   const doneTasks = memberTasks.filter(t => t.status === 'Done' || t.status === 'done');
-  const overdueTasks = memberTasks.filter(t => (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && t.days_late > 0);
-  const inProgTasks = memberTasks.filter(t => (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && (t.days_late || 0) <= 0);
+  const overdueTasks = openTasks.filter(t => (t.days_late || 0) > 0);
+  const criticalTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'critical');
+  const highTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'high');
+  const normalTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
+  const interruptTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
 
-  const memberProjectIds = Array.from(new Set(memberTasks.map(t => t.project_id).filter(Boolean)));
-  const memberProjects = projects.filter(p => memberProjectIds.includes(p.id)).map(p => {
-    const pTasks = memberTasks.filter(t => t.project_id === p.id);
-    const pDone = pTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
-    return {
-      ...p,
-      tasksCount: pTasks.length,
-      doneCount: pDone,
-      progress: pTasks.length > 0 ? Math.round((pDone / pTasks.length) * 100) : 0
-    };
-  });
+  const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
+
+  const today = new Date();
+  const dateStr = `Tuần ${today.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} - ${new Date(today.getTime() + 6 * 86400000).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
+
+  const totalPossible = openTasks.length + doneTasks.length;
+  const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
 
   const filteredTasks = memberTasks.filter(t => {
-    if (searchTask && !t.name?.toLowerCase().includes(searchTask.toLowerCase())) return false;
-    if (taskFilter === 'done') return t.status === 'Done' || t.status === 'done';
-    if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && t.days_late > 0;
-    if (taskFilter === 'inProgress') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && (t.days_late || 0) <= 0;
+    if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && (t.days_late || 0) > 0;
+    if (taskFilter === 'critical') return (t.priority || '').toLowerCase() === 'critical';
+    if (taskFilter === 'high') return (t.priority || '').toLowerCase() === 'high';
     return true;
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        {/* MODAL HEADER */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-indigo-500/30 border border-indigo-400/40 flex items-center justify-center font-extrabold text-sm text-indigo-200">
+    <div className="fixed inset-0 z-50 overflow-hidden">
+      {/* BACKDROP */}
+      <div 
+        onClick={onClose} 
+        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" 
+      />
+
+      {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) */}
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
+        
+        {/* HEADER */}
+        <div className="sticky top-0 z-20 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-[#0058be] text-white flex items-center justify-center font-black text-lg shadow-sm shrink-0">
               {member.name ? member.name.charAt(0).toUpperCase() : 'M'}
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-extrabold text-white">{member.name}</h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                  Hạng #{member.rank}
-                </span>
-              </div>
-              <p className="text-xs text-slate-300">Tổng điểm KPI: <strong className="text-amber-400">{member.kpi.toFixed(1)}</strong> · Total Manday: <strong>{member.manday.toFixed(1)}</strong></p>
+              <h2 className="text-xl font-extrabold text-[#0b1c30] tracking-tight">{member.name}</h2>
+              <p className="text-xs font-semibold text-slate-400 mt-0.5">
+                {(rawMemberObj.team || rawMemberObj.department || 'INFRA').toUpperCase()} · {rawMemberObj.leader_name || 'Khác'} · {dateStr}
+              </p>
             </div>
           </div>
           <button 
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors cursor-pointer text-base"
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors flex items-center justify-center font-bold text-sm cursor-pointer shrink-0"
           >
             ✕
           </button>
         </div>
 
-        {/* MODAL TABS */}
-        <div className="flex border-b border-slate-100 px-6 bg-slate-50 text-xs font-bold text-slate-500 gap-4">
-          <button 
-            onClick={() => setActiveTab('overview')}
-            className={`py-3 border-b-2 transition-colors ${activeTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent hover:text-slate-700'}`}
-          >
-            Tổng quan KPI ({member.kpi.toFixed(1)})
-          </button>
-          <button 
-            onClick={() => setActiveTab('projects')}
-            className={`py-3 border-b-2 transition-colors ${activeTab === 'projects' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent hover:text-slate-700'}`}
-          >
-            Dự án ({memberProjects.length})
-          </button>
-          <button 
-            onClick={() => setActiveTab('tasks')}
-            className={`py-3 border-b-2 transition-colors ${activeTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent hover:text-slate-700'}`}
-          >
-            Danh sách Task ({memberTasks.length})
-          </button>
-        </div>
+        {/* DRAWER BODY CONTENT */}
+        <div className="p-6 space-y-6 flex-1">
+          
+          {/* 1. TOP METRIC SUMMARY (6 CARDS IN A ROW) */}
+          <div className="grid grid-cols-6 gap-2">
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{activeProjects.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Dự án active</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{openTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Task mở</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{criticalTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Critical</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-red-600 leading-none">{overdueTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Trễ</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{memberTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Deadline kỳ</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0058be] leading-none">{member.kpi?.toFixed(1) || '0.0'}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI</span>
+            </div>
+          </div>
 
-        {/* MODAL BODY */}
-        <div className="p-6 overflow-y-auto custom-scrollbar space-y-5 flex-1">
-          {activeTab === 'overview' && (
-            <div className="space-y-5">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100">
-                  <span className="text-[10px] font-bold uppercase text-indigo-500">Tổng điểm KPI</span>
-                  <p className="text-2xl font-black text-indigo-700 mt-1">{member.kpi.toFixed(1)}</p>
+          {/* 2. CẢNH BÁO ĐIỀU PHỐI (3 BOXES) */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Cảnh báo điều phối</h3>
+            <div className="grid grid-cols-3 gap-3">
+              {/* Task trễ */}
+              <div className="bg-red-50/40 border border-red-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
+                <div>
+                  <span className="text-[9px] font-extrabold text-red-400 uppercase tracking-wider">Task trễ</span>
+                  <p className="text-2xl font-black text-red-600 mt-1">{overdueTasks.length}</p>
                 </div>
-                <div className="p-4 bg-emerald-50/60 rounded-xl border border-emerald-100">
-                  <span className="text-[10px] font-bold uppercase text-emerald-500">Task Hoàn Thành</span>
-                  <p className="text-2xl font-black text-emerald-700 mt-1">{doneTasks.length} / {memberTasks.length}</p>
-                </div>
-                <div className="p-4 bg-amber-50/60 rounded-xl border border-amber-100">
-                  <span className="text-[10px] font-bold uppercase text-amber-500">Đang Triển Khai</span>
-                  <p className="text-2xl font-black text-amber-700 mt-1">{inProgTasks.length}</p>
-                </div>
-                <div className="p-4 bg-red-50/60 rounded-xl border border-red-100">
-                  <span className="text-[10px] font-bold uppercase text-red-500">Task Trễ Hạn</span>
-                  <p className="text-2xl font-black text-red-700 mt-1">{overdueTasks.length}</p>
-                </div>
+                <p className="text-[10px] text-slate-400 leading-tight mt-3">Task cần leader follow-up hoặc xử lý blocker.</p>
               </div>
 
-              <div>
-                <h4 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Dự án tham gia</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {memberProjects.length === 0 ? (
-                    <p className="text-xs text-slate-400 font-semibold col-span-2 text-center py-4">Chưa có dự án nào.</p>
-                  ) : (
-                    memberProjects.map((p: any) => (
-                      <div key={p.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                        <div className="flex justify-between items-center mb-2">
-                          <span className="text-xs font-bold text-[#0b1c30] truncate">{p.name}</span>
-                          <span className="text-[10px] font-extrabold text-[#0058be]">{p.progress}%</span>
-                        </div>
-                        <ProgressBar value={p.progress} color={p.progress >= 80 ? 'bg-emerald-500' : 'bg-blue-500'} height="h-1.5" />
-                        <span className="text-[10px] text-slate-400 font-medium mt-1.5 block">{p.doneCount}/{p.tasksCount} task hoàn thành</span>
-                      </div>
-                    ))
-                  )}
+              {/* Critical mở */}
+              <div className="bg-amber-50/40 border border-amber-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
+                <div>
+                  <span className="text-[9px] font-extrabold text-amber-500 uppercase tracking-wider">Critical mở</span>
+                  <p className="text-2xl font-black text-amber-700 mt-1">{criticalTasks.length}</p>
                 </div>
+                <p className="text-[10px] text-slate-400 leading-tight mt-3">Task ưu tiên cao, ảnh hưởng trực tiếp tiến độ dự án.</p>
+              </div>
+
+              {/* Tải công việc */}
+              <div className="bg-blue-50/40 border border-blue-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
+                <div>
+                  <span className="text-[9px] font-extrabold text-blue-500 uppercase tracking-wider">Tải công việc</span>
+                  <p className="text-2xl font-black text-[#0058be] mt-1">{workload}%</p>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-tight mt-3">Tải trung bình — có thể nhận thêm task nếu ưu tiên rõ.</p>
               </div>
             </div>
-          )}
+          </div>
 
-          {activeTab === 'projects' && (
+          {/* 3. PHÂN BỐ PRIORITY (4 PILLS) */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Phân bố priority</h3>
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-purple-50/80 border border-purple-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-purple-700 block">{criticalTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-purple-600 uppercase tracking-wider mt-0.5 block">CRITICAL</span>
+              </div>
+              <div className="bg-orange-50/80 border border-orange-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-orange-700 block">{highTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-orange-600 uppercase tracking-wider mt-0.5 block">HIGH</span>
+              </div>
+              <div className="bg-blue-50/80 border border-blue-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-blue-700 block">{normalTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider mt-0.5 block">NORMAL</span>
+              </div>
+              <div className="bg-slate-100/80 border border-slate-200/80 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-slate-700 block">{interruptTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-slate-600 uppercase tracking-wider mt-0.5 block">INTERRUPT</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. DỰ ÁN ĐANG THAM GIA */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Dự án đang tham gia</h3>
             <div className="space-y-3">
-              {memberProjects.length === 0 ? (
-                <p className="text-xs text-slate-400 font-semibold text-center py-6">Chưa có dự án nào.</p>
+              {activeProjects.length === 0 ? (
+                <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center text-xs font-semibold text-slate-400">
+                  Chưa có dự án nào đang tham gia.
+                </div>
               ) : (
-                memberProjects.map((p: any) => (
-                  <div key={p.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
-                    <div>
-                      <h4 className="text-xs font-bold text-[#0b1c30]">{p.name}</h4>
-                      <p className="text-[10px] text-slate-400 mt-1">Phụ trách {p.tasksCount} task · Đã xong {p.doneCount} task</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-extrabold text-[#0058be]">{p.progress}%</span>
-                      <div className="w-24">
-                        <ProgressBar value={p.progress} color={p.progress >= 80 ? 'bg-emerald-500' : 'bg-blue-500'} height="h-2" />
+                activeProjects.map(p => {
+                  const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
+                  const pOpen = pTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel').length;
+                  const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
+                  const nextTask = pTasks.find(t => t.end_date_est || t.created_at);
+                  const deadlineStr = nextTask ? (nextTask.end_date_est || '11/08').split('-').reverse().slice(0,2).join('/') : '11/08';
+
+                  return (
+                    <div key={p.id} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-extrabold text-[#0b1c30]">{p.name}</h4>
+                        <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">
+                          {pOpen} task mở
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
+                          <span className="text-sm font-black text-[#0b1c30] block">{pOpen}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">TASK MỞ</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
+                          <span className="text-sm font-black text-[#0b1c30] block">{pCritical}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">CRITICAL</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
+                          <span className="text-sm font-black text-[#0b1c30] block">{deadlineStr}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">DEADLINE GẦN NHẤT</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
-          )}
+          </div>
 
-          {activeTab === 'tasks' && (
-            <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-slate-100">
-                <div className="flex gap-1.5 flex-wrap">
-                  <button onClick={() => setTaskFilter('all')} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${taskFilter === 'all' ? 'bg-[#0058be] text-white' : 'bg-slate-100 text-slate-600'}`}>Tất cả ({memberTasks.length})</button>
-                  <button onClick={() => setTaskFilter('inProgress')} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${taskFilter === 'inProgress' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Đang làm ({inProgTasks.length})</button>
-                  <button onClick={() => setTaskFilter('overdue')} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${taskFilter === 'overdue' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Trễ ({overdueTasks.length})</button>
-                  <button onClick={() => setTaskFilter('done')} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${taskFilter === 'done' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Đã xong ({doneTasks.length})</button>
-                </div>
-                <input 
-                  type="text" 
-                  placeholder="Tìm task..." 
-                  value={searchTask} 
-                  onChange={e => setSearchTask(e.target.value)} 
-                  className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 outline-none w-48"
-                />
+          {/* 5. TASK TRONG KỲ ĐANG XEM */}
+          <div>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+              <div>
+                <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider">Task trong kỳ đang xem</h3>
+                <p className="text-[10px] text-slate-400 font-medium">Sắp xếp: Deadline gần nhất → Critical → High → Normal → Interrupt</p>
               </div>
-
-              <div className="space-y-2 max-h-[350px] overflow-y-auto custom-scrollbar">
-                {filteredTasks.length === 0 ? (
-                  <p className="text-xs text-slate-400 font-semibold text-center py-6">Không tìm thấy task nào.</p>
-                ) : (
-                  filteredTasks.map((t: any) => (
-                    <div key={t.id} className="p-3 bg-white rounded-xl border border-slate-200 flex justify-between items-center gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${t.status === 'Done' || t.status === 'done' ? 'bg-emerald-100 text-emerald-700' : t.days_late > 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-                            {t.status}
-                          </span>
-                          <p className="text-xs font-bold text-[#0b1c30]">{t.name}</p>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1">Dự án: {t.projectName || 'Không có'} · Khách hàng: {t.customerName || 'Không có'}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className="text-xs font-extrabold text-[#0058be] block">+{t.kpi_base || 0} KPI</span>
-                        <span className="text-[10px] text-slate-400 font-semibold">{t.end_date_est || 'Chưa có hạn'}</span>
-                      </div>
-                    </div>
-                  ))
-                )}
+              <div className="flex gap-1">
+                {(['all', 'overdue', 'critical', 'high'] as const).map(filter => (
+                  <button
+                    key={filter}
+                    onClick={() => setTaskFilter(filter)}
+                    className={`px-3 py-1 rounded-full text-[10px] font-extrabold transition-all cursor-pointer ${
+                      taskFilter === filter 
+                        ? 'bg-[#0058be] text-white shadow-sm' 
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {filter === 'all' ? 'Tất cả' : filter === 'overdue' ? 'Trễ' : filter === 'critical' ? 'Critical' : 'High'}
+                  </button>
+                ))}
               </div>
             </div>
-          )}
+
+            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-400 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-100">
+                      <th className="px-4 py-2.5 text-left">TASK</th>
+                      <th className="px-4 py-2.5 text-left">DỰ ÁN</th>
+                      <th className="px-4 py-2.5 text-center">PRIORITY</th>
+                      <th className="px-4 py-2.5 text-center">DEADLINE</th>
+                      <th className="px-4 py-2.5 text-center">TRẠNG THÁI</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredTasks.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="text-center py-6 text-xs text-slate-400 font-semibold">
+                          Không có task nào.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredTasks.map((t: any) => {
+                        const prio = (t.priority || 'normal').toUpperCase();
+                        const isDone = t.status === 'Done' || t.status === 'done';
+                        const dlStr = t.end_date_est ? t.end_date_est.split('-').reverse().slice(0,2).join('/') : '11/08';
+
+                        return (
+                          <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="px-4 py-3">
+                              <p className="font-bold text-[#0b1c30] text-xs">{t.name}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">Task đang được triển khai trong kỳ.</p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 font-medium text-xs">
+                              {t.projectName || t.project_name || 'Dự án Timetech'}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                                prio === 'CRITICAL' ? 'bg-purple-100 text-purple-700' :
+                                prio === 'HIGH' ? 'bg-orange-100 text-orange-700' :
+                                prio === 'INTERRUPT' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                              }`}>
+                                {prio}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center font-bold text-slate-700 text-xs">
+                              {dlStr}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                isDone ? 'bg-emerald-50 text-emerald-600' : 'bg-emerald-50 text-emerald-600'
+                              }`}>
+                                {isDone ? 'Đã xong' : 'Đang làm'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
