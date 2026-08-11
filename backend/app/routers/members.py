@@ -292,6 +292,7 @@ def list_members(
         count = int(task_count) if task_count else 0
         md_total = float(manday_total) if manday_total else 0.0
         md_est_t = float(manday_est_total) if manday_est_total else 0.0
+        kpi_base_t = float(kpi_base_total) if kpi_base_total else 0.0
         avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
         bonus = calc_kpi_bonus(avg)
 

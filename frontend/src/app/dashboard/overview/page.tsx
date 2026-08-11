@@ -365,10 +365,10 @@ export default function OverviewTab() {
     const isSameId = (a: any, b: any) => a != null && b != null && String(a) === String(b);
     const isIdInList = (idList: any[], targetId: any) => targetId != null && idList.some(id => String(id) === String(targetId));
 
-    // 1. Get Leaders
+    // 1. Get Leaders directly from rawMembers
     const leaderMap = new Map();
     rawMembers.forEach(m => {
-      const lName = m.leader_name || 'Không có Leader';
+      const lName = (m.leader_name || '').trim() || 'Không có Leader';
       if (!leaderMap.has(lName)) {
         leaderMap.set(lName, { name: lName, count: 0, team: m.team || m.department || 'Khác', memberIds: [] });
       }
@@ -390,7 +390,7 @@ export default function OverviewTab() {
     // 2. Filter Members by Leader
     let activeTeamList = rawMembers;
     if (selectedLeader && selectedLeader !== 'all') {
-      activeTeamList = rawMembers.filter(m => (m.leader_name || 'Không có Leader') === selectedLeader);
+      activeTeamList = rawMembers.filter(m => ((m.leader_name || '').trim() || 'Không có Leader') === selectedLeader);
     }
     const teamMemberIds = activeTeamList.map(m => m.id);
 
