@@ -483,3 +483,21 @@ export const getSessionTimeline = (sessionId: string) =>
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);
 
+// Notifications
+export const remindLeader = (taskId: number, message?: string) =>
+  api.post('/notifications/remind', { task_id: taskId, message }).then(r => r.data);
+
+export const remindLeaderBulk = (projectId?: number) =>
+  api.post('/notifications/remind-bulk', { project_id: projectId }).then(r => r.data);
+
+export const getMyAlerts = () =>
+  api.get('/notifications/my-alerts').then(r => r.data);
+
+export const remindTaskGroup = (taskGroupId: number, message?: string) =>
+  api.post('/notifications/remind-group', { task_group_id: taskGroupId, message }).then(r => r.data);
+
+export const getInboxNotifications = () =>
+  api.get('/notifications/inbox').then(r => r.data);
+
+export const markNotificationRead = (id: number) =>
+  api.patch(`/notifications/${id}/read`).then(r => r.data);

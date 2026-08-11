@@ -418,20 +418,9 @@ def recalculate_parent_end_actual(task, db):
         if '.' not in suffix:  # Chỉ con trực tiếp, không phải cháu/chắt
             immediate_children.append(child)
     
-    # Lấy tất cả end_date_actual của các task con có status = Done
-    done_dates = []
-    for child in immediate_children:
-        if child.status and child.status.strip().lower() == "done":
-            if child.end_date_actual:
-                done_dates.append(child.end_date_actual)
-    
-    # Cập nhật END ACTUAL của cha
-    if done_dates:
-        # Lấy ngày trễ nhất (MAX)
-        parent_task.end_date_actual = max(done_dates)
-    else:
-        # Không có task con nào Done → xóa END ACTUAL
-        parent_task.end_date_actual = None
+    # Tính năng cập nhật END ACTUAL của cha từ con bị bỏ theo yêu cầu của user.
+    # Khi task cha chuyển Done thì hệ thống đã tự động set end_date_actual = hôm nay.
+    pass
     
     db.flush()
     

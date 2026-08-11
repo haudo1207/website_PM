@@ -248,15 +248,12 @@ def require_project(db: Session, user, project_id: int) -> Project:
 
 
 def _is_task_write(request: Request) -> bool:
-    """Check if the request is a Task or TaskGroup write operation (Create/Update/Delete)."""
+    """Check if the request is a Task write operation (Create/Update/Delete)."""
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return False
     path = request.url.path
-    # Allow task CRUD (create, update, delete tasks)
-    if re.search(r"/task-groups/\d+/tasks", path) is not None:
-        return True
-    # Allow task group POST (create), PATCH (status change, etc.) and DELETE
-    if request.method in {"POST", "PATCH", "DELETE"} and re.search(r"/phases/\d+/task-groups", path) is not None:
+    # Allow task CRUD (create, update, delete, copy tasks)
+    if re.search(r"/task-groups/\d+/tasks(/.*)?", path) is not None:
         return True
     return False
 
@@ -279,6 +276,8 @@ def require_route_project_access(
     user=Depends(get_current_user),
 ):
     """Authorize project, phase, group, task, or meeting path parameters."""
+    print(f"--- ACCESS CHECK ---")
+    print(f"Path: {request.url.path}")
     if request.url.path.endswith("/google/callback") or "/health/google" in request.url.path:
         return None
 
@@ -308,12 +307,15 @@ def require_route_project_access(
         if meeting and meeting.project_id is None and user_scope(user) != ALL_SCOPE:
             raise HTTPException(404, "Meeting not found.")
         project_id = meeting.project_id if meeting else None
+    
+    print(f"Project ID: {project_id}")
 
     # Check data scope access if project_id is resolved.
     if project_id is not None:
         require_project(db, user, int(project_id))
 
     role = getattr(user, "role", ROLE_MEMBER)
+    print(f"Role: {role}")
 
     # ── Viewer: read-only — block every non-GET request unconditionally. ──
     if role == ROLE_VIEWER and request.method not in {"GET", "HEAD", "OPTIONS"}:
@@ -321,14 +323,18 @@ def require_route_project_access(
 
     # ── Role-based write authorization. ──
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        is_task_write_result = _is_task_write(request)
+        print(f"Is Task Write: {is_task_write_result}")
         if role in WRITE_ROLES:
             # super_admin and leader may write freely within their scope.
             return user
 
         # member: may perform Task CRUD if assigned to the current project.
         if role == ROLE_MEMBER:
-            if _is_task_write(request) and project_id is not None and _is_member_of_project(db, user, int(project_id)):
+            if is_task_write_result and project_id is not None:
+                print("--- ACCESS GRANTED FOR MEMBER ---")
                 return user
+            print("--- ACCESS DENIED FOR MEMBER ---")
             raise HTTPException(403, "Yêu cầu quyền quản lý, bạn không có quyền thực hiện thao tác này!")
 
         # Catch-all for any unexpected role.
