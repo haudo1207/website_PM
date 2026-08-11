@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
-import { getMembers, getTeams, getDepartments, getWorkspaces } from '@/lib/api';
+import { getMembers, getTeams, getDepartments, getWorkspaces, getMe } from '@/lib/api';
 
 export default function KPIPage() {
     const router = useRouter();
@@ -28,6 +28,16 @@ export default function KPIPage() {
     const [levelOptions, setLevelOptions] = useState<any[]>([]);
     const [workspaceOptions, setWorkspaceOptions] = useState<any[]>([]);
     const [teamOptions, setTeamOptions] = useState<any[]>([]);
+    // Workspace data scope: for Member/Viewer the assigned Workspace is the
+    // effective KPI data scope (fixed filter); other roles keep existing behavior.
+    const [userRole, setUserRole] = useState("");
+    const [userScope, setUserScope] = useState("");
+    const isScopedUser = (userRole === 'member' || userRole === 'viewer') && userScope !== 'all';
+    const lockedWorkspaceName = useMemo(() => {
+        if (!isScopedUser || !userScope) return "";
+        const w = workspaceOptions.find(o => (o.code || "").toLowerCase() === String(userScope).toLowerCase());
+        return w ? w.name : "";
+    }, [isScopedUser, userScope, workspaceOptions]);
     const [sortConfig, setSortConfig] = useState({
         key: "kpi_total",
         direction: "desc",
@@ -53,24 +63,38 @@ export default function KPIPage() {
         getTeams().then(setLevelOptions).catch(() => {});
         getWorkspaces().then(setWorkspaceOptions).catch(() => {});
         getDepartments().then(setTeamOptions).catch(() => {});
+        getMe().then(me => { setUserRole(me.role); setUserScope(me.data_scope || ''); }).catch(() => {});
     }, []);
+
+    // Member/Viewer: keep the Workspace filter pinned to the assigned Workspace.
+    useEffect(() => {
+        if (!isScopedUser) return;
+        if (lockedWorkspaceName && workspace !== lockedWorkspaceName) {
+            setWorkspace(lockedWorkspaceName);
+        }
+    }, [isScopedUser, lockedWorkspaceName, workspace]);
 
     const memberParams = useMemo(() => {
         const params: any = {};
+        const effectiveWorkspace = isScopedUser ? lockedWorkspaceName : workspace;
         if (activeTab === 'KPItotal') {
             if (month) params.month = parseInt(month);
             if (year) params.year = parseInt(year);
+            if (level) params.team = level;
+            if (effectiveWorkspace) params.workspace = effectiveWorkspace;
+            if (team) params.department = team;
+            if (debouncedSearch) params.search = debouncedSearch;
         } else {
             // KPI Tuần: gửi date range thay vì tháng/năm
             if (startDate) params.start_date = startDate;
             if (endDate) params.end_date = endDate;
+            if (level) params.team = level;
+            if (effectiveWorkspace) params.workspace = effectiveWorkspace;
+            if (team) params.department = team;
+            if (debouncedSearch) params.search = debouncedSearch;
         }
-        if (level) params.team = level;
-        if (workspace) params.workspace = workspace;
-        if (team) params.department = team;
-        if (debouncedSearch) params.search = debouncedSearch;
         return params;
-    }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate]);
+    }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName]);
 
     const { data: members = [], isFetching: isLoading } = useQuery({
         queryKey: ['kpi-members', memberParams],
@@ -182,12 +206,20 @@ export default function KPIPage() {
 
                                     {/* Workspace */}
                                     <select 
-                                        value={workspace} 
+                                        value={isScopedUser ? (lockedWorkspaceName || workspace) : workspace} 
                                         onChange={e => setWorkspace(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
+                                        disabled={isScopedUser}
+                                        title={isScopedUser ? `Workspace cố định theo tài khoản: ${lockedWorkspaceName || userScope}` : undefined}
+                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-70"
                                     >
-                                        <option value="">Tất cả Workspace</option>
-                                        {workspaceOptions.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                                        {isScopedUser ? (
+                                            <option value={lockedWorkspaceName || workspace}>{lockedWorkspaceName || 'Tất cả Workspace'}</option>
+                                        ) : (
+                                            <>
+                                                <option value="">Tất cả Workspace</option>
+                                                {workspaceOptions.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                                            </>
+                                        )}
                                     </select>
 
                                     {/* Team */}
@@ -225,8 +257,8 @@ export default function KPIPage() {
                                     </select>
 
                                     {/* Clear filter */}
-                                    {(month || year || search || level || workspace || team) && (
-                                        <button onClick={() => { setMonth(''); setYear(''); setSearch(''); setLevel(''); setWorkspace(''); setTeam(''); }}
+                                    {(month || year || search || level || team || (!isScopedUser && workspace)) && (
+                                        <button onClick={() => { setMonth(''); setYear(''); setSearch(''); setLevel(''); setTeam(''); if (!isScopedUser) setWorkspace(''); }}
                                             className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all ml-auto bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
                                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
