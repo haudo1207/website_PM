@@ -23,6 +23,22 @@ TEAM_POSITIONS = {
   "Content Production": ["Video Editor", "Graphic Designer", "Motion Designer", "Photographer"]
 }
 
+def calc_kpi_bonus(kpi: float) -> float:
+    if kpi < 90: return 0.0
+    if kpi < 95: return 0.90
+    if kpi < 100: return 0.95
+    if kpi < 105: return 1.00
+    if kpi < 110: return 1.05
+    if kpi < 115: return 1.10
+    if kpi < 120: return 1.15
+    if kpi < 125: return 1.20
+    if kpi < 130: return 1.25
+    if kpi < 135: return 1.30
+    if kpi < 140: return 1.35
+    if kpi < 145: return 1.40
+    if kpi < 150: return 1.45
+    return 1.50
+
 def get_primary_team(positions):
     for team, team_positions in TEAM_POSITIONS.items():
         if any(pos in team_positions for pos in positions):
@@ -233,23 +249,9 @@ def list_members(
         count = int(task_count) if task_count else 0
         md_total = float(manday_total) if manday_total else 0.0
         md_est_t = float(manday_est_total) if manday_est_total else 0.0
-        kpi_base_t = float(kpi_base_total) if kpi_base_total else 0.0
-        
-        avg = 0.0
-        bonus = 0.0
-        
-        # Chỉ tính Trung bình và Bonus nếu người dùng đang lọc theo một Tháng cụ thể
-        if month:
-            # 1. Trung bình KPI (Tổng điểm KPI / Số tuần của chu kỳ đó)
-            avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
-            
-            # 2. KPI Bonus (dựa trên ảnh bảng Achievement)
-            if total >= 150:
-                bonus = 1.50
-            elif total >= 100:
-                step = (int(total) - 100) // 5
-                bonus = 1.00 + (step * 0.05)
-            
+        avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
+        bonus = calc_kpi_bonus(avg)
+
         d['kpi_total'] = total
         d['kpi_avg'] = avg
         d['kpi_bonus'] = round(bonus, 2)

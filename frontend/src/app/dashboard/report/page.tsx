@@ -20,15 +20,12 @@ const formatVNDate = (dStr: string) => {
 import { 
   priorityDot,
   statusStyle,
-  activityColor
+  activityColor,
+  MONTH_WEEKS_COUNT,
+  getWeekOfMonth
 } from '@/app/dashboard/constants';
 
 let cachedReportData: any = null;
-
-function getWeekOfMonth(date: Date) {
-  const firstDay = new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-  return Math.ceil((date.getDate() + firstDay) / 7);
-}
 
 export default function ReportTab() {
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
@@ -50,12 +47,78 @@ export default function ReportTab() {
   const [loadingReal, setLoadingReal] = useState(false);
 
   const [rawMyTasks, setRawMyTasks] = useState<any[]>(cachedReportData?.rawMyTasks || []);
-  
-  const fetchReportData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedReportData && cachedReportData.rawMyTasks?.length > 0) {
-      return;
-    }
 
+  const applyQuickFilter = (type: string) => {
+    const now = new Date();
+    if (type === 'Tuần trước') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tuần này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek(getWeekOfMonth(now));
+    } else if (type === 'Tuần tới') {
+      const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tháng trước') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng tới') {
+      const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    }
+  };
+
+  const { chartStats, chartWeeklyProgress, chartMonthlyProgress } = useMemo(() => {
+    let dCount = 0, iCount = 0, oCount = 0, cKpi = 0;
+
+    const cTasks = rawMyTasks.filter((t: any) => {
+      if (!t.end_date_est) return true;
+      const d = new Date(t.end_date_est);
+      if (isNaN(d.getTime())) return true;
+      if (selectedYear !== 'all' && d.getFullYear() !== selectedYear) return false;
+      if (selectedMonth !== 'all' && (d.getMonth() + 1) !== selectedMonth) return false;
+      if (selectedWeek !== 'all' && getWeekOfMonth(d) !== selectedWeek) return false;
+      return true;
+    });
+
+    cTasks.forEach((t: any) => {
+      const isDone = t.status === 'Done' || t.status === 'done';
+      const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+      const daysLateNum = typeof t.days_late === 'number' ? t.days_late : 0;
+      const isOverdue = !isDone && !isCancel && daysLateNum > 0;
+      if (isDone) { dCount++; cKpi += (t.kpi_base || 0); }
+      else if (!isCancel) { iCount++; if (isOverdue) oCount++; }
+    });
+
+    const targetMonth = selectedMonth !== 'all' ? selectedMonth : (new Date().getMonth() + 1);
+    const numWeeks = typeof targetMonth === 'number' && MONTH_WEEKS_COUNT[targetMonth] ? MONTH_WEEKS_COUNT[targetMonth] : 5;
+
+    const wProgress = Array.from({ length: numWeeks }, (_, idx) => {
+      const wNum = idx + 1;
+      const wTasks = cTasks.filter((t: any) => {
+        if (!t.end_date_est) return false;
+        const d = new Date(t.end_date_est);
+        return !isNaN(d.getTime()) && getWeekOfMonth(d) === wNum;
+      });
+      const wDone = wTasks.filter((t: any) => t.status === 'Done' || t.status === 'done');
+      const wKpi = wDone.reduce((acc: number, t: any) => acc + (t.kpi_base || 0), 0);
+      return {
+        name: `Tuần ${wNum}`,
+        kpi: Math.round(wKpi),
+        tasks: wTasks.length
+      };
+    });
+
+    return {
+      chartStats: { done: dCount, inProgress: iCount, overdue: oCount },
+      chartWeeklyProgress: wProgress,
+      chartMonthlyProgress: [{ name: selectedMonth !== 'all' ? `Tháng ${selectedMonth}` : 'Tất cả', kpi: Math.round(cKpi), tasks: cTasks.length }]
+    };
+  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek]);
+
+  const fetchReportData = useCallback((forceRefresh = false) => {
+    if (!forceRefresh && cachedReportData) return;
     setLoadingReal(true);
     const ts = Date.now();
     const token = getToken();
@@ -122,7 +185,8 @@ export default function ReportTab() {
     realTaskStats,
     filteredActivities,
     weeklyProgress,
-    monthlyProgress
+    monthlyProgress,
+    topRealProjects
   } = useMemo(() => {
     let doneCount = 0;
     let inProgressCount = 0;
@@ -170,8 +234,8 @@ export default function ReportTab() {
           overdueCount++;
           overdueList.push({
             id: t.id,
-            project: t.projectName,
-            customer: t.customerName,
+            project: t.projectName || t.project_name || 'Chưa rõ',
+            customer: t.customerName || t.customer_name || 'Chưa rõ',
             year: t.year,
             name: t.name,
             deadline: t.end_date_est || 'Chưa có',
@@ -183,12 +247,31 @@ export default function ReportTab() {
           const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
           if (diffDays >= 0 && diffDays <= 3) {
             upcoming.push({
-              id: t.id, project: t.projectName, name: t.name, deadline: t.end_date_est, daysLeft: diffDays
+              id: t.id, project: t.projectName || 'Chưa rõ', name: t.name, deadline: t.end_date_est, daysLeft: diffDays
             });
           }
         }
       }
     });
+
+    const myProjectsMap = new Map();
+    filteredTasks.forEach(t => {
+      const pName = t.projectName || 'Không có';
+      const cName = t.customerName || t.customer_name || 'Không có';
+      if (!myProjectsMap.has(pName)) {
+        myProjectsMap.set(pName, { name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0 });
+      }
+      const p = myProjectsMap.get(pName);
+      p.tasks++;
+      if (t.status === 'Done' || t.status === 'done') p.done++;
+      p.kpi += (t.kpi_base || 0);
+    });
+    const topProjects = Array.from(myProjectsMap.values())
+      .sort((a, b) => b.kpi - a.kpi)
+      .map(p => ({
+        ...p,
+        progress: p.tasks > 0 ? Math.round((p.done / p.tasks) * 100) : 0
+      }));
 
     const stats = {
       total: filteredTasks.length,
@@ -208,7 +291,7 @@ export default function ReportTab() {
       { name: 'Tuần 4', kpi: Math.round(kpiPoints), tasks: filteredTasks.length },
     ];
     
-    const mProg = [{ name: `Tháng ${selectedMonth}`, kpi: Math.round(kpiPoints), tasks: filteredTasks.length }];
+    const mProg = [{ name: selectedMonth !== 'all' ? `Tháng ${selectedMonth}` : 'Tất cả', kpi: Math.round(kpiPoints), tasks: filteredTasks.length }];
 
     return {
       myRealTasks: filteredTasks,
@@ -217,7 +300,8 @@ export default function ReportTab() {
       realTaskStats: stats,
       filteredActivities: acts.slice(0, 5),
       weeklyProgress: wProg,
-      monthlyProgress: mProg
+      monthlyProgress: mProg,
+      topRealProjects: topProjects
     };
   }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, realMemberData]);
 
@@ -263,12 +347,14 @@ export default function ReportTab() {
 
   return (
     <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
+      {/* HEADER & TIME FILTER */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div className="flex items-center gap-2">
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Báo cáo hiệu suất cá nhân</h3>
           {loadingReal && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật...</span>}
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
             <div className="flex gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
@@ -304,10 +390,25 @@ export default function ReportTab() {
                   className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
                 >
                   <option value="all">Tất cả</option>
-                  {[...Array(5)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+                  {[...Array(selectedMonth !== 'all' ? (MONTH_WEEKS_COUNT[selectedMonth] || 5) : 5)].map((_, i) => (
+                    <option key={i+1} value={i+1}>{i+1}</option>
+                  ))}
                 </select>
               </div>
             </div>
+          </div>
+
+          {/* SHORTCUT FILTER BUTTONS FOR REPORT */}
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {['Tuần trước', 'Tuần này', 'Tuần tới', 'Tháng trước', 'Tháng này', 'Tháng tới'].map(label => (
+              <button
+                key={label}
+                onClick={() => applyQuickFilter(label)}
+                className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-[11px] font-bold transition-all text-slate-600 cursor-pointer whitespace-nowrap shadow-sm active:scale-95"
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <button
@@ -320,21 +421,23 @@ export default function ReportTab() {
         </div>
       </div>
 
+      {/* KPI CARDS */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {reportKpiCards.map(c => <KpiCard key={c.label} {...c} />)}
       </div>
 
+      {/* CHARTS CONTAINER */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <PieChartCard title="Trạng thái Task" data={[
-          { name: 'Hoàn Thành', value: realTaskStats.done, fill: '#10b981' },
-          { name: 'Đang Làm', value: Math.max(0, realTaskStats.inProgress - realTaskStats.overdue), fill: '#f59e0b' },
-          { name: 'Trễ Hạn', value: realTaskStats.overdue, fill: '#ef4444' }
+          { name: 'Hoàn Thành', value: chartStats.done, fill: '#10b981' },
+          { name: 'Đang Làm', value: chartStats.inProgress, fill: '#f59e0b' },
+          { name: 'Trễ Hạn', value: chartStats.overdue, fill: '#ef4444' }
         ]} />
         
         <div className="relative">
           <BarChartCard
-            title={selectedWeek === 'all' ? "Tiến độ KPI theo tuần trong tháng" : "Tiến độ KPI tuần này"}
-            data={selectedWeek === 'all' ? weeklyProgress : monthlyProgress}
+            title={selectedMonth !== 'all' ? `Tiến độ KPI tháng ${selectedMonth}` : "Tiến độ KPI theo tuần"}
+            data={chartWeeklyProgress}
             bars={[
               { key: 'kpi',   name: 'Điểm KPI',  fill: '#6366f1' },
               { key: 'tasks', name: 'Số Task', fill: '#10b981' },
@@ -344,6 +447,57 @@ export default function ReportTab() {
         </div>
       </div>
 
+      {/* DỰ ÁN CỦA TÔI (MY PROJECTS TABLE) */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <SvgIcon name="folders" className="w-4 h-4 text-emerald-600" />
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự Án Của Tôi</h3>
+          </div>
+          <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full border border-emerald-100">{topRealProjects.length} dự án</span>
+        </div>
+        <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-slate-50/80 text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider">
+                <th className="px-4 py-3 font-bold w-12 text-center">STT</th>
+                <th className="px-4 py-3 font-bold">Tên Dự Án</th>
+                <th className="px-4 py-3 font-bold">Khách Hàng</th>
+                <th className="px-4 py-3 font-bold text-center">Số Task</th>
+                <th className="px-4 py-3 font-bold text-center">Hoàn Thành</th>
+                <th className="px-4 py-3 font-bold text-center text-[#0058be]">Tổng KPI</th>
+                <th className="px-4 py-3 font-bold min-w-[120px]">Tiến Độ Của Tôi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topRealProjects.length === 0 ? (
+                <tr><td colSpan={7} className="text-center py-6 text-slate-400 font-semibold">Chưa tham gia dự án nào.</td></tr>
+              ) : (
+                topRealProjects.map((p, idx) => (
+                  <tr key={p.name} className="border-b border-slate-50 hover:bg-slate-50/50">
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${idx < 3 ? 'bg-amber-100 text-amber-700' : 'text-slate-400'}`}>#{idx + 1}</span>
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-[#0b1c30]">{p.name}</td>
+                    <td className="px-4 py-3 text-slate-500 font-semibold">{p.customerName || 'Không có'}</td>
+                    <td className="px-4 py-3 text-center text-slate-500 font-semibold">{p.tasks}</td>
+                    <td className="px-4 py-3 text-center text-emerald-600 font-bold">{p.done}</td>
+                    <td className="px-4 py-3 text-center text-[#0058be] font-extrabold">{p.kpi}</td>
+                    <td className="px-4 py-3">
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden flex items-center">
+                        <div className={`h-full rounded-full ${p.progress >= 80 ? 'bg-emerald-500' : p.progress >= 50 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${p.progress}%` }} />
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 mt-1 block">{p.progress}%</span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* TASK CỦA TÔI TABLE */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
@@ -354,9 +508,9 @@ export default function ReportTab() {
         </div>
         <div className="overflow-x-auto overflow-y-auto max-h-[500px] custom-scrollbar relative">
           <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur shadow-sm">
+            <thead className="sticky top-0 z-20 bg-slate-50/95 backdrop-blur shadow-sm">
               <tr className="text-slate-500 border-b border-slate-200 text-[10px] tracking-wider">
-                <th className="px-4 py-2.5 min-w-[150px] w-auto max-w-[220px] align-top bg-slate-100">
+                <th className="px-4 py-2.5 min-w-[180px] w-[250px] max-w-[280px] align-top bg-slate-100 sticky left-0 z-30 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                   <input 
                     type="text" 
                     placeholder="TÊN TASK (TÌM...)" 
@@ -544,8 +698,8 @@ export default function ReportTab() {
                 </tr>
               ) : (
                 tableTasks.map((t: any, i: number) => (
-                  <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/30'}`}>
-                    <td className="px-4 py-3 font-semibold text-[#0b1c30] whitespace-normal break-words max-w-[250px]">
+                  <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
+                    <td className={`px-4 py-3 font-semibold text-[#0b1c30] whitespace-normal break-words max-w-[250px] sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/95'}`}>
                       <div className="flex items-start gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${priorityDot[t.priority] || 'bg-slate-400'}`} />
                         <span className="leading-tight">{t.name}</span>
@@ -574,6 +728,7 @@ export default function ReportTab() {
         </div>
       </div>
 
+      {/* DEADLINE GẦN & HOẠT ĐỘNG GẦN ĐÂY & TASK TRỄ HẠN */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-amber-50/40 to-white">
