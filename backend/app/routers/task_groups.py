@@ -92,22 +92,11 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
 
 
 def sync_group_actual_dates(tg, db):
-    """Sync TaskGroup end_date_actual (max) from child tasks, considering only 'Done' tasks.
+    """Sync TaskGroup end_date_actual (max) from child tasks.
     
-    If the TaskGroup status is 'Done' and end_date_actual has been auto-set
-    (from when the group was marked Done), keep it — do not override."""
-    # Nếu TaskGroup đang Done và đã có end_date_actual (tự động set khi chuyển Done),
-    # giữ nguyên, không ghi đè bởi task con
-    if tg.status and tg.status.strip().lower() == "done" and tg.end_date_actual:
-        return tg
-
-    rows = db.query(Task.end_date_actual).filter(
-        Task.task_group_id == tg.id,
-        Task.status.in_(["Done", "done"]),  # Only consider tasks with status 'Done'
-        Task.end_date_actual.isnot(None)
-    ).all()
-    actual_end_dates = [r[0] for r in rows]
-    tg.end_date_actual = max(actual_end_dates) if actual_end_dates else None
+    Removed the child task synchronization as per user request.
+    If the TaskGroup is marked Done, it will just keep its end_date_actual.
+    """
     return tg
 
 

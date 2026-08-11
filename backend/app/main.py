@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit, notifications as notifications_router
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
@@ -15,6 +15,7 @@ from .models import task_group as task_group_model
 from .models import task as task_model
 from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
+from .models import notification as notification_model
 from sqlalchemy import text
 
 # Create all tables (new v5 schema)
@@ -224,6 +225,28 @@ def apply_schema_updates():
         # Add remark_type and description to performance_settings
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))
+
+        # Create notifications table
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                recipient_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+                sender_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                task_id INTEGER REFERENCES tasks_v2(id) ON DELETE SET NULL,
+                task_group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL,
+                project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                message VARCHAR NOT NULL,
+                notification_type VARCHAR DEFAULT 'task_reminder',
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS task_group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL;"))
+        conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_recipient_id ON notifications (recipient_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_task_id ON notifications (task_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_task_group_id ON notifications (task_group_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_project_id ON notifications (project_id);"))
 
         # Add new columns to chat_ai_tasks
         conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS skill_solution_id INTEGER NULL"))
@@ -850,6 +873,7 @@ app.include_router(lunch_router.router,         prefix="/api/lunch")
 app.include_router(chat_ai.router,              prefix="/api")
 app.include_router(project_templates_router.router, prefix="/api")
 app.include_router(system_audit.router,         prefix="/api")
+app.include_router(notifications_router.router, prefix="/api/notifications")
 
 @app.get("/health")
 @app.get("/api/health")
