@@ -19,9 +19,10 @@ import {
   getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks, getMasterPhases,
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
-  getMeetings, createMeeting, updateMeeting, deleteMeeting
+  getMeetings, createMeeting, updateMeeting, deleteMeeting,
+  remindLeader, remindTaskGroup
 } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, isMember } from '@/lib/auth';
 
 const ROMAN_PAIRS: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
 const to_roman = (n: number): string => {
@@ -2654,6 +2655,36 @@ function ProjectDetailContent() {
               <span>📄</span>
             </button>
 
+            {/* 🔔 Nhắc Leader
+            {(() => {
+              const today = new Date(); today.setHours(0,0,0,0);
+              const endEst = task.end_date_est ? new Date(task.end_date_est) : null;
+              const isOverdue = endEst && endEst < today && !['Done','Cancel'].includes(task.status);
+              const isDonePending = task.status === 'Done' && (!task.kpi_final || Number(task.kpi_final) === 0);
+              const needsRemind = isOverdue || isDonePending;
+              return (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await remindLeader(task.id);
+                      flash('Đã gửi nhắc nhở tới Leader thành công! 🔔');
+                    } catch (err: any) {
+                      alert('Lỗi gửi nhắc nhở: ' + (err.response?.data?.detail || err.message));
+                    }
+                  }}
+                  className={`flex items-center justify-center w-5 h-5 rounded text-[11px] transition-all ${
+                    needsRemind
+                      ? 'hover:bg-amber-100 text-amber-500 animate-pulse'
+                      : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'
+                  }`}
+                  title={needsRemind ? (isOverdue ? 'Task đang trễ hạn! Nhắc Leader' : 'Task Done chờ Leader xác nhận') : 'Nhắc Leader'}
+                >
+                  <span>🔔</span>
+                </button>
+              );
+            })()} */}
+
             {/* 🗑️ Delete */}
             <button
               type="button"
@@ -3862,10 +3893,40 @@ value={editValue}
                 );
               }
 
-              // Detail Task — bold with group icon
+              // Detail Task — bold with group icon and Remind Leader button
               if (colUpper === 'DETAIL TASK') {
+                const childTasks = items.filter(t => t.task_group_id === group.id);
+                const allDone = childTasks.length > 0 && childTasks.every(t => (t.status || '').toLowerCase() === 'done');
                 displayContent = (
-                  <span className="text-[12px] font-black text-[#0f172a] whitespace-pre-wrap break-words block leading-relaxed pr-4">{val}</span>
+                  <div className="flex items-center justify-between w-full pr-2 gap-2">
+                    <span className="text-[12px] font-black text-[#0f172a] whitespace-pre-wrap break-words block leading-relaxed pr-2">{val}</span>
+                    {isMember() && (group.status.toLowerCase() !== 'done') && (
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!allDone) {
+                            flash('Tất cả task con phải ở trạng thái Done mới được phép gửi thông báo!', true);
+                            return;
+                          }
+                          try {
+                            await remindTaskGroup(group.id);
+                            flash('Đã gửi thông báo nhắc Leader duyệt Task Cha thành công! 🔔');
+                          } catch (err: any) {
+                            alert(err.response?.data?.detail || 'Lỗi khi gửi thông báo nhắc duyệt!');
+                          }
+                        }}
+                        className={`px-2 py-0.5 rounded text-[10.5px] font-bold flex items-center gap-1 transition-all shrink-0 ${
+                          allDone
+                            ? 'bg-amber-100 hover:bg-amber-200 text-amber-700 border border-amber-300 shadow-sm cursor-pointer animate-pulse'
+                            : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-pointer hover:bg-slate-200'
+                        }`}
+                        title={allDone ? "Nhắc Leader duyệt Task Cha này" : "Phải hoàn thành tất cả task con (Done) mới được gửi thông báo"}
+                      >
+                        <span>🔔 Nhắc Leader</span>
+                      </button>
+                    )}
+                  </div>
                 );
               }
 

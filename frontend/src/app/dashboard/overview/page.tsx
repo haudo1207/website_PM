@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { getEmail, getName, getToken, getRole } from '@/lib/auth';
+import { getMyAlerts, remindLeaderBulk, getInboxNotifications, markNotificationRead } from '@/lib/api';
 import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
@@ -36,6 +38,18 @@ export default function OverviewTab() {
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
 
+  // Alerts for current member
+  const [myAlerts, setMyAlerts] = useState<{ overdue_count: number; pending_approval_count: number; total: number } | null>(null);
+  const [sendingBulkRemind, setSendingBulkRemind] = useState(false);
+  const [bulkRemindMsg, setBulkRemindMsg] = useState<string | null>(null);
+
+  // Inbox (Hộp thư) for Leader/Admin
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxItems, setInboxItems] = useState<any[]>([]);
+  const [inboxUnread, setInboxUnread] = useState(0);
+  const inboxRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
   // Matrix Filter
   const [matrixYear, setMatrixYear] = useState<number>(new Date().getFullYear());
 
@@ -45,6 +59,9 @@ export default function OverviewTab() {
     const ts = Date.now();
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+
+    // Fetch my-alerts in parallel
+    getMyAlerts().then(data => setMyAlerts(data)).catch(() => {});
 
     Promise.all([
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
@@ -62,9 +79,31 @@ export default function OverviewTab() {
     }).finally(() => setLoading(false));
   }, []);
 
+  const fetchInbox = useCallback(() => {
+    const role = getRole();
+    if (role === 'super_admin' || role === 'leader') {
+      getInboxNotifications().then(data => {
+        setInboxItems(data.items || []);
+        setInboxUnread(data.unread_count || 0);
+      }).catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     fetchOverviewData(false);
-  }, [fetchOverviewData]);
+    fetchInbox();
+  }, [fetchOverviewData, fetchInbox]);
+
+  // Close inbox popover on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (inboxRef.current && !inboxRef.current.contains(e.target as Node)) {
+        setInboxOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Derived Data
   const { 
@@ -311,7 +350,95 @@ export default function OverviewTab() {
 
 
 
+      {/* INBOX (HỘP THƯ) — chỉ hiển thị với Super Admin và Team Leader */}
+      {(() => {
+        const role = getRole();
+        if (!['super_admin', 'leader'].includes(role || '')) return null;
+        return (
+          <div ref={inboxRef} className="relative flex justify-end -mt-2 mb-2">
+            <button
+              onClick={() => { setInboxOpen(v => !v); if (!inboxOpen) fetchInbox(); }}
+              className="relative flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl shadow-sm hover:bg-slate-50 text-slate-700 text-[12px] font-bold transition-all cursor-pointer"
+              title="Hộp thư thông báo"
+            >
+              <span className="text-base">📨</span>
+              <span>Hộp thư</span>
+              {inboxUnread > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+                  {inboxUnread > 9 ? '9+' : inboxUnread}
+                </span>
+              )}
+            </button>
+
+            {inboxOpen && (
+              <div className="absolute top-10 right-0 z-50 w-[380px] max-h-[440px] overflow-y-auto bg-white border border-slate-200 rounded-2xl shadow-2xl flex flex-col">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 sticky top-0 bg-white z-10">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">📨</span>
+                    <h4 className="text-[13px] font-extrabold text-[#0b1c30]">Hộp thư thông báo</h4>
+                    {inboxUnread > 0 && (
+                      <span className="px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full">{inboxUnread} chưa đọc</span>
+                    )}
+                  </div>
+                  <button onClick={() => setInboxOpen(false)} className="text-slate-400 hover:text-slate-600 text-base cursor-pointer">✕</button>
+                </div>
+
+                {/* Items */}
+                {inboxItems.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                    <span className="text-4xl mb-2">📭</span>
+                    <p className="text-[12px]">Chưa có thông báo nào</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {inboxItems.map((n: any) => (
+                      <div
+                        key={n.id}
+                        onClick={async () => {
+                          if (!n.is_read) {
+                            await markNotificationRead(n.id).catch(() => {});
+                            setInboxItems(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x));
+                            setInboxUnread(prev => Math.max(0, prev - 1));
+                          }
+                          setInboxOpen(false);
+                          if (n.project_id) {
+                            const url = `/project/detail?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
+                            router.push(url);
+                          }
+                        }}
+                        className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-60' : 'bg-indigo-50/40'}`}
+                      >
+                        <span className="text-xl mt-0.5 shrink-0">{n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[12px] leading-snug ${n.is_read ? 'text-slate-500' : 'text-[#0b1c30] font-semibold'}`}>
+                            {n.message}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {n.project_name && (
+                              <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">{n.project_name}</span>
+                            )}
+                            {n.group_name && (
+                              <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold">{n.group_name}</span>
+                            )}
+                            <span className="text-[10px] text-slate-400 ml-auto shrink-0">
+                              {n.created_at ? new Date(n.created_at).toLocaleDateString('vi-VN') : ''}
+                            </span>
+                          </div>
+                        </div>
+                        {!n.is_read && <div className="w-2 h-2 bg-indigo-500 rounded-full mt-1.5 shrink-0" />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* KPI CARDS */}
+
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         <KpiCard label="Tasks Phụ Trách" value={pmStats.total} icon="tasks" border="border-l-[#0058be]" text="text-[#0058be]" trend="Tổng" />
         <KpiCard label="Đã Hoàn Thành" value={pmStats.done} icon="check" border="border-l-emerald-500" text="text-emerald-600" trend={pmStats.total ? `${Math.round(pmStats.done/pmStats.total*100)}%` : '0%'} />
@@ -320,6 +447,69 @@ export default function OverviewTab() {
         <KpiCard label="Manday Thực Tế" value={pmStats.manday} icon="clock" border="border-l-cyan-500" text="text-cyan-600" trend="Đã tiêu hao" />
         <KpiCard label="KPI Đạt Được" value={pmStats.kpi} icon="trophy" border="border-l-purple-500" text="text-purple-600" trend="Tổng điểm" />
       </div>
+
+      {/* ALERT BLOCK — hiển thị khi có task cần chú ý */}
+      {myAlerts && myAlerts.total > 0 && (
+        <div className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 py-3 rounded-xl border shadow-sm ${
+          myAlerts.overdue_count > 0
+            ? 'bg-red-50 border-red-200'
+            : 'bg-amber-50 border-amber-200'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            <span className="text-lg mt-0.5">⚠️</span>
+            <div>
+              <p className={`text-[12.5px] font-bold ${
+                myAlerts.overdue_count > 0 ? 'text-red-700' : 'text-amber-700'
+              }`}>
+                {myAlerts.overdue_count > 0 && (
+                  <>Bạn đang có <strong>{myAlerts.overdue_count}</strong> task trễ hạn cần xử lý{myAlerts.pending_approval_count > 0 ? ' và' : '.'}</>
+                )}
+                {myAlerts.pending_approval_count > 0 && (
+                  <> <strong>{myAlerts.pending_approval_count}</strong> task đã hoàn thành chờ xác nhận từ Leader.</>  
+                )}
+              </p>
+              {bulkRemindMsg && (
+                <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">{bulkRemindMsg}</p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/project"
+              className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                myAlerts.overdue_count > 0
+                  ? 'text-red-600 border-red-300 hover:bg-red-100'
+                  : 'text-amber-600 border-amber-300 hover:bg-amber-100'
+              }`}
+            >
+              Xem chi tiết
+            </Link>
+            <button
+              onClick={async () => {
+                setSendingBulkRemind(true);
+                setBulkRemindMsg(null);
+                try {
+                  const res = await remindLeaderBulk();
+                  setBulkRemindMsg(res.message || 'Đã gửi nhắc nhở!');
+                  setTimeout(() => setBulkRemindMsg(null), 4000);
+                } catch {
+                  setBulkRemindMsg('Lỗi gửi nhắc nhở, vui lòng thử lại.');
+                } finally {
+                  setSendingBulkRemind(false);
+                }
+              }}
+              disabled={sendingBulkRemind}
+              className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                myAlerts.overdue_count > 0
+                  ? 'bg-red-500 hover:bg-red-600 text-white border-red-500'
+                  : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
+              } disabled:opacity-60 cursor-pointer`}
+            >
+              {sendingBulkRemind ? '⏳ Đang gửi...' : '🔔 Gửi nhắc nhở hàng loạt'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
