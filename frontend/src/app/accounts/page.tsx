@@ -98,7 +98,7 @@ export default function AccountsPage() {
     }
   }, [router]);
 
-  const { data: accountsData, isFetching: loading, refetch: reload } = useQuery({
+  const { data: accountsData, isLoading: loading, refetch: reload } = useQuery({
     queryKey: ['accounts-list'],
     queryFn: async () => {
       const [accs, members, wss] = await Promise.all([
@@ -109,6 +109,7 @@ export default function AccountsPage() {
       return { accounts: accs, availableMembers: members, workspaces: wss || [] };
     },
     enabled: authorized,
+    staleTime: 2 * 60_000,
   });
   const accounts: Account[] = accountsData?.accounts || [];
   const availableMembers: MemberInfo[] = accountsData?.availableMembers || [];

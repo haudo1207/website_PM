@@ -473,7 +473,7 @@ export default function LeaveRequestPage() {
 
   const QUERY_KEY = ['leave-requests'] as const;
 
-  const { data: leaveData, isFetching: loading } = useQuery({
+  const { data: leaveData, isLoading: loading } = useQuery({
     queryKey: QUERY_KEY,
     queryFn: async () => {
       try {
@@ -497,6 +497,7 @@ export default function LeaveRequestPage() {
         return { requests: mockLeaveRequests, teamMembers: [] as TeamMember[] };
       }
     },
+    staleTime: 2 * 60_000,
   });
 
   const requests: LeaveRequest[] = leaveData?.requests || [];

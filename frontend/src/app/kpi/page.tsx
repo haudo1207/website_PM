@@ -96,9 +96,10 @@ export default function KPIPage() {
         return params;
     }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName]);
 
-    const { data: members = [], isFetching: isLoading } = useQuery({
+    const { data: members = [], isLoading } = useQuery({
         queryKey: ['kpi-members', memberParams],
         queryFn: () => getMembers(memberParams),
+        staleTime: 2 * 60_000,
     });
 
     const sortedMembers = useMemo(() => {

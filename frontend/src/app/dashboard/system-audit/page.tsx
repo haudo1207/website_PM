@@ -150,6 +150,7 @@ export default function SystemAuditTab() {
   const { data: auditData, isFetching: loading, refetch } = useQuery({
     queryKey: ['dashboard-system-audit', auditPage],
     queryFn: fetchSystemAuditData,
+    staleTime: 2 * 60_000,
   });
 
   const activeProjectsProgress: any[] = auditData?.activeProjectsProgress || [];
