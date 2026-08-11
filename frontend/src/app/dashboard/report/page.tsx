@@ -116,6 +116,7 @@ export default function ReportTab() {
   const { data: reportData, isFetching: loadingReal, refetch: refetchReport } = useQuery({
     queryKey: ['dashboard-report'],
     queryFn: fetchReportData,
+    staleTime: 2 * 60_000,
   });
 
   const currentUserProfile = reportData?.currentUserProfile ?? null;

@@ -404,6 +404,7 @@ export default function OverviewTab() {
   const { data: overviewData, isFetching: loading, refetch } = useQuery({
     queryKey: ['dashboard-overview'],
     queryFn: fetchOverview,
+    staleTime: 2 * 60_000,
   });
 
   const rawMembers: any[] = overviewData?.rawMembers || [];
