@@ -732,7 +732,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
                 db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Member"))
                 inserted.add((m_id, "Member"))
 
-    p.last_activity_at = func.now()
+    p.last_activity_at = sql_func.now()
     db.commit()
     db.refresh(p)
 
