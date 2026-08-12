@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search, Sparkles } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
@@ -11,9 +12,8 @@ import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, 
 import { isAdmin } from '@/lib/auth';
 
 export default function MeetingsPage() {
+  const queryClient = useQueryClient();
   const [canManage, setCanManage] = useState(false);
-  const [meetings, setMeetings] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
   const [monthFilter, setMonthFilter] = useState('All');
@@ -102,20 +102,17 @@ export default function MeetingsPage() {
     setCanManage(isAdmin());
   }, []);
 
-  const fetchMeetings = async () => {
-    setIsLoading(true);
-    try {
+  const { data: meetingsData, isLoading, refetch: fetchMeetings } = useQuery({
+    queryKey: ['meetings'],
+    queryFn: async () => {
       const data = await getMeetings();
-      if (data && data.success && Array.isArray(data.data)) {
-        setMeetings(data.data);
-      } else if (Array.isArray(data)) {
-        setMeetings(data);
-      }
-    } catch (error) { console.error("Failed to fetch meetings", error); }
-    finally { setIsLoading(false); }
-  };
-
-  useEffect(() => { fetchMeetings(); }, []);
+      if (data && data.success && Array.isArray(data.data)) return data.data;
+      if (Array.isArray(data)) return data;
+      return [];
+    },
+    staleTime: 2 * 60_000,
+  });
+  const meetings: any[] = meetingsData || [];
 
   const filteredMeetings = useMemo(() => {
     return (meetings || []).filter(m => {
@@ -135,11 +132,11 @@ export default function MeetingsPage() {
       if (meetingData.id) {
         const data = await updateMeeting(meetingData.id, meetingData);
         if (data.success) {
-          setMeetings(meetings.map(m => m.id === meetingData.id ? data.data : m));
+          queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meetingData.id ? data.data : m));
         }
       } else {
         const data = await createMeeting(meetingData);
-        if (data.success) setMeetings([data.data, ...meetings]);
+        if (data.success) queryClient.setQueryData(['meetings'], (prev: any[] = []) => [data.data, ...prev]);
       }
       setIsModalOpen(false); setEditingMeeting(null);
     } catch (error: any) {
@@ -152,7 +149,7 @@ export default function MeetingsPage() {
     if (!deleteConfirmId) return;
     try {
       await deleteMeeting(parseInt(deleteConfirmId));
-      setMeetings(prev => prev.filter(m => m.id !== parseInt(deleteConfirmId)));
+      queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.filter(m => m.id !== parseInt(deleteConfirmId)));
       setDeleteConfirmId(null);
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
@@ -163,7 +160,7 @@ export default function MeetingsPage() {
   const handleSync = async (meeting: any) => {
     const data = await syncMeeting(parseInt(meeting.id));
     if (data.success) {
-      setMeetings(prev => prev.map(m => m.id === meeting.id ? data.data : m));
+      queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? data.data : m));
     }
   };
 
@@ -268,7 +265,7 @@ export default function MeetingsPage() {
 
                 <button
                   type="button"
-                  onClick={fetchMeetings}
+                  onClick={() => fetchMeetings()}
                   className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#0b1c30] text-xs font-semibold rounded-lg transition-colors border border-[#cbd5e1] shadow-xs flex items-center gap-1.5"
                 >
                   <span>↻</span>
@@ -403,7 +400,7 @@ export default function MeetingsPage() {
       {/* Modals */}
       {canManage && <CreateMeetingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
-      {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => setMeetings(prev => prev.map(x => x.id === m.id ? m : x))} />}
+      {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(x => x.id === m.id ? m : x))} />}
       <MeetingDetailModal isOpen={isDetailOpen} onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }} meeting={detailMeeting} onEdit={canManage ? (m => { setEditingMeeting(m); setIsModalOpen(true); }) : undefined} onSummarize={canManage ? (m => { setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined} />
 
       {/* Delete Confirm Modal */}
