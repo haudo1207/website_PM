@@ -85,7 +85,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!isSuperAdmin()) {
-      router.push('/dashboard');
+      router.push('/dashboard/overview');
     } else {
       setAuthorized(true);
       getUsers().then(setUsers).catch(() => { });

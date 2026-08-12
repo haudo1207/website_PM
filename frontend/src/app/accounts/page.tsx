@@ -92,7 +92,7 @@ export default function AccountsPage() {
 
   useEffect(() => {
     if (!isAdmin()) {
-      router.push('/dashboard');
+      router.push('/dashboard/overview');
     } else {
       setAuthorized(true);
     }
