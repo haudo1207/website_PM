@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
-import { getMe, getWorkspaces, getMyLoginHistory, MeProfile, Workspace, LoginHistoryItem } from '@/lib/api';
+import { getMe, getWorkspaces, getMyLoginHistory, LoginHistoryItem } from '@/lib/api';
 
 const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Super Admin',
@@ -54,24 +55,28 @@ function ProfileSkeleton() {
 }
 
 export default function ProfilePage() {
-  const [profile, setProfile] = useState<MeProfile | null>(null);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [lastLogin, setLastLogin] = useState<LoginHistoryItem | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const [history, setHistory] = useState<LoginHistoryItem[] | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  useEffect(() => {
-    Promise.all([getMe(), getWorkspaces().catch(() => []), getMyLoginHistory(1).catch(() => [])])
-      .then(([me, ws, last]) => {
-        setProfile(me);
-        setWorkspaces(ws || []);
-        setLastLogin(last?.[0] || null);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: bundle, isLoading: loading } = useQuery({
+    queryKey: ['profile'],
+    queryFn: async () => {
+      const [me, ws, last] = await Promise.all([
+        getMe(),
+        getWorkspaces().catch(() => []),
+        getMyLoginHistory(1).catch(() => []),
+      ]);
+      return { profile: me, workspaces: ws || [], lastLogin: last?.[0] || null };
+    },
+  });
+  const profile = bundle?.profile || null;
+  const workspaces = bundle?.workspaces || [];
+  const lastLogin: LoginHistoryItem | null = bundle?.lastLogin || null;
+
+  const { data: history, isLoading: historyLoading } = useQuery({
+    queryKey: ['profile-login-history'],
+    queryFn: () => getMyLoginHistory(20),
+    enabled: historyOpen,
+  });
 
   const scopeLabel = useMemo(() => {
     if (!profile) return '';
@@ -80,19 +85,7 @@ export default function ProfilePage() {
     return ws ? `Dự án ${ws.name}` : profile.data_scope;
   }, [profile, workspaces]);
 
-  const toggleHistory = () => {
-    if (historyOpen) {
-      setHistoryOpen(false);
-      return;
-    }
-    setHistoryOpen(true);
-    if (history !== null) return;
-    setHistoryLoading(true);
-    getMyLoginHistory(20)
-      .then(setHistory)
-      .catch(() => setHistory([]))
-      .finally(() => setHistoryLoading(false));
-  };
+  const toggleHistory = () => setHistoryOpen(o => !o);
 
   return (
     <div className="min-h-screen bg-[#f0f2f5] text-[#0b1c30]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
