@@ -294,6 +294,15 @@ def apply_schema_updates():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_solution_id ON tasks_v2 (skill_solution_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_vendor_id ON tasks_v2 (skill_vendor_id)"))
 
+        # The Project model's last_activity_at column (sort projects by most
+        # recently touched) was never given a matching migration here — every
+        # pre-existing `projects` row is missing it on any install where the
+        # table already existed before this column was added, breaking any
+        # query that touches Project (Dashboard, Meetings, project edit, ...).
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ"))
+        conn.execute(text("UPDATE projects SET last_activity_at = COALESCE(updated_at, created_at, now()) WHERE last_activity_at IS NULL"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_last_activity_at ON projects (last_activity_at)"))
+
 def init_db_defaults():
     from .database import SessionLocal
     from .models.user import User
