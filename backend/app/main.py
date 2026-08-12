@@ -1,11 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit
+from sqlalchemy.orm import Session
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit, notifications as notifications_router
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
-from .database import engine, Base
+from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
 from .models import project as project_model
 from .models import lunch_record as lunch_record_model
@@ -14,10 +15,8 @@ from .models import task_group as task_group_model
 from .models import task as task_model
 from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
+from .models import notification as notification_model
 from sqlalchemy import text
-
-# Create all tables (new v5 schema)
-Base.metadata.create_all(bind=engine)
 
 def apply_schema_updates():
     """Small idempotent migrations for existing installs without Alembic."""
@@ -224,6 +223,28 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))
 
+        # Create notifications table
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                recipient_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+                sender_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                task_id INTEGER REFERENCES tasks_v2(id) ON DELETE SET NULL,
+                task_group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL,
+                project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                message VARCHAR NOT NULL,
+                notification_type VARCHAR DEFAULT 'task_reminder',
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS task_group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL;"))
+        conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_recipient_id ON notifications (recipient_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_task_id ON notifications (task_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_task_group_id ON notifications (task_group_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_project_id ON notifications (project_id);"))
+
         # Add new columns to chat_ai_tasks
         conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS skill_solution_id INTEGER NULL"))
         conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS skill_vendor_id INTEGER NULL"))
@@ -266,10 +287,12 @@ def apply_schema_updates():
         conn.execute(text("UPDATE audit_logs SET business_unit = 'INFRA' WHERE LOWER(business_unit) = 'infrastructure'"))
         conn.execute(text("UPDATE audit_logs SET business_unit = 'DEV' WHERE LOWER(business_unit) = 'markee'"))
 
-try:
-    apply_schema_updates()
-except Exception as e:
-    print(f"[!] Schema updates notice: {e}")
+        # Performance: index the tasks_v2 FK columns hit hardest by Dashboard
+        # Overview's per-member/per-skill JOIN and GROUP BY queries.
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_assigned_id ON tasks_v2 (assigned_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_support_id ON tasks_v2 (support_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_solution_id ON tasks_v2 (skill_solution_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_vendor_id ON tasks_v2 (skill_vendor_id)"))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -812,11 +835,46 @@ def init_db_defaults():
     finally:
         db.close()
 
-# Run database auto-seeding safely
-try:
-    init_db_defaults()
-except Exception as e:
-    print(f"[!] Database defaults notice: {e}")
+# With multiple uvicorn workers, each process runs this module at import
+# time. Migrations/seeding are idempotent (IF NOT EXISTS checks) but running
+# them concurrently from N processes can still race on DDL locks or
+# double-insert seed rows. A Postgres session-level advisory lock serializes
+# it: whichever process gets there first runs everything while holding the
+# lock; the rest wait, then find it already done.
+def run_startup_once():
+    # Base.metadata.create_all races the exact same way across processes —
+    # two workers creating the same table concurrently throws a Postgres
+    # catalog UniqueViolation. It has to be inside the same lock as the rest
+    # of startup, not run before it.
+    if not str(engine.url).startswith("postgresql"):
+        # No cross-process race on SQLite/local dev — just run in order.
+        Base.metadata.create_all(bind=engine)
+        try:
+            apply_schema_updates()
+        except Exception as e:
+            print(f"[!] Schema updates notice: {e}")
+        try:
+            init_db_defaults()
+        except Exception as e:
+            print(f"[!] Database defaults notice: {e}")
+        return
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text("SELECT pg_advisory_lock(727001)"))
+        try:
+            Base.metadata.create_all(bind=engine)
+            try:
+                apply_schema_updates()
+            except Exception as e:
+                print(f"[!] Schema updates notice: {e}")
+            try:
+                init_db_defaults()
+            except Exception as e:
+                print(f"[!] Database defaults notice: {e}")
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(727001)"))
+
+run_startup_once()
 
 
 app = FastAPI(
@@ -826,7 +884,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://kpi.markeeai.com",
+        "https://kpi.securityzone.vn",
+        "https://dev.kpi.markeeai.com",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -848,6 +911,8 @@ app.include_router(ai_review.router,            prefix="/api")
 app.include_router(lunch_router.router,         prefix="/api/lunch")
 app.include_router(chat_ai.router,              prefix="/api")
 app.include_router(project_templates_router.router, prefix="/api")
+app.include_router(system_audit.router,         prefix="/api")
+app.include_router(notifications_router.router, prefix="/api/notifications")
 
 @app.get("/health")
 @app.get("/api/health")
@@ -861,23 +926,87 @@ def health():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
+@app.get("/api/meetings/google/callback")
+def google_callback_public(code: str, state: str = None, db: Session = Depends(get_db)):
+    """Handle Google OAuth2 callback and save tokens (Public Route)."""
+    import os
+    import logging
+    from .config import settings
+    from google_auth_oauthlib.flow import Flow
+    from .services.meeting_sync import _save_google_tokens
+    from fastapi.responses import RedirectResponse
+
+    logger = logging.getLogger("google_callback")
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        redirect_uri=settings.GOOGLE_REDIRECT_URI,
+    )
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
+    user_id = int(state) if (state and state.isdigit()) else 1
+    _save_google_tokens(db, user_id, {
+        "access_token": creds.token,
+        "refresh_token": creds.refresh_token,
+    })
+    db.commit()
+
+    if creds.refresh_token:
+        settings.GOOGLE_REFRESH_TOKEN = creds.refresh_token
+        # Automatically update .env and env files on server
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        for env_filename in [".env", "env"]:
+            env_path = os.path.join(base_dir, env_filename)
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    updated = False
+                    new_lines = []
+                    for line in lines:
+                        if line.startswith("GOOGLE_REFRESH_TOKEN="):
+                            new_lines.append(f"GOOGLE_REFRESH_TOKEN={creds.refresh_token}\n")
+                            updated = True
+                        else:
+                            new_lines.append(line)
+                    if not updated:
+                        new_lines.append(f"\nGOOGLE_REFRESH_TOKEN={creds.refresh_token}\n")
+                    with open(env_path, "w", encoding="utf-8") as f:
+                        f.writelines(new_lines)
+                except Exception as e:
+                    logger.warning(f"Could not auto-write GOOGLE_REFRESH_TOKEN to {env_filename}: {e}")
+
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
+
 import asyncio
 
 @app.on_event("startup")
 async def start_auto_sync_loop():
     async def _loop():
         await asyncio.sleep(5)  # Allow FastAPI to complete startup first
-        from .database import SessionLocal
+        from .database import BackgroundSessionLocal
         from .services.meeting_sync import auto_sync_all_ended_meetings
         while True:
-            db = SessionLocal()
+            db = BackgroundSessionLocal()
             try:
                 await asyncio.to_thread(auto_sync_all_ended_meetings, db)
             except Exception as e:
                 pass
             finally:
                 db.close()
-            await asyncio.sleep(60)
+            await asyncio.sleep(30)
 
     asyncio.create_task(_loop())
 

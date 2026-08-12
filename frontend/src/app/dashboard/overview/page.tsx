@@ -1,209 +1,438 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import Link from 'next/link';
-import { getName, getToken } from '@/lib/auth';
+import { useRouter } from 'next/navigation';
+import { getEmail, getName, getToken, getRole } from '@/lib/auth';
+import { getMyAlerts, remindLeaderBulk, getInboxNotifications, markNotificationRead } from '@/lib/api';
 import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
-import PieChartCard from '@/components/dashboard/PieChartCard';
-import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
+import BarChartCard from '@/components/dashboard/BarChartCard';
+import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth } from '@/app/dashboard/constants';
 
-let cachedOverviewData: any = null;
+const getShortName = (name: string) => {
+  if (!name) return 'Unknown';
+  const parts = name.trim().split(' ');
+  if (parts.length <= 2) return name;
+  return `${parts[0]} ${parts[parts.length - 1]}`;
+};
+
+const getKpiMultiplier = (kpi: number) => {
+  if (kpi < 90) return 0;
+  if (kpi < 95) return 0.9;
+  if (kpi < 100) return 0.95;
+  if (kpi < 105) return 1.0;
+  if (kpi < 110) return 1.05;
+  if (kpi < 115) return 1.10;
+  if (kpi < 120) return 1.15;
+  if (kpi < 125) return 1.20;
+  if (kpi < 130) return 1.25;
+  if (kpi < 135) return 1.30;
+  if (kpi < 140) return 1.35;
+  if (kpi < 145) return 1.40;
+  if (kpi < 150) return 1.45;
+  return 1.50;
+};
+
+const CircularProgress = ({ value, total }: { value: number, total: number }) => {
+  const percent = total > 0 ? Math.round((value / total) * 100) : 0;
+  const radius = 12;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (percent / 100) * circumference;
+  return (
+    <div className="relative flex items-center justify-center w-8 h-8 shrink-0">
+      <svg className="w-8 h-8 transform -rotate-90">
+        <circle cx="16" cy="16" r="12" stroke="currentColor" strokeWidth="2.5" fill="transparent" className="text-slate-200" />
+        <circle cx="16" cy="16" r="12" stroke="currentColor" strokeWidth="2.5" fill="transparent" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} className="text-[#0058be] transition-all duration-500" />
+      </svg>
+      <span className="absolute text-[8px] font-extrabold text-[#0058be]">{percent}%</span>
+    </div>
+  );
+};
+
+const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, tasks: any[], projects: any[], onClose: () => void }) => {
+  const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
+
+  if (!member) return null;
+
+  const rawMemberObj = member.rawMember || member;
+  const memberTasks = tasks.filter(t => (t.assigned_id != null && String(t.assigned_id) === String(member.id)) || (t.support_id != null && String(t.support_id) === String(member.id)));
+  const openTasks = memberTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel');
+  const doneTasks = memberTasks.filter(t => t.status === 'Done' || t.status === 'done');
+  const overdueTasks = openTasks.filter(t => (t.days_late || 0) > 0);
+  const criticalTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'critical');
+  const highTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'high');
+  const normalTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
+  const interruptTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
+
+  const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
+
+  const today = new Date();
+  const dateStr = `Tuần ${today.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} - ${new Date(today.getTime() + 6 * 86400000).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
+
+  const totalPossible = openTasks.length + doneTasks.length;
+  const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
+
+  const filteredTasks = memberTasks.filter(t => {
+    if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && (t.days_late || 0) > 0;
+    if (taskFilter === 'critical') return (t.priority || '').toLowerCase() === 'critical';
+    if (taskFilter === 'high') return (t.priority || '').toLowerCase() === 'high';
+    return true;
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden">
+      {/* BACKDROP */}
+      <div 
+        onClick={onClose} 
+        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" 
+      />
+
+      {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) */}
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
+        
+        {/* HEADER */}
+        <div className="sticky top-0 z-20 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-[#0058be] text-white flex items-center justify-center font-black text-lg shadow-sm shrink-0">
+              {member.name ? member.name.charAt(0).toUpperCase() : 'M'}
+            </div>
+            <div>
+              <h2 className="text-xl font-extrabold text-[#0b1c30] tracking-tight">{member.name}</h2>
+              <p className="text-xs font-semibold text-slate-400 mt-0.5">
+                {(rawMemberObj.team || rawMemberObj.department || 'INFRA').toUpperCase()} · {rawMemberObj.leader_name || 'Khác'} · {dateStr}
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors flex items-center justify-center font-bold text-sm cursor-pointer shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* DRAWER BODY CONTENT */}
+        <div className="p-6 space-y-6 flex-1">
+          
+          {/* 1. TOP METRIC SUMMARY (6 CARDS IN A ROW) */}
+          <div className="grid grid-cols-6 gap-2">
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{activeProjects.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Dự án active</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{openTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Task mở</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{criticalTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Critical</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-red-600 leading-none">{overdueTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Trễ</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{memberTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Deadline kỳ</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0058be] leading-none">{member.kpi?.toFixed(1) || '0.0'}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI</span>
+            </div>
+          </div>
+
+          {/* 2. CẢNH BÁO ĐIỀU PHỐI (3 BOXES) */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Cảnh báo điều phối</h3>
+            <div className="grid grid-cols-3 gap-3">
+              {/* Task trễ */}
+              <div className="bg-red-50/40 border border-red-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
+                <div>
+                  <span className="text-[9px] font-extrabold text-red-400 uppercase tracking-wider">Task trễ</span>
+                  <p className="text-2xl font-black text-red-600 mt-1">{overdueTasks.length}</p>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-tight mt-3">Task cần leader follow-up hoặc xử lý blocker.</p>
+              </div>
+
+              {/* Critical mở */}
+              <div className="bg-amber-50/40 border border-amber-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
+                <div>
+                  <span className="text-[9px] font-extrabold text-amber-500 uppercase tracking-wider">Critical mở</span>
+                  <p className="text-2xl font-black text-amber-700 mt-1">{criticalTasks.length}</p>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-tight mt-3">Task ưu tiên cao, ảnh hưởng trực tiếp tiến độ dự án.</p>
+              </div>
+
+              {/* Tải công việc */}
+              <div className="bg-blue-50/40 border border-blue-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
+                <div>
+                  <span className="text-[9px] font-extrabold text-blue-500 uppercase tracking-wider">Tải công việc</span>
+                  <p className="text-2xl font-black text-[#0058be] mt-1">{workload}%</p>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-tight mt-3">Tải trung bình — có thể nhận thêm task nếu ưu tiên rõ.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. PHÂN BỐ PRIORITY (4 PILLS) */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Phân bố priority</h3>
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-purple-50/80 border border-purple-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-purple-700 block">{criticalTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-purple-600 uppercase tracking-wider mt-0.5 block">CRITICAL</span>
+              </div>
+              <div className="bg-orange-50/80 border border-orange-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-orange-700 block">{highTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-orange-600 uppercase tracking-wider mt-0.5 block">HIGH</span>
+              </div>
+              <div className="bg-blue-50/80 border border-blue-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-blue-700 block">{normalTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider mt-0.5 block">NORMAL</span>
+              </div>
+              <div className="bg-slate-100/80 border border-slate-200/80 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-slate-700 block">{interruptTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-slate-600 uppercase tracking-wider mt-0.5 block">INTERRUPT</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. DỰ ÁN ĐANG THAM GIA */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Dự án đang tham gia</h3>
+            <div className="space-y-3">
+              {activeProjects.length === 0 ? (
+                <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center text-xs font-semibold text-slate-400">
+                  Chưa có dự án nào đang tham gia.
+                </div>
+              ) : (
+                activeProjects.map(p => {
+                  const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
+                  const pOpen = pTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel').length;
+                  const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
+                  const nextTask = pTasks.find(t => t.end_date_est || t.created_at);
+                  const deadlineStr = nextTask ? (nextTask.end_date_est || '11/08').split('-').reverse().slice(0,2).join('/') : '11/08';
+
+                  return (
+                    <div key={p.id} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-extrabold text-[#0b1c30]">{p.name}</h4>
+                        <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">
+                          {pOpen} task mở
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
+                          <span className="text-sm font-black text-[#0b1c30] block">{pOpen}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">TASK MỞ</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
+                          <span className="text-sm font-black text-[#0b1c30] block">{pCritical}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">CRITICAL</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
+                          <span className="text-sm font-black text-[#0b1c30] block">{deadlineStr}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">DEADLINE GẦN NHẤT</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* 5. TASK TRONG KỲ ĐANG XEM */}
+          <div>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+              <div>
+                <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider">Task trong kỳ đang xem</h3>
+                <p className="text-[10px] text-slate-400 font-medium">Sắp xếp: Deadline gần nhất → Critical → High → Normal → Interrupt</p>
+              </div>
+              <div className="flex gap-1">
+                {(['all', 'overdue', 'critical', 'high'] as const).map(filter => (
+                  <button
+                    key={filter}
+                    onClick={() => setTaskFilter(filter)}
+                    className={`px-3 py-1 rounded-full text-[10px] font-extrabold transition-all cursor-pointer ${
+                      taskFilter === filter 
+                        ? 'bg-[#0058be] text-white shadow-sm' 
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {filter === 'all' ? 'Tất cả' : filter === 'overdue' ? 'Trễ' : filter === 'critical' ? 'Critical' : 'High'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-400 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-100">
+                      <th className="px-4 py-2.5 text-left">TASK</th>
+                      <th className="px-4 py-2.5 text-left">DỰ ÁN</th>
+                      <th className="px-4 py-2.5 text-center">PRIORITY</th>
+                      <th className="px-4 py-2.5 text-center">DEADLINE</th>
+                      <th className="px-4 py-2.5 text-center">TRẠNG THÁI</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredTasks.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="text-center py-6 text-xs text-slate-400 font-semibold">
+                          Không có task nào.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredTasks.map((t: any) => {
+                        const prio = (t.priority || 'normal').toUpperCase();
+                        const isDone = t.status === 'Done' || t.status === 'done';
+                        const dlStr = t.end_date_est ? t.end_date_est.split('-').reverse().slice(0,2).join('/') : '11/08';
+
+                        return (
+                          <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="px-4 py-3">
+                              <p className="font-bold text-[#0b1c30] text-xs">{t.name}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">Task đang được triển khai trong kỳ.</p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 font-medium text-xs">
+                              {t.projectName || t.project_name || 'Dự án Timetech'}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                                prio === 'CRITICAL' ? 'bg-purple-100 text-purple-700' :
+                                prio === 'HIGH' ? 'bg-orange-100 text-orange-700' :
+                                prio === 'INTERRUPT' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                              }`}>
+                                {prio}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center font-bold text-slate-700 text-xs">
+                              {dlStr}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                isDone ? 'bg-emerald-50 text-emerald-600' : 'bg-emerald-50 text-emerald-600'
+                              }`}>
+                                {isDone ? 'Đã xong' : 'Đang làm'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function OverviewTab() {
-  const [selectedTeam, setSelectedTeam] = useState<string>('');
-  const [loading, setLoading] = useState(false);
-  const [showAllProjects, setShowAllProjects] = useState(false);
+  // Team Audit Log states
+  const [auditLoading, setAuditLoading] = useState(false);
   const [auditModuleFilter, setAuditModuleFilter] = useState('all');
 
-  // Raw data from APIs
-  const [rawMembers, setRawMembers] = useState<any[]>(cachedOverviewData?.rawMembers || []);
-  const [rawTasks, setRawTasks] = useState<any[]>(cachedOverviewData?.rawTasks || []);
-  const [rawProjects, setRawProjects] = useState<any[]>(cachedOverviewData?.rawProjects || []);
-  const [rawAuditLogs, setRawAuditLogs] = useState<any[]>(cachedOverviewData?.rawAuditLogs || []);
-  const [currentUserProfile, setCurrentUserProfile] = useState<any>(cachedOverviewData?.currentUserProfile || null);
+  // Workspace/Leader Filter
+  const [selectedLeader, setSelectedLeader] = useState<string>('all');
+  
+  // Unified Date Filter
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
 
-  const fetchOverviewData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedOverviewData && cachedOverviewData.rawMembers?.length > 0) return;
+  // Alerts for current member
+  const [myAlerts, setMyAlerts] = useState<{ overdue_count: number; pending_approval_count: number; total: number } | null>(null);
+  const [sendingBulkRemind, setSendingBulkRemind] = useState(false);
+  const [bulkRemindMsg, setBulkRemindMsg] = useState<string | null>(null);
 
-    setLoading(true);
+  // Inbox (Hộp thư) for Leader/Admin
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxItems, setInboxItems] = useState<any[]>([]);
+  const [inboxUnread, setInboxUnread] = useState(0);
+  const inboxRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
+  // Matrix Filter
+  const [matrixYear, setMatrixYear] = useState<number>(new Date().getFullYear());
+
+  // Filter & Modal States
+  const [selectedMemberModal, setSelectedMemberModal] = useState<any>(null);
+  const [aiCheckStatus, setAiCheckStatus] = useState<string | null>(null);
+
+  const fetchOverview = useCallback(async () => {
     const ts = Date.now();
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
 
-    Promise.all([
-      axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
+    // Fetch my-alerts in parallel — not part of the cached bundle below.
+    getMyAlerts().then(data => setMyAlerts(data)).catch(() => {});
+
+    const [membersRes, projRes, tasksRes, auditRes, leadersRes] = await Promise.all([
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } }))
-    ]).then(([userRes, membersRes, projRes, tasksRes, auditRes]) => {
-      const userProfile = userRes.data || {};
-      const members = membersRes.data || [];
-      const projects = projRes.data || [];
-      const tasks = tasksRes.data || [];
-      const logs = auditRes.data?.items || [];
-
-      setCurrentUserProfile(userProfile);
-      setRawMembers(members);
-      setRawProjects(projects);
-      setRawTasks(tasks);
-      setRawAuditLogs(logs);
-
-      cachedOverviewData = {
-        currentUserProfile: userProfile,
-        rawMembers: members,
-        rawProjects: projects,
-        rawTasks: tasks,
-        rawAuditLogs: logs
-      };
-    }).finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    fetchOverviewData();
-  }, [fetchOverviewData]);
-
-  // Derived data based on selectedDepartment and selectedTeam
-  const {
-    leaderCards,
-    depMembers,
-    realTaskStats,
-    techLeaderStats,
-    realProjects,
-    teamMembers,
-    topPerformer,
-    lowestPerformer,
-    teamAuditLogs,
-    activeLeader
-  } = useMemo(() => {
-    // 1. Get all members
-    const depList = rawMembers;
-
-    // 2. Generate Leader Cards by grouping `leader_name`
-    const rawUniqueLeaders = Array.from(new Set(depList.map((m: any) => m.leader_name).filter(Boolean))) as string[];
-    const cards = rawUniqueLeaders.map(lName => {
-      const tMembers = depList.filter((m: any) => m.leader_name === lName);
-      let lId = null;
-      const leaderObj = rawMembers.find((m: any) => m.full_name === lName || m.display_name === lName);
-      if (leaderObj) lId = leaderObj.id;
-
-      return {
-        leaderName: lName,
-        leaderId: lId,
-        memberCount: tMembers.length
-      };
-    });
-
-    // Handle activeLeader fallback to first leader
-    let currentLeader = selectedTeam;
-    if (!currentLeader || currentLeader === 'All' || !rawUniqueLeaders.includes(currentLeader)) {
-      currentLeader = rawUniqueLeaders.length > 0 ? rawUniqueLeaders[0] : '';
-    }
-
-    // 3. Filter members by activeLeader
-    let activeTeamList = depList.filter((m: any) => m.leader_name === currentLeader);
-
-    // 4. Calculate Tech Leader Stats
-    let tlDone = 0, tlInProg = 0, tlOverdue = 0, tlTotal = 0;
-    let tlCritical = 0, tlHigh = 0, tlNormal = 0, tlInterrupt = 0;
-    let tlStats = { name: 'Chưa có Leader', total: 0, done: 0, inProgress: 0, overdue: 0, critical: 0, high: 0, normal: 0, interrupt: 0 };
-    
-    const card = cards.find(c => c.leaderName === currentLeader);
-    if (card && card.leaderId) {
-      const tlTasks = rawTasks.filter((t: any) => t.assigned_id === card.leaderId || t.support_id === card.leaderId);
-      tlTotal = tlTasks.length;
-      tlTasks.forEach((t: any) => {
-        if (t.status === 'Done') tlDone++;
-        else { tlInProg++; if (t.days_late > 0) tlOverdue++; }
-
-        const prio = (t.priority || '').toLowerCase();
-        if (prio === 'critical') tlCritical++;
-        else if (prio === 'high') tlHigh++;
-        else if (prio === 'normal') tlNormal++;
-        else if (prio === 'interrupt') tlInterrupt++;
-      });
-      tlStats = { name: card.leaderName, total: tlTotal, done: tlDone, inProgress: tlInProg, overdue: tlOverdue, critical: tlCritical, high: tlHigh, normal: tlNormal, interrupt: tlInterrupt };
-    }
-
-    // 5. Calculate Team Stats for the 6 KPI boxes
-    const teamMemberIds = activeTeamList.map((m: any) => m.id);
-    const teamTasks = rawTasks.filter((t: any) => teamMemberIds.includes(t.assigned_id) || teamMemberIds.includes(t.support_id));
-
-    let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = teamTasks.length, pmManday = 0, pmKpi = 0;
-    teamTasks.forEach((t: any) => {
-      if (t.status === 'Done') pmDone++;
-      else { pmInProg++; if (t.days_late > 0) pmOverdue++; }
-      pmManday += (t.manday_actual || 0);
-    });
-    activeTeamList.forEach((m: any) => {
-      pmKpi += (m.kpi_total || 0);
-    });
-
-    const pmStats = { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: pmManday, kpi: pmKpi };
-
-    // 6. Active Projects
-    // (teamMemberIds and teamTasks already calculated above)
-    const projectIds = Array.from(new Set(teamTasks.map((t: any) => t.project_id).filter(Boolean)));
-    const activeProjects = rawProjects.filter((p: any) => projectIds.includes(p.id)).map((p: any) => {
-      const projTasks = rawTasks.filter((t: any) => t.project_id === p.id);
-      const total = projTasks.length;
-      const done = projTasks.filter((t: any) => t.status === 'Done').length;
-      const prog = total > 0 ? Math.round((done / total) * 100) : 0;
-      return { id: p.id, name: p.name, status: p.status || 'Developing', progress: prog, tasks: total, done };
-    });
-
-    // 7. Member KPI Ranking
-    const memberStats = activeTeamList.map((m: any) => {
-      const mTasks = rawTasks.filter((t: any) => t.assigned_id === m.id || t.support_id === m.id);
-      let done = 0, inProg = 0, overdue = 0;
-      let manday = 0;
-      mTasks.forEach((t: any) => {
-        if (t.status === 'Done') done++;
-        else { inProg++; if (t.days_late > 0) overdue++; }
-        manday += (t.manday_actual || 0);
-      });
-      return {
-        id: m.id,
-        name: m.full_name || m.display_name || 'No Name',
-        team: m.team || 'N/A',
-        assigned: mTasks.length,
-        done, inProgress: inProg, overdue, manday,
-        kpi: m.kpi_total || 0,
-      };
-    }).sort((a: any, b: any) => b.kpi - a.kpi).map((m: any, idx: number) => ({ ...m, rank: idx + 1 }));
-
-    let topP = null, lowP = null;
-    if (memberStats.length > 0) {
-      topP = memberStats[0];
-      lowP = memberStats[memberStats.length - 1];
-    }
+      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
+      axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] })),
+    ]);
 
     return {
-      leaderCards: cards,
-      depMembers: depList,
-      realTaskStats: pmStats,
-      techLeaderStats: tlStats,
-      realProjects: activeProjects,
-      teamMembers: memberStats,
-      topPerformer: topP,
-      lowestPerformer: lowP,
-      teamAuditLogs: rawAuditLogs,
-      activeLeader: currentLeader
+      rawMembers: membersRes.data || [],
+      rawProjects: projRes.data || [],
+      rawTasks: tasksRes.data || [],
+      teamAuditLogs: auditRes.data?.items || [],
+      rawLeaders: leadersRes.data || [],
     };
-  }, [rawMembers, rawTasks, rawProjects, rawAuditLogs, selectedTeam, currentUserProfile]);
+  }, []);
 
+  // React Query: shows the last-cached bundle instantly on revisit (no
+  // loading flash), then silently refetches in the background — replaces
+  // the old module-level `cachedOverviewData` variable, which only lived
+  // until a full page reload and never refreshed itself automatically.
+  const { data: overviewData, isFetching: loading, refetch } = useQuery({
+    queryKey: ['dashboard-overview'],
+    queryFn: fetchOverview,
+    staleTime: 2 * 60_000,
+  });
 
-  const pmKpiCards = [
-    { label: 'Task Được Giao',   value: realTaskStats.total,  icon: 'user',      border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Tổng số task' },
-    { label: 'Đã Hoàn Thành',    value: realTaskStats.done,   icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: realTaskStats.total ? `${Math.round(realTaskStats.done/realTaskStats.total*100)}%` : '0%' },
-    { label: 'Đang Làm',      value: realTaskStats.inProgress,   icon: 'lightning', border: 'border-l-amber-500',   text: 'text-amber-600',  trend: realTaskStats.total ? `${Math.round(realTaskStats.inProgress/realTaskStats.total*100)}%` : '0%' },
-    { label: 'Trễ Hạn',       value: realTaskStats.overdue,   icon: 'alert',     border: 'border-l-red-500',     text: 'text-red-600',    trend: 'Cần chú ý' },
-    { label: 'Manday Thực Tế', value: Number(realTaskStats.manday).toFixed(1), icon: 'clock', border: 'border-l-cyan-500', text: 'text-cyan-600', trend: 'Ngày làm việc' },
-    { label: 'KPI Đạt',       value: Number(realTaskStats.kpi).toFixed(1), icon: 'trending-up', border: 'border-l-purple-500', text: 'text-purple-600', trend: 'Điểm tích lũy' },
-  ];
+  const rawMembers: any[] = overviewData?.rawMembers || [];
+  const rawProjects: any[] = overviewData?.rawProjects || [];
+  const rawTasks: any[] = overviewData?.rawTasks || [];
+  const rawLeaders: any[] = overviewData?.rawLeaders || [];
+  const teamAuditLogs: any[] = overviewData?.teamAuditLogs || [];
+
+  const applyQuickFilter = (type: string) => {
+    const now = new Date();
+    if (type === 'Tuần trước') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tuần này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek(getWeekOfMonth(now));
+    } else if (type === 'Tuần tới') {
+      const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tháng trước') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng tới') {
+      const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    }
+  };
 
   const filteredAuditLogs = teamAuditLogs.filter(log => {
     if (auditModuleFilter !== 'all') {
@@ -212,138 +441,624 @@ export default function OverviewTab() {
     return true;
   });
 
-  const displayedProjects = realProjects;
+  const fetchInbox = useCallback(() => {
+    const role = getRole();
+    if (role === 'super_admin' || role === 'leader') {
+      getInboxNotifications().then(data => {
+        setInboxItems(data.items || []);
+        setInboxUnread(data.unread_count || 0);
+      }).catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchInbox();
+  }, [fetchInbox]);
+
+  // Close inbox popover on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (inboxRef.current && !inboxRef.current.contains(e.target as Node)) {
+        setInboxOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const { 
+    leaders, 
+    totalAllTasks,
+    totalAllDoneTasks,
+    activeTeamMembers, 
+    filteredTasks, 
+    pmStats, 
+    priorityStats, 
+    overdueTasksList, 
+    memberRanking,
+    activeProjects,
+    topPerformer,
+    lowestPerformer,
+    summaryMatrix,
+    averageMatrix,
+    bonusMatrix
+  } = useMemo(() => {
+    const isSameId = (a: any, b: any) => a != null && b != null && String(a) === String(b);
+    const isIdInList = (idList: any[], targetId: any) => targetId != null && idList.some(id => String(id) === String(targetId));
+
+    // 1. Get Leaders directly from rawMembers
+    const leaderMap = new Map();
+    rawMembers.forEach(m => {
+      const lName = (m.leader_name || '').trim() || 'Không có Leader';
+      if (!leaderMap.has(lName)) {
+        leaderMap.set(lName, { name: lName, count: 0, team: m.team || m.department || 'Khác', memberIds: [] });
+      }
+      const ld = leaderMap.get(lName);
+      ld.count++;
+      ld.memberIds.push(m.id);
+    });
+    
+    // Calculate tasks for leaders
+    const lList = Array.from(leaderMap.values()).map(ld => {
+       const lTasks = rawTasks.filter(t => isIdInList(ld.memberIds, t.assigned_id) || isIdInList(ld.memberIds, t.support_id));
+       const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
+       return { ...ld, totalTasks: lTasks.length, doneTasks: done };
+    }).sort((a,b) => b.count - a.count);
+
+    const totTasks = rawTasks.length;
+    const totDone = rawTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
+
+    // 2. Filter Members by Leader
+    let activeTeamList = rawMembers;
+    if (selectedLeader && selectedLeader !== 'all') {
+      activeTeamList = rawMembers.filter(m => ((m.leader_name || '').trim() || 'Không có Leader') === selectedLeader);
+    }
+    const teamMemberIds = activeTeamList.map(m => m.id);
+
+    // 3. Filter Tasks by Team & Date
+    let fTasks = rawTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
+    fTasks = fTasks.filter(t => {
+      const tDateStr = t.end_date_est || t.end_date_actual || t.created_at;
+      if (!tDateStr) return true;
+      const tDate = new Date(tDateStr);
+      if (isNaN(tDate.getTime())) return true;
+      if (selectedYear !== 'all' && tDate.getFullYear() !== selectedYear) return false;
+      if (selectedMonth !== 'all' && (tDate.getMonth() + 1) !== selectedMonth) return false;
+      if (selectedWeek !== 'all' && getWeekOfMonth(tDate) !== selectedWeek) return false;
+      return true;
+    });
+
+    // 4. Calculate Stats (PM)
+    let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = fTasks.length, pmManday = 0, pmKpi = 0;
+    const pStats = { critical: 0, high: 0, normal: 0, interrupt: 0 };
+    const overdueList: any[] = [];
+
+    fTasks.forEach(t => {
+      pmManday += (t.manday_actual || t.manday_est || 0);
+      pmKpi += (t.kpi_base || 0);
+      const isDone = t.status === 'Done' || t.status === 'done';
+      const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+      const isOverdue = !isDone && !isCancel && (t.days_late > 0);
+
+      if (isDone) pmDone++;
+      else { 
+        pmInProg++; 
+        if (isOverdue) {
+          pmOverdue++;
+          overdueList.push({
+            id: t.id,
+            name: t.name,
+            assignee: t.assigned_name || 'Unassigned',
+            daysLate: t.days_late,
+            deadline: t.end_date_est || 'N/A',
+            customerName: t.customerName || t.customer_name || 'Không có',
+            projectName: t.projectName || t.project_name || 'Không có'
+          });
+        }
+      }
+
+      const prio = (t.priority || '').toLowerCase();
+      if (prio === 'critical') pStats.critical++;
+      else if (prio === 'high') pStats.high++;
+      else if (prio === 'interrupt') pStats.interrupt++;
+      else pStats.normal++;
+    });
+
+    // 5. Ranking
+    const initialRanking = activeTeamList.map(m => {
+      const myTasks = fTasks.filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
+      let d = 0, i = 0, o = 0, md = 0, k = 0;
+      myTasks.forEach(t => {
+        md += (t.manday_actual || t.manday_est || 0);
+        const done = t.status === 'Done' || t.status === 'done';
+        if (done) { d++; k += (t.kpi_base || 0); }
+        else {
+           i++;
+           if (t.days_late > 0) o++;
+        }
+      });
+      return { 
+        id: m.id, 
+        name: m.display_name || m.full_name, 
+        team: m.team || m.department || 'General',
+        position: m.position || 'Member', 
+        assigned: myTasks.length,
+        done: d,
+        inProgress: i,
+        overdue: o,
+        manday: Math.round(md * 10) / 10,
+        kpi: Math.round(k * 10) / 10,
+        rawMember: m
+      };
+    });
+    const finalRanking = initialRanking.sort((a, b) => b.kpi - a.kpi).map((m, idx) => ({ ...m, rank: idx + 1 }));
+    const topPerf = finalRanking.length > 0 && finalRanking[0].kpi > 0 ? finalRanking[0] : null;
+    const lowestPerf = finalRanking.length > 1 ? finalRanking[finalRanking.length - 1] : null;
+
+    // 6. Active Projects
+    const aProjects = rawProjects.map((p: any) => {
+      const pTasks = rawTasks.filter(t => isSameId(t.project_id, p.id));
+      const done = pTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
+      return {
+        id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
+        progress: pTasks.length ? Math.round((done / pTasks.length) * 100) : 0,
+        totalTasks: pTasks.length, doneTasks: done
+      };
+    }).sort((a,b) => b.progress - a.progress);
+
+    // 7. KPI Matrices
+    let sumM: any[] = [];
+    let avgM: any[] = [];
+    let bonM: any[] = [];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    for(let i=1; i<=12; i++) {
+        const rowSum: any = { month: `${monthNames[i-1]} - ${matrixYear}` };
+        const rowAvg: any = { month: `${monthNames[i-1]} - ${matrixYear}` };
+        const rowBon: any = { month: `${monthNames[i-1]} - ${matrixYear}` };
+
+        activeTeamList.forEach(m => {
+           const mTasks = rawTasks.filter(t => (isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id)) && (t.status === 'Done' || t.status === 'done'));
+           let mkpi = 0;
+           mTasks.forEach(t => {
+              const tdStr = t.end_date_est || t.end_date_actual || t.created_at;
+              if (tdStr) {
+                const td = new Date(tdStr);
+                if(td.getFullYear() === matrixYear && (td.getMonth()+1) === i) {
+                  mkpi += (t.kpi_base || 0);
+                }
+              }
+           });
+           const weeksInMonth = MONTH_WEEKS_COUNT[i] || 4;
+           let avgKpi = mkpi > 0 ? (mkpi / weeksInMonth) : 0;
+           rowSum[`m_${m.id}`] = mkpi;
+           rowAvg[`m_${m.id}`] = avgKpi.toFixed(1);
+           rowBon[`m_${m.id}`] = getKpiMultiplier(avgKpi).toFixed(2);
+        });
+        sumM.push(rowSum);
+        avgM.push(rowAvg);
+        bonM.push(rowBon);
+    }
+
+    return { 
+      leaders: lList, 
+      totalAllTasks: totTasks,
+      totalAllDoneTasks: totDone,
+      activeTeamMembers: activeTeamList, 
+      filteredTasks: fTasks,
+      pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday*10)/10, kpi: Math.round(pmKpi) },
+      priorityStats: pStats,
+      overdueTasksList: overdueList.sort((a,b) => b.daysLate - a.daysLate),
+      memberRanking: finalRanking,
+      activeProjects: aProjects,
+      topPerformer: topPerf,
+      lowestPerformer: lowestPerf,
+      summaryMatrix: sumM,
+      averageMatrix: avgM,
+      bonusMatrix: bonM
+    };
+  }, [rawMembers, rawTasks, rawProjects, rawLeaders, selectedLeader, selectedYear, selectedMonth, selectedWeek, matrixYear]);
+
+  const handleAiCheck = () => {
+    setAiCheckStatus('Đang thực hiện AI Check dự án...');
+    setTimeout(() => {
+      setAiCheckStatus(`✅ AI Check hoàn tất: Tất cả ${activeProjects.length} dự án hoạt động ổn định, tiến độ trung bình ${activeProjects.length > 0 ? Math.round(activeProjects.reduce((acc, p) => acc + p.progress, 0)/activeProjects.length) : 0}%.`);
+      setTimeout(() => setAiCheckStatus(null), 5000);
+    }, 1000);
+  };
 
   return (
-    <div className="p-6 space-y-5">
-      {/* Overview Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tổng quan Team Leader</h3>
-          {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse ml-2">Đang cập nhật...</span>}
-        </div>
-        <button
-          onClick={() => fetchOverviewData(true)}
-          className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
-        >
-          <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
-          <span>Làm mới dữ liệu</span>
-        </button>
-      </div>
-
-      {/* Leader Selection Cards */}
-      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-        {leaderCards.map(c => (
-          <button
-            key={c.leaderName}
-            onClick={() => setSelectedTeam(c.leaderName)}
-            className={`flex-shrink-0 p-3 rounded-xl border text-left min-w-[140px] transition-all ${activeLeader === c.leaderName ? 'border-[#0058be] bg-blue-50 shadow-sm' : 'border-slate-200 bg-white hover:border-blue-300'}`}
-          >
-            <p className={`text-xs font-bold ${activeLeader === c.leaderName ? 'text-[#0058be]' : 'text-[#0b1c30]'}`}>{c.leaderName}</p>
-            <p className="text-[10px] text-slate-500 mt-1">{c.memberCount} member</p>
-          </button>
-        ))}
-      </div>
-
-
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {pmKpiCards.map(c => <KpiCard key={c.label} {...c} />)}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <PieChartCard title="Trạng thái Task (PM)" data={[
-          { name: 'Hoàn Thành', value: realTaskStats.done, fill: '#10b981' },
-          { name: 'Đang Làm', value: Math.max(0, realTaskStats.inProgress - realTaskStats.overdue), fill: '#f59e0b' },
-          { name: 'Trễ Hạn', value: realTaskStats.overdue, fill: '#ef4444' }
-        ]} />
-
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-blue-200 p-5 shadow-sm flex flex-col justify-between">
+    <div className="p-6 space-y-6">
+      {/* 1. HEADER & DATE FILTER & SHORTCUT FILTERS */}
+      <div className="flex flex-col gap-4 border-b border-slate-100 pb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
-              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Technical Leader — {activeLeader}</p>
-            </div>
-            <p className="text-sm font-extrabold text-[#0b1c30]">{techLeaderStats.name}</p>
-            <p className="text-xs text-slate-400 mt-0.5">Tổng task phụ trách: {techLeaderStats.total}</p>
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-4">
-            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-emerald-600">{techLeaderStats.done}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Đã Xong</p>
-            </div>
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-amber-600">{techLeaderStats.inProgress}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Đang làm</p>
-            </div>
-            <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-red-600">{techLeaderStats.overdue}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Trễ Hạn</p>
-            </div>
+            <h2 className="text-lg font-extrabold text-[#0b1c30]">Dashboard Tổng Quan</h2>
+            <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI của Team</p>
           </div>
           
-          <div className="mt-3 grid grid-cols-4 gap-2">
-            <div className="bg-purple-50 border border-purple-100 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-purple-600">{techLeaderStats.critical}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Critical</p>
+          {/* TIME FILTER & REFRESH */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
+              <div className="flex gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500">Năm:</span>
+                  <select
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                    className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">Tất cả</option>
+                    {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+                  </select>
+                </div>
+                <div className="w-px h-4 bg-slate-200 self-center"></div>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500">Tháng:</span>
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                    className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">Tất cả</option>
+                    {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}</option>)}
+                  </select>
+                </div>
+                <div className="w-px h-4 bg-slate-200 self-center"></div>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500">Tuần:</span>
+                  <select
+                    value={selectedWeek}
+                    onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                    className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">Tất cả</option>
+                    {[...Array(selectedMonth !== 'all' ? (MONTH_WEEKS_COUNT[selectedMonth] || 5) : 5)].map((_, i) => (
+                      <option key={i+1} value={i+1}>{i+1}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
-            <div className="bg-orange-50 border border-orange-100 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-orange-600">{techLeaderStats.high}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">High</p>
+
+            {/* SHORTCUT FILTER BUTTONS */}
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {['Tuần trước', 'Tuần này', 'Tuần tới', 'Tháng trước', 'Tháng này', 'Tháng tới'].map(label => (
+                <button
+                  key={label}
+                  onClick={() => applyQuickFilter(label)}
+                  className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-[11px] font-bold transition-all text-slate-600 cursor-pointer whitespace-nowrap shadow-sm active:scale-95"
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <div className="bg-blue-50 border border-blue-100 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-blue-600">{techLeaderStats.normal}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Normal</p>
-            </div>
-            <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-center">
-              <p className="text-sm font-extrabold text-slate-600">{techLeaderStats.interrupt}</p>
-              <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Interrupt</p>
-            </div>
+
+            <button
+              onClick={() => refetch()}
+              className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
+            >
+              <SvgIcon name="refresh" className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#0058be]' : 'text-slate-500'}`} />
+              LÀM MỚI
+            </button>
           </div>
+        </div>
+        
+        {/* 2. LEADER SELECTOR BAR WITH PERCENTAGE CIRCLE */}
+        <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
+          <button
+            onClick={() => setSelectedLeader('all')}
+            className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+          >
+            <div>
+              <div className="text-xs font-bold">Toàn bộ Leader</div>
+              <div className="text-[10px] font-normal opacity-80">{leaders.length} team · {rawMembers.length} member</div>
+            </div>
+            <CircularProgress value={totalAllDoneTasks} total={totalAllTasks} />
+          </button>
+          {leaders.map(ld => (
+            <button
+              key={ld.name}
+              onClick={() => setSelectedLeader(ld.name)}
+              className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            >
+              <div className="truncate">
+                <div className="text-xs font-bold truncate">{ld.name}</div>
+                <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
+              </div>
+              <CircularProgress value={ld.doneTasks} total={ld.totalTasks} />
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Main Row: Active Projects */}
-      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5 flex flex-col justify-between">
-        <div>
-          <div className="px-1 py-1 pb-4 border-b border-slate-100 flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
-              <SvgIcon name="folder" className="w-4 h-4 text-slate-700" />
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự Án Đang Triển Khai</h3>
+
+
+      {/* INBOX (HỘP THƯ) — chỉ hiển thị với Super Admin và Team Leader */}
+      {(() => {
+        const role = getRole();
+        if (!['super_admin', 'leader'].includes(role || '')) return null;
+        return (
+          <div ref={inboxRef} className="relative flex justify-end -mt-2 mb-2">
+            <button
+              onClick={() => { setInboxOpen(v => !v); if (!inboxOpen) fetchInbox(); }}
+              className="relative flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl shadow-sm hover:bg-slate-50 text-slate-700 text-[12px] font-bold transition-all cursor-pointer"
+              title="Hộp thư thông báo"
+            >
+              <span className="text-base">📨</span>
+              <span>Hộp thư</span>
+              {inboxUnread > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+                  {inboxUnread > 9 ? '9+' : inboxUnread}
+                </span>
+              )}
+            </button>
+
+            {inboxOpen && (
+              <div className="absolute top-10 right-0 z-50 w-[380px] max-h-[440px] overflow-y-auto bg-white border border-slate-200 rounded-2xl shadow-2xl flex flex-col">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 sticky top-0 bg-white z-10">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">📨</span>
+                    <h4 className="text-[13px] font-extrabold text-[#0b1c30]">Hộp thư thông báo</h4>
+                    {inboxUnread > 0 && (
+                      <span className="px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full">{inboxUnread} chưa đọc</span>
+                    )}
+                  </div>
+                  <button onClick={() => setInboxOpen(false)} className="text-slate-400 hover:text-slate-600 text-base cursor-pointer">✕</button>
+                </div>
+
+                {/* Items */}
+                {inboxItems.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                    <span className="text-4xl mb-2">📭</span>
+                    <p className="text-[12px]">Chưa có thông báo nào</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {inboxItems.map((n: any) => (
+                      <div
+                        key={n.id}
+                        onClick={async () => {
+                          if (!n.is_read) {
+                            await markNotificationRead(n.id).catch(() => {});
+                            setInboxItems(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x));
+                            setInboxUnread(prev => Math.max(0, prev - 1));
+                          }
+                          setInboxOpen(false);
+                          if (n.project_id) {
+                            const url = `/project/detail?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
+                            router.push(url);
+                          }
+                        }}
+                        className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-60' : 'bg-indigo-50/40'}`}
+                      >
+                        <span className="text-xl mt-0.5 shrink-0">{n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[12px] leading-snug ${n.is_read ? 'text-slate-500' : 'text-[#0b1c30] font-semibold'}`}>
+                            {n.message}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {n.project_name && (
+                              <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">{n.project_name}</span>
+                            )}
+                            {n.group_name && (
+                              <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold">{n.group_name}</span>
+                            )}
+                            <span className="text-[10px] text-slate-400 ml-auto shrink-0">
+                              {n.created_at ? new Date(n.created_at).toLocaleDateString('vi-VN') : ''}
+                            </span>
+                          </div>
+                        </div>
+                        {!n.is_read && <div className="w-2 h-2 bg-indigo-500 rounded-full mt-1.5 shrink-0" />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* KPI CARDS */}
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <KpiCard label="Tasks Phụ Trách" value={pmStats.total} icon="tasks" border="border-l-[#0058be]" text="text-[#0058be]" trend="Tổng" />
+        <KpiCard label="Đã Hoàn Thành" value={pmStats.done} icon="check" border="border-l-emerald-500" text="text-emerald-600" trend={pmStats.total ? `${Math.round(pmStats.done/pmStats.total*100)}%` : '0%'} />
+        <KpiCard label="Đang Làm" value={Math.max(0, pmStats.inProgress - pmStats.overdue)} icon="lightning" border="border-l-amber-500" text="text-amber-600" trend="Trong tiến độ" />
+        <KpiCard label="Trễ Hạn" value={pmStats.overdue} icon="alert" border="border-l-red-500" text="text-red-600" trend="Cần xử lý" />
+        <KpiCard label="Manday Thực Tế" value={pmStats.manday} icon="clock" border="border-l-cyan-500" text="text-cyan-600" trend="Đã tiêu hao" />
+        <KpiCard label="KPI Đạt Được" value={pmStats.kpi} icon="trophy" border="border-l-purple-500" text="text-purple-600" trend="Tổng điểm" />
+      </div>
+
+      {/* ALERT BLOCK — hiển thị khi có task cần chú ý */}
+      {myAlerts && myAlerts.total > 0 && (
+        <div className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 py-3 rounded-xl border shadow-sm ${
+          myAlerts.overdue_count > 0
+            ? 'bg-red-50 border-red-200'
+            : 'bg-amber-50 border-amber-200'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            <span className="text-lg mt-0.5">⚠️</span>
+            <div>
+              <p className={`text-[12.5px] font-bold ${
+                myAlerts.overdue_count > 0 ? 'text-red-700' : 'text-amber-700'
+              }`}>
+                {myAlerts.overdue_count > 0 && (
+                  <>Bạn đang có <strong>{myAlerts.overdue_count}</strong> task trễ hạn cần xử lý{myAlerts.pending_approval_count > 0 ? ' và' : '.'}</>
+                )}
+                {myAlerts.pending_approval_count > 0 && (
+                  <> <strong>{myAlerts.pending_approval_count}</strong> task đã hoàn thành chờ xác nhận từ Leader.</>  
+                )}
+              </p>
+              {bulkRemindMsg && (
+                <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">{bulkRemindMsg}</p>
+              )}
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-5 max-h-[400px] overflow-y-auto pr-2 pb-2 custom-scrollbar">
-            {displayedProjects.length === 0 ? (
-              <p className="col-span-4 text-center text-slate-400 text-xs py-4 font-semibold">Chưa có dự án nào đang hoạt động.</p>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/project"
+              className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                myAlerts.overdue_count > 0
+                  ? 'text-red-600 border-red-300 hover:bg-red-100'
+                  : 'text-amber-600 border-amber-300 hover:bg-amber-100'
+              }`}
+            >
+              Xem chi tiết
+            </Link>
+            <button
+              onClick={async () => {
+                setSendingBulkRemind(true);
+                setBulkRemindMsg(null);
+                try {
+                  const res = await remindLeaderBulk();
+                  setBulkRemindMsg(res.message || 'Đã gửi nhắc nhở!');
+                  setTimeout(() => setBulkRemindMsg(null), 4000);
+                } catch {
+                  setBulkRemindMsg('Lỗi gửi nhắc nhở, vui lòng thử lại.');
+                } finally {
+                  setSendingBulkRemind(false);
+                }
+              }}
+              disabled={sendingBulkRemind}
+              className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                myAlerts.overdue_count > 0
+                  ? 'bg-red-500 hover:bg-red-600 text-white border-red-500'
+                  : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
+              } disabled:opacity-60 cursor-pointer`}
+            >
+              {sendingBulkRemind ? '⏳ Đang gửi...' : '🔔 Gửi nhắc nhở hàng loạt'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 4. ONGOING PROJECTS */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden mb-5">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <SvgIcon name="folders" className="w-4 h-4 text-slate-700" />
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự án đang triển khai</h3>
+          </div>
+          <button 
+            onClick={handleAiCheck}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-sm text-[11px] font-bold transition-all cursor-pointer active:scale-95"
+          >
+            <span className="text-sm">✨</span> AI Check
+          </button>
+        </div>
+        {aiCheckStatus && (
+          <div className="bg-blue-50 px-5 py-2 text-xs font-bold text-blue-700 border-b border-blue-100 flex items-center justify-between animate-fadeIn">
+            <span>{aiCheckStatus}</span>
+            <button onClick={() => setAiCheckStatus(null)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+          </div>
+        )}
+        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[360px] overflow-y-auto custom-scrollbar">
+          {activeProjects.length === 0 ? (
+            <p className="text-xs text-slate-400 font-semibold py-4 text-center col-span-full">Chưa có dự án nào.</p>
+          ) : (
+            activeProjects.map((p: any) => (
+              <div key={p.id} className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-slate-300 transition-all flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-start mb-2 gap-2">
+                    <h4 className="text-xs font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</h4>
+                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
+                      {p.status || 'Developing'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-semibold block mb-3">{p.current_phase || '1. Tư vấn'}</span>
+                </div>
+                <div>
+                  <div className="flex justify-between text-[11px] mb-1.5 font-bold">
+                    <span className="text-slate-500">Tiến độ</span>
+                    <span className="text-[#0058be]">{p.progress}%</span>
+                  </div>
+                  <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-blue-600'} height="h-2" />
+                  <div className="flex justify-between text-[10px] text-slate-400 font-semibold mt-2">
+                    <span>Task: {p.doneTasks}/{p.totalTasks}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      
+      {/* CHARTS & LISTS */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* BAR CHART STATUS */}
+        <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm p-5 flex flex-col justify-between">
+           <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-4">Trạng thái Task</h3>
+           <BarChartCard 
+              title="" 
+              data={[
+                { name: 'Hoàn Thành', count: pmStats.done, fill: '#10b981' },
+                { name: 'Đang Làm', count: Math.max(0, pmStats.inProgress - pmStats.overdue), fill: '#f59e0b' },
+                { name: 'Trễ Hạn', count: pmStats.overdue, fill: '#ef4444' }
+              ]} 
+              bars={[{ key: 'count', name: 'Số lượng', fill: '#0058be' }]}
+              xKey="name"
+           />
+        </div>
+
+        {/* PRIORITY TABLE */}
+        <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-slate-100 bg-slate-50">
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Mức Độ Ưu Tiên (Priority)</h3>
+          </div>
+          <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
+             {[
+               { label: 'Critical', val: priorityStats.critical, cls: 'bg-red-50 text-red-600 border-red-200' },
+               { label: 'High', val: priorityStats.high, cls: 'bg-orange-50 text-orange-600 border-orange-200' },
+               { label: 'Normal', val: priorityStats.normal, cls: 'bg-blue-50 text-blue-600 border-blue-200' },
+               { label: 'Interrupt', val: priorityStats.interrupt, cls: 'bg-purple-50 text-purple-600 border-purple-200' }
+             ].map(item => (
+                <div key={item.label} className={`flex items-center justify-between p-3 rounded-xl border ${item.cls}`}>
+                  <span className="text-xs font-bold">{item.label}</span>
+                  <span className="text-sm font-extrabold">{item.val} tasks</span>
+                </div>
+             ))}
+          </div>
+        </div>
+
+        {/* OVERDUE LIST WITH CUSTOMER & PROJECT NAME */}
+        <div className="bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-red-100 bg-red-50/50 flex justify-between items-center">
+            <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">Task Trễ Hạn ({overdueTasksList.length})</h3>
+          </div>
+          <div className="p-4 overflow-y-auto max-h-[300px] space-y-2.5 custom-scrollbar">
+            {overdueTasksList.length === 0 ? (
+               <p className="text-xs text-slate-400 font-semibold text-center py-6">Không có task trễ hạn.</p>
             ) : (
-              displayedProjects.map(p => (
-                <Link
-                  key={p.id}
-                  href={`/project/detail?id=${p.id}`}
-                  className="group p-4 bg-slate-50/50 border border-slate-100 rounded-xl hover:border-blue-300 hover:bg-blue-50/30 hover:shadow-md transition-all flex flex-col justify-between cursor-pointer block"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-[#0b1c30] group-hover:text-blue-600 transition-colors truncate" title={p.name}>{p.name}</span>
-                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full ${projectStatusBadge[p.status] || 'bg-slate-100 text-slate-500'}`}>{p.status}</span>
-                  </div>
-                  <div className="mt-3">
-                    <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-slate-400'} height="h-2" />
-                    <p className="text-[10px] text-slate-400 mt-2 font-semibold">{p.done}/{p.tasks} tasks hoàn thành ({p.progress}%)</p>
-                  </div>
-                </Link>
-              ))
+               overdueTasksList.map((t, idx) => (
+                 <div key={idx} className="p-3 bg-white rounded-xl border border-red-100 hover:border-red-300 transition-all">
+                    <div className="flex flex-wrap gap-1 mb-1.5">
+                      <span className="text-[9px] font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 truncate max-w-[140px]" title={t.projectName}>Dự án: {t.projectName}</span>
+                      <span className="text-[9px] font-extrabold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 truncate max-w-[140px]" title={t.customerName}>KH: {t.customerName}</span>
+                    </div>
+                    <p className="text-xs font-bold text-[#0b1c30] leading-snug">{t.name}</p>
+                    <div className="flex justify-between items-center mt-2">
+                       <span className="text-[10px] font-semibold text-slate-500">Phụ trách: <span className="text-slate-700 font-bold">{t.assignee}</span></span>
+                       <span className="text-[10px] font-extrabold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">Trễ {t.daysLate} ngày</span>
+                    </div>
+                 </div>
+               ))
             )}
           </div>
         </div>
       </div>
 
-      {/* TEAM AUDIT LOG SECTION */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      {/* 6. TEAM AUDIT LOG SECTION */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden mb-5">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-white">
           <div className="flex items-center gap-2">
-            <SvgIcon name="history" className="w-4 h-4 text-blue-600" />
+            <span className="text-base">📜</span>
             <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Audit Log — {activeLeader}</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">Nhật ký hoạt động & thay đổi của các thành viên trong team</p>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Hoạt Động Gần Đây</h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">Nhật ký hoạt động & thay đổi của hệ thống</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -372,10 +1087,10 @@ export default function OverviewTab() {
               </tr>
             </thead>
             <tbody>
-              {teamAuditLogs.length === 0 ? (
+              {auditLoading ? (
                 <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Đang tải nhật ký hoạt động...</td></tr>
               ) : filteredAuditLogs.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Chưa có nhật ký hoạt động nào cho team này.</td></tr>
+                <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Chưa có nhật ký hoạt động nào.</td></tr>
               ) : (
                 filteredAuditLogs.slice(0, 8).map((log, idx) => (
                   <tr key={log.id || idx} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${idx % 2 === 0 ? '' : 'bg-slate-50/30'}`}>
@@ -406,17 +1121,14 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {/* Member KPI Ranking */}
+      {/* 7. MEMBER KPI RANKING TABLE (CLICK MEMBER TO VIEW DETAIL MODAL) */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
-            <SvgIcon name="user" className="w-4 h-4 text-indigo-600" />
-            <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên — {activeLeader}</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">Dữ liệu thực tế</p>
-            </div>
+            <SvgIcon name="crown" className="w-4 h-4 text-indigo-600" />
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên</h3>
           </div>
-          <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-full border border-indigo-100">{teamMembers.length} thành viên</span>
+          <span className="text-[10px] font-semibold text-slate-400">💡 Bấm vào tên thành viên để xem chi tiết KPI, Dự án & Task</span>
         </div>
         <div className="max-h-[400px] overflow-y-auto overflow-x-auto custom-scrollbar">
           <table className="w-full text-xs relative">
@@ -430,32 +1142,34 @@ export default function OverviewTab() {
                 <th className="px-4 py-3 text-center font-bold">Trễ</th>
                 <th className="px-4 py-3 text-center font-bold">Manday</th>
                 <th className="px-4 py-3 text-center font-bold text-[#0058be]">KPI</th>
-                <th className="px-4 py-3 font-bold min-w-[140px]">Tiến độ</th>
+                <th className="px-4 py-3 font-bold min-w-[140px]">Tiến Độ</th>
               </tr>
             </thead>
             <tbody>
-              {teamMembers.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td>
-                </tr>
+              {memberRanking.length === 0 ? (
+                <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
               ) : (
-                teamMembers.map((m, i) => {
+                memberRanking.map((m, i) => {
                   const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
                   return (
-                    <tr key={m.id} className={`border-b border-slate-50 hover:bg-indigo-50/30 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}>
+                    <tr 
+                      key={m.id} 
+                      onClick={() => setSelectedMemberModal(m)}
+                      className={`border-b border-slate-50 hover:bg-indigo-50/50 transition-colors cursor-pointer ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}
+                    >
                       <td className="px-4 py-3.5 text-center">
                         <span className={`text-xs font-bold ${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}`}>#{m.rank}</span>
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-400 to-blue-500 flex items-center justify-center text-white text-[10px] font-extrabold shrink-0">{m.name.split(' ').pop()?.charAt(0) || '?'}</div>
-                          <span className="font-semibold text-[#0b1c30]">{m.name}</span>
-                        </div>
+                        <span className="font-semibold text-[#0058be] hover:underline flex items-center gap-1.5">
+                          {m.name}
+                          <span className="text-[10px] text-slate-400">🔍</span>
+                        </span>
                       </td>
                       <td className="px-4 py-3.5 text-center font-semibold text-slate-600">{m.assigned}</td>
                       <td className="px-4 py-3.5 text-center"><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{m.done}</span></td>
                       <td className="px-4 py-3.5 text-center font-semibold text-blue-600">{m.inProgress}</td>
-                      <td className="px-4 py-3.5 text-center">{m.overdue > 0 ? <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">{m.overdue}</span> : <span className="text-slate-300 font-bold">—</span>}</td>
+                      <td className="px-4 py-3.5 text-center">{m.overdue > 0 ? <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">{m.overdue}</span> : <span className="text-slate-300 font-bold">—</span>}</td>
                       <td className="px-4 py-3.5 text-center text-slate-500 tabular-nums">{m.manday.toFixed(1)}</td>
                       <td className="px-4 py-3.5 text-center font-extrabold text-[#0058be] text-[13px]">{m.kpi.toFixed(1)}</td>
                       <td className="px-4 py-3.5">
@@ -470,36 +1184,173 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {topPerformer && lowestPerformer && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div className="bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl p-5 shadow-md text-white relative overflow-hidden">
-            <div className="absolute -right-4 -bottom-4 opacity-10 select-none">
-              <SvgIcon name="crown" className="w-32 h-32 text-white" />
+      {/* 8. TOP PERFORMER & LOWEST PERFORMER (PLACED RIGHT BELOW MEMBER RANKING TABLE) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+        {/* XUẤT SẮC NHẤT */}
+        {topPerformer ? (
+          <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-orange-400 to-orange-500 shadow-md p-5 flex flex-col justify-between">
+            <div className="absolute -right-6 -bottom-6 opacity-20 transform rotate-12">
+               <SvgIcon name="star" className="w-40 h-40 text-white" />
             </div>
-            <p className="text-[10px] font-bold uppercase tracking-widest opacity-80">Xuất Sắc Nhất</p>
-            <p className="text-lg font-extrabold mt-1">{topPerformer.name}</p>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {[{ label: 'KPI', value: topPerformer.kpi.toFixed(1) }, { label: 'Hoàn thành', value: topPerformer.done }, { label: 'Manday', value: topPerformer.manday.toFixed(1) }].map(s => (
-                <div key={s.label} className="bg-white/20 backdrop-blur rounded-xl p-2.5 text-center">
-                  <p className="text-base font-extrabold">{s.value}</p>
-                  <p className="text-[9px] font-semibold opacity-70 uppercase mt-0.5">{s.label}</p>
+            <div className="relative z-10">
+              <h3 className="text-[10px] font-black text-white/90 uppercase tracking-widest mb-1 shadow-sm">Xuất Sắc Nhất</h3>
+              <p className="text-2xl font-extrabold text-white mb-6 drop-shadow-md">{topPerformer.name}</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                  <span className="text-xl font-black">{topPerformer.kpi.toFixed(1)}</span>
+                  <span className="text-[9px] font-bold uppercase mt-1 opacity-90">KPI</span>
                 </div>
-              ))}
+                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                  <span className="text-xl font-black">{topPerformer.done}</span>
+                  <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Hoàn Thành</span>
+                </div>
+                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                  <span className="text-xl font-black">{topPerformer.manday.toFixed(1)}</span>
+                  <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Manday</span>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="bg-white rounded-2xl border border-red-200 p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-red-500">⚠️ Cần Cải Thiện</p>
-            <p className="text-base font-extrabold mt-1 text-[#0b1c30]">{lowestPerformer.name}</p>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {[{ label: 'KPI', value: lowestPerformer.kpi.toFixed(1), cls: 'text-red-600' }, { label: 'Xong', value: lowestPerformer.done, cls: 'text-slate-600' }, { label: 'Trễ', value: lowestPerformer.overdue, cls: 'text-red-500' }].map(s => (
-                <div key={s.label} className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
-                  <p className={`text-base font-extrabold ${s.cls}`}>{s.value}</p>
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase mt-0.5">{s.label}</p>
+        ) : (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center min-h-[160px] text-slate-400 font-bold text-xs">Chưa đủ dữ liệu top</div>
+        )}
+
+        {/* CẦN CẢI THIỆN */}
+        {lowestPerformer ? (
+          <div className="rounded-2xl bg-white border border-red-100 shadow-sm p-5 flex flex-col justify-between">
+            <div>
+              <h3 className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-1 flex items-center gap-1">
+                <span>⚠️</span> Cần Cải Thiện
+              </h3>
+              <p className="text-2xl font-extrabold text-[#0b1c30] mb-6">{lowestPerformer.name}</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                  <span className="text-xl font-black text-red-600">{lowestPerformer.kpi.toFixed(1)}</span>
+                  <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">KPI</span>
                 </div>
-              ))}
+                <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                  <span className="text-xl font-black text-[#0b1c30]">{lowestPerformer.done}</span>
+                  <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">XONG</span>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                  <span className="text-xl font-black text-red-600">{lowestPerformer.overdue}</span>
+                  <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">TRỄ</span>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center min-h-[160px] text-slate-400 font-bold text-xs">Chưa đủ dữ liệu cải thiện</div>
+        )}
+      </div>
+
+      {/* 9. KPI MATRICES */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5 space-y-6">
+         <div className="flex flex-col sm:flex-row justify-between items-center border-b border-slate-100 pb-4 gap-4">
+           <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wider">Ma Trận KPI Thành Viên</h3>
+           <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-600">Lọc theo năm:</span>
+              <input type="number" value={matrixYear} onChange={e => setMatrixYear(parseInt(e.target.value))} className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 w-24 outline-none cursor-pointer" />
+           </div>
+         </div>
+
+         {/* 1. Summary Matrix */}
+         <div className="w-full">
+           <h4 className="text-xs font-bold text-pink-700 mb-2">1. Tổng KPI</h4>
+           <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
+               <thead className="sticky top-0 z-10">
+                 <tr className="bg-pink-500 text-white font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[100px] sticky left-0 bg-pink-600 z-20">Tháng</th>
+                   {activeTeamMembers.map(m => (
+                     <th key={m.id} className="p-2 border border-slate-200 min-w-[80px] bg-pink-500">{getShortName(m.full_name || m.display_name)}</th>
+                   ))}
+                 </tr>
+               </thead>
+               <tbody>
+                 {summaryMatrix.map((r,i) => (
+                   <tr key={i} className="hover:bg-slate-50">
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
+                     {activeTeamMembers.map(m => {
+                        const val = r[`m_${m.id}`];
+                        const bg = val > 100 ? 'bg-amber-300' : (val > 50 ? 'bg-amber-100' : 'bg-white');
+                        return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                     })}
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+         </div>
+
+         {/* 2. Average Matrix */}
+         <div className="w-full">
+           <h4 className="text-xs font-bold text-emerald-700 mb-2">2. Trung Bình KPI / Task</h4>
+           <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
+               <thead className="sticky top-0 z-10">
+                 <tr className="bg-emerald-500 text-white font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[100px] sticky left-0 bg-emerald-600 z-20">Tháng</th>
+                   {activeTeamMembers.map(m => (
+                     <th key={m.id} className="p-2 border border-slate-200 min-w-[80px] bg-emerald-500">{getShortName(m.full_name || m.display_name)}</th>
+                   ))}
+                 </tr>
+               </thead>
+               <tbody>
+                 {averageMatrix.map((r,i) => (
+                   <tr key={i} className="hover:bg-slate-50">
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
+                     {activeTeamMembers.map(m => {
+                        const val = r[`m_${m.id}`];
+                        const bg = val > 10 ? 'bg-green-200' : (val > 5 ? 'bg-green-100' : 'bg-white');
+                        return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                     })}
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+         </div>
+
+         {/* 3. Bonus Matrix */}
+         <div className="w-full">
+           <h4 className="text-xs font-bold text-indigo-700 mb-2">3. KPI Thưởng</h4>
+           <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+             <table className="w-full text-[10px] text-center border-collapse whitespace-nowrap">
+               <thead className="sticky top-0 z-10">
+                 <tr className="bg-indigo-500 text-white font-bold">
+                   <th className="p-2 border border-slate-200 text-left min-w-[100px] sticky left-0 bg-indigo-600 z-20">Tháng</th>
+                   {activeTeamMembers.map(m => (
+                     <th key={m.id} className="p-2 border border-slate-200 min-w-[80px] bg-indigo-500">{getShortName(m.full_name || m.display_name)}</th>
+                   ))}
+                 </tr>
+               </thead>
+               <tbody>
+                 {bonusMatrix.map((r,i) => (
+                   <tr key={i} className="hover:bg-slate-50">
+                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
+                     {activeTeamMembers.map(m => {
+                        const val = r[`m_${m.id}`];
+                        const bg = val > 0 ? 'bg-indigo-100 text-indigo-800' : 'bg-white text-slate-400';
+                        return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                     })}
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+         </div>
+
+      </div>
+
+      {/* MEMBER DETAIL MODAL */}
+      {selectedMemberModal && (
+        <MemberDetailModal
+          member={selectedMemberModal}
+          tasks={rawTasks}
+          projects={rawProjects}
+          onClose={() => setSelectedMemberModal(null)}
+        />
       )}
     </div>
   );

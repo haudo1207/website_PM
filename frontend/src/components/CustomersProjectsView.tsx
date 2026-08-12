@@ -1,5 +1,6 @@
 'use client';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin, isAdmin } from '@/lib/auth';
@@ -32,18 +33,18 @@ const PROJECT_PHASES = [
   '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
 ];
 
+interface ComboboxOption {
+  id: number;
+  name: string;
+}
+
+
+
 export default function CustomersProjectsView({ onFlash }: CustomersProjectsViewProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
-  // Data states
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [allCustomers, setAllCustomers] = useState<any[]>([]);
-  const [projects, setProjects] = useState<any[]>([]);
-  const [members, setMembers] = useState<any[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  
   // Loading states
-  const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Selection states
@@ -59,6 +60,12 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
 
   // Filter/Search states
   const [customerSearch, setCustomerSearch] = useState('');
+
+  // V2 Filter & Sort States
+  const [selectedPmIds, setSelectedPmIds] = useState<number[]>([]);
+  const [selectedSalesIds, setSelectedSalesIds] = useState<number[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
+  const [sortMode, setSortMode] = useState<string>('activity_desc');
 
   // Customer Inline Form / Edit states
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -153,62 +160,86 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [modalPmDropdownOpen, modalLeaderDropdownOpen, modalSalesDropdownOpen, modalMemberDropdownOpen, modalPhaseDropdownOpen]);
 
-  // Master phases state from settings
-  const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
-
-  // Fetch initial data
-  useEffect(() => {
-    getWorkspaces()
-      .then(ws => {
-        setWorkspaces(ws || []);
-        setActiveBU(prev => prev || (ws?.[0]?.code || ''));
-      })
-      .catch(() => {});
-  }, []);
+  // Workspace list for the tab switcher — shared cache key with Navbar so
+  // switching pages doesn't refetch this near-static data.
+  const workspacesQuery = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const workspaces: Workspace[] = workspacesQuery.data || [];
 
   useEffect(() => {
-    if (!activeBU) return;
-    loadData();
-  }, [activeBU]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [custs, projs, mems, mPhases, allCusts] = await Promise.all([
-        getCustomers(activeBU).catch(e => { console.error('getCustomers error:', e); return []; }),
-        getProjects(activeBU).catch(e => { console.error('getProjects error:', e); return []; }),
-        getMembers().catch(e => { console.error('getMembers error:', e); return []; }),
-        getMasterPhases().catch(e => { console.error('getMasterPhases error:', e); return []; }),
-        getCustomers().catch(e => { console.error('getCustomers all error:', e); return []; })
-      ]);
-      setCustomers(custs || []);
-      setAllCustomers(allCusts || []);
-      setProjects(projs || []);
-      setMembers(mems || []);
-      setDbMasterPhases(mPhases || []);
-
-      // Auto-select first customer if available
-      if (custs && custs.length > 0) {
-        setSelectedCustomerId(custs[0].id);
-      } else {
-        setSelectedCustomerId(null);
-      }
-    } catch (err: any) {
-      console.error('loadData error:', err);
-      onFlash(err.response?.data?.detail || err.message || 'Lỗi tải dữ liệu cấu hình hệ thống', true);
-    } finally {
-      setLoading(false);
+    if (workspaces.length > 0) {
+      setActiveBU(prev => prev || workspaces[0].code);
     }
+  }, [workspaces]);
+
+  // Base data (Customers/Members/MasterPhases) — cached per Workspace, does
+  // not refetch on PM/Sales/Member/sort filter changes.
+  const baseDataKey = ['workspace-base-data', activeBU];
+  const baseQuery = useQuery({
+    queryKey: baseDataKey,
+    queryFn: async () => {
+      const [custs, mems, mPhases, allCusts] = await Promise.all([
+        getCustomers(activeBU).catch((e: any) => { console.error('getCustomers error:', e); return []; }),
+        getMembers().catch((e: any) => { console.error('getMembers error:', e); return []; }),
+        getMasterPhases().catch((e: any) => { console.error('getMasterPhases error:', e); return []; }),
+        getCustomers().catch((e: any) => { console.error('getCustomers all error:', e); return []; }),
+      ]);
+      return { customers: custs || [], members: mems || [], masterPhases: mPhases || [], allCustomers: allCusts || [] };
+    },
+    enabled: !!activeBU,
+  });
+  const customers: any[] = baseQuery.data?.customers || [];
+  const members: any[] = baseQuery.data?.members || [];
+  const dbMasterPhases: any[] = baseQuery.data?.masterPhases || [];
+  const allCustomers: any[] = baseQuery.data?.allCustomers || [];
+
+  // Projects — cached per Workspace + filter/sort combo (its own key so a
+  // filter change doesn't force-refetch Customers/Members/MasterPhases).
+  const projectsKey = ['workspace-projects', activeBU, selectedPmIds, selectedSalesIds, selectedMemberIds, sortMode];
+  const projectsQuery = useQuery({
+    queryKey: projectsKey,
+    queryFn: () => getProjects({
+      business_unit: activeBU,
+      pm_ids: selectedPmIds.length > 0 ? selectedPmIds.join(',') : undefined,
+      sales_ids: selectedSalesIds.length > 0 ? selectedSalesIds.join(',') : undefined,
+      member_ids: selectedMemberIds.length > 0 ? selectedMemberIds.join(',') : undefined,
+      sort: sortMode
+    }).catch((e: any) => { console.error('getProjects error:', e); return []; }),
+    enabled: !!activeBU,
+  });
+  const projects: any[] = projectsQuery.data || [];
+  const loading = baseQuery.isLoading || projectsQuery.isLoading;
+
+  // Auto-select the first Customer once per Workspace switch (matches the
+  // legacy behavior) — but never on a silent background revalidation, so an
+  // in-progress selection isn't yanked away by cache/focus refetches.
+  const autoSelectedForBU = useRef<string | null>(null);
+  useEffect(() => {
+    if (!baseQuery.data || autoSelectedForBU.current === activeBU) return;
+    autoSelectedForBU.current = activeBU;
+    const custs = baseQuery.data.customers;
+    setSelectedCustomerId(custs.length > 0 ? custs[0].id : null);
+  }, [activeBU, baseQuery.data]);
+
+  // Compatibility wrappers — every existing call site (CRUD handlers) keeps
+  // calling loadData()/reloadProjects() exactly as before; only the
+  // implementation changed to invalidate the React Query cache instead of
+  // doing a bespoke fetch + setState.
+  const loadData = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['workspace-base-data', activeBU] }),
+      queryClient.invalidateQueries({ queryKey: ['workspace-projects', activeBU] }),
+    ]);
+    const fresh = queryClient.getQueryData<{ customers: any[] }>(baseDataKey);
+    const custs = fresh?.customers || [];
+    setSelectedCustomerId(custs.length > 0 ? custs[0].id : null);
   };
 
-  // Safe reload for project updates without full loading state
   const reloadProjects = async () => {
-    try {
-      const projs = await getProjects(activeBU);
-      setProjects(projs || []);
-    } catch (err) {
-      console.error(err);
-    }
+    await queryClient.invalidateQueries({ queryKey: ['workspace-projects', activeBU] });
   };
 
   // Filtered Customers based on search
@@ -315,10 +346,9 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       const created = await createCustomer({ name: newCustomerName.trim(), business_unit: activeBU });
       setNewCustomerName('');
       onFlash(`Đã thêm khách hàng thành công`);
-      
-      // Update local state and select the new customer
-      const updatedCusts = await getCustomers(activeBU);
-      setCustomers(updatedCusts || []);
+
+      // Refresh the list and select the newly created customer
+      await queryClient.invalidateQueries({ queryKey: ['workspace-base-data', activeBU] });
       if (created && created.id) {
         setSelectedCustomerId(created.id);
       }
@@ -341,9 +371,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       await updateCustomer(id, { name: editingCustomerName.trim() });
       setEditingCustomerId(null);
       onFlash('Đã cập nhật tên khách hàng');
-      
-      const updatedCusts = await getCustomers();
-      setCustomers(updatedCusts || []);
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace-base-data', activeBU] });
       // Also reload projects to reflect updated customer names
       reloadProjects();
     } catch (err: any) {
@@ -554,6 +583,16 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     }
   };
 
+  // Memoized options for SearchableSelect
+  const memberOptions = useMemo<ComboboxOption[]>(() => {
+    return (members || [])
+      .map((m: any) => ({
+        id: m.id,
+        name: m.display_name || m.full_name || m.email || `Member #${m.id}`
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  }, [members]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -596,6 +635,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
           )}
         </div>
       </div>
+
+
 
       {/* 3-Column Portfolio UI Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">

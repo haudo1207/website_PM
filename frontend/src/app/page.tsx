@@ -8,7 +8,7 @@ export default function RootPage() {
 
   useEffect(() => {
     if (getToken()) {
-      router.push('/dashboard');
+      router.push('/dashboard/overview');
     } else {
       router.push('/login');
     }

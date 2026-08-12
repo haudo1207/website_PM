@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
@@ -19,9 +20,10 @@ import {
   getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks, getMasterPhases,
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
-  getMeetings, createMeeting, updateMeeting, deleteMeeting
+  getMeetings, createMeeting, updateMeeting, deleteMeeting,
+  remindLeader, remindTaskGroup
 } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, isMember } from '@/lib/auth';
 
 const ROMAN_PAIRS: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
 const to_roman = (n: number): string => {
@@ -61,8 +63,6 @@ function ProjectDetailContent() {
 
   const [project, setProject] = useState<any>(null);
   const [loadingProject, setLoadingProject] = useState(true);
-  const [items, setItems] = useState<any[]>([]);
-  const [taskGroups, setTaskGroups] = useState<any[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
   const [addingTaskGroupId, setAddingTaskGroupId] = useState<number | null>(null);
   const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
@@ -139,7 +139,6 @@ function ProjectDetailContent() {
   // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'
   const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'>('overview');
   const [activePhase, setActivePhase] = useState<string>('ALL');
-  const [phases, setPhases] = useState<any[]>([]);
   const [showPhaseModal, setShowPhaseModal] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
   const [editingPhaseId, setEditingPhaseId] = useState<number | null>(null);
@@ -382,6 +381,66 @@ function ProjectDetailContent() {
     return TASK_COLUMNS;
   };
 
+  // Phases/task groups/tasks now live in the React Query cache instead of
+  // 3 separate useState — enabled:false because every fetch here has always
+  // been driven explicitly by reloadAll() (33 call sites, on mount and after
+  // every write), not by React's own mount/dependency tracking.
+  const { data: taskQueryData, refetch: refetchTasks } = useQuery({
+    queryKey: ['project-tasks', id],
+    queryFn: async () => {
+      let loadedTasks: any[] = [];
+      let allGroups: any[] = [];
+      let loadedPhases: any[] = [];
+      try {
+        const phs = await getPhases(Number(id));
+        loadedPhases = phs || [];
+
+        if (phs && phs.length > 0) {
+          for (const p of phs) {
+            try {
+              const grps = await getTaskGroups(p.id);
+              allGroups.push(...(grps || []));
+            } catch (e) {
+              console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error('Lỗi khi tải danh sách Phase dự án:', err);
+        flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      }
+
+      try {
+        const tsks = await getAllProjectTasks(Number(id));
+        loadedTasks = tsks || [];
+      } catch (err: any) {
+        console.error('Lỗi khi tải danh sách Task dự án:', err);
+        flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      }
+
+      return { phases: loadedPhases, groups: allGroups, tasks: loadedTasks };
+    },
+    enabled: false,
+  });
+
+  const phases: any[] = taskQueryData?.phases || [];
+  const taskGroups: any[] = taskQueryData?.groups || [];
+  const items: any[] = taskQueryData?.tasks || [];
+
+  // Thin wrapper kept so all 33 existing call sites (on mount + after every
+  // create/update/delete/move) don't need to change — same signature,
+  // same loadingTasks behavior, same { tasks, groups } return shape.
+  const reloadAll = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoadingTasks(true);
+    }
+    const result = await refetchTasks();
+    if (!silent) {
+      setLoadingTasks(false);
+    }
+    return { tasks: result.data?.tasks || [], groups: result.data?.groups || [] };
+  }, [refetchTasks]);
+
   const dynamicTabs = [
     { key: 'ALL', label: 'Master', is_master: true, id: undefined as any },
     ...phases.filter(p => !p.is_master && p.name.toLowerCase() !== 'master').map(p => ({
@@ -588,9 +647,9 @@ function ProjectDetailContent() {
     monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
 
     const days = [];
-    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6'];
+    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 7; i++) {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
 
@@ -606,12 +665,13 @@ function ProjectDetailContent() {
         isoDate,
         dayNum: dd,
         yearNum: yyyy,
-        fullDate: d
+        fullDate: d,
+        isWeekend: i >= 5
       });
     }
 
     const startFormatted = days[0].formattedDate;
-    const endFormatted = days[4].formattedDate;
+    const endFormatted = days[6].formattedDate;
     const weekTitle = `LỊCH HỌP DỰ ÁN TUẦN ${startFormatted}–${endFormatted}`;
 
     return { days, weekTitle, startFormatted, endFormatted };
@@ -640,46 +700,6 @@ function ProjectDetailContent() {
     }
   }, [id]);
 
-  const reloadAll = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoadingTasks(true);
-    }
-    let loadedTasks: any[] = [];
-    let allGroups: any[] = [];
-    try {
-      const phs = await getPhases(Number(id));
-      setPhases(phs || []);
-
-      if (phs && phs.length > 0) {
-        for (const p of phs) {
-          try {
-            const grps = await getTaskGroups(p.id);
-            allGroups.push(...(grps || []));
-          } catch (e) {
-            console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
-          }
-        }
-      }
-      setTaskGroups(allGroups);
-    } catch (err: any) {
-      console.error('Lỗi khi tải danh sách Phase dự án:', err);
-      flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
-    }
-
-    try {
-      const tsks = await getAllProjectTasks(Number(id));
-      loadedTasks = tsks || [];
-      setItems(loadedTasks);
-    } catch (err: any) {
-      console.error('Lỗi khi tải danh sách Task dự án:', err);
-      flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
-    }
-
-    if (!silent) {
-      setLoadingTasks(false);
-    }
-    return { tasks: loadedTasks, groups: allGroups };
-  }, [id]);
 
   const loadChatData = useCallback(async () => {
     if (!id) return;
@@ -705,13 +725,19 @@ function ProjectDetailContent() {
   }, [id]);
 
   useEffect(() => {
+    // Chỉ poll khi đang ở tab Chat — trước đây poll suốt thời gian mở trang
+    // dự án dù chưa từng mở tab Chat.
+    if (activeMainTab !== 'chats') return;
+
     loadChatData();
-    // Real-time auto-sync: Poll AI Task Inbox every 5 seconds so new messages automatically display without refreshing!
     const timer = setInterval(() => {
-      loadChatData();
-    }, 5000);
+      // Không poll khi tab trình duyệt đang ở nền.
+      if (document.visibilityState === 'visible') {
+        loadChatData();
+      }
+    }, 20000); // 20s thay cho 5s
     return () => clearInterval(timer);
-  }, [id, loadChatData]);
+  }, [id, loadChatData, activeMainTab]);
 
   // Load chats from localStorage
   useEffect(() => {
@@ -2654,6 +2680,36 @@ function ProjectDetailContent() {
               <span>📄</span>
             </button>
 
+            {/* 🔔 Nhắc Leader
+            {(() => {
+              const today = new Date(); today.setHours(0,0,0,0);
+              const endEst = task.end_date_est ? new Date(task.end_date_est) : null;
+              const isOverdue = endEst && endEst < today && !['Done','Cancel'].includes(task.status);
+              const isDonePending = task.status === 'Done' && (!task.kpi_final || Number(task.kpi_final) === 0);
+              const needsRemind = isOverdue || isDonePending;
+              return (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await remindLeader(task.id);
+                      flash('Đã gửi nhắc nhở tới Leader thành công! 🔔');
+                    } catch (err: any) {
+                      alert('Lỗi gửi nhắc nhở: ' + (err.response?.data?.detail || err.message));
+                    }
+                  }}
+                  className={`flex items-center justify-center w-5 h-5 rounded text-[11px] transition-all ${
+                    needsRemind
+                      ? 'hover:bg-amber-100 text-amber-500 animate-pulse'
+                      : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'
+                  }`}
+                  title={needsRemind ? (isOverdue ? 'Task đang trễ hạn! Nhắc Leader' : 'Task Done chờ Leader xác nhận') : 'Nhắc Leader'}
+                >
+                  <span>🔔</span>
+                </button>
+              );
+            })()} */}
+
             {/* 🗑️ Delete */}
             <button
               type="button"
@@ -3862,10 +3918,40 @@ value={editValue}
                 );
               }
 
-              // Detail Task — bold with group icon
+              // Detail Task — bold with group icon and Remind Leader button
               if (colUpper === 'DETAIL TASK') {
+                const childTasks = items.filter(t => t.task_group_id === group.id);
+                const allDone = childTasks.length > 0 && childTasks.every(t => (t.status || '').toLowerCase() === 'done');
                 displayContent = (
-                  <span className="text-[12px] font-black text-[#0f172a] whitespace-pre-wrap break-words block leading-relaxed pr-4">{val}</span>
+                  <div className="flex items-center justify-between w-full pr-2 gap-2">
+                    <span className="text-[12px] font-black text-[#0f172a] whitespace-pre-wrap break-words block leading-relaxed pr-2">{val}</span>
+                    {isMember() && (group.status.toLowerCase() !== 'done') && (
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!allDone) {
+                            flash('Tất cả task con phải ở trạng thái Done mới được phép gửi thông báo!', true);
+                            return;
+                          }
+                          try {
+                            await remindTaskGroup(group.id);
+                            flash('Đã gửi thông báo nhắc Leader duyệt Task Cha thành công! 🔔');
+                          } catch (err: any) {
+                            alert(err.response?.data?.detail || 'Lỗi khi gửi thông báo nhắc duyệt!');
+                          }
+                        }}
+                        className={`px-2 py-0.5 rounded text-[10.5px] font-bold flex items-center gap-1 transition-all shrink-0 ${
+                          allDone
+                            ? 'bg-amber-100 hover:bg-amber-200 text-amber-700 border border-amber-300 shadow-sm cursor-pointer animate-pulse'
+                            : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-pointer hover:bg-slate-200'
+                        }`}
+                        title={allDone ? "Nhắc Leader duyệt Task Cha này" : "Phải hoàn thành tất cả task con (Done) mới được gửi thông báo"}
+                      >
+                        <span>🔔 Nhắc Leader</span>
+                      </button>
+                    )}
+                  </div>
                 );
               }
 
@@ -4753,8 +4839,8 @@ value={editValue}
                       </div>
                     </div>
 
-                    {/* 5-Day Weekly Calendar Grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 mt-2">
+                    {/* 7-Day Weekly Calendar Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mt-2">
                       {currentWeekInfo.days.map((d, i) => {
                         const dayMeetings = meetings.filter(m => {
                           if (!m || !m.date) return false;
@@ -4775,7 +4861,7 @@ value={editValue}
                         });
 
                         return (
-                          <div key={i} className="bg-white border border-[#e2e8f0] rounded-xl p-3.5 min-h-[160px]">
+                          <div key={i} className={`border rounded-xl p-3.5 min-h-[160px] ${d.isWeekend ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-[#e2e8f0]'}`}>
                             <h4 className="text-[13px] font-bold text-[#0b1c30] mb-3">{d.label}</h4>
                             {dayMeetings.length > 0 ? (
                               dayMeetings.map(item => {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import Link from 'next/link';
 import { getToken } from '@/lib/auth';
@@ -10,64 +11,30 @@ import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
 import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
 
-let cachedSystemAuditData: any = null;
-
 export default function SystemAuditTab() {
   const [selectedMonth, setSelectedMonth] = useState('08/2026');
-  const [activeProjectsProgress, setActiveProjectsProgress] = useState<any[]>(cachedSystemAuditData?.activeProjectsProgress || []);
   const [showAllProjects, setShowAllProjects] = useState(false);
 
-  const [projectsAtRisk, setProjectsAtRisk] = useState<any[]>(cachedSystemAuditData?.projectsAtRisk || []);
-  const [taskStats, setTaskStats] = useState(cachedSystemAuditData?.taskStats || { total: 0, done: 0, inProgress: 0, overdue: 0 });
-  const [loading, setLoading] = useState(false);
-
   // System Audit Logs State
-  const [auditLogs, setAuditLogs] = useState<any[]>(cachedSystemAuditData?.auditLogs || []);
-  const [auditTotal, setAuditTotal] = useState(cachedSystemAuditData?.auditTotal || 0);
   const [auditPage, setAuditPage] = useState(1);
   const [auditModule, setAuditModule] = useState('all');
   const [auditLoading, setAuditLoading] = useState(false);
 
-  // Analytics Tables State (4 Top Tables)
-  const [analytics, setAnalytics] = useState<{
-    top_active_users: any[];
-    top_updated_projects: any[];
-    top_ai_users: any[];
-    top_login_failures: any[];
-  }>(cachedSystemAuditData?.analytics || {
-    top_active_users: [],
-    top_updated_projects: [],
-    top_ai_users: [],
-    top_login_failures: []
-  });
-
-  // Infra vs Markee Distribution
-  const [infraMembers, setInfraMembers] = useState<any[]>(cachedSystemAuditData?.infraMembers || []);
-  const [markeeMembers, setMarkeeMembers] = useState<any[]>(cachedSystemAuditData?.markeeMembers || []);
-
-  // Phase distribution stats
-  const [phaseStats, setPhaseStats] = useState<any[]>(cachedSystemAuditData?.phaseStats || []);
-
-  const fetchSystemAuditData = useCallback((forceRefresh = false) => {
-    if (!forceRefresh && cachedSystemAuditData) {
-      return;
-    }
-
-    setLoading(true);
+  const fetchSystemAuditData = useCallback(async () => {
     const ts = Date.now();
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
 
     // Parallel fast fetch for projects, tasks, members, analytics, logs, AND master phases from Settings
-    Promise.all([
+    const [projRes, tasksRes, membersRes, analyticsRes, logsRes, masterPhasesRes] = await Promise.all([
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/system-audit/analytics?_t=${ts}`, config).catch(() => ({ data: {} })),
       axios.get(`/api/system-audit/logs?page=${auditPage}&page_size=15&_t=${ts}`, config).catch(() => ({ data: { items: [], total: 0 } })),
-      axios.get(`/api/system-categories/master-phases?_t=${ts}`, config).catch(() => ({ data: [] }))
-    ]).then(([projRes, tasksRes, membersRes, analyticsRes, logsRes, masterPhasesRes]) => {
-      const projects = projRes.data || [];
+      axios.get(`/api/system-categories/master-phases?_t=${ts}`, config).catch(() => ({ data: [] })),
+    ]);
+    const projects = projRes.data || [];
       const allTasksCombined = tasksRes.data || [];
       const masterPhases = masterPhasesRes.data || [];
 
@@ -99,8 +66,6 @@ export default function SystemAuditTab() {
       if (pStats.length === 0) {
         pStats = Object.keys(phaseCounts).map(k => ({ name: k, count: phaseCounts[k] }));
       }
-
-      setPhaseStats(pStats);
 
       let allDone = 0, allInProg = 0, allOverdue = 0, allTasksCount = 0;
       const pRisk: any[] = [];
@@ -137,10 +102,6 @@ export default function SystemAuditTab() {
       const sortedRisk = pRisk.sort((a: any, b: any) => b.overdueTask - a.overdueTask).slice(0, 5);
       const tStats = { total: allTasksCount, done: allDone, inProgress: allInProg, overdue: allOverdue };
 
-      setActiveProjectsProgress(sortedProjects);
-      setProjectsAtRisk(sortedRisk);
-      setTaskStats(tStats);
-
       // Members distribution
       const list = membersRes.data || [];
       const infra: any[] = [];
@@ -160,8 +121,6 @@ export default function SystemAuditTab() {
       });
       const infraSorted = infra.sort((a,b) => b.kpi - a.kpi);
       const markeeSorted = markee.sort((a,b) => b.kpi - a.kpi);
-      setInfraMembers(infraSorted);
-      setMarkeeMembers(markeeSorted);
 
       // Analytics
       const analyticsData = {
@@ -170,32 +129,49 @@ export default function SystemAuditTab() {
         top_ai_users: analyticsRes.data?.top_ai_users || [],
         top_login_failures: analyticsRes.data?.top_login_failures || []
       };
-      setAnalytics(analyticsData);
 
       // Logs
       const logs = logsRes.data?.items || [];
       const total = logsRes.data?.total || 0;
-      setAuditLogs(logs);
-      setAuditTotal(total);
 
-      // Save cache
-      cachedSystemAuditData = {
-        activeProjectsProgress: sortedProjects,
-        projectsAtRisk: sortedRisk,
-        taskStats: tStats,
-        phaseStats: pStats,
-        infraMembers: infraSorted,
-        markeeMembers: markeeSorted,
-        analytics: analyticsData,
-        auditLogs: logs,
-        auditTotal: total
-      };
-    }).finally(() => setLoading(false));
+    return {
+      activeProjectsProgress: sortedProjects,
+      projectsAtRisk: sortedRisk,
+      taskStats: tStats,
+      phaseStats: pStats,
+      infraMembers: infraSorted,
+      markeeMembers: markeeSorted,
+      analytics: analyticsData,
+      auditLogs: logs,
+      auditTotal: total,
+    };
   }, [auditPage]);
 
-  useEffect(() => {
-    fetchSystemAuditData(false);
-  }, [fetchSystemAuditData]);
+  const { data: auditData, isFetching: loading, refetch } = useQuery({
+    queryKey: ['dashboard-system-audit', auditPage],
+    queryFn: fetchSystemAuditData,
+    staleTime: 2 * 60_000,
+  });
+
+  const activeProjectsProgress: any[] = auditData?.activeProjectsProgress || [];
+  const projectsAtRisk: any[] = auditData?.projectsAtRisk || [];
+  const taskStats = auditData?.taskStats || { total: 0, done: 0, inProgress: 0, overdue: 0 };
+  const phaseStats: any[] = auditData?.phaseStats || [];
+  const infraMembers: any[] = auditData?.infraMembers || [];
+  const markeeMembers: any[] = auditData?.markeeMembers || [];
+  const analytics: {
+    top_active_users: any[];
+    top_updated_projects: any[];
+    top_ai_users: any[];
+    top_login_failures: any[];
+  } = auditData?.analytics || {
+    top_active_users: [],
+    top_updated_projects: [],
+    top_ai_users: [],
+    top_login_failures: [],
+  };
+  const auditLogs: any[] = auditData?.auditLogs || [];
+  const auditTotal = auditData?.auditTotal || 0;
 
   const superAdminCards = [
     { label: 'Tổng Số Dự Án',      value: activeProjectsProgress.length, icon: 'project',   border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Toàn hệ thống' },
@@ -215,25 +191,29 @@ export default function SystemAuditTab() {
           {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật dữ liệu hệ thống...</span>}
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => fetchSystemAuditData(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
-          >
-            <SvgIcon name="refresh" className="w-3.5 h-3.5 text-slate-500" />
-            <span>Làm mới dữ liệu</span>
-          </button>
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1 shadow-sm">
-            <span className="text-[11px] font-bold text-slate-500">Lọc Tháng:</span>
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="text-xs font-bold text-[#0058be] bg-transparent focus:outline-none cursor-pointer"
-            >
-              <option value="08/2026">Tháng 08/2026</option>
-              <option value="07/2026">Tháng 07/2026</option>
-              <option value="06/2026">Tháng 06/2026</option>
-            </select>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
+            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+              <span className="text-slate-500">Tháng:</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+              >
+                <option value="08/2026">08/2026</option>
+                <option value="07/2026">07/2026</option>
+                <option value="06/2026">06/2026</option>
+              </select>
+            </div>
           </div>
+
+          <button
+            onClick={() => refetch()}
+            className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg shadow-sm text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
+          >
+            <SvgIcon name="refresh" className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#0058be]' : 'text-slate-500'}`} />
+            LÀM MỚI
+          </button>
         </div>
       </div>
 
@@ -300,7 +280,7 @@ export default function SystemAuditTab() {
               </div>
               <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">{projectsAtRisk.length} rủi ro</span>
             </div>
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
               {projectsAtRisk.length === 0 ? (
                 <p className="text-xs text-slate-400 font-semibold text-center py-6">Tuyệt vời! Không có dự án nào bị rủi ro trễ hạn.</p>
               ) : (

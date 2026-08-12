@@ -1,18 +1,19 @@
 'use client';
 import React, { useState, useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search, Sparkles } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
+import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleAuthUrl, getGoogleStatus } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 export default function MeetingsPage() {
+  const queryClient = useQueryClient();
   const [canManage, setCanManage] = useState(false);
-  const [meetings, setMeetings] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
   const [monthFilter, setMonthFilter] = useState('All');
@@ -21,9 +22,24 @@ export default function MeetingsPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [googleConnected, setGoogleConnected] = useState(false);
+
+  const handleCalendarMeetingClick = (item: any) => {
+    const statusUpper = String(item.status || '').toUpperCase();
+    const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED' || Boolean(item.executive_summary) || (Array.isArray(item.summary) && item.summary.length > 0);
+
+    if (isDone) {
+      setSummarizingMeeting(item);
+      setIsSummarizeOpen(true);
+    } else {
+      setDetailMeeting(item);
+      setIsDetailOpen(true);
+    }
+  };
 
   useEffect(() => {
     getGoogleStatus().then(res => {
@@ -52,9 +68,9 @@ export default function MeetingsPage() {
     monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
 
     const days = [];
-    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6'];
+    const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 7; i++) {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
 
@@ -70,12 +86,13 @@ export default function MeetingsPage() {
         isoDate,
         dayNum: dd,
         yearNum: yyyy,
-        fullDate: d
+        fullDate: d,
+        isWeekend: i >= 5
       });
     }
 
     const startFormatted = days[0].formattedDate;
-    const endFormatted = days[4].formattedDate;
+    const endFormatted = days[6].formattedDate;
     const weekTitle = `LỊCH LÀM VIỆC TUẦN ${startFormatted}–${endFormatted}`;
 
     return { days, weekTitle, startFormatted, endFormatted };
@@ -85,20 +102,17 @@ export default function MeetingsPage() {
     setCanManage(isAdmin());
   }, []);
 
-  const fetchMeetings = async () => {
-    setIsLoading(true);
-    try {
+  const { data: meetingsData, isLoading, refetch: fetchMeetings } = useQuery({
+    queryKey: ['meetings'],
+    queryFn: async () => {
       const data = await getMeetings();
-      if (data && data.success && Array.isArray(data.data)) {
-        setMeetings(data.data);
-      } else if (Array.isArray(data)) {
-        setMeetings(data);
-      }
-    } catch (error) { console.error("Failed to fetch meetings", error); }
-    finally { setIsLoading(false); }
-  };
-
-  useEffect(() => { fetchMeetings(); }, []);
+      if (data && data.success && Array.isArray(data.data)) return data.data;
+      if (Array.isArray(data)) return data;
+      return [];
+    },
+    staleTime: 2 * 60_000,
+  });
+  const meetings: any[] = meetingsData || [];
 
   const filteredMeetings = useMemo(() => {
     return (meetings || []).filter(m => {
@@ -118,11 +132,11 @@ export default function MeetingsPage() {
       if (meetingData.id) {
         const data = await updateMeeting(meetingData.id, meetingData);
         if (data.success) {
-          setMeetings(meetings.map(m => m.id === meetingData.id ? data.data : m));
+          queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meetingData.id ? data.data : m));
         }
       } else {
         const data = await createMeeting(meetingData);
-        if (data.success) setMeetings([data.data, ...meetings]);
+        if (data.success) queryClient.setQueryData(['meetings'], (prev: any[] = []) => [data.data, ...prev]);
       }
       setIsModalOpen(false); setEditingMeeting(null);
     } catch (error: any) {
@@ -135,7 +149,7 @@ export default function MeetingsPage() {
     if (!deleteConfirmId) return;
     try {
       await deleteMeeting(parseInt(deleteConfirmId));
-      setMeetings(prev => prev.filter(m => m.id !== parseInt(deleteConfirmId)));
+      queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.filter(m => m.id !== parseInt(deleteConfirmId)));
       setDeleteConfirmId(null);
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
@@ -146,7 +160,7 @@ export default function MeetingsPage() {
   const handleSync = async (meeting: any) => {
     const data = await syncMeeting(parseInt(meeting.id));
     if (data.success) {
-      setMeetings(prev => prev.map(m => m.id === meeting.id ? data.data : m));
+      queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? data.data : m));
     }
   };
 
@@ -167,8 +181,8 @@ export default function MeetingsPage() {
             <span className="text-xs font-bold text-[#0b1c30]">Quản lý Meetings</span>
           </div>}
           <div className="flex items-center gap-3">
-            <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-1.5 bg-white hover:bg-[#f0f2f5] border border-[#c2c6d6] text-[#565e74] text-xs font-bold px-3 py-2 rounded-lg transition-colors">
-              <Sparkles size={14} className="text-emerald-500" />Cấu hình AI
+            <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-1.5 bg-white hover:bg-[#f0f2f5] border border-[#c2c6d6] text-[#565e74] text-xs font-bold px-3 py-2 rounded-lg transition-colors shadow-2xs">
+              <Sparkles size={14} className="text-emerald-500" />Cấu hình AI & Google Admin
             </button>
             <button onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }} className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm">
               <span className="material-symbols-outlined text-[16px]">add</span>Tạo meeting
@@ -251,21 +265,7 @@ export default function MeetingsPage() {
 
                 <button
                   type="button"
-                  onClick={handleConnectGoogle}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors border shadow-xs flex items-center gap-1.5 ${
-                    googleConnected
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                      : 'bg-[#0058be] hover:bg-[#004297] text-white border-transparent'
-                  }`}
-                  title="Kết nối tài khoản Google để tự động đồng bộ Google Meet & Transcript"
-                >
-                  <Sparkles size={13} />
-                  <span>{googleConnected ? '✓ Đã kết nối Google' : 'Kết nối Google Meet'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={fetchMeetings}
+                  onClick={() => fetchMeetings()}
                   className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#0b1c30] text-xs font-semibold rounded-lg transition-colors border border-[#cbd5e1] shadow-xs flex items-center gap-1.5"
                 >
                   <span>↻</span>
@@ -274,8 +274,8 @@ export default function MeetingsPage() {
               </div>
             </div>
 
-            {/* 5-Day Weekly Calendar Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 mt-2">
+            {/* 7-Day Weekly Calendar Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mt-2">
               {currentWeekInfo.days.map((d, i) => {
                 const dayMeetings = meetings.filter(m => {
                   if (!m || !m.date) return false;
@@ -311,7 +311,7 @@ export default function MeetingsPage() {
                 });
 
                 return (
-                  <div key={i} className="bg-white border border-[#e2e8f0] rounded-xl p-3.5 min-h-[180px]">
+                  <div key={i} className={`border rounded-xl p-3.5 min-h-[180px] ${d.isWeekend ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-[#e2e8f0]'}`}>
                     <h4 className="text-[13px] font-bold text-[#0b1c30] mb-3">{d.label}</h4>
                     {dayMeetings.length > 0 ? (
                       dayMeetings.map(item => {
@@ -328,7 +328,7 @@ export default function MeetingsPage() {
                         return (
                           <div
                             key={item.id}
-                            onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
+                            onClick={() => handleCalendarMeetingClick(item)}
                             className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${
                               isPM
                                 ? 'bg-[#fff7e8] border-l-[#f59e0b]'
@@ -400,7 +400,8 @@ export default function MeetingsPage() {
       {/* Modals */}
       {canManage && <CreateMeetingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
-      {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => setMeetings(prev => prev.map(x => x.id === m.id ? m : x))} />}
+      {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(x => x.id === m.id ? m : x))} />}
+      <MeetingDetailModal isOpen={isDetailOpen} onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }} meeting={detailMeeting} onEdit={canManage ? (m => { setEditingMeeting(m); setIsModalOpen(true); }) : undefined} onSummarize={canManage ? (m => { setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined} />
 
       {/* Delete Confirm Modal */}
       {deleteConfirmId && (

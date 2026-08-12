@@ -34,11 +34,60 @@ export const getAuthConfig = () => api.get<AuthConfig>('/auth/config').then(r =>
 export const googleLogin = (credential: string) =>
   api.post('/auth/google', { credential }).then(r => r.data);
 
+export interface MeProfile {
+  id: number;
+  email: string;
+  full_name: string;
+  avatar_url?: string | null;
+  role: string;
+  data_scope: string;
+  member_id?: number | null;
+  is_active: boolean;
+  login_method: string;
+  position?: string | null;
+  department?: string | null;
+  skills: string[];
+  member: {
+    display_name: string;
+    team?: string | null;
+    phone?: string | null;
+    experience_year?: number | null;
+    leader_name?: string | null;
+  } | null;
+}
+export const getMe = () => api.get<MeProfile>('/users/me').then(r => r.data);
+
+export interface LoginHistoryItem {
+  id: number;
+  action: string;
+  outcome: string;
+  login_method?: string | null;
+  browser?: string | null;
+  os?: string | null;
+  device_type?: string | null;
+  ip_address?: string | null;
+  ip_risk?: string | null;
+  is_new_ip: boolean;
+  is_new_device: boolean;
+  created_at: string | null;
+}
+export const getMyLoginHistory = (limit = 20) =>
+  api.get<LoginHistoryItem[]>('/users/me/login-history', { params: { limit } }).then(r => r.data);
+
 // ═══════════════════════════════════════════════════════════
 // PROJECTS (v5)
 // ═══════════════════════════════════════════════════════════
-export const getProjects = (businessUnit?: string) =>
-  api.get('/projects', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+export const getProjects = (params?: {
+  business_unit?: string;
+  search?: string;
+  customer?: string;
+  year?: number;
+  phase?: string;
+  pm_ids?: string;
+  sales_ids?: string;
+  member_ids?: string;
+  sort?: string;
+}) => api.get('/projects', { params }).then(r => r.data);
 export const getSidebarTree = (businessUnit?: string) =>
   api.get('/projects/sidebar-tree', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
 export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r.data);
@@ -186,7 +235,7 @@ export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
 
 // Members
-export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; skill_id?: number }) =>
+export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number }) =>
   api.get('/members', { params }).then(r => r.data);
 export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.data);
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
@@ -333,13 +382,42 @@ export const exportProjectAuditLogs = (projectId: number, params?: { module?: st
   api.get(`/projects/${projectId}/audit-logs/export`, { params, responseType: 'blob' }).then(r => r.data);
 
 // System Audit (Global Admin)
+export interface SystemAuditChange {
+  field_name: string;
+  old_value: string;
+  new_value: string;
+  description: string;
+}
+
 export interface SystemAuditItem extends AuditLogItem {
   business_unit?: string;
   customer_id?: number;
   project_name?: string;
+  resource_name?: string;
+  severity?: 'INFO' | 'WARNING' | 'CRITICAL';
+  login_method?: string;
+  source?: string;
+  category?: 'Security' | 'Administration' | 'Configuration' | 'Integration' | 'System';
+  session_id?: string;
+  ip_risk?: 'Internal' | 'Trusted' | 'Unknown';
+  correlation_id?: string;
+  target_user_id?: number;
+  target_user_name?: string;
+  target_customer_id?: number;
+  target_department?: string;
+  snapshot_json?: string;
+  outcome?: 'SUCCESS' | 'FAILED' | 'PARTIAL';
+  duration_ms?: number;
+  browser?: string;
+  os?: string;
+  device_type?: string;
+  is_new_ip?: boolean;
+  is_new_device?: boolean;
   ip_address?: string;
   user_agent?: string;
   request_url?: string;
+  changes_count?: number;
+  changes?: SystemAuditChange[];
 }
 
 export interface SystemAuditStats {
@@ -360,6 +438,15 @@ export const getSystemAuditLogs = (params?: {
   project_id?: number;
   module?: string;
   action?: string;
+  severity?: string;
+  login_method?: string;
+  source?: string;
+  category?: string;
+  ip_risk?: string;
+  outcome?: string;
+  session_id?: string;
+  correlation_id?: string;
+  target_user_id?: number;
   user_id?: number;
   search?: string;
   start_date?: string;
@@ -373,12 +460,44 @@ export const exportSystemAuditLogs = (params?: {
   project_id?: number;
   module?: string;
   action?: string;
+  severity?: string;
+  login_method?: string;
+  source?: string;
+  category?: string;
+  ip_risk?: string;
   user_id?: number;
   search?: string;
   start_date?: string;
   end_date?: string;
 }) => api.get('/system-audit/export', { params, responseType: 'blob' }).then(r => r.data);
 
+export const exportSystemAuditLogsJSON = (params?: {
+  search?: string;
+  category?: string;
+  source?: string;
+}) => api.get('/system-audit/export-json', { params, responseType: 'blob' }).then(r => r.data);
+
+export const getSessionTimeline = (sessionId: string) =>
+  api.get<{ session_id: string; total_events: number; events: SystemAuditItem[] }>(`/system-audit/session-timeline/${sessionId}`).then(r => r.data);
+
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);
 
+// Notifications
+export const remindLeader = (taskId: number, message?: string) =>
+  api.post('/notifications/remind', { task_id: taskId, message }).then(r => r.data);
+
+export const remindLeaderBulk = (projectId?: number) =>
+  api.post('/notifications/remind-bulk', { project_id: projectId }).then(r => r.data);
+
+export const getMyAlerts = () =>
+  api.get('/notifications/my-alerts').then(r => r.data);
+
+export const remindTaskGroup = (taskGroupId: number, message?: string) =>
+  api.post('/notifications/remind-group', { task_group_id: taskGroupId, message }).then(r => r.data);
+
+export const getInboxNotifications = () =>
+  api.get('/notifications/inbox').then(r => r.data);
+
+export const markNotificationRead = (id: number) =>
+  api.patch(`/notifications/${id}/read`).then(r => r.data);

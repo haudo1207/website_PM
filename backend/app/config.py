@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     CHECK_INTERVAL_SECONDS: int = 3600
     REDIS_URL: str = ""
 
+    # DB connection pool — was hard-coded pool_size=2/max_overflow=0 in database.py,
+    # which exhausts under concurrent Dashboard load and forces requests to queue.
+    # Kept conservative: measured on the dev DB (Supabase pooler) max_connections=60
+    # with ~24 already used by Supabase's own infra (Supavisor/PostgREST/pg_cron),
+    # leaving ~36 free. pool_size+max_overflow is a per-worker ceiling, and prod
+    # runs 2 brands sharing one DB — override via .env per environment once
+    # UVICORN_WORKERS > 1 is actually rolled out, based on real headroom there.
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    DB_POOL_TIMEOUT: int = 30
+
     # Zoom Server-to-Server OAuth
     ZOOM_ACCOUNT_ID: str = ""
     ZOOM_CLIENT_ID: str = ""
@@ -30,6 +41,7 @@ class Settings(BaseSettings):
     # Google OAuth2 (for Google Meet & Google Drive)
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REFRESH_TOKEN: str = ""
     GOOGLE_CLIENT_EMAIL: str = ""
     GOOGLE_PRIVATE_KEY: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/meetings/google/callback"

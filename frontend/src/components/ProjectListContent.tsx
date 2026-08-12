@@ -1,9 +1,11 @@
 'use client';
 import { useEffect, useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin, isSuperAdmin } from '@/lib/auth';
+import SearchableSelect from './common/SearchableSelect';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
   'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
@@ -85,15 +87,13 @@ export default function ProjectListContent() {
   const paramYear = searchParams.get('year');
 
   const canManage = isAdmin();
-  const [projects, setProjects] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState('All');
   const [phaseFilter, setPhaseFilter] = useState('All');
   const [customerFilter, setCustomerFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
   const [salesFilter, setSalesFilter] = useState('All');
+  const [memberFilter, setMemberFilter] = useState('All');
   const [yearFilter, setYearFilter] = useState('All');
   const [sortBy, setSortBy] = useState('newest');
 
@@ -102,21 +102,24 @@ export default function ProjectListContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
 
-  const reload = async () => {
-    try {
+  const { data: listData, refetch: reload } = useQuery({
+    queryKey: ['project-list'],
+    queryFn: async () => {
       const [projs, custs, wss] = await Promise.all([
         getProjects(),
         getCustomers(),
         getWorkspaces().catch(() => [])
       ]);
-      setProjects(projs || []);
-      setCustomers(custs || []);
-      setWorkspaces(wss || []);
-    } catch {
-      // Fallback safe load
-    }
-  };
-  useEffect(() => { reload(); }, []);
+      return {
+        projects: projs || [],
+        customers: custs || [],
+        workspaces: wss || [],
+      };
+    },
+  });
+  const projects: any[] = listData?.projects || [];
+  const customers: any[] = listData?.customers || [];
+  const workspaces: Workspace[] = listData?.workspaces || [];
 
   // Sync URL query params to filter states
   useEffect(() => {
@@ -160,6 +163,7 @@ export default function ProjectListContent() {
     setCustomerFilter('All');
     setPmFilter('All');
     setSalesFilter('All');
+    setMemberFilter('All');
     setYearFilter('All');
     setPage(1);
     router.push('/projects');
@@ -180,6 +184,24 @@ export default function ProjectListContent() {
     const names: string[] = [];
     projects.forEach(p => {
       (p.sales_name || '').split(',').map((s: string) => s.trim()).filter((s: string) => s).forEach((n: string) => names.push(n));
+    });
+    return Array.from(new Set(names)).sort();
+  }, [projects]);
+
+  const uniqueMembers = useMemo(() => {
+    const names: string[] = [];
+    projects.forEach(p => {
+      if (p.member_names) {
+        p.member_names.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
+      if (Array.isArray(p.members)) {
+        p.members.forEach((m: any) => { if (m?.name) names.push(m.name); });
+      }
+      if (p.pm_name) names.push(p.pm_name);
+      if (p.technical_leader_name) names.push(p.technical_leader_name);
+      if (p.sales_name) {
+        p.sales_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
     });
     return Array.from(new Set(names)).sort();
   }, [projects]);
@@ -209,18 +231,38 @@ export default function ProjectListContent() {
       const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
       const matchSales = salesFilter === 'All' ||
         (p.sales_name || '').split(',').map((s: string) => s.trim()).includes(salesFilter);
+      const matchMember = memberFilter === 'All' || (() => {
+        const mLower = memberFilter.toLowerCase();
+        const projMemberNames: string[] = [];
+        if (p.member_names) projMemberNames.push(...p.member_names.split(',').map((s: string) => s.trim()));
+        if (Array.isArray(p.members)) p.members.forEach((m: any) => { if (m?.name) projMemberNames.push(m.name); });
+        if (p.pm_name) projMemberNames.push(p.pm_name);
+        if (p.technical_leader_name) projMemberNames.push(p.technical_leader_name);
+        if (p.sales_name) projMemberNames.push(...p.sales_name.split(',').map((s: string) => s.trim()));
+        return projMemberNames.some(name => name.toLowerCase() === mLower);
+      })();
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
-      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchYear;
+      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter, wsNameByCode]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode]);
 
   // Sort memoized
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      if (sortBy === 'newest') return b.id - a.id;
-      if (sortBy === 'oldest') return a.id - b.id;
-      if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
-      if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
+      if (sortBy === 'newest') {
+        const timeA = new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
+        if (timeB !== timeA) return timeB - timeA;
+        return b.id - a.id;
+      }
+      if (sortBy === 'oldest') {
+        const timeA = new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return a.id - b.id;
+      }
+      if (sortBy === 'name_asc') return a.name.localeCompare(b.name, 'vi');
+      if (sortBy === 'name_desc') return b.name.localeCompare(a.name, 'vi');
       return 0;
     });
   }, [filtered, sortBy]);
@@ -258,7 +300,7 @@ export default function ProjectListContent() {
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm relative z-30">
             <div className="relative flex-1 min-w-[240px]">
               <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -267,65 +309,68 @@ export default function ProjectListContent() {
                 className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none text-slate-700 focus:border-indigo-500 bg-slate-50/20" />
             </div>
             
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Giai đoạn</label>
-              <select value={phaseFilter} onChange={e => { setPhaseFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả giai đoạn</option>
-                {PROJECT_PHASES.map(ph => (
-                  <option key={ph} value={ph}>{ph}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="giai đoạn"
+              icon="🚩"
+              options={PROJECT_PHASES.map(ph => ({ id: ph, name: ph }))}
+              value={phaseFilter}
+              onChange={val => { setPhaseFilter(String(val)); setPage(1); }}
+              placeholder="Tìm giai đoạn..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Khách hàng</label>
-              <select value={customerFilter} onChange={e => { setCustomerFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả khách hàng</option>
-                {uniqueCustomers.map(cust => (
-                  <option key={cust} value={cust}>{cust}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="khách hàng"
+              icon="🏢"
+              options={uniqueCustomers.map(cust => ({ id: cust, name: cust }))}
+              value={customerFilter}
+              onChange={val => { setCustomerFilter(String(val)); setPage(1); }}
+              placeholder="Tìm khách hàng..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Quản lý (PM)</label>
-              <select value={pmFilter} onChange={e => { setPmFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả PM</option>
-                {uniquePms.map(pm => (
-                  <option key={pm} value={pm}>{pm}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="PM"
+              icon="👔"
+              options={uniquePms.map(pm => ({ id: pm, name: pm }))}
+              value={pmFilter}
+              onChange={val => { setPmFilter(String(val)); setPage(1); }}
+              placeholder="Tìm PM..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[170px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Sales</label>
-              <select value={salesFilter} onChange={e => { setSalesFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả Sales</option>
-                {uniqueSales.map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="Sales"
+              icon="💼"
+              options={uniqueSales.map(s => ({ id: s, name: s }))}
+              value={salesFilter}
+              onChange={val => { setSalesFilter(String(val)); setPage(1); }}
+              placeholder="Tìm Sales..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[140px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Workspace</label>
-              <select value={businessFilter} onChange={e => { setBusinessFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả Workspace</option>
-                {workspaces.map(ws => (
-                  <option key={ws.code} value={ws.name}>{ws.name}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="thành viên"
+              icon="👥"
+              options={uniqueMembers.map(m => ({ id: m, name: m }))}
+              value={memberFilter}
+              onChange={val => { setMemberFilter(String(val)); setPage(1); }}
+              placeholder="Tìm thành viên..."
+            />
 
-            <div className="flex flex-col flex-shrink-0 w-[120px]">
-              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-0.5 tracking-wider">Năm</label>
-              <select value={yearFilter} onChange={e => { setYearFilter(e.target.value); setPage(1); }} className="bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none text-slate-600 focus:border-indigo-500 cursor-pointer font-semibold">
-                <option value="All">Tất cả năm</option>
-                {uniqueYears.map(yr => (
-                  <option key={yr} value={String(yr)}>{yr}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="Workspace"
+              icon="🗂️"
+              options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
+              value={businessFilter}
+              onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
+              placeholder="Tìm Workspace..."
+            />
+
+            <SearchableSelect
+              label="năm"
+              icon="📅"
+              options={uniqueYears.map(yr => ({ id: String(yr), name: String(yr) }))}
+              value={yearFilter}
+              onChange={val => { setYearFilter(String(val)); setPage(1); }}
+              placeholder="Tìm năm..."
+            />
 
             <button onClick={handleResetFilters} className="flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors flex-shrink-0 h-[34px]">
               <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.meeting import Meeting
+from ..models.member import Member
 from ..models.phase import Phase
 from ..models.project import Project, project_members
 from ..models.system_category import Workspace
 from ..models.task import Task
 from ..models.task_group import TaskGroup
+from ..models.user import User
 from .auth import get_current_user
 
 ALL_SCOPE = "all"
@@ -21,6 +23,9 @@ ROLE_MEMBER = "member"
 ROLE_VIEWER = "viewer"
 VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER, "admin"}
 WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, "admin"}
+# Roles whose effective data scope is their assigned Workspace
+# (same Workspace-based data-scope mechanism shared by Leader, Member and Viewer).
+WORKSPACE_SCOPED_ROLES = {ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}
 
 
 # ── Workspace Master (Single Source of Truth) ───────────────
@@ -29,11 +34,24 @@ def get_workspaces(db: Session):
     return db.query(Workspace).order_by(Workspace.id.asc()).all()
 
 
-def resolve_workspace(db: Session, value):
-    """Resolve a Workspace by its code or case-insensitive display name."""
+def preload_workspace_maps(db: Session):
+    """Workspace table is tiny and near-static (2-3 rows) — load it once for
+    an entire project list instead of resolve_workspace() re-querying it per
+    project inside business_label_for_project/business_unit_for_project."""
+    all_ws = db.query(Workspace).all()
+    by_code = {w.code.lower(): w for w in all_ws if w.code}
+    by_name = {w.name.lower(): w for w in all_ws if w.name}
+    return by_code, by_name
+
+
+def resolve_workspace(db: Session, value, by_code=None, by_name=None):
+    """Resolve a Workspace by its code or case-insensitive display name.
+    Pass by_code/by_name (from preload_workspace_maps) to avoid a query."""
     v = str(value or "").strip().lower()
     if not v:
         return None
+    if by_code is not None:
+        return by_code.get(v) or by_name.get(v)
     ws = db.query(Workspace).filter(Workspace.code == v).first()
     if not ws:
         ws = db.query(Workspace).filter(sql_func.lower(Workspace.name) == v).first()
@@ -74,20 +92,20 @@ def scope_display_name(db: Session, scope) -> str:
     return ws.name if ws else s
 
 
-def business_label_for_project(db: Session, project) -> str:
+def business_label_for_project(db: Session, project, by_code=None, by_name=None) -> str:
     """Display name for a project: explicit business value or resolved from customer BU."""
     if project.business:
         return project.business
     bu_code = project.customer.business_unit if project.customer else None
-    ws = resolve_workspace(db, bu_code or getattr(project, "data_scope", None))
+    ws = resolve_workspace(db, bu_code or getattr(project, "data_scope", None), by_code, by_name)
     return ws.name if ws else "All"
 
 
-def business_unit_for_project(db: Session, project) -> str:
+def business_unit_for_project(db: Session, project, by_code=None, by_name=None) -> str:
     """Workspace code for a project, resolved from the customer BU / data scope."""
     if project.customer and project.customer.business_unit:
         return project.customer.business_unit
-    ws = resolve_workspace(db, getattr(project, "data_scope", None))
+    ws = resolve_workspace(db, getattr(project, "data_scope", None), by_code, by_name)
     return ws.code if ws else default_scope(db)
 
 
@@ -100,12 +118,31 @@ def default_scope_guard() -> str:
     return "infrastructure"
 
 
+def project_belongs_to_workspace(db: Session, scope: str):
+    """Return OR-conditions for projects belonging to the given Workspace scope.
+
+    Shared data-scope rule used by Leader, Member and Viewer: a project belongs
+    to the caller's Workspace when its scope/business matches the Workspace or
+    when it is global ('all' / 'All').
+    """
+    ws = resolve_workspace(db, scope)
+    filters = [
+        Project.data_scope == scope,
+        Project.data_scope == ALL_SCOPE,
+        Project.business == "All",
+    ]
+    if ws:
+        filters.append(Project.business == ws.name)
+    return filters
+
+
 def project_query_for_user(db: Session, user):
     """Return a Project query filtered by the caller's role and scope.
 
     - super_admin (scope=all): every project.
     - leader: projects matching data_scope, business==All/scope, or explicitly assigned.
-    - member / viewer: projects where the user's linked member_id is in project_members.
+    - member / viewer: projects where the user's linked member_id is in project_members
+      AND the project belongs to the user's assigned Workspace.
     """
     query = db.query(Project)
     scope = user_scope(user)
@@ -116,14 +153,7 @@ def project_query_for_user(db: Session, user):
 
     if role == ROLE_LEADER:
         member_id = getattr(user, "member_id", None)
-        ws = resolve_workspace(db, scope)
-        filters = [
-            Project.data_scope == scope,
-            Project.data_scope == ALL_SCOPE,
-            Project.business == "All",
-        ]
-        if ws:
-            filters.append(Project.business == ws.name)
+        filters = list(project_belongs_to_workspace(db, scope))
         if member_id:
             assigned_project_ids = (
                 db.query(project_members.c.project_id)
@@ -133,7 +163,7 @@ def project_query_for_user(db: Session, user):
             filters.append(Project.id.in_(assigned_project_ids))
         return query.filter(or_(*filters))
 
-    # member / viewer — restrict to assigned projects only.
+    # member / viewer — assigned projects, restricted to the user's Workspace.
     member_id = getattr(user, "member_id", None)
     if not member_id:
         # User has no linked member → they can see nothing.
@@ -144,7 +174,51 @@ def project_query_for_user(db: Session, user):
         .filter(project_members.c.member_id == member_id)
         .subquery()
     )
-    return query.filter(Project.id.in_(assigned_project_ids))
+    base = query.filter(Project.id.in_(assigned_project_ids))
+    return base.filter(or_(*project_belongs_to_workspace(db, scope)))
+
+
+def member_query_for_user(db: Session, user):
+    """Return a Member query filtered by the caller's role and Workspace scope.
+
+    - super_admin / scope=all: every member (unchanged).
+    - leader / member / viewer: members belonging to the caller's Workspace —
+      i.e. members whose linked account data_scope matches the Workspace, or
+      members assigned to a project within the caller's scope. The effective
+      Workspace always comes from the authoritative User data_scope, so the
+      caller can never bypass their assigned Workspace.
+    """
+    query = db.query(Member)
+    scope = user_scope(user)
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    if role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE:
+        return query
+    if role not in WORKSPACE_SCOPED_ROLES:
+        return query
+
+    scoped_user_member_ids = (
+        db.query(User.member_id)
+        .filter(
+            User.member_id.isnot(None),
+            or_(User.data_scope == scope, User.data_scope == ALL_SCOPE),
+        )
+        .subquery()
+    )
+    scoped_project_ids = (
+        project_query_for_user(db, user).with_entities(Project.id).subquery()
+    )
+    scoped_project_member_ids = (
+        db.query(project_members.c.member_id)
+        .filter(project_members.c.project_id.in_(scoped_project_ids))
+        .subquery()
+    )
+    return query.filter(
+        or_(
+            Member.id.in_(scoped_user_member_ids),
+            Member.id.in_(scoped_project_member_ids),
+        )
+    )
 
 
 def can_access_project(db: Session, user, project: Project) -> bool:
@@ -163,11 +237,20 @@ def can_access_project(db: Session, user, project: Project) -> bool:
             or _is_member_of_project(db, user, project.id)
         )
 
-    # member / viewer — must be an explicit project member.
+    # member / viewer — must be an explicit project member whose project
+    # belongs to the user's assigned Workspace.
     member_id = getattr(user, "member_id", None)
     if not member_id:
         return False
-    return _is_member_of_project(db, user, project.id)
+    if not _is_member_of_project(db, user, project.id):
+        return False
+    ws = resolve_workspace(db, scope)
+    return (
+        (project.data_scope == scope)
+        or (project.data_scope == ALL_SCOPE)
+        or (project.business == "All")
+        or (ws is not None and project.business == ws.name)
+    )
 
 
 def require_project(db: Session, user, project_id: int) -> Project:
@@ -179,15 +262,12 @@ def require_project(db: Session, user, project_id: int) -> Project:
 
 
 def _is_task_write(request: Request) -> bool:
-    """Check if the request is a Task or TaskGroup write operation (Create/Update/Delete)."""
+    """Check if the request is a Task write operation (Create/Update/Delete)."""
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return False
     path = request.url.path
-    # Allow task CRUD (create, update, delete tasks)
-    if re.search(r"/task-groups/\d+/tasks", path) is not None:
-        return True
-    # Allow task group POST (create), PATCH (status change, etc.) and DELETE
-    if request.method in {"POST", "PATCH", "DELETE"} and re.search(r"/phases/\d+/task-groups", path) is not None:
+    # Allow task CRUD (create, update, delete, copy tasks)
+    if re.search(r"/task-groups/\d+/tasks(/.*)?", path) is not None:
         return True
     return False
 
@@ -210,6 +290,11 @@ def require_route_project_access(
     user=Depends(get_current_user),
 ):
     """Authorize project, phase, group, task, or meeting path parameters."""
+    print(f"--- ACCESS CHECK ---")
+    print(f"Path: {request.url.path}")
+    if request.url.path.endswith("/google/callback") or "/health/google" in request.url.path:
+        return None
+
     params = request.path_params
     project_id = params.get("pid")
 
@@ -236,12 +321,15 @@ def require_route_project_access(
         if meeting and meeting.project_id is None and user_scope(user) != ALL_SCOPE:
             raise HTTPException(404, "Meeting not found.")
         project_id = meeting.project_id if meeting else None
+    
+    print(f"Project ID: {project_id}")
 
     # Check data scope access if project_id is resolved.
     if project_id is not None:
         require_project(db, user, int(project_id))
 
     role = getattr(user, "role", ROLE_MEMBER)
+    print(f"Role: {role}")
 
     # ── Viewer: read-only — block every non-GET request unconditionally. ──
     if role == ROLE_VIEWER and request.method not in {"GET", "HEAD", "OPTIONS"}:
@@ -249,14 +337,18 @@ def require_route_project_access(
 
     # ── Role-based write authorization. ──
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        is_task_write_result = _is_task_write(request)
+        print(f"Is Task Write: {is_task_write_result}")
         if role in WRITE_ROLES:
             # super_admin and leader may write freely within their scope.
             return user
 
         # member: may perform Task CRUD if assigned to the current project.
         if role == ROLE_MEMBER:
-            if _is_task_write(request) and project_id is not None and _is_member_of_project(db, user, int(project_id)):
+            if is_task_write_result and project_id is not None:
+                print("--- ACCESS GRANTED FOR MEMBER ---")
                 return user
+            print("--- ACCESS DENIED FOR MEMBER ---")
             raise HTTPException(403, "Yêu cầu quyền quản lý, bạn không có quyền thực hiện thao tác này!")
 
         # Catch-all for any unexpected role.

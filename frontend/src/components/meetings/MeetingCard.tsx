@@ -27,13 +27,42 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
   const hasAISummary = Boolean(execSummary && isDone);
   const tasksCount = Array.isArray(meeting.recommended_tasks) ? meeting.recommended_tasks.length : 0;
 
-  const meetingLink = meeting.link || meeting.meeting_url;
+  const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
+  const meetingLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : '';
+
+  const creatorName = meeting.creator_name || meeting.creator?.display_name || meeting.created_by_name || 'Trang Nguyễn';
 
   const handleShare = () => {
-    const urlToCopy = meetingLink || window.location.href;
-    navigator.clipboard.writeText(urlToCopy);
+    if (!meetingLink) {
+      alert("Cuộc họp này chưa có đường link. Bạn có thể tạo link bằng nút 'Tạo meeting' hoặc 'Sửa'.");
+      return;
+    }
+    navigator.clipboard.writeText(meetingLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadTranscript = () => {
+    const transcriptText = meeting.transcript || meeting.ai_summary || execSummary;
+    if (!transcriptText || (typeof transcriptText === 'string' && !transcriptText.trim())) {
+      alert("Cuộc họp này chưa có file biên bản (transcript) để tải về.");
+      return;
+    }
+    const content = typeof transcriptText === 'string' 
+      ? transcriptText 
+      : (Array.isArray(transcriptText) ? transcriptText.join('\n') : JSON.stringify(transcriptText, null, 2));
+      
+    const cleanTitle = (meeting.title || 'Bien_ban_cuoc_hop').replace(/[^a-zA-Z0-9_\-\s]/g, '').trim().replace(/\s+/g, '_');
+    const filename = `${cleanTitle}_Bien_ban.txt`;
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -115,23 +144,24 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
       <div className="text-[11px] text-[#718096] flex items-center justify-between gap-3 flex-wrap font-medium">
         <div className="flex items-center gap-3 flex-wrap">
           <span>📅 {meeting.date || meeting.meeting_date || 'Chưa chọn'} · {meeting.time || meeting.start_time || 'Chưa chọn'}</span>
-          <span>👤 {attendeeCount} người</span>
+          <span>👤 {creatorName}</span>
           <span>⏱ {durationStr}</span>
         </div>
 
         {/* Direct Join Link */}
-        {meetingLink && (
+        <div className="flex items-center gap-1.5 flex-wrap">
           <a
-            href={meetingLink.startsWith('http') ? meetingLink : `https://${meetingLink}`}
+            href={`${(meetingLink || 'https://meet.google.com/new').startsWith('http') ? (meetingLink || 'https://meet.google.com/new') : `https://${meetingLink}`}${(meetingLink || '').includes('?') ? '&' : '?'}authuser=mkt.szone@gmail.com`}
             target="_blank"
             rel="noreferrer"
-            className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all shadow-2xs"
+            className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-xs"
+            title="Vào Google Meet với tư cách Host mkt.szone@gmail.com để Duyệt người tham gia & Bật Ghi âm cuộc họp"
           >
-            <Video size={13} />
-            <span>Tham gia cuộc họp</span>
+            <Video size={14} />
+            <span>🎥 Tham gia cuộc họp (Host mkt.szone)</span>
             <ExternalLink size={11} />
           </a>
-        )}
+        </div>
       </div>
 
       {/* Dynamic Stepper Workflow (4 steps) */}
@@ -191,10 +221,11 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
 
         <button
           type="button"
-          onClick={() => onSummarize?.(meeting)}
-          className="px-4 py-2 rounded-xl text-xs font-bold text-[#445168] bg-white border border-[#dce3ee] hover:bg-slate-50 transition-all shadow-xs"
+          onClick={handleDownloadTranscript}
+          className="px-4 py-2 rounded-xl text-xs font-bold text-[#445168] bg-white border border-[#dce3ee] hover:bg-slate-50 transition-all shadow-xs flex items-center gap-1.5"
+          title="Tải về file biên bản cuộc họp (.txt)"
         >
-          ⇩ Biên bản
+          <span>⇩ Biên bản</span>
         </button>
       </div>
     </div>

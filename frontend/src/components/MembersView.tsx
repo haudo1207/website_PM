@@ -5,6 +5,7 @@ import {
   getTeams, getPositions, getDepartments, getCategories,
   syncFromRecruitment, getLeaders
 } from '@/lib/api';
+import SearchableSelect from './common/SearchableSelect';
 
 // ─── Types ─────────────────────────────────────────────────────────
 interface Skill { id: number; name: string; }
@@ -39,109 +40,7 @@ interface Props {
   onFlash: (msg: string) => void;
 }
 
-interface SearchableSelectProps {
-  label: string;
-  value: string;
-  onChange: (val: string) => void;
-  options: string[];
-  placeholder?: string;
-  required?: boolean;
-}
 
-function SearchableSelect({ label, value, onChange, options, placeholder = "-- Chọn --", required = false }: SearchableSelectProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState('');
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(`.select-container-${label.replace(/\s+/g, '-').replace(/\*/g, '')}`)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('click', handleOutsideClick);
-    return () => document.removeEventListener('click', handleOutsideClick);
-  }, [isOpen, label]);
-
-  return (
-    <div className={`flex flex-col gap-1 relative select-container-${label.replace(/\s+/g, '-').replace(/\*/g, '')}`}>
-      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{label} {required && '*'}</label>
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => setIsOpen(!isOpen)}
-          className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all text-left flex items-center justify-between font-medium"
-        >
-          <span className={value ? "text-slate-800" : "text-slate-400"}>
-            {value || placeholder}
-          </span>
-          <svg className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        {isOpen && (
-          <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-hidden flex flex-col">
-            <div className="p-2 border-b border-slate-100 bg-slate-50">
-              <input
-                type="text"
-                autoFocus
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Tìm kiếm..."
-                className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none focus:border-blue-500 placeholder-slate-400 font-medium"
-              />
-            </div>
-            <div className="overflow-y-auto flex-1 divide-y divide-slate-50 max-h-48">
-              <button
-                type="button"
-                onClick={() => {
-                  onChange('');
-                  setIsOpen(false);
-                  setSearch('');
-                }}
-                className="w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-slate-50 transition-colors font-medium"
-              >
-                {placeholder}
-              </button>
-              {options
-                .filter(opt => opt && opt.toLowerCase().includes(search.toLowerCase()))
-                .map(opt => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => {
-                      onChange(opt);
-                      setIsOpen(false);
-                      setSearch('');
-                    }}
-                    className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 hover:text-blue-700 transition-colors font-medium ${
-                      value === opt ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-700"
-                    }`}
-                  >
-                    {opt}
-                  </button>
-                ))}
-              {value && !options.some(opt => opt === value) && value.toLowerCase().includes(search.toLowerCase()) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsOpen(false);
-                    setSearch('');
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs bg-blue-50 text-blue-700 font-bold"
-                >
-                  {value}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export default function MembersView({ onFlash }: Props) {
   const [members, setMembers] = useState<Member[]>([]);
@@ -291,7 +190,7 @@ export default function MembersView({ onFlash }: Props) {
   // ─── Render ───────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      <div className="sticky top-[112px] z-20 bg-[#f8fafc]/95 backdrop-blur-sm">
+      <div className="sticky top-[112px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-8 py-6 space-y-6">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -323,7 +222,7 @@ export default function MembersView({ onFlash }: Props) {
           </div>
 
           {/* Search & Filters */}
-          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3">
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3 relative z-[100]">
             <div className="relative flex-1 min-w-[200px]">
               <svg className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -337,17 +236,24 @@ export default function MembersView({ onFlash }: Props) {
               />
             </div>
 
-            <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-              <option value="">Tất cả Level</option>
-              {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-            </select>
+            <SearchableSelect
+              label="Level"
+              icon="⭐"
+              options={teams.map(t => ({ id: t.name, name: t.name }))}
+              value={filterTeam}
+              onChange={val => setFilterTeam(val === 'all' ? '' : String(val))}
+              placeholder="Tìm Level..."
+            />
 
-            <select value={filterDepartment} onChange={e => setFilterDepartment(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-[#0f172a] outline-none focus:border-blue-500 bg-white">
-              <option value="">Tất cả Team</option>
-              {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-            </select>
+            <SearchableSelect
+              label="Team"
+              icon="👥"
+              align="right"
+              options={departments.map(d => ({ id: d.name, name: d.name }))}
+              value={filterDepartment}
+              onChange={val => setFilterDepartment(val === 'all' ? '' : String(val))}
+              placeholder="Tìm Team..."
+            />
 
             {(filterTeam || filterPosition || filterDepartment || search) && (
               <button onClick={() => { setSearch(''); setFilterTeam(''); setFilterPosition(''); setFilterDepartment(''); }}
@@ -362,20 +268,20 @@ export default function MembersView({ onFlash }: Props) {
       </div>
 
       {/* Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-auto shadow-sm" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+      <div className="bg-white border border-slate-200 rounded-xl overflow-auto shadow-sm relative z-[1]" style={{ maxHeight: 'calc(100vh - 340px)' }}>
         <table className="w-full text-xs text-[#0f172a]">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-10">STT</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Họ tên</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Level</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Team</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
-                <th className="sticky top-0 z-20 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Leader</th>
-                <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 w-16"></th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-10">STT</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Display Name</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Họ tên</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Level</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Team</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kỹ năng</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Leader</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 w-16"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
