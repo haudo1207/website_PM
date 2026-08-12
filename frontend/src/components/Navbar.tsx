@@ -347,8 +347,10 @@ function NavbarContent() {
             </div>
           </Link>
 
-          {/* Settings (Admin/Super Admin only) */}
-          {(isSuperAdmin() || isAdmin() || role === 'super_admin' || role === 'admin') && (
+          {/* Settings — Super Admin only (matches the page's own guard;
+              isAdmin() also returns true for Leader, which would show this
+              button then bounce them straight back out). */}
+          {isSuperAdmin() && (
             <Link
               href="/settings"
               className={`flex items-center justify-center gap-2 w-full py-1.5 rounded-lg text-xs font-semibold transition-all border ${
@@ -480,8 +482,10 @@ function NavbarContent() {
             </div>
           </Link>
 
-          {/* Settings (Admin/Super Admin only) */}
-          {(isSuperAdmin() || isAdmin() || role === 'super_admin' || role === 'admin') && (
+          {/* Settings — Super Admin only (matches the page's own guard;
+              isAdmin() also returns true for Leader, which would show this
+              button then bounce them straight back out). */}
+          {isSuperAdmin() && (
             <Link
               href="/settings"
               onClick={() => setMobileMenuOpen(false)}
