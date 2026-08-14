@@ -54,6 +54,36 @@ const CircularProgress = ({ value, total }: { value: number, total: number }) =>
   );
 };
 
+const ProjectDistributionDonut = ({ activeCount, whiteCount }: { activeCount: number, whiteCount: number }) => {
+  const total = activeCount + whiteCount;
+  const activePercent = total > 0 ? Math.round((activeCount / total) * 100) : 0;
+  const radius = 14;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (activePercent / 100) * circumference;
+
+  return (
+    <div className="flex items-center gap-3 bg-slate-50 border border-slate-200/80 px-3.5 py-1.5 rounded-xl shadow-xs">
+      <div className="relative flex items-center justify-center w-9 h-9 shrink-0">
+        <svg className="w-9 h-9 transform -rotate-90">
+          <circle cx="18" cy="18" r="14" stroke="currentColor" strokeWidth="3.5" fill="transparent" className="text-slate-200" />
+          <circle cx="18" cy="18" r="14" stroke="currentColor" strokeWidth="3.5" fill="transparent" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} className="text-[#0058be] transition-all duration-500" />
+        </svg>
+        <span className="absolute text-[8px] font-black text-[#0058be]">{activePercent}%</span>
+      </div>
+      <div className="text-[10px] space-y-0.5">
+        <div className="flex items-center gap-1.5 font-extrabold text-[#0b1c30]">
+          <span className="w-2 h-2 rounded-full bg-[#0058be] inline-block shrink-0"></span>
+          <span>Đang hoạt động: <strong className="text-[#0058be]">{activeCount}</strong></span>
+        </div>
+        <div className="flex items-center gap-1.5 font-bold text-slate-500">
+          <span className="w-2 h-2 rounded-full bg-slate-300 inline-block shrink-0"></span>
+          <span>Dự án trắng: <strong className="text-slate-600">{whiteCount}</strong></span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, tasks: any[], projects: any[], onClose: () => void }) => {
   const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
 
@@ -218,6 +248,8 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
                   const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
                   const nextTask = pTasks.find(t => t.end_date_est || t.created_at);
                   const deadlineStr = nextTask ? (nextTask.end_date_est || '11/08').split('-').reverse().slice(0,2).join('/') : '11/08';
+                  const pManday = pTasks.reduce((acc, t) => acc + (t.manday_actual || t.manday_est || 0), 0);
+                  const pKpi = pTasks.reduce((acc, t) => acc + (t.status === 'Done' || t.status === 'done' ? (t.kpi_base || 0) : 0), 0);
 
                   return (
                     <div key={p.id} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
@@ -227,18 +259,26 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
                           {pOpen} task mở
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
-                          <span className="text-sm font-black text-[#0b1c30] block">{pOpen}</span>
-                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">TASK MỞ</span>
+                      <div className="grid grid-cols-5 gap-2">
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-[#0b1c30] block">{pOpen}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">TASK MỜ</span>
                         </div>
-                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
-                          <span className="text-sm font-black text-[#0b1c30] block">{pCritical}</span>
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-[#0b1c30] block">{pCritical}</span>
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">CRITICAL</span>
                         </div>
-                        <div className="bg-slate-50 rounded-xl p-2.5 text-center border border-slate-100">
-                          <span className="text-sm font-black text-[#0b1c30] block">{deadlineStr}</span>
-                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">DEADLINE GẦN NHẤT</span>
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-[#0b1c30] block">{deadlineStr}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">DEADLINE</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-amber-600 block">{pManday.toFixed(1)}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">MANDAY</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-[#0058be] block">{pKpi.toFixed(1)}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">KPI</span>
                         </div>
                       </div>
                     </div>
@@ -272,16 +312,16 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
               </div>
             </div>
 
-            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm">
+            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm max-h-[380px] overflow-y-auto custom-scrollbar">
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead>
+                  <thead className="sticky top-0 z-10 bg-slate-50 shadow-xs">
                     <tr className="bg-slate-50 text-slate-400 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-100">
-                      <th className="px-4 py-2.5 text-left">TASK</th>
-                      <th className="px-4 py-2.5 text-left">DỰ ÁN</th>
-                      <th className="px-4 py-2.5 text-center">PRIORITY</th>
-                      <th className="px-4 py-2.5 text-center">DEADLINE</th>
-                      <th className="px-4 py-2.5 text-center">TRẠNG THÁI</th>
+                      <th className="px-4 py-2.5 text-left bg-slate-50">TASK</th>
+                      <th className="px-4 py-2.5 text-left bg-slate-50">DỰ ÁN</th>
+                      <th className="px-4 py-2.5 text-center bg-slate-50">PRIORITY</th>
+                      <th className="px-4 py-2.5 text-center bg-slate-50">DEADLINE</th>
+                      <th className="px-4 py-2.5 text-center bg-slate-50">TRẠNG THÁI</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -361,6 +401,9 @@ export default function OverviewTab() {
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
 
+  // Quick Filter Highlight state
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>(null);
+
   // Alerts for current member
   const [myAlerts, setMyAlerts] = useState<{ overdue_count: number; pending_approval_count: number; total: number } | null>(null);
   const [sendingBulkRemind, setSendingBulkRemind] = useState(false);
@@ -381,6 +424,7 @@ export default function OverviewTab() {
   const [aiCheckStatus, setAiCheckStatus] = useState<string | null>(null);
 
   const applyQuickFilter = (type: string) => {
+    setActiveQuickFilter(type);
     const now = new Date();
     if (type === 'Tuần trước') {
       const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -514,10 +558,15 @@ export default function OverviewTab() {
     const totTasks = rawTasks.length;
     const totDone = rawTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
 
-    // 2. Filter Members by Leader
+    // 2. Filter Members by Leader (Include subordinates + Leader person themselves!)
     let activeTeamList = rawMembers;
     if (selectedLeader && selectedLeader !== 'all') {
-      activeTeamList = rawMembers.filter(m => ((m.leader_name || '').trim() || 'Không có Leader') === selectedLeader);
+      const selTrim = selectedLeader.trim().toLowerCase();
+      activeTeamList = rawMembers.filter(m => {
+        const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
+        const mName = (m.display_name || m.full_name || m.name || '').trim().toLowerCase();
+        return leaderName === selTrim || mName === selTrim;
+      });
     }
     const teamMemberIds = activeTeamList.map(m => m.id);
 
@@ -601,16 +650,22 @@ export default function OverviewTab() {
     const topPerf = finalRanking.length > 0 && finalRanking[0].kpi > 0 ? finalRanking[0] : null;
     const lowestPerf = finalRanking.length > 1 ? finalRanking[finalRanking.length - 1] : null;
 
-    // 6. Active Projects
-    const aProjects = rawProjects.map((p: any) => {
+    // 6. Active Projects (Only show projects with tasks OR PM assigned)
+    const allMappedProjects = rawProjects.map((p: any) => {
       const pTasks = rawTasks.filter(t => isSameId(t.project_id, p.id));
       const done = pTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
+      const hasPM = Boolean(p.pm_name || p.pm || p.pm_id || p.manager || p.project_manager || p.leader_name || p.owner || p.user_id || p.leader_id);
+      const hasTasks = pTasks.length > 0;
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
         progress: pTasks.length ? Math.round((done / pTasks.length) * 100) : 0,
-        totalTasks: pTasks.length, doneTasks: done
+        totalTasks: pTasks.length, doneTasks: done,
+        hasPM, hasTasks,
+        isDisplayable: hasTasks || hasPM
       };
-    }).sort((a,b) => b.progress - a.progress);
+    });
+
+    const aProjects = allMappedProjects.filter(p => p.isDisplayable).sort((a,b) => b.progress - a.progress);
 
     // 7. KPI Matrices
     let sumM: any[] = [];
@@ -734,7 +789,11 @@ export default function OverviewTab() {
                 <button
                   key={label}
                   onClick={() => applyQuickFilter(label)}
-                  className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-[11px] font-bold transition-all text-slate-600 cursor-pointer whitespace-nowrap shadow-sm active:scale-95"
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm active:scale-95 ${
+                    activeQuickFilter === label
+                      ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
+                      : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
+                  }`}
                 >
                   {label}
                 </button>
@@ -964,13 +1023,17 @@ export default function OverviewTab() {
         )}
         <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[360px] overflow-y-auto custom-scrollbar">
           {activeProjects.length === 0 ? (
-            <p className="text-xs text-slate-400 font-semibold py-4 text-center col-span-full">Chưa có dự án nào.</p>
+            <p className="text-xs text-slate-400 font-semibold py-4 text-center col-span-full">Chưa có dự án nào đang hoạt động.</p>
           ) : (
             activeProjects.map((p: any) => (
-              <div key={p.id} className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-slate-300 transition-all flex flex-col justify-between">
+              <div 
+                key={p.id} 
+                onClick={() => router.push(`/project/detail?id=${p.id}`)}
+                className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-[#0058be] hover:shadow-md transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99]"
+              >
                 <div>
                   <div className="flex justify-between items-start mb-2 gap-2">
-                    <h4 className="text-xs font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</h4>
+                    <h4 className="text-xs font-bold text-[#0b1c30] truncate hover:text-[#0058be]" title={p.name}>{p.name}</h4>
                     <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
                       {p.status || 'Developing'}
                     </span>
@@ -983,8 +1046,9 @@ export default function OverviewTab() {
                     <span className="text-[#0058be]">{p.progress}%</span>
                   </div>
                   <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-blue-600'} height="h-2" />
-                  <div className="flex justify-between text-[10px] text-slate-400 font-semibold mt-2">
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold mt-2">
                     <span>Task: {p.doneTasks}/{p.totalTasks}</span>
+                    <span className="text-[#0058be] font-extrabold hover:underline">Xem chi tiết ➔</span>
                   </div>
                 </div>
               </div>
@@ -1137,18 +1201,18 @@ export default function OverviewTab() {
           <span className="text-[10px] font-semibold text-slate-400">💡 Bấm vào tên thành viên để xem chi tiết KPI, Dự án & Task</span>
         </div>
         <div className="max-h-[400px] overflow-y-auto overflow-x-auto custom-scrollbar">
-          <table className="w-full text-xs relative">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-slate-50/95 backdrop-blur-sm text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider shadow-sm">
-                <th className="px-4 py-3 text-center font-bold w-14">Hạng</th>
-                <th className="px-4 py-3 text-left font-bold">Thành Viên</th>
-                <th className="px-4 py-3 text-center font-bold">Giao</th>
-                <th className="px-4 py-3 text-center font-bold">Xong</th>
-                <th className="px-4 py-3 text-center font-bold">Đang Làm</th>
-                <th className="px-4 py-3 text-center font-bold">Trễ</th>
-                <th className="px-4 py-3 text-center font-bold">Manday</th>
-                <th className="px-4 py-3 text-center font-bold text-[#0058be]">KPI</th>
-                <th className="px-4 py-3 font-bold min-w-[140px]">Tiến Độ</th>
+          <table className="w-full text-xs relative border-collapse">
+            <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm">
+              <tr className="bg-slate-100 text-slate-500 border-b border-slate-200 uppercase text-[10px] tracking-wider font-extrabold">
+                <th className="px-4 py-3 text-center font-bold w-14 bg-slate-100">Hạng</th>
+                <th className="px-4 py-3 text-left font-bold bg-slate-100">Thành Viên</th>
+                <th className="px-4 py-3 text-center font-bold bg-slate-100">Giao</th>
+                <th className="px-4 py-3 text-center font-bold bg-slate-100">Xong</th>
+                <th className="px-4 py-3 text-center font-bold bg-slate-100">Đang Làm</th>
+                <th className="px-4 py-3 text-center font-bold bg-slate-100">Trễ</th>
+                <th className="px-4 py-3 text-center font-bold bg-slate-100">Manday</th>
+                <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">KPI</th>
+                <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">Tiến Độ</th>
               </tr>
             </thead>
             <tbody>
@@ -1157,20 +1221,37 @@ export default function OverviewTab() {
               ) : (
                 memberRanking.map((m, i) => {
                   const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
+                  const isLeader = leaders.some(ld => ld.name && ld.name !== 'Không có Leader' && (
+                    ld.name.trim().toLowerCase() === m.name.trim().toLowerCase() ||
+                    ld.name.trim().toLowerCase() === (m.rawMember?.full_name || '').trim().toLowerCase() ||
+                    ld.name.trim().toLowerCase() === (m.rawMember?.display_name || '').trim().toLowerCase()
+                  ));
+
                   return (
                     <tr 
                       key={m.id} 
                       onClick={() => setSelectedMemberModal(m)}
-                      className={`border-b border-slate-50 hover:bg-indigo-50/50 transition-colors cursor-pointer ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}
+                      className={`border-b border-slate-100 hover:bg-indigo-50/70 transition-colors cursor-pointer ${
+                        isLeader 
+                          ? 'bg-indigo-50/40 font-bold border-l-4 border-l-indigo-600' 
+                          : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'
+                      }`}
                     >
                       <td className="px-4 py-3.5 text-center">
                         <span className={`text-xs font-bold ${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}`}>#{m.rank}</span>
                       </td>
                       <td className="px-4 py-3.5">
-                        <span className="font-semibold text-[#0058be] hover:underline flex items-center gap-1.5">
-                          {m.name}
-                          <span className="text-[10px] text-slate-400">🔍</span>
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-[#0058be] hover:underline flex items-center gap-1">
+                            {m.name}
+                            <span className="text-[10px] text-slate-400">🔍</span>
+                          </span>
+                          {isLeader && (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-xs flex items-center gap-1">
+                              👑 LEADER
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3.5 text-center font-semibold text-slate-600">{m.assigned}</td>
                       <td className="px-4 py-3.5 text-center"><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{m.done}</span></td>
