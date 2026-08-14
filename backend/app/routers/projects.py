@@ -556,7 +556,7 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
     return result
 
 
-@router.get("/projects/{pid}")
+@router.get("/projects/{pid:int}")
 def get_project(pid: int, db: Session = Depends(get_db)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
@@ -564,7 +564,7 @@ def get_project(pid: int, db: Session = Depends(get_db)):
     return serialize_project(p, db)
 
 
-@router.patch("/projects/{pid}")
+@router.patch("/projects/{pid:int}")
 def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
@@ -773,7 +773,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     return serialize_project(p, db)
 
 
-@router.delete("/projects/{pid}")
+@router.delete("/projects/{pid:int}")
 def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
@@ -822,7 +822,7 @@ def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends
 # PROJECT MEMBERS
 # ═══════════════════════════════════════════════════════════
 
-@router.get("/projects/{pid}/members")
+@router.get("/projects/{pid:int}/members")
 def list_project_members(pid: int, db: Session = Depends(get_db)):
     rows = (
         db.query(project_members.c.member_id, project_members.c.role, Member)
@@ -842,7 +842,7 @@ def list_project_members(pid: int, db: Session = Depends(get_db)):
     ]
 
 
-@router.post("/projects/{pid}/members")
+@router.post("/projects/{pid:int}/members")
 def add_project_member(pid: int, body: dict, db: Session = Depends(get_db)):
     member_id = body.get("member_id")
     role = body.get("role", "Member")
@@ -864,7 +864,7 @@ def add_project_member(pid: int, body: dict, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@router.delete("/projects/{pid}/members/{mid}")
+@router.delete("/projects/{pid:int}/members/{mid}")
 def remove_project_member(pid: int, mid: int, db: Session = Depends(get_db)):
     db.execute(
         project_members.delete().where(
@@ -916,7 +916,7 @@ def serialize_phase(ph, db):
     }
 
 
-@router.get("/projects/{pid}/phases")
+@router.get("/projects/{pid:int}/phases")
 def list_phases(pid: int, db: Session = Depends(get_db)):
     try:
         phases = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order, Phase.id).all()
@@ -926,7 +926,7 @@ def list_phases(pid: int, db: Session = Depends(get_db)):
         return []
 
 
-@router.post("/projects/{pid}/phases")
+@router.post("/projects/{pid:int}/phases")
 def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     name = body.get("name", "").strip()
     if not name:
@@ -974,7 +974,7 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_us
     }
 
 
-@router.patch("/projects/{pid}/phases/{phid}")
+@router.patch("/projects/{pid:int}/phases/{phid}")
 def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
@@ -1001,7 +1001,7 @@ def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db),
     return serialize_phase(ph, db)
 
 
-@router.delete("/projects/{pid}/phases/{phid}")
+@router.delete("/projects/{pid:int}/phases/{phid}")
 def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
@@ -1057,13 +1057,13 @@ def serialize_link(link, db):
     }
 
 
-@router.get("/projects/{pid}/chat-groups")
+@router.get("/projects/{pid:int}/chat-groups")
 def list_chat_groups(pid: int, db: Session = Depends(get_db)):
     links = db.query(ProjectLink).filter(ProjectLink.project_id == pid).order_by(ProjectLink.sort_order, ProjectLink.id).all()
     return [serialize_link(l, db) for l in links]
 
 
-@router.post("/projects/{pid}/chat-groups")
+@router.post("/projects/{pid:int}/chat-groups")
 def create_chat_group(pid: int, body: dict, db: Session = Depends(get_db)):
     name = body.get("name", "").strip()
     url = body.get("link", body.get("url", "")).strip()
@@ -1099,7 +1099,7 @@ def create_chat_group(pid: int, body: dict, db: Session = Depends(get_db)):
     return serialize_link(link, db)
 
 
-@router.patch("/projects/{pid}/chat-groups/{lid}")
+@router.patch("/projects/{pid:int}/chat-groups/{lid}")
 def update_chat_group(pid: int, lid: int, body: dict, db: Session = Depends(get_db)):
     link = db.query(ProjectLink).filter(ProjectLink.id == lid, ProjectLink.project_id == pid).first()
     if not link:
@@ -1121,7 +1121,7 @@ def update_chat_group(pid: int, lid: int, body: dict, db: Session = Depends(get_
     return serialize_link(link, db)
 
 
-@router.delete("/projects/{pid}/chat-groups/{lid}")
+@router.delete("/projects/{pid:int}/chat-groups/{lid}")
 def delete_chat_group(pid: int, lid: int, db: Session = Depends(get_db)):
     link = db.query(ProjectLink).filter(ProjectLink.id == lid, ProjectLink.project_id == pid).first()
     if not link:
@@ -1167,7 +1167,7 @@ def create_platform(body: dict, db: Session = Depends(get_db)):
 # AUDIT LOGS
 # ═══════════════════════════════════════════════════════════
 
-@router.get("/projects/{pid}/audit-logs")
+@router.get("/projects/{pid:int}/audit-logs")
 def list_project_audit_logs(
     pid: int,
     module: Optional[str] = None,
@@ -1218,7 +1218,7 @@ def list_project_audit_logs(
     }
 
 
-@router.get("/projects/{pid}/audit-logs/export")
+@router.get("/projects/{pid:int}/audit-logs/export")
 def export_project_audit_logs(
     pid: int,
     module: Optional[str] = None,
