@@ -402,6 +402,7 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
 
+    old_dict = {"title": m.title, "status": m.status, "meeting_date": str(m.meeting_date) if m.meeting_date else None}
     old_status = m.status
     status_input = str(body.get("status", m.status)).upper()
     new_status = STATUS_FE_TO_DB.get(status_input, status_input)
@@ -477,6 +478,14 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             m.project_id = None
 
     db.commit()
+    AuditService.record_diff(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=m.id, old_dict=old_dict,
+        new_dict={"title": m.title, "status": m.status, "meeting_date": str(m.meeting_date) if m.meeting_date else None},
+        project_id=m.project_id,
+        field_labels={"title": "Tiêu đề", "status": "Trạng thái", "meeting_date": "Ngày họp"},
+    )
+    db.commit()
 
     # Re-fetch with relationships
     m = db.query(Meeting).options(
@@ -508,17 +517,24 @@ def update_transcript(id: int, body: dict, db: Session = Depends(get_db), _=Depe
 
 # ─── DELETE ──────────────────────────────────────────────
 @router.delete("/{id}")
-def delete_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m_title, m_project_id = m.title, m.project_id
     db.delete(m)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=id, action="DELETE", project_id=m_project_id, resource_name=m_title,
+        description=f"Xóa cuộc họp '{m_title}'"
+    )
     db.commit()
     return {"message": "Đã xóa cuộc họp thành công"}
 
 # ─── ADD MEMBER ─────────────────────────────────────────
 @router.post("/{id}/members")
-def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
@@ -555,6 +571,12 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), _=Dep
     )
     db.add(mm)
     db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=id, action="UPDATE", project_id=m.project_id, resource_name=member.display_name,
+        description=f"Thêm '{member.display_name}' vào cuộc họp '{m.title}' (vai trò {role})"
+    )
+    db.commit()
 
     # Re-fetch full meeting
     m = db.query(Meeting).options(
@@ -567,7 +589,7 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), _=Dep
 
 # ─── REMOVE MEMBER ───────────────────────────────────────
 @router.delete("/{id}/members/{member_id}")
-def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
@@ -583,7 +605,15 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
     if not mm:
         raise HTTPException(404, "Thành viên không thuộc cuộc họp này")
 
+    removed_member = db.query(Member).filter(Member.id == member_id).first()
     db.delete(mm)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=id, action="UPDATE", project_id=m.project_id,
+        resource_name=removed_member.display_name if removed_member else str(member_id),
+        description=f"Gỡ '{removed_member.display_name if removed_member else member_id}' khỏi cuộc họp '{m.title}'"
+    )
     db.commit()
 
     # Re-fetch full meeting

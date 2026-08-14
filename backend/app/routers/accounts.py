@@ -17,6 +17,7 @@ from ..utils.access import (
     ROLE_VIEWER,
 )
 from ..utils.auth import hash_password, require_manager, get_current_user
+from ..utils.audit_service import AuditService
 
 router = APIRouter()
 MIN_PASSWORD_LENGTH = 8
@@ -182,6 +183,13 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
         db.rollback()
         raise HTTPException(400, "Email hoặc thành viên liên kết đã được sử dụng.")
     db.refresh(account)
+    AuditService.record(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=account.id, action="CREATE_USER", resource_name=account.email,
+        target_user_id=account.id,
+        description=f"Tạo tài khoản '{account.email}' (role={account.role})"
+    )
+    db.commit()
     return account_to_dict(account)
 
 
@@ -194,6 +202,14 @@ def update_account(
 ):
     account = require_account(db, account_id)
     _leader_guard(caller, account, "chỉnh sửa")
+
+    old_dict = {
+        "email": account.email,
+        "full_name": account.full_name,
+        "member_id": account.member_id,
+        "data_scope": account.data_scope,
+    }
+    old_role = account.role
 
     if "email" in body:
         if is_bootstrap_superadmin(account):
@@ -253,6 +269,21 @@ def update_account(
         db.rollback()
         raise HTTPException(400, "Không thể cập nhật do dữ liệu bị trùng.")
     db.refresh(account)
+
+    AuditService.record_diff(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=account.id, old_dict=old_dict,
+        new_dict={"email": account.email, "full_name": account.full_name, "member_id": account.member_id, "data_scope": account.data_scope},
+        field_labels={"email": "Email", "full_name": "Họ tên", "member_id": "Thành viên liên kết", "data_scope": "Phạm vi dữ liệu"},
+    )
+    if old_role != account.role:
+        AuditService.record(
+            db=db, user_id=getattr(caller, "id", None), module="Permission", entity_type="User",
+            entity_id=account.id, action="CHANGE_ROLE", resource_name=account.email,
+            target_user_id=account.id, field_name="role", old_value=old_role, new_value=account.role,
+            description=f"Đổi role tài khoản '{account.email}': '{old_role}' → '{account.role}'"
+        )
+    db.commit()
     return account_to_dict(account)
 
 
@@ -265,6 +296,13 @@ def reset_password(account_id: int, body: dict, db: Session = Depends(get_db), c
     new_password = str(body.get("password") or "")
     validate_password(new_password)
     account.hashed_pw = hash_password(new_password)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=account.id, action="RESET_PASSWORD", resource_name=account.email,
+        target_user_id=account.id,
+        description=f"Đặt lại mật khẩu cho tài khoản '{account.email}'"
+    )
     db.commit()
     return {"message": "Đặt lại mật khẩu thành công."}
 
@@ -284,6 +322,13 @@ def lock_account(
     ensure_superadmin_remains(db, account, active=False)
     account.is_active = False
     db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=account.id, action="LOCK_ACCOUNT", resource_name=account.email,
+        target_user_id=account.id,
+        description=f"Khóa tài khoản '{account.email}'"
+    )
+    db.commit()
     return {"message": "Đã khóa tài khoản."}
 
 
@@ -292,6 +337,13 @@ def unlock_account(account_id: int, db: Session = Depends(get_db), caller=Depend
     account = require_account(db, account_id)
     _leader_guard(caller, account, "mở khóa")
     account.is_active = True
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=account.id, action="UNLOCK_ACCOUNT", resource_name=account.email,
+        target_user_id=account.id,
+        description=f"Mở khóa tài khoản '{account.email}'"
+    )
     db.commit()
     return {"message": "Đã mở khóa tài khoản."}
 
@@ -309,6 +361,13 @@ def delete_account(
     if caller.id == account.id:
         raise HTTPException(400, "Bạn không thể tự xóa tài khoản đang đăng nhập.")
     ensure_superadmin_remains(db, account, deleting=True)
+    acc_email, acc_id = account.email, account.id
     db.delete(account)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=acc_id, action="DELETE_USER", resource_name=acc_email,
+        description=f"Xóa tài khoản '{acc_email}'"
+    )
     db.commit()
     return {"message": "Đã xóa tài khoản; thành viên liên kết vẫn được giữ nguyên."}

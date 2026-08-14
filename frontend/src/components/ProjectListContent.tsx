@@ -3,8 +3,8 @@ import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
-import { isAdmin, isSuperAdmin } from '@/lib/auth';
+import { getProjects, deleteProject, updateProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 import SearchableSelect from './common/SearchableSelect';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
@@ -109,8 +109,20 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [renamingProject, setRenamingProject] = useState<{ id: number; name: string } | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
+
+  // Close the per-card "..." menu on any click outside it — the button/dropdown
+  // themselves stop propagation, so only genuine outside clicks reach here.
+  useEffect(() => {
+    if (menuOpenId === null) return;
+    const handler = () => setMenuOpenId(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [menuOpenId]);
 
   const { data: listData, refetch: reload } = useQuery({
     queryKey: ['project-list'],
@@ -415,7 +427,44 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                   <div className="p-6 flex-1 flex flex-col">
                     <div className="flex justify-between items-start mb-3">
                       <span className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200 px-2 py-0.5 rounded">Năm: {p.year || '—'}</span>
-                      <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
+                        {canManage && (
+                          <div className="relative" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => setMenuOpenId(prev => prev === p.id ? null : p.id)}
+                              className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0 cursor-pointer"
+                              title="Tuỳ chọn dự án"
+                            >
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z" />
+                              </svg>
+                            </button>
+                            {menuOpenId === p.id && (
+                              <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
+                                <button
+                                  onClick={() => { setMenuOpenId(null); router.push(`/project/detail?id=${p.id}`); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                >
+                                  ✏️ Chỉnh sửa
+                                </button>
+                                <button
+                                  onClick={() => { setMenuOpenId(null); setRenamingProject({ id: p.id, name: p.name }); setRenameValue(p.name || ''); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                >
+                                  ✎ Đổi tên
+                                </button>
+                                <button
+                                  onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
+                                >
+                                  🗑 Xóa dự án
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <h3 className="text-base font-bold text-slate-800 mb-0.5 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
                     <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic flex items-center gap-1.5"><span className="not-italic text-sm">🏢</span> {p.customer_name || 'Chưa có khách hàng'}</p>
@@ -555,6 +604,37 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         </div>
       </div>
 
+      {renamingProject && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setRenamingProject(null)}>
+          <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-base font-bold text-[#0b1c30] mb-4">Đổi tên dự án</h2>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setRenamingProject(null); }}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-6 outline-none focus:ring-2 focus:ring-[#0058be]/30 focus:border-[#0058be]"
+              placeholder="Tên dự án"
+            />
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setRenamingProject(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
+              <button onClick={async () => {
+                const trimmed = renameValue.trim();
+                if (!trimmed) { flash('Tên dự án không được để trống', true); return; }
+                try {
+                  await updateProject(renamingProject.id, { name: trimmed });
+                  reload();
+                  flash('Đã đổi tên!');
+                } catch (e: any) {
+                  flash(e?.response?.data?.detail || 'Đổi tên thất bại', true);
+                }
+                setRenamingProject(null);
+              }} className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#0058be] hover:bg-[#00479c] text-white shadow-sm">Lưu</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteId !== null && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
@@ -563,11 +643,8 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
             <div className="flex justify-end gap-3">
               <button onClick={() => setDeleteId(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
               <button onClick={async () => {
-                if (!isSuperAdmin()) {
-                  flash('Chỉ Super Admin mới có quyền xóa dự án!', true);
-                  setDeleteId(null);
-                  return;
-                }
+                // Backend enforces the real rule (super_admin, or a leader scoped
+                // to this project) — no need to duplicate it here.
                 try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null);
               }}
                 className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm">Xóa</button>

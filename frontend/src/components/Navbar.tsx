@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin } from '@/lib/auth';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getWorkspaces } from '@/lib/api';
 import { brand } from '@/lib/brand';
@@ -14,6 +14,8 @@ function NavbarContent() {
   const [role, setRole] = useState('');
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [wsOpen, setWsOpen] = useState(false);
+  const wsRef = useRef<HTMLDivElement>(null);
 
   // Shared cache key with Project Hub pages / CustomersProjectsView — the
   // Workspace list is near-static, so navigating between pages (Navbar
@@ -31,39 +33,72 @@ function NavbarContent() {
     setRole(getRole() ?? '');
   }, []);
 
+  // Close the Workspace switcher on an outside click.
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (wsRef.current && !wsRef.current.contains(e.target as Node)) {
+        setWsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const projectHubIcon = (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
     </svg>
   );
 
-  const renderProjectHubNav = (onNavigate?: () => void) => (
-    <div className="space-y-0.5">
-      <Link href="/project-hub" onClick={onNavigate}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
-          path === '/project-hub' ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-        }`}>
-        {projectHubIcon}
-        Project Hub
-      </Link>
-      {workspaces.length > 0 && (
-        <div className="pl-9 space-y-0.5">
-          {workspaces.map((ws, idx) => {
-            const active = path.startsWith(`/project-hub/${ws.code}`);
-            const isLast = idx === workspaces.length - 1;
-            return (
-              <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={onNavigate}
-                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium transition-all truncate ${
-                  active ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}>
-                <span className="text-slate-600 shrink-0">{isLast ? '└─' : '├─'}</span>
-                <span className="truncate">{ws.name}</span>
-              </Link>
-            );
-          })}
+  // Workspace the user is currently looking at, derived from the URL
+  // (/project-hub/{code}) — null means the merged "all workspaces" view.
+  const currentWsCode = path.startsWith('/project-hub/') ? path.split('/')[2] : null;
+  const currentWs = workspaces.find((w: any) => w.code === currentWsCode);
+
+  const renderWorkspaceSwitcher = (onNavigate?: () => void) => (
+    <div className="relative mb-2" ref={wsRef}>
+      <button
+        onClick={() => setWsOpen(o => !o)}
+        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60 hover:bg-slate-800 transition-all cursor-pointer"
+      >
+        <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🗂️</span>
+        <span className="flex-1 min-w-0 text-left">
+          <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspace</span>
+          <span className="block text-[12.5px] font-bold text-white truncate">{currentWs ? currentWs.name : 'Tất cả'}</span>
+        </span>
+        <svg className={`w-3.5 h-3.5 text-slate-500 transition-transform shrink-0 ${wsOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {wsOpen && (
+        <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-20 py-1">
+          <Link href="/project-hub" onClick={() => { setWsOpen(false); onNavigate?.(); }}
+            className={`block px-3 py-2 text-xs font-semibold transition-colors ${
+              !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+            }`}>
+            Tất cả Workspace
+          </Link>
+          {workspaces.map((ws: any) => (
+            <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => { setWsOpen(false); onNavigate?.(); }}
+              className={`block px-3 py-2 text-xs font-semibold truncate transition-colors ${
+                ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+              }`}>
+              {ws.name}
+            </Link>
+          ))}
         </div>
       )}
     </div>
+  );
+
+  const renderProjectsLink = (onNavigate?: () => void) => (
+    <Link href="/project-hub" onClick={onNavigate}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+        path.startsWith('/project-hub') ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+      }`}>
+      {projectHubIcon}
+      Projects
+    </Link>
   );
 
   const nav = [
@@ -154,7 +189,8 @@ function NavbarContent() {
             );
           })()}
 
-          {renderProjectHubNav()}
+          {renderWorkspaceSwitcher()}
+          {renderProjectsLink()}
 
           {nav.map(n => {
             const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
@@ -246,7 +282,8 @@ function NavbarContent() {
 
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
-          {renderProjectHubNav(() => setMobileMenuOpen(false))}
+          {renderWorkspaceSwitcher(() => setMobileMenuOpen(false))}
+          {renderProjectsLink(() => setMobileMenuOpen(false))}
 
           {nav.map(n => {
             const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));

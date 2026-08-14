@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin, isAdmin } from '@/lib/auth';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import {
   getCustomers,
   getCustomersByWorkspace,
@@ -1074,16 +1075,15 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace }: Cust
                       <label className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider block">
                         Khách hàng <span className="text-amber-500 font-bold ml-0.5">*</span>
                       </label>
-                      <select
+                      <SearchableSelect
+                        label="khách hàng"
+                        icon=""
+                        options={modalBusinessCustomers.map(c => ({ id: c.id, name: c.name }))}
                         value={projectForm.customerId}
-                        onChange={e => setProjectForm({ ...projectForm, customerId: e.target.value })}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
-                      >
-                        <option value="">-- Chọn khách hàng --</option>
-                        {modalBusinessCustomers.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
+                        onChange={(val: any) => setProjectForm({ ...projectForm, customerId: val === 'all' ? '' : val })}
+                        placeholder="Tìm khách hàng..."
+                        className="w-full"
+                      />
                       {modalCustomerMismatch && (
                         <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
                           <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>

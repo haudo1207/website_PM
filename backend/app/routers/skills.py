@@ -5,6 +5,7 @@ from ..database import get_db
 from ..models.skill_master import Category, Group, Skill, user_skills
 from ..models.task import Task
 from ..utils.auth import require_admin, get_current_user
+from ..utils.audit_service import AuditService
 
 router = APIRouter()
 
@@ -107,26 +108,34 @@ def list_categories(db: Session = Depends(get_db), current_user=Depends(get_curr
     return result
 
 @router.post("/categories")
-def create_category(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def create_category(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(400, "Category name cannot be empty")
     existing = db.query(Category).filter(Category.name == name).first()
     if existing:
         raise HTTPException(400, "Category name already exists")
-    
+
     cat = Category(name=name, is_active=True)
     db.add(cat)
     db.commit()
     db.refresh(cat)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill Category", entity_type="Category",
+        entity_id=cat.id, action="CREATE", resource_name=cat.name,
+        description=f"Tạo skill category '{cat.name}'"
+    )
+    db.commit()
     return cat
 
 @router.put("/categories/{cid}")
-def update_category(cid: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def update_category(cid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     cat = db.query(Category).filter(Category.id == cid).first()
     if not cat:
         raise HTTPException(404, "Category not found")
-    
+
+    old_dict = {"name": cat.name, "is_active": cat.is_active}
+
     if "name" in body:
         name = body["name"].strip()
         if not name:
@@ -135,25 +144,31 @@ def update_category(cid: int, body: dict, db: Session = Depends(get_db), _=Depen
         if existing:
             raise HTTPException(400, "Category name already exists")
         cat.name = name
-        
+
     if "is_active" in body:
         cat.is_active = bool(body["is_active"])
-        
+
     db.commit()
     db.refresh(cat)
+    AuditService.record_diff(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill Category", entity_type="Category",
+        entity_id=cat.id, old_dict=old_dict, new_dict={"name": cat.name, "is_active": cat.is_active},
+        field_labels={"name": "Tên", "is_active": "Đang áp dụng"},
+    )
+    db.commit()
     return cat
 
 @router.delete("/categories/{cid}")
-def delete_category(cid: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+def delete_category(cid: int, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     cat = db.query(Category).filter(Category.id == cid).first()
     if not cat:
         raise HTTPException(404, "Category not found")
-    
+
     # Check if category is used
     # 1. By member
     if is_category_used_by_member(db, cid):
         raise HTTPException(400, "Cannot delete category: One of its skills is currently assigned to a member.")
-    
+
     # 2. By task
     for g in cat.groups:
         if is_group_used_by_task(db, g.name):
@@ -161,8 +176,15 @@ def delete_category(cid: int, db: Session = Depends(get_db), _=Depends(require_a
         for s in g.skills:
             if is_skill_used_by_task(db, s.name):
                 raise HTTPException(400, f"Cannot delete category: Skill '{s.name}' is used by a task.")
-                
+
+    cat_name = cat.name
     db.delete(cat)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill Category", entity_type="Category",
+        entity_id=cid, action="DELETE", resource_name=cat_name,
+        description=f"Xóa skill category '{cat_name}'"
+    )
     db.commit()
     return {"message": "Category deleted successfully"}
 
@@ -170,64 +192,85 @@ def delete_category(cid: int, db: Session = Depends(get_db), _=Depends(require_a
 # --- GROUPS ---
 
 @router.post("/groups")
-def create_group(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def create_group(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     name = body.get("name", "").strip()
     category_id = body.get("category_id")
     if not name:
         raise HTTPException(400, "Group name cannot be empty")
     if not category_id:
         raise HTTPException(400, "Category ID is required")
-        
+
     cat = db.query(Category).filter(Category.id == category_id).first()
     if not cat:
         raise HTTPException(404, "Category not found")
-        
+
     grp = Group(name=name, category_id=category_id)
     db.add(grp)
     db.commit()
     db.refresh(grp)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill Group", entity_type="Group",
+        entity_id=grp.id, action="CREATE", resource_name=grp.name,
+        description=f"Tạo skill group '{grp.name}' (thuộc category '{cat.name}')"
+    )
+    db.commit()
     return grp
 
 @router.put("/groups/{gid}")
-def update_group(gid: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def update_group(gid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     grp = db.query(Group).filter(Group.id == gid).first()
     if not grp:
         raise HTTPException(404, "Group not found")
-        
+
+    old_dict = {"name": grp.name, "category_id": grp.category_id}
+
     if "name" in body:
         name = body["name"].strip()
         if not name:
             raise HTTPException(400, "Group name cannot be empty")
         grp.name = name
-        
+
     if "category_id" in body:
         cat_id = body["category_id"]
         cat = db.query(Category).filter(Category.id == cat_id).first()
         if not cat:
             raise HTTPException(404, "Category not found")
         grp.category_id = cat_id
-        
+
     db.commit()
     db.refresh(grp)
+    AuditService.record_diff(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill Group", entity_type="Group",
+        entity_id=grp.id, old_dict=old_dict, new_dict={"name": grp.name, "category_id": grp.category_id},
+        field_labels={"name": "Tên", "category_id": "Category"},
+    )
+    db.commit()
     return grp
 
 @router.delete("/groups/{gid}")
-def delete_group(gid: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+def delete_group(gid: int, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     grp = db.query(Group).filter(Group.id == gid).first()
     if not grp:
         raise HTTPException(404, "Group not found")
-        
+
     # Check if used
     if is_group_used_by_task(db, grp.name):
         raise HTTPException(400, f"Cannot delete group: Group name '{grp.name}' is used by a task.")
     if is_group_used_by_member(db, gid):
         raise HTTPException(400, "Cannot delete group: One of its skills is currently assigned to a member.")
-        
+
     for s in grp.skills:
         if is_skill_used_by_task(db, s.name):
             raise HTTPException(400, f"Cannot delete group: Skill '{s.name}' is used by a task.")
-            
+
+    grp_name = grp.name
     db.delete(grp)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill Group", entity_type="Group",
+        entity_id=gid, action="DELETE", resource_name=grp_name,
+        description=f"Xóa skill group '{grp_name}'"
+    )
     db.commit()
     return {"message": "Group deleted successfully"}
 
@@ -235,62 +278,84 @@ def delete_group(gid: int, db: Session = Depends(get_db), _=Depends(require_admi
 # --- SKILLS ---
 
 @router.post("/skills")
-def create_skill(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def create_skill(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     name = body.get("name", "").strip()
     group_id = body.get("group_id")
     if not name:
         raise HTTPException(400, "Skill name cannot be empty")
     if not group_id:
         raise HTTPException(400, "Group ID is required")
-        
+
     grp = db.query(Group).filter(Group.id == group_id).first()
     if not grp:
         raise HTTPException(404, "Group not found")
-        
+
     skill = Skill(name=name, group_id=group_id, is_active=True)
     db.add(skill)
     db.commit()
     db.refresh(skill)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill", entity_type="Skill",
+        entity_id=skill.id, action="CREATE", resource_name=skill.name,
+        description=f"Tạo skill '{skill.name}' (thuộc group '{grp.name}')"
+    )
+    db.commit()
     return skill
 
 @router.put("/skills/{sid}")
-def update_skill(sid: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def update_skill(sid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     skill = db.query(Skill).filter(Skill.id == sid).first()
     if not skill:
         raise HTTPException(404, "Skill not found")
-        
+
+    old_dict = {"name": skill.name, "group_id": skill.group_id, "is_active": skill.is_active}
+
     if "name" in body:
         name = body["name"].strip()
         if not name:
             raise HTTPException(400, "Skill name cannot be empty")
         skill.name = name
-        
+
     if "group_id" in body:
         grp_id = body["group_id"]
         grp = db.query(Group).filter(Group.id == grp_id).first()
         if not grp:
             raise HTTPException(404, "Group not found")
         skill.group_id = grp_id
-        
+
     if "is_active" in body:
         skill.is_active = bool(body["is_active"])
-        
+
     db.commit()
     db.refresh(skill)
+    AuditService.record_diff(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill", entity_type="Skill",
+        entity_id=skill.id, old_dict=old_dict,
+        new_dict={"name": skill.name, "group_id": skill.group_id, "is_active": skill.is_active},
+        field_labels={"name": "Tên", "group_id": "Group", "is_active": "Đang áp dụng"},
+    )
+    db.commit()
     return skill
 
 @router.delete("/skills/{sid}")
-def delete_skill(sid: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+def delete_skill(sid: int, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     skill = db.query(Skill).filter(Skill.id == sid).first()
     if not skill:
         raise HTTPException(404, "Skill not found")
-        
+
     # Check if used
     if is_skill_used_by_task(db, skill.name):
         raise HTTPException(400, f"Cannot delete skill: Skill '{skill.name}' is used by a task.")
     if is_skill_used_by_member(db, sid):
         raise HTTPException(400, "Cannot delete skill: Skill is currently assigned to a member.")
-        
+
+    skill_name = skill.name
     db.delete(skill)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Skill", entity_type="Skill",
+        entity_id=sid, action="DELETE", resource_name=skill_name,
+        description=f"Xóa skill '{skill_name}'"
+    )
     db.commit()
     return {"message": "Skill deleted successfully"}

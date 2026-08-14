@@ -813,7 +813,14 @@ def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends
     except Exception as err:
         print("Cascade clean warning:", err)
 
+    p_name = p.name
     db.delete(p)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=pid, action="DELETE_PROJECT", resource_name=p_name,
+        description=f"Xóa dự án '{p_name}' (kèm toàn bộ phase/task/link/member/meeting liên quan)"
+    )
     db.commit()
     return {"ok": True}
 
@@ -843,7 +850,7 @@ def list_project_members(pid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/projects/{pid:int}/members")
-def add_project_member(pid: int, body: dict, db: Session = Depends(get_db)):
+def add_project_member(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     member_id = body.get("member_id")
     role = body.get("role", "Member")
     if not member_id:
@@ -861,16 +868,32 @@ def add_project_member(pid: int, body: dict, db: Session = Depends(get_db)):
         project_id=pid, member_id=member_id, role=role
     ))
     db.commit()
+    member = db.query(Member).filter(Member.id == member_id).first()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=pid, action="UPDATE", project_id=pid,
+        resource_name=member.display_name if member else str(member_id),
+        description=f"Thêm '{member.display_name if member else member_id}' vào dự án với vai trò {role}"
+    )
+    db.commit()
     return {"ok": True}
 
 
 @router.delete("/projects/{pid:int}/members/{mid}")
-def remove_project_member(pid: int, mid: int, db: Session = Depends(get_db)):
+def remove_project_member(pid: int, mid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    member = db.query(Member).filter(Member.id == mid).first()
     db.execute(
         project_members.delete().where(
             project_members.c.project_id == pid,
             project_members.c.member_id == mid
         )
+    )
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=pid, action="UPDATE", project_id=pid,
+        resource_name=member.display_name if member else str(mid),
+        description=f"Gỡ '{member.display_name if member else mid}' khỏi dự án"
     )
     db.commit()
     return {"ok": True}
