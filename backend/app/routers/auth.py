@@ -3,6 +3,8 @@ from fastapi.security import OAuth2PasswordRequestForm
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+from jose import JWTError, jwt
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
@@ -13,6 +15,84 @@ from ..utils.audit_service import AuditService
 router = APIRouter()
 
 GOOGLE_TOKEN_CLOCK_SKEW_SECONDS = 10
+
+# ── Microsoft (Outlook) ID token verification ──────────────────────────────
+# Microsoft JWKS endpoint; "common" tenant serves personal + Entra accounts.
+OUTLOOK_JWKS_URL = "https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys"
+OUTLOOK_JWKS_CACHE_TTL_SECONDS = 24 * 60 * 60
+# With OUTLOOK_TENANT_ID=common the issuer varies per account type; accept any
+# Microsoft v2.0 issuer while keeping the format strict.
+OUTLOOK_V2_ISSUER_PREFIX = "https://login.microsoftonline.com/"
+OUTLOOK_V2_ISSUER_SUFFIX = "/v2.0"
+
+_outlook_jwks_cache: dict = {"fetched_at": 0.0, "keys": None}
+
+
+def _fetch_outlook_jwks() -> dict:
+    """Return Microsoft's cached JWKS, refetching when stale or missing."""
+    import time
+    import requests as http_requests
+
+    cached = _outlook_jwks_cache.get("keys")
+    if cached and time.time() - _outlook_jwks_cache["fetched_at"] < OUTLOOK_JWKS_CACHE_TTL_SECONDS:
+        return cached
+    tenant = settings.OUTLOOK_TENANT_ID.strip() or "common"
+    response = http_requests.get(
+        OUTLOOK_JWKS_URL.format(tenant=tenant), timeout=10
+    )
+    response.raise_for_status()
+    keys = response.json()
+    _outlook_jwks_cache["fetched_at"] = time.time()
+    _outlook_jwks_cache["keys"] = keys
+    return keys
+
+
+def _is_outlook_issuer(iss: str) -> bool:
+    return (
+        iss.startswith(OUTLOOK_V2_ISSUER_PREFIX)
+        and iss.endswith(OUTLOOK_V2_ISSUER_SUFFIX)
+    )
+
+
+def verify_outlook_id_token(token: str) -> dict:
+    """Verify a Microsoft ID token (signature, RS256, aud, exp, iss, claims)."""
+    jwks = _fetch_outlook_jwks()
+    try:
+        claims = jwt.decode(
+            token,
+            jwks,
+            algorithms=["RS256"],
+            audience=settings.OUTLOOK_CLIENT_ID,
+            options={
+                "verify_aud": True,
+                "verify_exp": True,
+                "verify_iss": True,
+                "verify_signature": True,
+            },
+        )
+    except JWTError:
+        # Microsoft rotates signing keys; retry once with a fresh JWKS.
+        _outlook_jwks_cache["keys"] = None
+        _outlook_jwks_cache["fetched_at"] = 0.0
+        try:
+            claims = jwt.decode(
+                token,
+                _fetch_outlook_jwks(),
+                algorithms=["RS256"],
+                audience=settings.OUTLOOK_CLIENT_ID,
+                options={
+                    "verify_aud": True,
+                    "verify_exp": True,
+                    "verify_iss": True,
+                    "verify_signature": True,
+                },
+            )
+        except JWTError:
+            raise HTTPException(401, "Invalid Microsoft credential.")
+    if not _is_outlook_issuer(str(claims.get("iss") or "")):
+        raise HTTPException(401, "Invalid Microsoft credential.")
+    return claims
+
 
 def token_response(user: User) -> dict:
     token = create_access_token({"sub": str(user.id), "role": user.role})
@@ -32,6 +112,9 @@ def auth_config():
         "google_login_enabled": settings.GOOGLE_LOGIN_ENABLED,
         "google_client_id": settings.GOOGLE_CLIENT_ID if settings.GOOGLE_LOGIN_ENABLED else "",
         "password_login_enabled": settings.PASSWORD_LOGIN_ENABLED,
+        "outlook_login_enabled": settings.OUTLOOK_LOGIN_ENABLED,
+        "outlook_client_id": settings.OUTLOOK_CLIENT_ID if settings.OUTLOOK_LOGIN_ENABLED else "",
+        "outlook_tenant_id": settings.OUTLOOK_TENANT_ID if settings.OUTLOOK_LOGIN_ENABLED else "",
     }
 
 @router.post("/login")
@@ -174,6 +257,75 @@ def google_login(body: dict, request: Request, db: Session = Depends(get_db)):
         severity="INFO",
         login_method="Google OAuth",
         description=f"Đăng nhập thành công bằng Google OAuth ({user.email})",
+        request=request
+    )
+    db.commit()
+    return token_response(user)
+
+@router.post("/outlook")
+def outlook_login(body: dict, request: Request, db: Session = Depends(get_db)):
+    if not settings.OUTLOOK_LOGIN_ENABLED or not settings.OUTLOOK_CLIENT_ID:
+        raise HTTPException(503, "Microsoft login is not configured.")
+
+    credential = str(body.get("credential") or "").strip()
+    if not credential:
+        raise HTTPException(400, "Missing Microsoft credential.")
+
+    claims = verify_outlook_id_token(credential)
+
+    email = str(
+        claims.get("email") or claims.get("preferred_username") or ""
+    ).strip().lower()
+    outlook_sub = str(claims.get("oid") or claims.get("sub") or "").strip()
+    if not email or not outlook_sub:
+        raise HTTPException(401, "Microsoft account identifier is missing.")
+
+    user = db.query(User).filter(User.outlook_sub == outlook_sub).first()
+    if not user:
+        user = db.query(User).filter(func.lower(User.outlook_mail) == email).first()
+    if not user:
+        AuditService.record(
+            db=db,
+            user_id=None,
+            module="Authentication",
+            entity_type="User",
+            entity_id=email,
+            action="FAILED_LOGIN",
+            severity="WARNING",
+            login_method="Microsoft OAuth",
+            description=f"Đăng nhập Microsoft thất bại: Email '{email}' chưa được cấp quyền",
+            request=request
+        )
+        db.commit()
+        raise HTTPException(403, "This Microsoft email has not been granted access.")
+    if user.outlook_sub and user.outlook_sub != outlook_sub:
+        raise HTTPException(403, "Tài khoản Microsoft này đã được liên kết với một tài khoản khác.")
+    if not user.is_active:
+        raise HTTPException(403, "Tài khoản đã bị vô hiệu hoá.")
+
+    changed = False
+    if not user.outlook_sub:
+        user.outlook_sub = outlook_sub
+        changed = True
+    outlook_name = str(claims.get("name") or "").strip()
+    if outlook_name and user.full_name != outlook_name:
+        user.full_name = outlook_name
+        changed = True
+
+    if changed:
+        db.commit()
+        db.refresh(user)
+
+    AuditService.record(
+        db=db,
+        user_id=user.id,
+        module="Authentication",
+        entity_type="User",
+        entity_id=user.id,
+        action="LOGIN",
+        severity="INFO",
+        login_method="Microsoft OAuth",
+        description=f"Đăng nhập thành công bằng Microsoft OAuth ({user.email})",
         request=request
     )
     db.commit()

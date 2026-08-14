@@ -44,6 +44,23 @@ def apply_schema_updates():
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub_unique "
             "ON users (google_sub) WHERE google_sub IS NOT NULL"
         ))
+        # Microsoft (Outlook) login identities — mirrors the google_sub pattern.
+        # outlook_mail is the admin pre-provisioned Microsoft Mail used to match
+        # the login; outlook_sub is the linked Microsoft identity on first login.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS outlook_mail VARCHAR"
+        ))
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS outlook_sub VARCHAR"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_mail_unique "
+            "ON users (outlook_mail) WHERE outlook_mail IS NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_sub_unique "
+            "ON users (outlook_sub) WHERE outlook_sub IS NOT NULL"
+        ))
         # Consolidate the legacy three-role model into the new 4-role model.
         # Permissions remain independent from project data scope.
         conn.execute(text(

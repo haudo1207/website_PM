@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getAuthConfig, googleLogin, login, type AuthConfig } from '@/lib/api';
+import { getAuthConfig, googleLogin, outlookLogin, login, type AuthConfig } from '@/lib/api';
 import { saveToken } from '@/lib/auth';
 import { brand } from '@/lib/brand';
+import { initMsal, microsoftLogin } from '@/lib/msal';
 
 declare global {
   interface Window {
@@ -37,6 +38,7 @@ export default function LoginPage() {
     getAuthConfig()
       .then(setConfig)
       .catch(() => setErr('Không tải được cấu hình đăng nhập.'));
+    initMsal().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -99,6 +101,23 @@ export default function LoginPage() {
     }
   };
 
+  const handleMicrosoftLogin = async () => {
+    if (!config?.outlook_client_id) return;
+    setLoading(true);
+    setErr('');
+    try {
+      finishLogin(await outlookLogin(await microsoftLogin()));
+    } catch (error: any) {
+      if (error?.message?.includes('User cancelled') || error?.errorCode === 'user_cancelled') {
+        setErr('');
+      } else {
+        setErr(error.response?.data?.detail || 'Đăng nhập Microsoft thất bại. Vui lòng thử lại.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f0f2f5] flex items-center justify-center p-4 text-[#0b1c30]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <div className="bg-white border border-[#c2c6d6]/60 rounded-2xl shadow-xl p-8 w-full max-w-sm">
@@ -111,6 +130,25 @@ export default function LoginPage() {
         {config?.google_login_enabled && (
           <div className={loading ? 'pointer-events-none opacity-60' : ''}>
             <div ref={googleButton} className="flex min-h-11 justify-center" />
+          </div>
+        )}
+
+        {config?.outlook_login_enabled && config.outlook_client_id && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={handleMicrosoftLogin}
+              disabled={loading}
+              className="w-full bg-white border border-[#8a8886] hover:bg-[#f5f5f5] text-[#0b1c30] rounded-lg py-2.5 px-3 text-xs font-semibold disabled:opacity-60 flex items-center justify-center gap-2 transition-colors"
+            >
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 21 21" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+                <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+                <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+                <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+              </svg>
+              Đăng nhập bằng Microsoft
+            </button>
           </div>
         )}
 
