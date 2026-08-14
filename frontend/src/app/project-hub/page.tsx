@@ -32,15 +32,9 @@ function AllWorkspacesTabBar({ active }: { active: Tab }) {
     </button>
   );
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-      <div>
-        <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Projects</h1>
-        <p className="text-sm text-slate-500 mt-1">Projects và Customers trên tất cả Workspace bạn được cấp quyền</p>
-      </div>
-      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
-        {pill('projects', 'Projects', '📁')}
-        {pill('customers', 'Customers', '🏢')}
-      </div>
+    <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0">
+      {pill('projects', 'Projects', '📁')}
+      {pill('customers', 'Customers', '🏢')}
     </div>
   );
 }

@@ -309,7 +309,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       <Navbar />
       <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
         <div className="p-8 space-y-6 max-w-[1400px] w-full mx-auto">
-          {renderTabs && renderTabs()}
           {msg && (
             <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border backdrop-blur-sm transition-all duration-300 transform translate-y-0 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
@@ -321,21 +320,21 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Danh sách dự án</h1>
               <p className="text-sm text-slate-500 mt-1">Quản lý và theo dõi tiến độ các dự án tuân thủ bảo mật.</p>
             </div>
-            
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-slate-200 rounded-lg shadow-sm">
-                <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
-                <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
-                  <option value="newest">Mới nhất</option>
-                  <option value="oldest">Cũ nhất</option>
-                  <option value="name_asc">Tên (A-Z)</option>
-                  <option value="name_desc">Tên (Z-A)</option>
-                </select>
-              </div>
-            </div>
+
+            {renderTabs && renderTabs()}
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm relative z-30">
+            <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
+              <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
+                <option value="newest">Mới nhất</option>
+                <option value="oldest">Cũ nhất</option>
+                <option value="name_asc">Tên (A-Z)</option>
+                <option value="name_desc">Tên (Z-A)</option>
+              </select>
+            </div>
+
             <div className="relative flex-1 min-w-[240px]">
               <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
