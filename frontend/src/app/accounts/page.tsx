@@ -35,6 +35,7 @@ interface Account {
   email: string;
   full_name: string;
   avatar_url?: string | null;
+  outlook_mail?: string | null;
   role: string;
   data_scope: string;
   is_active: boolean;
@@ -82,11 +83,11 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: '', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: '', full_name: '', member_id: 0, outlook_mail: '' });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: '', member_id: 0 });
+  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: '', member_id: 0, outlook_mail: '' });
 
   // Reset password modal
 
@@ -145,6 +146,8 @@ export default function AccountsPage() {
         acc.full_name,
         acc.member?.display_name,
         acc.member?.full_name,
+        acc.email,
+        acc.outlook_mail,
       ].some(value => (value || '').toLowerCase().includes(nameQuery));
 
       const roleMatch = !filterRole || acc.role === filterRole;
@@ -194,10 +197,11 @@ export default function AccountsPage() {
         data_scope: createForm.data_scope,
         full_name: createForm.full_name,
         member_id: createForm.member_id || undefined,
+        outlook_mail: createForm.outlook_mail || undefined,
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), full_name: '', member_id: 0 });
+      setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), full_name: '', member_id: 0, outlook_mail: '' });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -224,7 +228,7 @@ export default function AccountsPage() {
   const openEdit = (acc: Account) => {
     if (!canLeaderManageAccount(acc)) return;
     setEditAccount(acc);
-    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || (workspaces?.[0]?.code || ''), member_id: acc.member_id || 0 });
+    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || (workspaces?.[0]?.code || ''), member_id: acc.member_id || 0, outlook_mail: acc.outlook_mail || '' });
   };
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -398,6 +402,7 @@ export default function AccountsPage() {
                       <tr className="border-b border-slate-200">
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Microsoft Mail</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Workspace</th>
@@ -408,9 +413,9 @@ export default function AccountsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                   {loading ? (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
                   ) : filteredAccounts.length === 0 ? (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Chưa có tài khoản nào</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400 italic">Chưa có tài khoản nào</td></tr>
                   ) : (
                     filteredAccounts.map(acc => (
                       <tr key={acc.id} className="hover:bg-slate-50/50 transition-colors">
@@ -427,6 +432,7 @@ export default function AccountsPage() {
                             <span>{acc.email}</span>
                           </div>
                         </td>
+                        <td className="px-4 py-3 text-slate-600">{acc.outlook_mail || <span className="text-slate-300">–</span>}</td>
                         <td className="px-4 py-3 text-slate-600">{acc.full_name || '—'}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${ROLE_COLORS[acc.role] || 'bg-slate-100 text-slate-600'}`}>
@@ -521,6 +527,16 @@ export default function AccountsPage() {
                   />
                 </div>
                 <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Microsoft Mail</label>
+                  <input
+                    type="email"
+                    value={createForm.outlook_mail}
+                    onChange={e => setCreateForm(f => ({ ...f, outlook_mail: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                    placeholder="user@outlook.com"
+                  />
+                </div>
+                <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Họ tên</label>
                   <input
                     value={createForm.full_name}
@@ -604,6 +620,16 @@ export default function AccountsPage() {
                   value={editForm.email}
                   onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Microsoft Mail</label>
+                <input
+                  type="email"
+                  value={editForm.outlook_mail}
+                  onChange={e => setEditForm(f => ({ ...f, outlook_mail: e.target.value }))}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  placeholder="user@outlook.com"
                 />
               </div>
               <div className="space-y-1.5">

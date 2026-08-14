@@ -96,6 +96,7 @@ def account_to_dict(u: User) -> dict:
         "email": u.email,
         "full_name": u.full_name,
         "avatar_url": u.avatar_url,
+        "outlook_mail": u.outlook_mail,
         "role": u.role,
         "data_scope": u.data_scope,
         "is_active": u.is_active,
@@ -142,6 +143,7 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
     role = str(body.get("role") or "member").strip().lower()
     data_scope = str(body.get("data_scope") or default_scope(db)).strip().lower()
     member_id = body.get("member_id") or None
+    outlook_mail = normalize_email(body.get("outlook_mail")) or None
 
     if not email:
         raise HTTPException(400, "Email không được để trống.")
@@ -153,6 +155,8 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
         raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(valid_data_scopes(db))}")
     if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(400, "Email đã tồn tại.")
+    if outlook_mail and db.query(User).filter(func.lower(User.outlook_mail) == outlook_mail).first():
+        raise HTTPException(400, "Microsoft Mail đã tồn tại.")
 
     _ensure_leader_allowed_role(caller, role)
 
@@ -175,6 +179,7 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
         data_scope=data_scope,
         is_active=True,
         member_id=member_id,
+        outlook_mail=outlook_mail,
     )
     db.add(account)
     try:
@@ -208,6 +213,7 @@ def update_account(
         "full_name": account.full_name,
         "member_id": account.member_id,
         "data_scope": account.data_scope,
+        "outlook_mail": account.outlook_mail,
     }
     old_role = account.role
 
@@ -228,6 +234,20 @@ def update_account(
 
     if "full_name" in body:
         account.full_name = str(body["full_name"] or "").strip()
+
+    if "outlook_mail" in body:
+        new_outlook_mail = normalize_email(body["outlook_mail"]) or None
+        if new_outlook_mail:
+            duplicate = db.query(User).filter(
+                func.lower(User.outlook_mail) == new_outlook_mail,
+                User.id != account_id,
+            ).first()
+            if duplicate:
+                raise HTTPException(400, "Microsoft Mail đã tồn tại.")
+        if account.outlook_mail != new_outlook_mail:
+            account.outlook_mail = new_outlook_mail
+            # Re-approve and bind the replacement Microsoft identity on first login.
+            account.outlook_sub = None
 
     if "member_id" in body:
         member_id = body.get("member_id") or None
@@ -273,8 +293,8 @@ def update_account(
     AuditService.record_diff(
         db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
         entity_id=account.id, old_dict=old_dict,
-        new_dict={"email": account.email, "full_name": account.full_name, "member_id": account.member_id, "data_scope": account.data_scope},
-        field_labels={"email": "Email", "full_name": "Họ tên", "member_id": "Thành viên liên kết", "data_scope": "Phạm vi dữ liệu"},
+        new_dict={"email": account.email, "full_name": account.full_name, "member_id": account.member_id, "data_scope": account.data_scope, "outlook_mail": account.outlook_mail},
+        field_labels={"email": "Email", "full_name": "Họ tên", "member_id": "Thành viên liên kết", "data_scope": "Phạm vi dữ liệu", "outlook_mail": "Microsoft Mail"},
     )
     if old_role != account.role:
         AuditService.record(

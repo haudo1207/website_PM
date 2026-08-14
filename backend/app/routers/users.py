@@ -221,7 +221,7 @@ def me(user=Depends(get_current_user)):
         "data_scope": user.data_scope,
         "member_id": user.member_id,
         "is_active": user.is_active,
-        "login_method": "Google OAuth" if user.google_sub else "Password",
+        "login_method": "Google OAuth" if user.google_sub else ("Microsoft OAuth" if user.outlook_sub else "Password"),
         "position": user.position or (member.position if member else None),
         "department": user.department or (member.department if member else None),
         "skills": skills,
