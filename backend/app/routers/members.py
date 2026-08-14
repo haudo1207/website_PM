@@ -14,13 +14,28 @@ from ..utils.auth import require_admin, get_current_user
 from sqlalchemy import func, extract
 
 TEAM_POSITIONS = {
-  "Tech/Product": ["Product Manager", "UI/UX Designer", "Business Analyst", "Bridge Software Engineer (BrSE)", "Tester/QC"],
-  "Dev/DevOps": ["Frontend Developer", "Backend Developer", "Mobile Developer", "Fullstack Developer", "DevOps Engineer", "BA", "Frontend Developer", "Backend Developer", "Full-stack Developer", "DevOps / Platform", "Fullstack Developer"],
-  "Infrastructure": ["Network Engineer", "System Administrator", "IT Support/Helpdesk", "Cybersecurity Specialist", "Network Team", "System Team", "Security Team", "Hội nghị & Tổng đài", "Cloud & Datacenter"],
-  "AI": ["AI / ML Engineer", "Data Scientist", "Data Engineer", "Computer Vision Engineer", "NLP Engineer", "Data Analyst / Engineer", "AI Product / Research"],
-  "Marketing": ["Content Creator", "SEO Specialist", "Digital Marketer", "Media Designer", "Copywriter", "Content & Social", "Performance & Acquisition", "Marketing Ops"],
-  "Sales/Customer Care": ["Account Executive", "Sales Consultant", "Customer Support Representative", "Telemarketer", "B2B Sales", "Business Development", "Customer Success"],
-  "Content Production": ["Video Editor", "Graphic Designer", "Motion Designer", "Photographer"]
+  "Infrastructure": [
+    "Network Engineer", "System Administrator", "IT Support/Helpdesk", "Cybersecurity Specialist",
+    "Network Team", "System Team", "Security Team", "Hội nghị & Tổng đài", "Cloud & Datacenter"
+  ],
+  "Dev/DevOps": [
+    "Product Manager", "UI/UX Designer", "Business Analyst", "Bridge Software Engineer (BrSE)", "Tester/QC",
+    "Frontend Developer", "Backend Developer", "Mobile Developer", "Fullstack Developer", "DevOps Engineer",
+    "BA", "Frontend Developer", "Backend Developer", "Full-stack Developer", "DevOps / Platform", "Fullstack Developer",
+    "Video Editor", "Graphic Designer", "Motion Designer", "Photographer"
+  ],
+  "AI": [
+    "AI / ML Engineer", "Data Scientist", "Data Engineer", "Computer Vision Engineer", "NLP Engineer",
+    "Data Analyst / Engineer", "AI Product / Research"
+  ],
+  "Marketing": [
+    "Content Creator", "SEO Specialist", "Digital Marketer", "Media Designer", "Copywriter",
+    "Content & Social", "Performance & Acquisition", "Marketing Ops"
+  ],
+  "Sales": [
+    "Account Executive", "Sales Consultant", "Customer Support Representative", "Telemarketer",
+    "B2B Sales", "Business Development", "Customer Success", "Sales/Customer Care"
+  ]
 }
 
 def get_primary_team(positions):
@@ -520,7 +535,7 @@ def sync_candidate(
         
     # 2. Map Level and Team directly
     mapped_team = LEVEL_MAP.get(level.lower().strip(), level)
-    department = position
+    department = team if team and team != "all" else (position if position else None)
     
     # Auto-register in DB system categories
     ensure_system_level(db, mapped_team)
@@ -784,7 +799,7 @@ def sync_from_recruitment(
                 
             # Map Level and Department directly
             mapped_team = LEVEL_MAP.get(level.lower().strip(), level)[:100]
-            department = position[:100] if position else None
+            department = primary_team[:100] if primary_team and primary_team != "all" else (position[:100] if position else None)
             
             # Auto-register categories
             ensure_system_level(db, mapped_team)
