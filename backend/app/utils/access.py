@@ -213,12 +213,29 @@ def member_query_for_user(db: Session, user):
         .filter(project_members.c.project_id.in_(scoped_project_ids))
         .subquery()
     )
-    return query.filter(
-        or_(
-            Member.id.in_(scoped_user_member_ids),
-            Member.id.in_(scoped_project_member_ids),
-        )
-    )
+    conditions = [
+        Member.id.in_(scoped_user_member_ids),
+        Member.id.in_(scoped_project_member_ids),
+    ]
+
+    # Map workspace scope to department names
+    scope_to_dept = {
+        "infra": "Infrastructure",
+        "dev": "Dev/DevOps",
+        "soc": "Security",
+        "marketing": "Marketing",
+        "sales": "Sales"
+    }
+    target_dept = scope_to_dept.get(scope)
+    if target_dept:
+        conditions.append(Member.department.ilike(target_dept))
+    else:
+        ws = resolve_workspace(db, scope)
+        if ws:
+            conditions.append(Member.department.ilike(ws.name))
+            conditions.append(Member.department.ilike(ws.code))
+
+    return query.filter(or_(*conditions))
 
 
 def can_access_project(db: Session, user, project: Project) -> bool:
