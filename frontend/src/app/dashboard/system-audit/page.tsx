@@ -15,10 +15,6 @@ export default function SystemAuditTab() {
   const [selectedMonth, setSelectedMonth] = useState('08/2026');
   const [showAllProjects, setShowAllProjects] = useState(false);
 
-  const [projectsAtRisk, setProjectsAtRisk] = useState<any[]>(cachedSystemAuditData?.projectsAtRisk || []);
-  const [taskStats, setTaskStats] = useState(cachedSystemAuditData?.taskStats || { total: 0, done: 0, inProgress: 0, overdue: 0 });
-  const [loading, setLoading] = useState(false);
-  const [whiteProjectsCount, setWhiteProjectsCount] = useState(0);
   // System Audit Logs State
   const [auditPage, setAuditPage] = useState(1);
   const [auditModule, setAuditModule] = useState('all');
@@ -111,44 +107,13 @@ export default function SystemAuditTab() {
       const sortedRisk = pRisk.sort((a: any, b: any) => b.overdueTask - a.overdueTask).slice(0, 5);
       const tStats = { total: allTasksCount, done: allDone, inProgress: allInProg, overdue: allOverdue };
 
-      setActiveProjectsProgress(sortedProjects);
-      setWhiteProjectsCount(whiteCount);
-      setProjectsAtRisk(sortedRisk);
-      setTaskStats(tStats);
-      // Members distribution
-      const list = membersRes.data || [];
-      const infra: any[] = [];
-      const markee: any[] = [];
-      
-      list.forEach((m: any) => {
-        const item = {
-          name: m.full_name || m.display_name || 'No Name',
-          role: m.position || 'Dev',
-          kpi: m.kpi_total || 0,
-        };
-        if (m.team?.toLowerCase().includes('infra') || m.department?.toLowerCase().includes('infra') || infra.length < markee.length) {
-          infra.push(item);
-        } else {
-          markee.push(item);
-        }
-      });
-      const infraSorted = infra.sort((a,b) => b.kpi - a.kpi);
-      const markeeSorted = markee.sort((a,b) => b.kpi - a.kpi);
-
-      // Analytics
-      const analyticsData = {
-        top_active_users: analyticsRes.data?.top_active_users || [],
-        top_updated_projects: analyticsRes.data?.top_updated_projects || [],
-        top_ai_users: analyticsRes.data?.top_ai_users || [],
-        top_login_failures: analyticsRes.data?.top_login_failures || []
-      };
-
       // Logs
       const logs = logsRes.data?.items || [];
       const total = logsRes.data?.total || 0;
 
     return {
       activeProjectsProgress: sortedProjects,
+      whiteProjectsCount: whiteCount,
       projectsAtRisk: sortedRisk,
       taskStats: tStats,
       phaseStats: pStats,
@@ -167,6 +132,7 @@ export default function SystemAuditTab() {
   });
 
   const activeProjectsProgress: any[] = auditData?.activeProjectsProgress || [];
+  const whiteProjectsCount: number = auditData?.whiteProjectsCount || 0;
   const projectsAtRisk: any[] = auditData?.projectsAtRisk || [];
   const taskStats = auditData?.taskStats || { total: 0, done: 0, inProgress: 0, overdue: 0 };
   const phaseStats: any[] = auditData?.phaseStats || [];
