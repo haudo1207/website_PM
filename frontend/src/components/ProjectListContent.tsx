@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
@@ -79,7 +79,17 @@ const getPaginationRange = (current: number, total: number) => {
   return result;
 };
 
-export default function ProjectListContent() {
+interface ProjectListContentProps {
+  /** Workspace code to lock the list to (Project Hub). Hides the Workspace
+   * filter and prevents switching away from it. Undefined/omitted keeps the
+   * original standalone /projects behavior unchanged. */
+  lockedWorkspace?: string;
+  /** Project Hub — renders a tab bar (Projects/Customers) right below the
+   * page header. Undefined/omitted keeps the original standalone page look. */
+  renderTabs?: () => ReactNode;
+}
+
+export default function ProjectListContent({ lockedWorkspace, renderTabs }: ProjectListContentProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramCustId = searchParams.get('customer_id');
@@ -105,21 +115,33 @@ export default function ProjectListContent() {
   const { data: listData, refetch: reload } = useQuery({
     queryKey: ['project-list'],
     queryFn: async () => {
-      const [projs, custs, wss] = await Promise.all([
+      const [projs, custs] = await Promise.all([
         getProjects(),
         getCustomers(),
-        getWorkspaces().catch(() => [])
       ]);
       return {
         projects: projs || [],
         customers: custs || [],
-        workspaces: wss || [],
       };
     },
   });
+  // Shared cache key with Navbar/Project Hub/CustomersProjectsView — this
+  // near-static list is fetched once and reused across the whole app.
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
   const projects: any[] = listData?.projects || [];
   const customers: any[] = listData?.customers || [];
-  const workspaces: Workspace[] = listData?.workspaces || [];
+  const workspaces: Workspace[] = workspacesData || [];
+
+  // Project Hub: lock the Workspace filter to the current tab's Workspace.
+  useEffect(() => {
+    if (!lockedWorkspace) return;
+    const ws = workspaces.find(w => w.code === lockedWorkspace);
+    setBusinessFilter(ws?.name || lockedWorkspace);
+  }, [lockedWorkspace, workspaces]);
 
   // Sync URL query params to filter states
   useEffect(() => {
@@ -158,7 +180,7 @@ export default function ProjectListContent() {
 
   const handleResetFilters = () => {
     setSearch('');
-    setBusinessFilter('All');
+    if (!lockedWorkspace) setBusinessFilter('All');
     setPhaseFilter('All');
     setCustomerFilter('All');
     setPmFilter('All');
@@ -166,7 +188,7 @@ export default function ProjectListContent() {
     setMemberFilter('All');
     setYearFilter('All');
     setPage(1);
-    router.push('/projects');
+    if (!lockedWorkspace) router.push('/projects');
   };
 
   // Dynamic lists from loaded data memoized
@@ -275,6 +297,7 @@ export default function ProjectListContent() {
       <Navbar />
       <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
         <div className="p-8 space-y-6 max-w-[1400px] w-full mx-auto">
+          {renderTabs && renderTabs()}
           {msg && (
             <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border backdrop-blur-sm transition-all duration-300 transform translate-y-0 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
@@ -354,14 +377,16 @@ export default function ProjectListContent() {
               placeholder="Tìm thành viên..."
             />
 
-            <SearchableSelect
-              label="Workspace"
-              icon="🗂️"
-              options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
-              value={businessFilter}
-              onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
-              placeholder="Tìm Workspace..."
-            />
+            {!lockedWorkspace && (
+              <SearchableSelect
+                label="Workspace"
+                icon="🗂️"
+                options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
+                value={businessFilter}
+                onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
+                placeholder="Tìm Workspace..."
+              />
+            )}
 
             <SearchableSelect
               label="năm"

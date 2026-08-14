@@ -16,6 +16,7 @@ from .models import task as task_model
 from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
 from .models import notification as notification_model
+from .models import workspace_access as workspace_access_model
 from sqlalchemy import text
 
 def apply_schema_updates():
@@ -833,6 +834,33 @@ def init_db_defaults():
             for idx, p_name in enumerate(default_phases, 1):
                 db.add(MasterPhase(name=p_name, sort_order=idx, is_active=True))
             print("[*] Seeded initial Master Phases")
+
+        # Backfill user_workspace_access from the existing single data_scope
+        # column. Additive/idempotent — gives every current Leader/Member/Viewer
+        # exactly the one Workspace they already had, so effective access is
+        # unchanged until an admin explicitly grants extra Workspaces later.
+        from sqlalchemy import exists as sql_exists
+        from .models.workspace_access import UserWorkspaceAccess
+        from .models.system_category import Workspace
+        from .utils.access import WORKSPACE_SCOPED_ROLES, ALL_SCOPE
+
+        already_has_row = sql_exists().where(UserWorkspaceAccess.user_id == User.id)
+        users_needing_backfill = (
+            db.query(User)
+            .filter(User.role.in_(WORKSPACE_SCOPED_ROLES))
+            .filter(User.data_scope != ALL_SCOPE)
+            .filter(~already_has_row)
+            .all()
+        )
+        if users_needing_backfill:
+            ws_by_code = {w.code.strip().lower(): w for w in db.query(Workspace).all() if w.code}
+            backfilled = 0
+            for u in users_needing_backfill:
+                ws = ws_by_code.get(str(u.data_scope or "").strip().lower())
+                if ws:
+                    db.add(UserWorkspaceAccess(user_id=u.id, workspace_id=ws.id))
+                    backfilled += 1
+            print(f"[*] Backfilled user_workspace_access for {backfilled}/{len(users_needing_backfill)} user(s)")
 
         db.commit()
     except RuntimeError:

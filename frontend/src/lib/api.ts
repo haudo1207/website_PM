@@ -247,6 +247,10 @@ export const getLeaders = () => api.get('/members/meta/leaders').then(r => r.dat
 // Customers
 export const getCustomers = (businessUnit?: string) =>
   api.get('/system-categories/customers', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+// Project Hub — Customers derived from linked Projects (Customer.business_unit
+// is unreliable, see access.customer_query_for_user on the backend).
+export const getCustomersByWorkspace = (code: string) =>
+  api.get(`/system-categories/customers/by-workspace/${code}`).then(r => r.data);
 export const createCustomer = (data: { name: string; description?: string; business_unit?: string }) =>
   api.post('/system-categories/customers', data).then(r => r.data);
 export const updateCustomer = (id: number, data: { name: string; description?: string; business_unit?: string }) =>

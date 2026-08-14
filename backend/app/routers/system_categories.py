@@ -4,14 +4,25 @@ from sqlalchemy.orm import Session
 import json
 import re
 
-from sqlalchemy import func as sql_func
+from sqlalchemy import func as sql_func, or_ as sql_or
 from ..database import get_db
 from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer, Workspace
 from ..models.master_phase import MasterPhase
 from ..models.user import User
 from ..models.task import Task
+from ..models.workspace_access import UserWorkspaceAccess
 from ..utils.auth import require_admin, get_current_user
-from ..utils.access import default_scope, is_valid_scope, user_scope, resolve_workspace, ALL_SCOPE, WORKSPACE_SCOPED_ROLES
+from ..utils.access import (
+    default_scope,
+    is_valid_scope,
+    user_scope,
+    user_allowed_scopes,
+    resolve_workspace,
+    customer_query_for_user,
+    ALL_SCOPE,
+    ROLE_SUPER_ADMIN,
+    WORKSPACE_SCOPED_ROLES,
+)
 
 router = APIRouter()
 
@@ -358,6 +369,35 @@ def list_customers(business_unit: Optional[str] = None, db: Session = Depends(ge
         q = q.filter(Customer.business_unit == business_unit.lower().strip())
     return q.order_by(Customer.name.asc()).all()
 
+
+@router.get("/customers/by-workspace/{code}")
+def list_customers_by_workspace(code: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Project Hub — Customers tab. A Customer's effective Workspace is derived
+    from its linked Projects, not `Customer.business_unit` (confirmed
+    unreliable/unmaintained by a production data audit — see
+    access.customer_query_for_user for details). 403 if the caller hasn't
+    been granted *code*.
+    """
+    from ..models.project import Project as ProjectModel
+
+    ws = resolve_workspace(db, code)
+    if not ws:
+        raise HTTPException(404, "Không tìm thấy workspace")
+
+    role = getattr(current_user, "role", None)
+    if role != ROLE_SUPER_ADMIN:
+        scopes = user_allowed_scopes(db, current_user)
+        if scopes != ALL_SCOPE and ws.code not in scopes:
+            raise HTTPException(403, "Bạn không có quyền truy cập Workspace này.")
+
+    base = customer_query_for_user(db, current_user)
+    customer_ids_in_ws = db.query(ProjectModel.customer_id).filter(
+        ProjectModel.customer_id.isnot(None),
+        sql_or(ProjectModel.business == ws.name, ProjectModel.business == "All"),
+    ).subquery()
+    return base.filter(Customer.id.in_(customer_ids_in_ws)).order_by(Customer.name.asc()).all()
+
+
 @router.post("/customers")
 def create_customer(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
     name = str(body.get("name", "")).strip()
@@ -497,12 +537,13 @@ def delete_master_phase(id: int, db: Session = Depends(get_db), _=Depends(requir
 @router.get("/workspaces")
 def list_workspaces(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     q = db.query(Workspace).order_by(Workspace.id.asc())
-    # Workspace data scope: Leader, Member and Viewer only get their own assigned
-    # Workspace, so the Sidebar / Customer Management can never switch to another
-    # Workspace.
-    if getattr(current_user, "role", None) in WORKSPACE_SCOPED_ROLES and user_scope(current_user) != ALL_SCOPE:
-        ws = resolve_workspace(db, user_scope(current_user))
-        q = q.filter(Workspace.id == (ws.id if ws else -1))
+    # Workspace access: Leader, Member and Viewer only get the Workspace(s)
+    # they've been granted (one or more — see user_workspace_access), so the
+    # Sidebar / Project Hub can never switch to a Workspace outside that set.
+    if getattr(current_user, "role", None) in WORKSPACE_SCOPED_ROLES:
+        scopes = user_allowed_scopes(db, current_user)
+        if scopes != ALL_SCOPE:
+            q = q.filter(Workspace.code.in_(scopes))
     return q.all()
 
 @router.post("/workspaces")
@@ -572,6 +613,8 @@ def delete_workspace(id: int, db: Session = Depends(get_db), _=Depends(require_a
     from ..models.project import Project
     if db.query(User).filter(User.data_scope == w.code).first():
         raise HTTPException(400, f"Không thể xóa workspace '{w.name}' vì đang được sử dụng bởi một hoặc nhiều tài khoản")
+    if db.query(UserWorkspaceAccess).filter(UserWorkspaceAccess.workspace_id == w.id).first():
+        raise HTTPException(400, f"Không thể xóa workspace '{w.name}' vì đang được cấp quyền cho một hoặc nhiều tài khoản")
     if db.query(Project).filter(Project.data_scope == w.code).first():
         raise HTTPException(400, f"Không thể xóa workspace '{w.name}' vì đang được sử dụng bởi một hoặc nhiều dự án")
     if db.query(Customer).filter(Customer.business_unit == w.code).first():

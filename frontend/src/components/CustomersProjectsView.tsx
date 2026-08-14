@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { isSuperAdmin, isAdmin } from '@/lib/auth';
 import {
   getCustomers,
+  getCustomersByWorkspace,
   createCustomer,
   updateCustomer,
   deleteCustomer,
@@ -23,6 +24,11 @@ import {
 
 interface CustomersProjectsViewProps {
   onFlash: (msg: string, isError?: boolean) => void;
+  /** Project Hub — locks the view to a single Workspace: hides the Workspace
+   * tabs/header and fetches Customers via the Project-derived endpoint
+   * (Customer.business_unit is unreliable, see backend access.customer_query_for_user)
+   * instead of the legacy `Customer.business_unit`-based one. */
+  lockedWorkspace?: string;
 }
 
 const PROJECT_PHASES = [
@@ -40,7 +46,7 @@ interface ComboboxOption {
 
 
 
-export default function CustomersProjectsView({ onFlash }: CustomersProjectsViewProps) {
+export default function CustomersProjectsView({ onFlash, lockedWorkspace }: CustomersProjectsViewProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -160,29 +166,32 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [modalPmDropdownOpen, modalLeaderDropdownOpen, modalSalesDropdownOpen, modalMemberDropdownOpen, modalPhaseDropdownOpen]);
 
-  // Workspace list for the tab switcher — shared cache key with Navbar so
-  // switching pages doesn't refetch this near-static data.
+  // Workspace list for the (non-locked) tab switcher — shared cache key with
+  // Navbar/Project Hub so switching pages doesn't refetch this near-static data.
   const workspacesQuery = useQuery({
     queryKey: ['workspaces'],
     queryFn: () => getWorkspaces(),
+    enabled: !lockedWorkspace,
     staleTime: 5 * 60_000,
   });
   const workspaces: Workspace[] = workspacesQuery.data || [];
 
   useEffect(() => {
-    if (workspaces.length > 0) {
+    if (lockedWorkspace) {
+      setActiveBU(lockedWorkspace);
+    } else if (workspaces.length > 0) {
       setActiveBU(prev => prev || workspaces[0].code);
     }
-  }, [workspaces]);
+  }, [lockedWorkspace, workspaces]);
 
   // Base data (Customers/Members/MasterPhases) — cached per Workspace, does
   // not refetch on PM/Sales/Member/sort filter changes.
-  const baseDataKey = ['workspace-base-data', activeBU];
+  const baseDataKey = ['workspace-base-data', activeBU, lockedWorkspace ? 'by-project' : 'by-business-unit'];
   const baseQuery = useQuery({
     queryKey: baseDataKey,
     queryFn: async () => {
       const [custs, mems, mPhases, allCusts] = await Promise.all([
-        getCustomers(activeBU).catch((e: any) => { console.error('getCustomers error:', e); return []; }),
+        (lockedWorkspace ? getCustomersByWorkspace(activeBU) : getCustomers(activeBU)).catch((e: any) => { console.error('getCustomers error:', e); return []; }),
         getMembers().catch((e: any) => { console.error('getMembers error:', e); return []; }),
         getMasterPhases().catch((e: any) => { console.error('getMasterPhases error:', e); return []; }),
         getCustomers().catch((e: any) => { console.error('getCustomers all error:', e); return []; }),
@@ -607,34 +616,37 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   return (
     <div className="space-y-6" style={{ contentVisibility: 'auto' }}>
       
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
-          <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Workspace</p>
-        </div>
+      {/* Page Header — hidden inside Project Hub, which already shows the
+          Workspace name and its own Projects/Customers tab bar above this. */}
+      {!lockedWorkspace && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
+            <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Workspace</p>
+          </div>
 
-        {/* Workspace Selector Tabs (from Workspace Master) */}
-        <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
-          {workspaces.length === 0 ? (
-            <span className="px-5 py-2 rounded-lg text-xs font-bold text-slate-400">No Workspaces</span>
-          ) : (
-            workspaces.map(ws => (
-              <button
-                key={ws.code}
-                onClick={() => setActiveBU(ws.code)}
-                className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-                  activeBU === ws.code
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                }`}
-              >
-                <span>🗂️</span> {ws.name}
-              </button>
-            ))
-          )}
+          {/* Workspace Selector Tabs (from Workspace Master) */}
+          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
+            {workspaces.length === 0 ? (
+              <span className="px-5 py-2 rounded-lg text-xs font-bold text-slate-400">No Workspaces</span>
+            ) : (
+              workspaces.map(ws => (
+                <button
+                  key={ws.code}
+                  onClick={() => setActiveBU(ws.code)}
+                  className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                    activeBU === ws.code
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  <span>🗂️</span> {ws.name}
+                </button>
+              ))
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
 
 

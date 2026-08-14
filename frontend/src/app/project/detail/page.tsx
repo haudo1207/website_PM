@@ -4215,14 +4215,16 @@ value={editValue}
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
               Members
             </button>
-            <button
-              onClick={() => setActiveMainTab('audit_logs')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-            >
-              <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
-              Audit Logs
-            </button>
+            {isAdmin() && (
+              <button
+                onClick={() => setActiveMainTab('audit_logs')}
+                className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                  }`}
+              >
+                <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
+                Audit Logs
+              </button>
+            )}
           </div>
 
           {/* MAIN TABS CONTENT AREA */}
@@ -6921,7 +6923,7 @@ value={editValue}
                 </div>
               )}
 
-              {activeMainTab === 'audit_logs' && (
+              {activeMainTab === 'audit_logs' && isAdmin() && (
                 <AuditLogsTab
                   projectId={Number(id)}
                   onSelectTask={(taskCodeOrId) => {

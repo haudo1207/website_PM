@@ -38,7 +38,7 @@ from ..utils.access import (
     require_route_project_access,
     user_scope,
 )
-from ..utils.auth import get_current_user, require_super_admin
+from ..utils.auth import get_current_user, require_super_admin, require_manager
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
@@ -1179,7 +1179,7 @@ def list_project_audit_logs(
     page: int = 1,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_manager)
 ):
     require_project(db, current_user, pid)
     q = db.query(AuditLog).filter(AuditLog.project_id == pid)
@@ -1226,7 +1226,7 @@ def export_project_audit_logs(
     user_id: Optional[int] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_manager)
 ):
     import csv
     import io
@@ -1276,3 +1276,56 @@ def export_project_audit_logs(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=audit_logs_project_{pid}.csv"}
     )
+
+
+PROJECT_ACTIVITY_MODULES = ["Project", "Phase", "Task Group", "Task", "Meeting"]
+
+
+@router.get("/projects/recent-activity")
+def list_recent_project_activity(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_manager)
+):
+    """Aggregated project-activity feed (Task/Project/Phase/Task Group/Meeting events)
+    across every project the caller can access \u2014 powers the Dashboard Overview
+    'Ho\u1ea1t \u0111\u1ed9ng g\u1ea7n \u0111\u00e2y' section. Unlike /system-audit/logs, this is not admin-only
+    and does not exclude operational project modules."""
+    accessible_project_ids = project_query_for_user(db, current_user).with_entities(Project.id).subquery()
+    all_matching_logs = (
+        db.query(AuditLog)
+        .filter(AuditLog.project_id.in_(accessible_project_ids))
+        .filter(AuditLog.module.in_(PROJECT_ACTIVITY_MODULES))
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(limit * 5)  # over-fetch since multi-field updates collapse into one event below
+        .all()
+    )
+
+    grouped_events = []
+    seen_event_ids = set()
+    for log in all_matching_logs:
+        evt_key = log.event_id or f"single-{log.id}"
+        if evt_key in seen_event_ids:
+            continue
+        seen_event_ids.add(evt_key)
+
+        same_event_logs = [l for l in all_matching_logs if (l.event_id or f"single-{l.id}") == evt_key]
+        base_dict = log.to_dict()
+        changes = [
+            {
+                "field_name": l.field_name or "General",
+                "old_value": l.old_value or "",
+                "new_value": l.new_value or "",
+            }
+            for l in same_event_logs
+            if l.field_name or l.old_value or l.new_value
+        ]
+        base_dict["changes"] = changes
+        if len(changes) > 1:
+            base_dict["description"] = f"{base_dict['user_name']} \u0111\u00e3 c\u1eadp nh\u1eadt {log.module} '{log.resource_name or log.entity_id}' ({len(changes)} thay \u0111\u1ed5i)"
+
+        grouped_events.append(base_dict)
+        if len(grouped_events) >= limit:
+            break
+
+    return {"items": grouped_events}

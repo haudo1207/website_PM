@@ -379,8 +379,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
 };
 
 export default function OverviewTab() {
-  // Team Audit Log states
-  const [auditLoading, setAuditLoading] = useState(false);
+  // Recent Activity (cross-project) filter
   const [auditModuleFilter, setAuditModuleFilter] = useState('all');
 
   // Workspace/Leader Filter
@@ -421,11 +420,11 @@ export default function OverviewTab() {
     // Fetch my-alerts in parallel — not part of the cached bundle below.
     getMyAlerts().then(data => setMyAlerts(data)).catch(() => {});
 
-    const [membersRes, projRes, tasksRes, auditRes, leadersRes] = await Promise.all([
+    const [membersRes, projRes, tasksRes, activityRes, leadersRes] = await Promise.all([
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/system-audit/logs?page_size=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
+      axios.get(`/api/projects/recent-activity?limit=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
       axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] })),
     ]);
 
@@ -433,7 +432,7 @@ export default function OverviewTab() {
       rawMembers: membersRes.data || [],
       rawProjects: projRes.data || [],
       rawTasks: tasksRes.data || [],
-      teamAuditLogs: auditRes.data?.items || [],
+      recentActivity: activityRes.data?.items || [],
       rawLeaders: leadersRes.data || [],
     };
   }, []);
@@ -452,7 +451,7 @@ export default function OverviewTab() {
   const rawProjects: any[] = overviewData?.rawProjects || [];
   const rawTasks: any[] = overviewData?.rawTasks || [];
   const rawLeaders: any[] = overviewData?.rawLeaders || [];
-  const teamAuditLogs: any[] = overviewData?.teamAuditLogs || [];
+  const recentActivity: any[] = overviewData?.recentActivity || [];
 
   const applyQuickFilter = (type: string) => {
     setActiveQuickFilter(type);
@@ -476,7 +475,7 @@ export default function OverviewTab() {
     }
   };
 
-  const filteredAuditLogs = teamAuditLogs.filter(log => {
+  const filteredActivity = recentActivity.filter(log => {
     if (auditModuleFilter !== 'all') {
       return log.module?.toLowerCase() === auditModuleFilter.toLowerCase();
     }
@@ -1113,14 +1112,14 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {/* 6. TEAM AUDIT LOG SECTION */}
+      {/* 6. RECENT ACTIVITY SECTION (cross-project feed) */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden mb-5">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-white">
           <div className="flex items-center gap-2">
             <span className="text-base">📜</span>
             <div>
               <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Hoạt Động Gần Đây</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">Nhật ký hoạt động & thay đổi của hệ thống</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">20 hoạt động mới nhất trên tất cả dự án bạn có quyền xem</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1130,10 +1129,11 @@ export default function OverviewTab() {
               className="text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-[#0058be]"
             >
               <option value="all">Tất cả Module</option>
-              <option value="task">Task</option>
-              <option value="project">Project</option>
-              <option value="phase">Phase</option>
-              <option value="setting">Setting</option>
+              <option value="Project">Project</option>
+              <option value="Phase">Phase</option>
+              <option value="Task Group">Task Group</option>
+              <option value="Task">Task</option>
+              <option value="Meeting">Meeting</option>
             </select>
           </div>
         </div>
@@ -1143,24 +1143,28 @@ export default function OverviewTab() {
               <tr className="bg-slate-50/80 text-slate-400 border-b border-slate-100 uppercase text-[10px] tracking-wider">
                 <th className="px-4 py-3 text-left font-bold">Thời gian</th>
                 <th className="px-4 py-3 text-left font-bold">Thành viên</th>
+                <th className="px-4 py-3 text-left font-bold">Dự án</th>
                 <th className="px-4 py-3 text-center font-bold">Hành động</th>
                 <th className="px-4 py-3 text-center font-bold">Module</th>
                 <th className="px-5 py-3 text-left font-bold">Chi tiết thay đổi</th>
               </tr>
             </thead>
             <tbody>
-              {auditLoading ? (
-                <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Đang tải nhật ký hoạt động...</td></tr>
-              ) : filteredAuditLogs.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-6 text-slate-400 font-semibold">Chưa có nhật ký hoạt động nào.</td></tr>
+              {loading ? (
+                <tr><td colSpan={6} className="text-center py-6 text-slate-400 font-semibold">Đang tải hoạt động...</td></tr>
+              ) : filteredActivity.length === 0 ? (
+                <tr><td colSpan={6} className="text-center py-6 text-slate-400 font-semibold">Chưa có hoạt động nào.</td></tr>
               ) : (
-                filteredAuditLogs.slice(0, 8).map((log, idx) => (
+                filteredActivity.map((log, idx) => (
                   <tr key={log.id || idx} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${idx % 2 === 0 ? '' : 'bg-slate-50/30'}`}>
                     <td className="px-4 py-3 text-slate-500 font-mono text-[11px]">
                       {log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : 'Mới đây'}
                     </td>
                     <td className="px-4 py-3 font-semibold text-[#0b1c30]">
                       {log.user_name || 'Hệ thống'}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 font-medium">
+                      {log.project_name ? <>📁 {log.project_name}</> : '—'}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
@@ -1173,7 +1177,11 @@ export default function OverviewTab() {
                       <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{log.module}</span>
                     </td>
                     <td className="px-5 py-3 text-slate-600 leading-snug">
-                      {log.description || `${log.action} trên ${log.module}`}
+                      {log.changes?.length === 1 ? (
+                        <span>{log.changes[0].field_name}: <span className="text-slate-400">{log.changes[0].old_value || '—'}</span> → <span className="font-semibold text-[#0b1c30]">{log.changes[0].new_value || '—'}</span></span>
+                      ) : (
+                        log.description || `${log.action} trên ${log.module}`
+                      )}
                     </td>
                   </tr>
                 ))
