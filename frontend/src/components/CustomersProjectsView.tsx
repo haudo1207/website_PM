@@ -30,6 +30,9 @@ interface CustomersProjectsViewProps {
    * (Customer.business_unit is unreliable, see backend access.customer_query_for_user)
    * instead of the legacy `Customer.business_unit`-based one. */
   lockedWorkspace?: string;
+  /** Optional tab switcher (e.g. Projects/Customers) rendered on the same
+   * header row as the title — mirrors ProjectListContent's `renderTabs`. */
+  renderTabs?: () => React.ReactNode;
 }
 
 const PROJECT_PHASES = [
@@ -47,7 +50,7 @@ interface ComboboxOption {
 
 
 
-export default function CustomersProjectsView({ onFlash, lockedWorkspace }: CustomersProjectsViewProps) {
+export default function CustomersProjectsView({ onFlash, lockedWorkspace, renderTabs }: CustomersProjectsViewProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -617,34 +620,33 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace }: Cust
   return (
     <div className="space-y-6" style={{ contentVisibility: 'auto' }}>
       
-      {/* Page Header — hidden inside Project Hub, which already shows the
-          Workspace name and its own Projects/Customers tab bar above this. */}
+      {/* Page Header — hidden when Project Hub locks this view to a single
+          Workspace (Project Hub already shows the Workspace name there). */}
       {!lockedWorkspace && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
+            <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Quản lý khách hàng &amp; dự án</h1>
             <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Workspace</p>
           </div>
 
-          {/* Workspace Selector Tabs (from Workspace Master) */}
-          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
+          {/* Workspace filter (dropdown) — mirrors the Workspace filter on the
+              Projects tab instead of a dedicated pill row. */}
+          <div className="flex items-center gap-3 self-start sm:self-auto">
             {workspaces.length === 0 ? (
-              <span className="px-5 py-2 rounded-lg text-xs font-bold text-slate-400">No Workspaces</span>
+              <span className="text-xs font-semibold text-slate-400">No Workspaces</span>
             ) : (
-              workspaces.map(ws => (
-                <button
-                  key={ws.code}
-                  onClick={() => setActiveBU(ws.code)}
-                  className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-                    activeBU === ws.code
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                  }`}
-                >
-                  <span>🗂️</span> {ws.name}
-                </button>
-              ))
+              <SearchableSelect
+                label="Workspace"
+                icon="🏢"
+                options={workspaces.map(ws => ({ id: ws.code, name: ws.name }))}
+                value={activeBU}
+                onChange={val => setActiveBU(String(val))}
+                placeholder="Tìm Workspace..."
+                align="right"
+                className="w-[200px]"
+              />
             )}
+            {renderTabs && renderTabs()}
           </div>
         </div>
       )}
@@ -657,7 +659,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace }: Cust
         {/* ============================================================== */}
         {/* COLUMN 1: CUSTOMERS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-206px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">🏢 Khách hàng</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customers.length}</span>
@@ -785,7 +787,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace }: Cust
         {/* ============================================================== */}
         {/* COLUMN 2: YEARS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-206px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📅 Năm</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customerYears.length}</span>
@@ -862,7 +864,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace }: Cust
         {/* ============================================================== */}
         {/* COLUMN 3: PROJECTS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-206px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📁 Dự án</span>
             <div className="flex items-center gap-2">
