@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -872,46 +874,25 @@ def init_db_defaults():
     finally:
         db.close()
 
-# With multiple uvicorn workers, each process runs this module at import
-# time. Migrations/seeding are idempotent (IF NOT EXISTS checks) but running
-# them concurrently from N processes can still race on DDL locks or
-# double-insert seed rows. A Postgres session-level advisory lock serializes
-# it: whichever process gets there first runs everything while holding the
-# lock; the rest wait, then find it already done.
+# Uvicorn workers only serve requests. CI runs these schema/default updates in
+# one pre-deploy container so workers never race on DDL or pooled DB locks.
 def run_startup_once():
-    # Base.metadata.create_all races the exact same way across processes —
-    # two workers creating the same table concurrently throws a Postgres
-    # catalog UniqueViolation. It has to be inside the same lock as the rest
-    # of startup, not run before it.
-    if not str(engine.url).startswith("postgresql"):
-        # No cross-process race on SQLite/local dev — just run in order.
-        Base.metadata.create_all(bind=engine)
-        try:
-            apply_schema_updates()
-        except Exception as e:
-            print(f"[!] Schema updates notice: {e}")
-        try:
-            init_db_defaults()
-        except Exception as e:
-            print(f"[!] Database defaults notice: {e}")
-        return
+    """Apply idempotent schema/default updates in one pre-deploy process."""
+    Base.metadata.create_all(bind=engine)
+    try:
+        apply_schema_updates()
+    except Exception as e:
+        print(f"[!] Schema updates notice: {e}")
+    try:
+        init_db_defaults()
+    except Exception as e:
+        print(f"[!] Database defaults notice: {e}")
 
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.execute(text("SELECT pg_advisory_lock(727001)"))
-        try:
-            Base.metadata.create_all(bind=engine)
-            try:
-                apply_schema_updates()
-            except Exception as e:
-                print(f"[!] Schema updates notice: {e}")
-            try:
-                init_db_defaults()
-            except Exception as e:
-                print(f"[!] Database defaults notice: {e}")
-        finally:
-            conn.execute(text("SELECT pg_advisory_unlock(727001)"))
 
-run_startup_once()
+# Docker deployments call run_startup_once() explicitly before starting web
+# workers. Opt-in import execution remains available for one-process utilities.
+if os.getenv("RUN_DB_STARTUP_ON_IMPORT", "false").lower() in {"1", "true", "yes", "on"}:
+    run_startup_once()
 
 
 app = FastAPI(
