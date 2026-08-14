@@ -311,18 +311,17 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
               </div>
             </div>
 
-            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm max-h-[380px] overflow-y-auto custom-scrollbar">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 z-10 bg-slate-50 shadow-xs">
-                    <tr className="bg-slate-50 text-slate-400 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-100">
-                      <th className="px-4 py-2.5 text-left bg-slate-50">TASK</th>
-                      <th className="px-4 py-2.5 text-left bg-slate-50">DỰ ÁN</th>
-                      <th className="px-4 py-2.5 text-center bg-slate-50">PRIORITY</th>
-                      <th className="px-4 py-2.5 text-center bg-slate-50">DEADLINE</th>
-                      <th className="px-4 py-2.5 text-center bg-slate-50">TRẠNG THÁI</th>
-                    </tr>
-                  </thead>
+            <div className="border border-slate-200 rounded-2xl bg-white shadow-sm max-h-[380px] overflow-auto custom-scrollbar">
+              <table className="w-full text-xs border-separate border-spacing-0">
+                <thead>
+                  <tr className="text-slate-400 uppercase text-[9px] font-extrabold tracking-wider">
+                    <th className="px-4 py-2.5 text-left bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">TASK</th>
+                    <th className="px-4 py-2.5 text-left bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">DỰ ÁN</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">PRIORITY</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">DEADLINE</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">TRẠNG THÁI</th>
+                  </tr>
+                </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredTasks.length === 0 ? (
                       <tr>
@@ -370,7 +369,6 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
                     )}
                   </tbody>
                 </table>
-              </div>
             </div>
           </div>
 
