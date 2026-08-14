@@ -475,12 +475,6 @@ export default function OverviewTab() {
     }
   };
 
-  const filteredActivity = recentActivity.filter(log => {
-    if (auditModuleFilter !== 'all') {
-      return log.module?.toLowerCase() === auditModuleFilter.toLowerCase();
-    }
-    return true;
-  });
 
   const fetchInbox = useCallback(() => {
     const role = getRole();
@@ -710,6 +704,27 @@ export default function OverviewTab() {
       bonusMatrix: bonM
     };
   }, [rawMembers, rawTasks, rawProjects, rawLeaders, selectedLeader, selectedYear, selectedMonth, selectedWeek, matrixYear]);
+
+  // Projects touched by the selected Leader's team (any task assigned/supported
+  // by their members, regardless of the date filter — Recent Activity always
+  // shows the latest events, not just the ones in the currently selected period).
+  const teamProjectIds = useMemo(() => {
+    if (selectedLeader === 'all') return null;
+    const memberIds = new Set(activeTeamMembers.map((m: any) => String(m.id)));
+    const ids = new Set<string>();
+    rawTasks.forEach((t: any) => {
+      if ((memberIds.has(String(t.assigned_id)) || memberIds.has(String(t.support_id))) && t.project_id != null) {
+        ids.add(String(t.project_id));
+      }
+    });
+    return ids;
+  }, [selectedLeader, activeTeamMembers, rawTasks]);
+
+  const filteredActivity = recentActivity.filter(log => {
+    if (auditModuleFilter !== 'all' && log.module?.toLowerCase() !== auditModuleFilter.toLowerCase()) return false;
+    if (teamProjectIds && !teamProjectIds.has(String(log.project_id))) return false;
+    return true;
+  });
 
   const handleAiCheck = () => {
     setAiCheckStatus('Đang thực hiện AI Check dự án...');
