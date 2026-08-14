@@ -15,6 +15,10 @@ export default function SystemAuditTab() {
   const [selectedMonth, setSelectedMonth] = useState('08/2026');
   const [showAllProjects, setShowAllProjects] = useState(false);
 
+  const [projectsAtRisk, setProjectsAtRisk] = useState<any[]>(cachedSystemAuditData?.projectsAtRisk || []);
+  const [taskStats, setTaskStats] = useState(cachedSystemAuditData?.taskStats || { total: 0, done: 0, inProgress: 0, overdue: 0 });
+  const [loading, setLoading] = useState(false);
+  const [whiteProjectsCount, setWhiteProjectsCount] = useState(0);
   // System Audit Logs State
   const [auditPage, setAuditPage] = useState(1);
   const [auditModule, setAuditModule] = useState('all');
@@ -71,12 +75,12 @@ export default function SystemAuditTab() {
       const pRisk: any[] = [];
       
       const allProjectsProgressList = projects.map((p: any) => {
-        const tasks = allTasksCombined.filter((t: any) => t.project_id === p.id);
+        const tasks = allTasksCombined.filter((t: any) => String(t.project_id) === String(p.id));
         allTasksCount += tasks.length;
         
         let pDone = 0, pOverdue = 0;
         tasks.forEach((t: any) => {
-          if (t.status === 'Done') { pDone++; allDone++; }
+          if (t.status === 'Done' || t.status === 'done') { pDone++; allDone++; }
           else {
             allInProg++;
             if (t.days_late > 0) { pOverdue++; allOverdue++; }
@@ -94,14 +98,23 @@ export default function SystemAuditTab() {
             risk: pOverdue > 3 ? 'Cao' : (pOverdue > 1 ? 'Trung bình' : 'Thấp')
           });
         }
+
+        const hasPM = Boolean(p.pm_name || p.pm || p.pm_id || p.manager || p.project_manager || p.leader_name || p.owner || p.user_id || p.leader_id);
+        const hasTasks = tasks.length > 0;
+        const isDisplayable = hasTasks || hasPM;
         
-        return { id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn', progress: prog, totalTasks: tasks.length, doneTasks: pDone };
+        return { id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn', progress: prog, totalTasks: tasks.length, doneTasks: pDone, isDisplayable };
       });
 
-      const sortedProjects = allProjectsProgressList.sort((a: any, b: any) => b.progress - a.progress);
+      const sortedProjects = allProjectsProgressList.filter((p: any) => p.isDisplayable).sort((a: any, b: any) => b.progress - a.progress);
+      const whiteCount = allProjectsProgressList.filter((p: any) => !p.isDisplayable).length;
       const sortedRisk = pRisk.sort((a: any, b: any) => b.overdueTask - a.overdueTask).slice(0, 5);
       const tStats = { total: allTasksCount, done: allDone, inProgress: allInProg, overdue: allOverdue };
 
+      setActiveProjectsProgress(sortedProjects);
+      setWhiteProjectsCount(whiteCount);
+      setProjectsAtRisk(sortedRisk);
+      setTaskStats(tStats);
       // Members distribution
       const list = membersRes.data || [];
       const infra: any[] = [];
@@ -217,8 +230,53 @@ export default function SystemAuditTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {superAdminCards.map(c => <KpiCard key={c.label} {...c} />)}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* CUSTOM ENRICHED CARD FOR TỔNG SỐ DỰ ÁN WITH SUB METRICS & DONUT CHART */}
+        <div className="bg-white rounded-2xl border border-slate-200 border-l-4 border-l-[#0058be] shadow-sm p-4 flex items-center justify-between gap-3 relative overflow-hidden">
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">TỔNG SỐ DỰ ÁN</span>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl font-black text-[#0058be]">{activeProjectsProgress.length}</span>
+              <span className="text-[10px] font-bold text-slate-400">Toàn hệ thống</span>
+            </div>
+            
+            {/* SUB METRICS: ĐANG HOẠT ĐỘNG & DỰ ÁN TRẮNG */}
+            <div className="flex items-center gap-2.5 mt-2 pt-2 border-t border-slate-100 text-[10px]">
+              <div className="flex items-center gap-1 font-extrabold text-[#0058be]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#0058be] inline-block"></span>
+                <span>Hoạt động: <strong>{activeProjectsProgress.filter(p => p.totalTasks > 0).length}</strong></span>
+              </div>
+              <div className="flex items-center gap-1 font-bold text-slate-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-300 inline-block"></span>
+                <span>Dự án trắng: <strong>{activeProjectsProgress.filter(p => p.totalTasks === 0).length}</strong></span>
+              </div>
+            </div>
+          </div>
+
+          {/* DONUT PIE CHART EMBEDDED INSIDE CARD */}
+          <div className="relative flex items-center justify-center w-11 h-11 shrink-0">
+            {(() => {
+              const activeCount = activeProjectsProgress.filter(p => p.totalTasks > 0).length;
+              const total = activeProjectsProgress.length;
+              const pct = total > 0 ? Math.round((activeCount / total) * 100) : 0;
+              const radius = 15;
+              const circumference = 2 * Math.PI * radius;
+              const strokeDashoffset = circumference - (pct / 100) * circumference;
+              return (
+                <>
+                  <svg className="w-11 h-11 transform -rotate-90">
+                    <circle cx="22" cy="22" r="15" stroke="currentColor" strokeWidth="3.5" fill="transparent" className="text-slate-200" />
+                    <circle cx="22" cy="22" r="15" stroke="currentColor" strokeWidth="3.5" fill="transparent" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} className="text-[#0058be] transition-all duration-500" />
+                  </svg>
+                  <span className="absolute text-[8px] font-black text-[#0058be]">{pct}%</span>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* OTHER 3 SUPER ADMIN CARDS */}
+        {superAdminCards.slice(1).map(c => <KpiCard key={c.label} {...c} />)}
       </div>
 
       {/* FULL WIDTH: Tiến độ tất cả dự án (Default 6 projects + Xem thêm toggle) */}
