@@ -1,7 +1,7 @@
 'use client';
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getToken } from '@/lib/auth';
+import { restoreSession } from '@/lib/api';
 import { broadcastResponseToMainFrame } from '@azure/msal-browser/redirect-bridge';
 
 export default function RootPage() {
@@ -16,7 +16,9 @@ export default function RootPage() {
         // no auth response in the URL; proceed with normal navigation
       }
       if (cancelled) return;
-      if (getToken()) {
+      const restored = await restoreSession();
+      if (cancelled) return;
+      if (restored) {
         router.push('/dashboard/overview');
       } else {
         router.push('/login');

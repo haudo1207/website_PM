@@ -1,19 +1,126 @@
-import axios from 'axios';
-import { getToken, logout } from './auth';
+import axios, { AxiosRequestConfig } from 'axios';
+import { getToken, setToken, logout } from './auth';
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
-const api = axios.create({ baseURL: BASE });
+const api = axios.create({ baseURL: BASE, withCredentials: true });
 
-api.interceptors.request.use(cfg => {
-  const t = getToken();
-  if (t) cfg.headers.Authorization = `Bearer ${t}`;
+const PROACTIVE_REFRESH_THRESHOLD_SECONDS = 60;
+
+type AuthAwareConfig = AxiosRequestConfig & { _skipAuth?: boolean; _retried?: boolean };
+
+interface RefreshResponse {
+  access_token: string;
+  token_type: string;
+  role: string;
+  full_name: string;
+  avatar_url?: string | null;
+  email?: string | null;
+}
+
+let refreshPromise: Promise<string | null> | null = null;
+
+function decodeExp(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(decodeURIComponent(escape(window.atob(base64))));
+    return typeof json.exp === 'number' ? json.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    try {
+      const res = await api.post<RefreshResponse>('/auth/refresh', null, { _skipAuth: true } as AuthAwareConfig);
+      setToken(res.data.access_token);
+      return res.data.access_token;
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        // Session failure (expired/revoked/disabled) → clean logout.
+        logout();
+        return null;
+      }
+      // Temporary network/server failure: keep session state, do NOT logout.
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
+export async function restoreSession(): Promise<boolean> {
+  const token = getToken();
+  if (token) {
+    const exp = decodeExp(token);
+    if (exp !== null && exp - Math.floor(Date.now() / 1000) > PROACTIVE_REFRESH_THRESHOLD_SECONDS) {
+      return true;
+    }
+  }
+  const fresh = await refreshAccessToken();
+  return !!fresh;
+}
+
+async function ensureFreshToken(): Promise<string | null> {
+  const token = getToken();
+  if (!token) return null;
+  const exp = decodeExp(token);
+  if (exp === null) return token;
+  const remaining = exp - Math.floor(Date.now() / 1000);
+  if (remaining > PROACTIVE_REFRESH_THRESHOLD_SECONDS) return token;
+  return refreshAccessToken();
+}
+
+api.interceptors.request.use(async cfg => {
+  if ((cfg as AuthAwareConfig)._skipAuth) return cfg;
+  const token = await ensureFreshToken();
+  if (token) cfg.headers.Authorization = `Bearer ${token}`;
   return cfg;
 });
 
 api.interceptors.response.use(
   r => r,
-  err => {
-    if (err.response?.status === 401) logout();
+  async err => {
+    const cfg = err?.config as AuthAwareConfig | undefined;
+    const status = err?.response?.status;
+    const errorCode = err?.response?.headers?.['x-error-code'];
+    if (!cfg) return Promise.reject(err);
+    const isAuthEndpoint = typeof cfg.url === 'string' && cfg.url.startsWith('/auth/');
+
+    if (status === 401 && !cfg._skipAuth) {
+      if (isAuthEndpoint) {
+        return Promise.reject(err);
+      }
+      if (errorCode === 'TOKEN_EXPIRED' && !cfg._retried) {
+        // Explicitly expired Access JWT → refresh once, retry exactly once.
+        const fresh = await refreshAccessToken();
+        if (fresh) {
+          cfg._retried = true;
+          cfg.headers = { ...cfg.headers, Authorization: `Bearer ${fresh}` };
+          return api(cfg);
+        }
+        return Promise.reject(err);
+      }
+      if (!getToken() && !cfg._retried) {
+        // No Access JWT in memory (browser/computer restart, deep-link refresh):
+        // attempt session restore from the HttpOnly refresh cookie, retry once.
+        const fresh = await refreshAccessToken();
+        if (fresh) {
+          cfg._retried = true;
+          cfg.headers = { ...cfg.headers, Authorization: `Bearer ${fresh}` };
+          return api(cfg);
+        }
+        return Promise.reject(err);
+      }
+      // Any other authentication failure (invalid/tampered token, disabled
+      // user...) → do NOT refresh → clean logout.
+      logout();
+    }
     return Promise.reject(err);
   }
 );

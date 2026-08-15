@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..models.user import User
-from ..utils.auth import verify_password, create_access_token, get_current_user
+from ..utils.auth import verify_password, create_access_token, get_current_user, generate_refresh_token, hash_refresh_token
 from ..utils.audit_service import AuditService
 
 router = APIRouter()
@@ -105,6 +105,82 @@ def token_response(user: User) -> dict:
         "email": user.email,
     }
 
+
+# ── Portal refresh session (Phase 1, non-rotating) ──────────────────────────
+
+def _create_refresh_session(db: Session, user: User, response: Response) -> None:
+    """Create a Portal refresh session and set the HttpOnly cookie.
+
+    Only the SHA-256 hash of the token is persisted; the raw token lives
+    exclusively in the browser cookie and is never exposed to JavaScript.
+    """
+    from datetime import datetime, timedelta, timezone
+    from ..models.refresh_token import RefreshToken
+
+    raw_token = generate_refresh_token()
+    session = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_refresh_token(raw_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+    db.add(session)
+    db.flush()
+    response.set_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        value=raw_token,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        path="/",
+        secure=settings.REFRESH_COOKIE_SECURE,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def _refresh_session_error(response: Response, detail: str, code: str):
+    """Invalid/expired/revoked session → clear the cookie and reject."""
+    _clear_refresh_cookie(response)
+    raise HTTPException(401, detail, headers={"X-Error-Code": code})
+
+
+def _refresh_session_from_cookie(db: Session, request: Request, response: Response):
+    """Resolve the refresh session from the cookie, returning (session, user)."""
+    from datetime import datetime, timezone
+    from ..models.refresh_token import RefreshToken
+
+    raw_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if not raw_token:
+        _refresh_session_error(response, "No refresh session", "NO_REFRESH_SESSION")
+    session = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == hash_refresh_token(raw_token))
+        .first()
+    )
+    if not session or session.revoked_at is not None:
+        _refresh_session_error(response, "Refresh session not found", "REFRESH_SESSION_INVALID")
+    expires_at = session.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        db.delete(session)
+        db.commit()
+        _refresh_session_error(response, "Refresh session expired", "REFRESH_SESSION_EXPIRED")
+    user = db.query(User).filter(User.id == session.user_id).first()
+    if not user or not user.is_active:
+        db.delete(session)
+        db.commit()
+        _refresh_session_error(response, "Refresh session revoked", "REFRESH_SESSION_REVOKED")
+    return session, user
+
 @router.get("/config")
 def auth_config():
     """Public, non-sensitive settings needed to render the login screen."""
@@ -118,7 +194,7 @@ def auth_config():
     }
 
 @router.post("/login")
-def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, response: Response, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     if not settings.PASSWORD_LOGIN_ENABLED:
         raise HTTPException(403, "Password login is disabled. Use Google instead.")
     email = form.username.strip().lower()
@@ -153,11 +229,12 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         description=f"Đăng nhập thành công bằng mật khẩu ({user.email})",
         request=request
     )
+    _create_refresh_session(db, user, response)
     db.commit()
     return token_response(user)
 
 @router.post("/google")
-def google_login(body: dict, request: Request, db: Session = Depends(get_db)):
+def google_login(body: dict, request: Request, response: Response, db: Session = Depends(get_db)):
     if not settings.GOOGLE_LOGIN_ENABLED or not settings.GOOGLE_CLIENT_ID:
         raise HTTPException(503, "Google login is not configured.")
 
@@ -259,11 +336,12 @@ def google_login(body: dict, request: Request, db: Session = Depends(get_db)):
         description=f"Đăng nhập thành công bằng Google OAuth ({user.email})",
         request=request
     )
+    _create_refresh_session(db, user, response)
     db.commit()
     return token_response(user)
 
 @router.post("/outlook")
-def outlook_login(body: dict, request: Request, db: Session = Depends(get_db)):
+def outlook_login(body: dict, request: Request, response: Response, db: Session = Depends(get_db)):
     if not settings.OUTLOOK_LOGIN_ENABLED or not settings.OUTLOOK_CLIENT_ID:
         raise HTTPException(503, "Microsoft login is not configured.")
 
@@ -328,20 +406,54 @@ def outlook_login(body: dict, request: Request, db: Session = Depends(get_db)):
         description=f"Đăng nhập thành công bằng Microsoft OAuth ({user.email})",
         request=request
     )
+    _create_refresh_session(db, user, response)
+    db.commit()
+    return token_response(user)
+
+@router.post("/refresh")
+def refresh_session(request: Request, response: Response, db: Session = Depends(get_db)):
+    """Issue a new Portal Access JWT from the HttpOnly refresh cookie.
+
+    Deliberately does NOT depend on a valid Access JWT — the refresh session
+    alone is sufficient. The refresh token is NOT rotated in Phase 1.
+    """
+    from datetime import datetime, timezone
+
+    session, user = _refresh_session_from_cookie(db, request, response)
+    session.last_used_at = datetime.now(timezone.utc)
     db.commit()
     return token_response(user)
 
 @router.post("/logout")
-def logout(request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """Log user logout event."""
-    user_id = current_user.id if current_user else None
-    user_name = (current_user.full_name or current_user.email) if current_user else "Unknown User"
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    """Revoke the Portal refresh session and clear the cookie.
+
+    Works even when the Access JWT is already expired: revocation is driven by
+    the HttpOnly refresh cookie, not by a valid Access JWT.
+    """
+    from ..models.refresh_token import RefreshToken
+
+    user = None
+    user_name = "Unknown User"
+    raw_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if raw_token:
+        session = (
+            db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_refresh_token(raw_token))
+            .first()
+        )
+        if session:
+            user = db.query(User).filter(User.id == session.user_id).first()
+            db.delete(session)
+    if user:
+        user_name = user.full_name or user.email
+    _clear_refresh_cookie(response)
     AuditService.record(
         db=db,
-        user_id=user_id,
+        user_id=user.id if user else None,
         module="Authentication",
         entity_type="User",
-        entity_id=user_id,
+        entity_id=user.id if user else None,
         action="LOGOUT",
         severity="INFO",
         description=f"Người dùng {user_name} đã đăng xuất",
