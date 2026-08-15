@@ -9,7 +9,7 @@ from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
 from .database import engine, Base, get_db
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
 from .models import lunch_record as lunch_record_model
 from .models import phase as phase_model
@@ -322,6 +322,22 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ"))
         conn.execute(text("UPDATE projects SET last_activity_at = COALESCE(updated_at, created_at, now()) WHERE last_activity_at IS NULL"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_last_activity_at ON projects (last_activity_at)"))
+
+        # ── Portal refresh sessions (Phase 1 persistent login) ──
+        # Opaque refresh tokens are stored hashed; the raw token lives only in
+        # the HttpOnly cookie. No rotation in Phase 1.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP WITH TIME ZONE,
+                revoked_at TIMESTAMP WITH TIME ZONE
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens (user_id)"))
 
 def init_db_defaults():
     from .database import SessionLocal
