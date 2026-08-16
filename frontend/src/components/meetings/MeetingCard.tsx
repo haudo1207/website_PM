@@ -105,6 +105,18 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
               </span>
             )}
 
+            {(meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata) && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-teal-100 text-teal-800 border border-teal-300">
+                ✦ Từ n8n Sheet
+              </span>
+            )}
+
+            {(!meeting.project_id && (!meeting.project || meeting.project === 'Dự án chung')) && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300" title="Chưa được gán Dự án cụ thể">
+                ⚠️ Chưa gán Dự án
+              </span>
+            )}
+
             {meeting.platform && (
               <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
                 {meeting.platform}
@@ -112,6 +124,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingC
             )}
           </div>
         </div>
+
 
         <div className="flex items-center gap-2">
           {/* Share Link Button */}
