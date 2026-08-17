@@ -8,6 +8,7 @@ import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
@@ -1936,18 +1937,15 @@ function ProjectDetailContent() {
         );
       } else if (isUserCol) {
         inputField = (
-          <select
+          <SearchableSelect
+            label="thành viên"
+            icon=""
+            options={projectMembers.map((m: any) => ({ id: m.id, name: m.display_name }))}
             value={newForm[col] || ''}
-            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-            onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-              }`}
-          >
-            <option value="">-- Chọn thành viên --</option>
-            {projectMembers.map((m: any) => (
-              <option key={m.id} value={m.id}>{m.display_name}</option>
-            ))}
-          </select>
+            onChange={(val: any) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
+            placeholder="Tìm thành viên..."
+            className="w-full text-[11px]"
+          />
         );
       } else if (isNumeric) {
         inputField = (
@@ -1967,10 +1965,13 @@ function ProjectDetailContent() {
           .flatMap(c => c.groups || []);
 
         inputField = (
-          <select
+          <SearchableSelect
+            label="Group"
+            icon=""
+            options={activeGroups.map((g: any) => ({ id: g.id, name: g.name }))}
             value={newForm[col] || ''}
-            onChange={e => {
-              const selectedGrpId = e.target.value;
+            onChange={(val: any) => {
+              const selectedGrpId = val === 'all' ? '' : val;
               const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL VENDOR') || 'SKILL VENDOR';
               setNewForm({
                 ...newForm,
@@ -1978,15 +1979,9 @@ function ProjectDetailContent() {
                 [vendorCol]: ''
               });
             }}
-            onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-              }`}
-          >
-            <option value="">-- Chọn Group --</option>
-            {activeGroups.map((g: any) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
+            placeholder="Tìm group..."
+            className="w-full text-[11px]"
+          />
         );
       } else if (colUpper === 'SKILL VENDOR') {
         const solCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL SOLUTION') || 'SKILL SOLUTION';
@@ -2009,18 +2004,15 @@ function ProjectDetailContent() {
         }
 
         inputField = (
-          <select
+          <SearchableSelect
+            label="Skill"
+            icon=""
+            options={availableSkills.map((s: any) => ({ id: s.id, name: s.name }))}
             value={newForm[col] || ''}
-            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
-            onKeyDown={handleInputKeyDown}
-            className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
-              }`}
-          >
-            <option value="">-- Chọn Skill --</option>
-            {availableSkills.map((s: any) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+            onChange={(val: any) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
+            placeholder="Tìm skill..."
+            className="w-full text-[11px]"
+          />
         );
       } else if (colUpper === 'REMARK') {
         inputField = (
@@ -4215,14 +4207,16 @@ value={editValue}
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
               Members
             </button>
-            <button
-              onClick={() => setActiveMainTab('audit_logs')}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-            >
-              <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
-              Audit Logs
-            </button>
+            {isAdmin() && (
+              <button
+                onClick={() => setActiveMainTab('audit_logs')}
+                className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                  }`}
+              >
+                <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
+                Audit Logs
+              </button>
+            )}
           </div>
 
           {/* MAIN TABS CONTENT AREA */}
@@ -6197,45 +6191,43 @@ value={editValue}
                           <div className="grid grid-cols-2 gap-3">
                             <div>
                               <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Người thực hiện (Assigned) *</label>
-                              <select
+                              <SearchableSelect
+                                label="thành viên"
+                                icon=""
+                                options={membersList.map((m: any) => ({ id: m.id, name: m.display_name }))}
                                 value={editingInboxTask.assigned_id || ''}
-                                onChange={e => {
-                                  const val = e.target.value ? Number(e.target.value) : null;
-                                  const m = membersList.find((x: any) => x.id === val);
+                                onChange={(val: any) => {
+                                  const id = val === 'all' ? null : val;
+                                  const m = membersList.find((x: any) => x.id === id);
                                   setEditingInboxTask({
                                     ...editingInboxTask,
-                                    assigned_id: val,
+                                    assigned_id: id,
                                     assigned_name: m ? (m.display_name || m.full_name) : ''
                                   });
                                 }}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
-                              >
-                                <option value="">-- Chọn thành viên --</option>
-                                {membersList.map((m: any) => (
-                                  <option key={m.id} value={m.id}>{m.display_name}</option>
-                                ))}
-                              </select>
+                                placeholder="Tìm thành viên..."
+                                className="w-full"
+                              />
                             </div>
                             <div>
                               <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Người hỗ trợ (Support)</label>
-                              <select
+                              <SearchableSelect
+                                label="thành viên"
+                                icon=""
+                                options={membersList.map((m: any) => ({ id: m.id, name: m.display_name }))}
                                 value={editingInboxTask.support_id || ''}
-                                onChange={e => {
-                                  const val = e.target.value ? Number(e.target.value) : null;
+                                onChange={(val: any) => {
+                                  const id = val === 'all' ? null : val;
                                   setEditingInboxTask({
                                     ...editingInboxTask,
-                                    support_id: val,
-                                    kpi_ratio_assign: val ? 90 : 100,
-                                    kpi_ratio_support: val ? 10 : 0
+                                    support_id: id,
+                                    kpi_ratio_assign: id ? 90 : 100,
+                                    kpi_ratio_support: id ? 10 : 0
                                   });
                                 }}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
-                              >
-                                <option value="">-- Không có support --</option>
-                                {membersList.map((m: any) => (
-                                  <option key={m.id} value={m.id}>{m.display_name}</option>
-                                ))}
-                              </select>
+                                placeholder="Tìm thành viên..."
+                                className="w-full"
+                              />
                             </div>
                           </div>
 
@@ -6302,56 +6294,55 @@ value={editValue}
                           <div className="grid grid-cols-2 gap-3">
                             <div>
                               <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Skill Solution</label>
-                              <select
+                              <SearchableSelect
+                                label="Solution Group"
+                                icon=""
+                                options={categories
+                                  .filter(c => c.is_active)
+                                  .flatMap(c => c.groups || [])
+                                  .map((g: any) => ({ id: g.id, name: g.name }))}
                                 value={editingInboxTask.skill_solution_id || ''}
-                                onChange={e => {
-                                  const grpId = e.target.value ? Number(e.target.value) : null;
+                                onChange={(val: any) => {
+                                  const grpId = val === 'all' ? null : val;
                                   setEditingInboxTask({
                                     ...editingInboxTask,
                                     skill_solution_id: grpId,
                                     skill_vendor_id: null
                                   });
                                 }}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
-                              >
-                                <option value="">-- Chọn Solution Group --</option>
-                                {categories
-                                  .filter(c => c.is_active)
-                                  .flatMap(c => c.groups || [])
-                                  .map((g: any) => (
-                                    <option key={g.id} value={g.id}>{g.name}</option>
-                                  ))
-                                }
-                              </select>
+                                placeholder="Tìm Solution Group..."
+                                className="w-full"
+                              />
                             </div>
                             <div>
                               <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Skill Vendor</label>
-                              <select
-                                value={editingInboxTask.skill_vendor_id || ''}
-                                onChange={e => setEditingInboxTask({ ...editingInboxTask, skill_vendor_id: e.target.value ? Number(e.target.value) : null })}
-                                className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs font-semibold"
-                              >
-                                <option value="">-- Chọn Skill Vendor --</option>
-                                {(() => {
-                                  let availSkills: any[] = [];
-                                  if (editingInboxTask.skill_solution_id) {
-                                    const grpObj = categories
-                                      .filter(c => c.is_active)
-                                      .flatMap(c => c.groups || [])
-                                      .find((g: any) => g.id === editingInboxTask.skill_solution_id);
-                                    if (grpObj) availSkills = (grpObj.skills || []).filter((s: any) => s.is_active);
-                                  } else {
-                                    availSkills = categories
-                                      .filter(c => c.is_active)
-                                      .flatMap(c => c.groups || [])
-                                      .flatMap((g: any) => g.skills || [])
-                                      .filter((s: any) => s.is_active);
-                                  }
-                                  return availSkills.map((s: any) => (
-                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                  ));
-                                })()}
-                              </select>
+                              {(() => {
+                                let availSkills: any[] = [];
+                                if (editingInboxTask.skill_solution_id) {
+                                  const grpObj = categories
+                                    .filter(c => c.is_active)
+                                    .flatMap(c => c.groups || [])
+                                    .find((g: any) => g.id === editingInboxTask.skill_solution_id);
+                                  if (grpObj) availSkills = (grpObj.skills || []).filter((s: any) => s.is_active);
+                                } else {
+                                  availSkills = categories
+                                    .filter(c => c.is_active)
+                                    .flatMap(c => c.groups || [])
+                                    .flatMap((g: any) => g.skills || [])
+                                    .filter((s: any) => s.is_active);
+                                }
+                                return (
+                                  <SearchableSelect
+                                    label="Skill Vendor"
+                                    icon=""
+                                    options={availSkills.map((s: any) => ({ id: s.id, name: s.name }))}
+                                    value={editingInboxTask.skill_vendor_id || ''}
+                                    onChange={(val: any) => setEditingInboxTask({ ...editingInboxTask, skill_vendor_id: val === 'all' ? null : val })}
+                                    placeholder="Tìm Skill Vendor..."
+                                    className="w-full"
+                                  />
+                                );
+                              })()}
                             </div>
                           </div>
 
@@ -6921,7 +6912,7 @@ value={editValue}
                 </div>
               )}
 
-              {activeMainTab === 'audit_logs' && (
+              {activeMainTab === 'audit_logs' && isAdmin() && (
                 <AuditLogsTab
                   projectId={Number(id)}
                   onSelectTask={(taskCodeOrId) => {
@@ -7739,29 +7730,27 @@ value={editValue}
                 {/* Assigned & Support */}
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Assigned</label>
-                  <select
+                  <SearchableSelect
+                    label="thành viên"
+                    icon=""
+                    options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name }))}
                     value={drawerForm.assigned_id || ''}
-                    onChange={e => setDrawerForm({ ...drawerForm, assigned_id: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  >
-                    <option value="">— Chưa gắn —</option>
-                    {projectMembers.map((m: any) => (
-                      <option key={m.id} value={String(m.id)}>{m.display_name}</option>
-                    ))}
-                  </select>
+                    onChange={(val: any) => setDrawerForm({ ...drawerForm, assigned_id: val === 'all' ? '' : val })}
+                    placeholder="Tìm thành viên..."
+                    className="w-full"
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Support</label>
-                  <select
+                  <SearchableSelect
+                    label="thành viên"
+                    icon=""
+                    options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name }))}
                     value={drawerForm.support_id || ''}
-                    onChange={e => setDrawerForm({ ...drawerForm, support_id: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  >
-                    <option value="">— Chưa gắn —</option>
-                    {projectMembers.map((m: any) => (
-                      <option key={m.id} value={String(m.id)}>{m.display_name}</option>
-                    ))}
-                  </select>
+                    onChange={(val: any) => setDrawerForm({ ...drawerForm, support_id: val === 'all' ? '' : val })}
+                    placeholder="Tìm thành viên..."
+                    className="w-full"
+                  />
                 </div>
 
                 {/* Dates */}

@@ -9,6 +9,7 @@ services:
     environment:
       # The same private endpoint works through either company VPN or WARP.
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      RUN_DB_STARTUP_ON_IMPORT: "false"
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:

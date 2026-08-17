@@ -164,17 +164,21 @@ class AuditService:
             # Parse User-Agent into browser, os, device_type
             browser_name, os_name, dev_type = AuditService._parse_user_agent(ua)
 
-            # Check NEW_IP and NEW_DEVICE for user security alert
+            # Check NEW_IP and NEW_DEVICE for user security alert — only meaningful
+            # (and only ever displayed, in Profile's login history) for Authentication
+            # events. Skip the lookup queries for every other module to avoid two
+            # extra full-table scans on every single audit write.
             new_ip_flag = False
             new_dev_flag = False
-            if user_id and ip:
-                prev_ip = db.query(AuditLog).filter(AuditLog.user_id == user_id, AuditLog.ip_address == ip).first()
-                if not prev_ip:
-                    new_ip_flag = True
-            if user_id and ua:
-                prev_dev = db.query(AuditLog).filter(AuditLog.user_id == user_id, AuditLog.user_agent == ua).first()
-                if not prev_dev:
-                    new_dev_flag = True
+            if module == "Authentication":
+                if user_id and ip:
+                    prev_ip = db.query(AuditLog).filter(AuditLog.user_id == user_id, AuditLog.ip_address == ip).first()
+                    if not prev_ip:
+                        new_ip_flag = True
+                if user_id and ua:
+                    prev_dev = db.query(AuditLog).filter(AuditLog.user_id == user_id, AuditLog.user_agent == ua).first()
+                    if not prev_dev:
+                        new_dev_flag = True
 
             log_entry = AuditLog(
                 event_id=evt_id,

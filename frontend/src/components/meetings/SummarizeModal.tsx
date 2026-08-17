@@ -4,6 +4,7 @@ import { X, Sparkles, AlertTriangle, CheckCircle, Send, FileText } from 'lucide-
 
 import { pushMeetingTasks, getProjects, getAccounts } from '@/lib/api';
 import { getToken } from '@/lib/auth';
+import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface Props {
   isOpen: boolean;
@@ -278,40 +279,42 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-xs">
                             {/* Project Select */}
                             <div>
-                              <select
-                                aria-label="Project"
-                                value={t.project_name || ''}
-                                onChange={e => {
+                              <SearchableSelect
+                                label="dự án"
+                                icon=""
+                                options={Array.from(new Set([
+                                  t.project_name || meeting.project || 'Dự án chung',
+                                  ...projectsList.map(p => p.name),
+                                ]))}
+                                value={t.project_name || meeting.project || 'Dự án chung'}
+                                onChange={(val: any) => {
                                   const updated = [...tasks];
-                                  updated[i].project_name = e.target.value;
+                                  updated[i].project_name = val === 'all' ? '' : val;
                                   setTasks(updated);
                                 }}
-                                className="w-full bg-white border border-[#dce3ee] rounded-lg p-1.5 text-[11px] font-semibold text-[#17253d] focus:outline-none focus:border-[#1769d2]"
-                              >
-                                <option value={t.project_name || meeting.project || 'Dự án chung'}>{t.project_name || meeting.project || 'Dự án chung'}</option>
-                                {projectsList.map(p => (
-                                  <option key={p.id} value={p.name}>{p.name}</option>
-                                ))}
-                              </select>
+                                placeholder="Tìm dự án..."
+                                className="w-full"
+                              />
                             </div>
 
                             {/* Member Select */}
                             <div>
-                              <select
-                                aria-label="Member"
+                              <SearchableSelect
+                                label="người phụ trách"
+                                icon=""
+                                options={Array.from(new Set([
+                                  ...(t.assigned_name ? [t.assigned_name] : []),
+                                  ...membersList.map(m => m.full_name || m.display_name),
+                                ]))}
                                 value={t.assigned_name || ''}
-                                onChange={e => {
+                                onChange={(val: any) => {
                                   const updated = [...tasks];
-                                  updated[i].assigned_name = e.target.value;
+                                  updated[i].assigned_name = val === 'all' ? '' : val;
                                   setTasks(updated);
                                 }}
-                                className="w-full bg-white border border-[#dce3ee] rounded-lg p-1.5 text-[11px] font-semibold text-[#17253d] focus:outline-none focus:border-[#1769d2]"
-                              >
-                                <option value={t.assigned_name || ''}>{t.assigned_name || 'Chọn người phụ trách'}</option>
-                                {membersList.map(m => (
-                                  <option key={m.id} value={m.full_name || m.display_name}>{m.full_name || m.display_name}</option>
-                                ))}
-                              </select>
+                                placeholder="Tìm người phụ trách..."
+                                className="w-full"
+                              />
                             </div>
 
                             {/* Deadline Date Picker */}

@@ -12,9 +12,9 @@ export default function CustomersPage() {
   };
 
   return (
-    <div className="h-screen bg-[#f8fafc] text-[#0f172a] flex overflow-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
         {/* Flash Message */}
         {msg && (
           <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border backdrop-blur-sm transition-all duration-300 transform translate-y-0 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>
@@ -22,7 +22,7 @@ export default function CustomersPage() {
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto p-6 max-w-[1400px] w-full mx-auto space-y-6">
+        <main className="p-8 max-w-[1400px] w-full mx-auto space-y-6">
           <CustomersProjectsView onFlash={flash} />
         </main>
       </div>

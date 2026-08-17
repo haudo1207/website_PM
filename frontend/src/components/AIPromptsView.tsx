@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getProjects, getAIPrompts, saveAIPrompt } from '@/lib/api';
+import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface AIPromptData {
   id?: number;
@@ -119,15 +120,15 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
           {loadingProjects ? (
             <div className="h-9 w-48 bg-slate-100 animate-pulse rounded-lg"></div>
           ) : (
-            <select
+            <SearchableSelect
+              label="dự án"
+              icon=""
+              options={projects.map(p => ({ id: p.id, name: p.name }))}
               value={selectedProjectId || ''}
-              onChange={e => setSelectedProjectId(Number(e.target.value))}
-              className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-[#0b1c30] outline-none focus:border-blue-500 transition-all cursor-pointer min-w-[200px] shadow-sm"
-            >
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+              onChange={(val: any) => setSelectedProjectId(val === 'all' ? null : Number(val))}
+              placeholder="Tìm dự án..."
+              className="min-w-[200px]"
+            />
           )}
         </div>
       </div>
