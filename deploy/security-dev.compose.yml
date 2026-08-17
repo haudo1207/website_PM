@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     build: ${SOURCE_DIR}/backend
     env_file: ./app.env
+    environment:
+      RUN_DB_STARTUP_ON_IMPORT: "false"
     volumes:
       - ./secrets:/app/secrets:ro
     healthcheck:

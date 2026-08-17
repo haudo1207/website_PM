@@ -1,4 +1,5 @@
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
@@ -7,6 +8,8 @@ from ..database import get_db
 from ..models.user import User
 from ..config import settings
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -25,6 +28,14 @@ def create_access_token(data: dict) -> str:
     exp = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return jwt.encode({**data, "exp": exp}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
+def generate_refresh_token() -> str:
+    """Opaque, cryptographically secure refresh token (raw form, never stored)."""
+    return secrets.token_urlsafe(48)
+
+def hash_refresh_token(raw_token: str) -> str:
+    """Hash of the refresh token — the only form persisted server-side."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
 def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -32,6 +43,12 @@ def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)
         if not user or not user.is_active:
             raise HTTPException(401, "Invalid token")
         return user
+    except ExpiredSignatureError:
+        raise HTTPException(
+            401,
+            "Token expired",
+            headers={"X-Error-Code": "TOKEN_EXPIRED"},
+        )
     except (JWTError, KeyError, TypeError, ValueError):
         raise HTTPException(401, "Invalid token")
 

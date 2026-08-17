@@ -10,6 +10,8 @@ class User(Base):
     full_name = Column(String)
     avatar_url = Column(String, nullable=True)
     google_sub = Column(String, nullable=True, unique=True)
+    outlook_mail = Column(String, nullable=True, unique=True)
+    outlook_sub = Column(String, nullable=True, unique=True)
     hashed_pw = Column(String, nullable=False)
     role = Column(String, default="member")
     is_active = Column(Boolean, default=True)

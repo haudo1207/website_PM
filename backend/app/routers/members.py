@@ -12,16 +12,32 @@ from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
 from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name
+from ..utils.audit_service import AuditService
 from sqlalchemy import func, extract, false
 
 TEAM_POSITIONS = {
-  "Tech/Product": ["Product Manager", "UI/UX Designer", "Business Analyst", "Bridge Software Engineer (BrSE)", "Tester/QC"],
-  "Dev/DevOps": ["Frontend Developer", "Backend Developer", "Mobile Developer", "Fullstack Developer", "DevOps Engineer", "BA", "Frontend Developer", "Backend Developer", "Full-stack Developer", "DevOps / Platform", "Fullstack Developer"],
-  "Infrastructure": ["Network Engineer", "System Administrator", "IT Support/Helpdesk", "Cybersecurity Specialist", "Network Team", "System Team", "Security Team", "Hội nghị & Tổng đài", "Cloud & Datacenter"],
-  "AI": ["AI / ML Engineer", "Data Scientist", "Data Engineer", "Computer Vision Engineer", "NLP Engineer", "Data Analyst / Engineer", "AI Product / Research"],
-  "Marketing": ["Content Creator", "SEO Specialist", "Digital Marketer", "Media Designer", "Copywriter", "Content & Social", "Performance & Acquisition", "Marketing Ops"],
-  "Sales/Customer Care": ["Account Executive", "Sales Consultant", "Customer Support Representative", "Telemarketer", "B2B Sales", "Business Development", "Customer Success"],
-  "Content Production": ["Video Editor", "Graphic Designer", "Motion Designer", "Photographer"]
+  "Infrastructure": [
+    "Network Engineer", "System Administrator", "IT Support/Helpdesk", "Cybersecurity Specialist",
+    "Network Team", "System Team", "Security Team", "Hội nghị & Tổng đài", "Cloud & Datacenter"
+  ],
+  "Dev/DevOps": [
+    "Product Manager", "UI/UX Designer", "Business Analyst", "Bridge Software Engineer (BrSE)", "Tester/QC",
+    "Frontend Developer", "Backend Developer", "Mobile Developer", "Fullstack Developer", "DevOps Engineer",
+    "BA", "Frontend Developer", "Backend Developer", "Full-stack Developer", "DevOps / Platform", "Fullstack Developer",
+    "Video Editor", "Graphic Designer", "Motion Designer", "Photographer"
+  ],
+  "AI": [
+    "AI / ML Engineer", "Data Scientist", "Data Engineer", "Computer Vision Engineer", "NLP Engineer",
+    "Data Analyst / Engineer", "AI Product / Research"
+  ],
+  "Marketing": [
+    "Content Creator", "SEO Specialist", "Digital Marketer", "Media Designer", "Copywriter",
+    "Content & Social", "Performance & Acquisition", "Marketing Ops"
+  ],
+  "Sales": [
+    "Account Executive", "Sales Consultant", "Customer Support Representative", "Telemarketer",
+    "B2B Sales", "Business Development", "Customer Success", "Sales/Customer Care"
+  ]
 }
 
 def calc_kpi_bonus(kpi: float) -> float:
@@ -331,7 +347,7 @@ def get_member(id: int, db: Session = Depends(get_db), _=Depends(get_current_use
 
 # ─── CREATE ──────────────────────────────────────────────
 @router.post("")
-def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def create_member(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     display_name = str(body.get("display_name", "")).strip()
     full_name = str(body.get("full_name", "")).strip()
 
@@ -375,6 +391,12 @@ def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_a
     db.add(m)
     db.commit()
     db.refresh(m)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+        entity_id=m.id, action="CREATE", resource_name=m.display_name,
+        description=f"Tạo thành viên '{m.display_name}'"
+    )
+    db.commit()
     # reload with skills
     m = db.query(Member).options(joinedload(Member.skills)).filter(Member.id == m.id).first()
     return member_to_dict(m)
@@ -382,7 +404,7 @@ def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_a
 
 # ─── UPDATE ──────────────────────────────────────────────
 @router.put("/{id}")
-def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def update_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     m = db.query(Member).options(joinedload(Member.skills)).filter(Member.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy thành viên")
@@ -401,6 +423,11 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(
     ).first()
     if dup:
         raise HTTPException(400, f"Display Name '{display_name}' đã tồn tại")
+
+    old_dict = {
+        "display_name": m.display_name, "full_name": m.full_name, "email": m.email,
+        "team": m.team, "position": m.position, "department": m.department,
+    }
 
     birth_date = m.birth_date
     bd_str = body.get("birth_date", "")
@@ -433,17 +460,33 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(
         m.skills = skills
 
     db.commit()
+    AuditService.record_diff(
+        db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+        entity_id=m.id, old_dict=old_dict,
+        new_dict={"display_name": m.display_name, "full_name": m.full_name, "email": m.email,
+                  "team": m.team, "position": m.position, "department": m.department},
+        field_labels={"display_name": "Display Name", "full_name": "Họ tên", "email": "Email",
+                      "team": "Team", "position": "Vị trí", "department": "Phòng ban"},
+    )
+    db.commit()
     m = db.query(Member).options(joinedload(Member.skills)).filter(Member.id == id).first()
     return member_to_dict(m)
 
 
 # ─── DELETE ──────────────────────────────────────────────
 @router.delete("/{id}")
-def delete_member(id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+def delete_member(id: int, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     m = db.query(Member).filter(Member.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy thành viên")
+    m_name = m.display_name
     db.delete(m)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+        entity_id=id, action="DELETE", resource_name=m_name,
+        description=f"Xóa thành viên '{m_name}'"
+    )
     db.commit()
     return {"message": "Đã xóa thành viên thành công"}
 
@@ -540,7 +583,7 @@ def sync_candidate(
         
     # 2. Map Level and Team directly
     mapped_team = LEVEL_MAP.get(level.lower().strip(), level)
-    department = position
+    department = team if team and team != "all" else (position if position else None)
     
     # Auto-register in DB system categories
     ensure_system_level(db, mapped_team)
@@ -561,6 +604,7 @@ def sync_candidate(
         member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
         
     final_display_name = make_unique_display_name(db, display_name, member_id=member.id if member else None)
+    is_new_member = member is None
 
     if member:
         # Update existing member
@@ -607,6 +651,13 @@ def sync_candidate(
     try:
         db.commit()
         db.refresh(member)
+        AuditService.record(
+            db=db, user_id=None, module="Member", entity_type="Member",
+            entity_id=member.id, action="CREATE" if is_new_member else "UPDATE",
+            resource_name=member.display_name, source="API",
+            description=f"{'Tạo' if is_new_member else 'Cập nhật'} thành viên '{member.display_name}' qua sync-candidate (recruitment token)"
+        )
+        db.commit()
         return {"status": "success", "member_id": member.id, "display_name": member.display_name}
     except Exception as e:
         db.rollback()
@@ -652,9 +703,16 @@ def remove_candidate(
         return {"status": "not_found", "message": "Không tìm thấy thành viên để xóa"}
 
     try:
+        m_id, m_name = member.id, member.display_name
         db.delete(member)
         db.commit()
-        return {"status": "success", "message": f"Đã gỡ bỏ thành viên {member.display_name}"}
+        AuditService.record(
+            db=db, user_id=None, module="Member", entity_type="Member",
+            entity_id=m_id, action="DELETE", resource_name=m_name, source="API",
+            description=f"Gỡ bỏ thành viên '{m_name}' qua remove-candidate (recruitment token)"
+        )
+        db.commit()
+        return {"status": "success", "message": f"Đã gỡ bỏ thành viên {m_name}"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Lỗi database khi gỡ bỏ: {str(e)}")
@@ -663,7 +721,7 @@ def remove_candidate(
 @router.post("/sync-from-recruitment")
 def sync_from_recruitment(
     db: Session = Depends(get_db),
-    _=Depends(require_admin)
+    current_user=Depends(require_admin)
 ):
     import requests
     import re
@@ -804,7 +862,7 @@ def sync_from_recruitment(
                 
             # Map Level and Department directly
             mapped_team = LEVEL_MAP.get(level.lower().strip(), level)[:100]
-            department = position[:100] if position else None
+            department = primary_team[:100] if primary_team and primary_team != "all" else (position[:100] if position else None)
             
             # Auto-register categories
             ensure_system_level(db, mapped_team)
@@ -865,6 +923,12 @@ def sync_from_recruitment(
         message = f"Đồng bộ thành công {success_count} ứng viên."
         if deleted_count > 0:
             message += f" Đã gỡ bỏ {deleted_count} ứng viên không còn ở trạng thái đã nhận."
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+            entity_id=None, action="UPDATE",
+            description=f"Đồng bộ hàng loạt từ hệ thống tuyển dụng: {success_count} ứng viên cập nhật/tạo mới, {deleted_count} bị gỡ bỏ"
+        )
+        db.commit()
         return {"status": "success", "count": success_count, "message": message}
     except Exception as e:
         db.rollback()

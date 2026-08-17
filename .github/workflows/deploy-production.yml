@@ -31,8 +31,9 @@ jobs:
           rsync -a --delete --exclude .git --exclude .env --exclude secrets --exclude backups --exclude frontend/data ./ "$SOURCE_DIR"/
           cp deploy/security-prod.compose.yml "$SOURCE_DIR/docker-compose.yml"
           cd "$SOURCE_DIR"
-          # Redis and the legacy worker image remain local. Compose still recreates
-          # API, worker, and scheduler together so every writer uses the same DB URL.
-          docker compose --env-file .env -f docker-compose.yml up -d --build --remove-orphans
+          docker compose --env-file .env -f docker-compose.yml build backend frontend frontend_markee
+          docker compose --env-file .env -f docker-compose.yml run --rm --no-deps \
+            backend python -c "from app.main import run_startup_once; run_startup_once()"
+          docker compose --env-file .env -f docker-compose.yml up -d --no-build --remove-orphans
           timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done'
           timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done'

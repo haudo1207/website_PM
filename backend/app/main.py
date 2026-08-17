@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -7,7 +9,7 @@ from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
 from .database import engine, Base, get_db
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
 from .models import lunch_record as lunch_record_model
 from .models import phase as phase_model
@@ -16,6 +18,7 @@ from .models import task as task_model
 from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
 from .models import notification as notification_model
+from .models import workspace_access as workspace_access_model
 from sqlalchemy import text
 
 def apply_schema_updates():
@@ -40,6 +43,23 @@ def apply_schema_updates():
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub_unique "
             "ON users (google_sub) WHERE google_sub IS NOT NULL"
+        ))
+        # Microsoft (Outlook) login identities — mirrors the google_sub pattern.
+        # outlook_mail is the admin pre-provisioned Microsoft Mail used to match
+        # the login; outlook_sub is the linked Microsoft identity on first login.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS outlook_mail VARCHAR"
+        ))
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS outlook_sub VARCHAR"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_mail_unique "
+            "ON users (outlook_mail) WHERE outlook_mail IS NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_sub_unique "
+            "ON users (outlook_sub) WHERE outlook_sub IS NOT NULL"
         ))
         # Consolidate the legacy three-role model into the new 4-role model.
         # Permissions remain independent from project data scope.
@@ -302,6 +322,22 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ"))
         conn.execute(text("UPDATE projects SET last_activity_at = COALESCE(updated_at, created_at, now()) WHERE last_activity_at IS NULL"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_last_activity_at ON projects (last_activity_at)"))
+
+        # ── Portal refresh sessions (Phase 1 persistent login) ──
+        # Opaque refresh tokens are stored hashed; the raw token lives only in
+        # the HttpOnly cookie. No rotation in Phase 1.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP WITH TIME ZONE,
+                revoked_at TIMESTAMP WITH TIME ZONE
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens (user_id)"))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -834,6 +870,33 @@ def init_db_defaults():
                 db.add(MasterPhase(name=p_name, sort_order=idx, is_active=True))
             print("[*] Seeded initial Master Phases")
 
+        # Backfill user_workspace_access from the existing single data_scope
+        # column. Additive/idempotent — gives every current Leader/Member/Viewer
+        # exactly the one Workspace they already had, so effective access is
+        # unchanged until an admin explicitly grants extra Workspaces later.
+        from sqlalchemy import exists as sql_exists
+        from .models.workspace_access import UserWorkspaceAccess
+        from .models.system_category import Workspace
+        from .utils.access import WORKSPACE_SCOPED_ROLES, ALL_SCOPE
+
+        already_has_row = sql_exists().where(UserWorkspaceAccess.user_id == User.id)
+        users_needing_backfill = (
+            db.query(User)
+            .filter(User.role.in_(WORKSPACE_SCOPED_ROLES))
+            .filter(User.data_scope != ALL_SCOPE)
+            .filter(~already_has_row)
+            .all()
+        )
+        if users_needing_backfill:
+            ws_by_code = {w.code.strip().lower(): w for w in db.query(Workspace).all() if w.code}
+            backfilled = 0
+            for u in users_needing_backfill:
+                ws = ws_by_code.get(str(u.data_scope or "").strip().lower())
+                if ws:
+                    db.add(UserWorkspaceAccess(user_id=u.id, workspace_id=ws.id))
+                    backfilled += 1
+            print(f"[*] Backfilled user_workspace_access for {backfilled}/{len(users_needing_backfill)} user(s)")
+
         db.commit()
     except RuntimeError:
         db.rollback()
@@ -844,46 +907,25 @@ def init_db_defaults():
     finally:
         db.close()
 
-# With multiple uvicorn workers, each process runs this module at import
-# time. Migrations/seeding are idempotent (IF NOT EXISTS checks) but running
-# them concurrently from N processes can still race on DDL locks or
-# double-insert seed rows. A Postgres session-level advisory lock serializes
-# it: whichever process gets there first runs everything while holding the
-# lock; the rest wait, then find it already done.
+# Uvicorn workers only serve requests. CI runs these schema/default updates in
+# one pre-deploy container so workers never race on DDL or pooled DB locks.
 def run_startup_once():
-    # Base.metadata.create_all races the exact same way across processes —
-    # two workers creating the same table concurrently throws a Postgres
-    # catalog UniqueViolation. It has to be inside the same lock as the rest
-    # of startup, not run before it.
-    if not str(engine.url).startswith("postgresql"):
-        # No cross-process race on SQLite/local dev — just run in order.
-        Base.metadata.create_all(bind=engine)
-        try:
-            apply_schema_updates()
-        except Exception as e:
-            print(f"[!] Schema updates notice: {e}")
-        try:
-            init_db_defaults()
-        except Exception as e:
-            print(f"[!] Database defaults notice: {e}")
-        return
+    """Apply idempotent schema/default updates in one pre-deploy process."""
+    Base.metadata.create_all(bind=engine)
+    try:
+        apply_schema_updates()
+    except Exception as e:
+        print(f"[!] Schema updates notice: {e}")
+    try:
+        init_db_defaults()
+    except Exception as e:
+        print(f"[!] Database defaults notice: {e}")
 
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.execute(text("SELECT pg_advisory_lock(727001)"))
-        try:
-            Base.metadata.create_all(bind=engine)
-            try:
-                apply_schema_updates()
-            except Exception as e:
-                print(f"[!] Schema updates notice: {e}")
-            try:
-                init_db_defaults()
-            except Exception as e:
-                print(f"[!] Database defaults notice: {e}")
-        finally:
-            conn.execute(text("SELECT pg_advisory_unlock(727001)"))
 
-run_startup_once()
+# Docker deployments call run_startup_once() explicitly before starting web
+# workers. Opt-in import execution remains available for one-process utilities.
+if os.getenv("RUN_DB_STARTUP_ON_IMPORT", "false").lower() in {"1", "true", "yes", "on"}:
+    run_startup_once()
 
 
 app = FastAPI(

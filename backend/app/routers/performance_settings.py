@@ -6,6 +6,7 @@ from decimal import Decimal
 from ..database import get_db
 from ..models.performance_setting import PerformanceSetting
 from ..utils.auth import get_current_user, require_admin_write
+from ..utils.audit_service import AuditService
 
 router = APIRouter(dependencies=[Depends(require_admin_write)])
 
@@ -89,6 +90,18 @@ def create_performance_setting(body: dict, db: Session = Depends(get_db), curren
     db.commit()
     db.refresh(rule)
 
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Performance Setting",
+        entity_type="PerformanceSetting",
+        entity_id=rule.id,
+        action="CREATE",
+        resource_name=rule.performance,
+        description=f"Tạo cấu hình KPI '{rule.performance}' (KPI={rule.kpi}, loại={rule.remark_type})"
+    )
+    db.commit()
+
     return {"success": True, "data": _serialize(rule)}
 
 
@@ -98,6 +111,14 @@ def update_performance_setting(id: int, body: dict, db: Session = Depends(get_db
     rule = db.query(PerformanceSetting).filter(PerformanceSetting.id == id).first()
     if not rule:
         raise HTTPException(404, "Không tìm thấy cấu hình KPI")
+
+    old_dict = {
+        "performance": rule.performance,
+        "kpi": float(rule.kpi),
+        "remark_type": rule.remark_type,
+        "description": rule.description,
+        "is_active": rule.is_active,
+    }
 
     if "performance" in body:
         perf = str(body["performance"]).strip()
@@ -140,6 +161,32 @@ def update_performance_setting(id: int, body: dict, db: Session = Depends(get_db
     db.commit()
     db.refresh(rule)
 
+    new_dict = {
+        "performance": rule.performance,
+        "kpi": float(rule.kpi),
+        "remark_type": rule.remark_type,
+        "description": rule.description,
+        "is_active": rule.is_active,
+    }
+    field_labels = {
+        "performance": "Nội dung",
+        "kpi": "KPI",
+        "remark_type": "Loại",
+        "description": "Mô tả",
+        "is_active": "Đang áp dụng",
+    }
+    AuditService.record_diff(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Performance Setting",
+        entity_type="PerformanceSetting",
+        entity_id=rule.id,
+        old_dict=old_dict,
+        new_dict=new_dict,
+        field_labels=field_labels,
+    )
+    db.commit()
+
     return {"success": True, "data": _serialize(rule)}
 
 
@@ -150,6 +197,20 @@ def delete_performance_setting(id: int, db: Session = Depends(get_db), current_u
     if not rule:
         raise HTTPException(404, "Không tìm thấy cấu hình KPI")
 
+    perf_name = rule.performance
     db.delete(rule)
     db.commit()
+
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Performance Setting",
+        entity_type="PerformanceSetting",
+        entity_id=id,
+        action="DELETE",
+        resource_name=perf_name,
+        description=f"Xóa cấu hình KPI '{perf_name}'"
+    )
+    db.commit()
+
     return {"success": True, "message": "Đã xóa cấu hình KPI thành công"}

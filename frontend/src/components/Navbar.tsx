@@ -1,101 +1,117 @@
 'use client';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin } from '@/lib/auth';
-import { useState, useEffect, Suspense } from 'react';
-import { getSidebarTree, getProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
+import { useState, useEffect, useRef, Suspense } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getWorkspaces } from '@/lib/api';
 import { brand } from '@/lib/brand';
 
-interface CustomerNode {
-  id: number | null;
-  name: string;
-  project_count: number;
-}
+// Rendered once for the desktop sidebar and once for the mobile drawer —
+// both exist in the DOM simultaneously (CSS just hides one via
+// `hidden md:flex` / `md:hidden`), so this needs its own open-state and ref
+// per mount. Sharing a single ref/state between the two instances (as a
+// plain helper function on the parent would) breaks the outside-click check:
+// it ends up pointing at whichever instance mounted last, so a click inside
+// the *other* instance's dropdown reads as "outside" and closes the menu
+// before the Link's navigation can fire.
+function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const currentWs = workspaces.find((w: any) => w.code === currentWsCode);
 
-interface YearNode {
-  year: number;
-  project_count: number;
-  customers: CustomerNode[];
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative mb-2" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60 hover:bg-slate-800 transition-all cursor-pointer"
+      >
+        <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🗂️</span>
+        <span className="flex-1 min-w-0 text-left">
+          <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspace</span>
+          <span className="block text-[12.5px] font-bold text-white truncate">{currentWs ? currentWs.name : 'Tất cả'}</span>
+        </span>
+        <svg className={`w-3.5 h-3.5 text-slate-500 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-20 py-1">
+          <Link href="/project-hub" onClick={() => { setOpen(false); onNavigate?.(); }}
+            className={`block px-3 py-2 text-xs font-semibold transition-colors ${
+              !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+            }`}>
+            Tất cả Workspace
+          </Link>
+          {workspaces.map((ws: any) => (
+            <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => { setOpen(false); onNavigate?.(); }}
+              className={`block px-3 py-2 text-xs font-semibold truncate transition-colors ${
+                ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+              }`}>
+              {ws.name}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function NavbarContent() {
   const path = usePathname();
-  const searchParams = useSearchParams();
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
   const [role, setRole] = useState('');
 
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [activeBU, setActiveBU] = useState<string>('');
-  const [expandedYearBU, setExpandedYearBU] = useState<Record<string, number | null>>({});
-  const [customerSearchBU, setCustomerSearchBU] = useState<Record<string, string>>({});
-  const [treeDataBU, setTreeDataBU] = useState<Record<string, YearNode[]>>({});
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Shared cache key with Project Hub pages / CustomersProjectsView — the
+  // Workspace list is near-static, so navigating between pages (Navbar
+  // remounts on every route) reuses the cached result instead of refetching.
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const workspaces = workspacesData || [];
 
   useEffect(() => {
     setName(getName() ?? '');
     setAvatar(getAvatar() ?? '');
     setRole(getRole() ?? '');
-    getWorkspaces()
-      .then(ws => {
-        setWorkspaces(ws || []);
-        setActiveBU(prev => prev || (ws?.[0]?.code || ''));
-      })
-      .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!activeBU) return;
-    getSidebarTree(activeBU)
-      .then((data: YearNode[]) => {
-        setTreeDataBU(prev => ({ ...prev, [activeBU]: data || [] }));
-      })
-      .catch(() => {
-        // Fallback calculation if API fails
-        Promise.all([getCustomers(activeBU), getProjects()]).then(([custs, projs]) => {
-          const yearMap = new Map<number, Map<string, CustomerNode>>();
-          (projs || []).forEach((p: any) => {
-            const yr = p.year || new Date().getFullYear();
-            const cName = p.customer_name ? p.customer_name.trim() : 'Khác';
-            const cId = p.customer_id || null;
-            if (!yearMap.has(yr)) yearMap.set(yr, new Map());
-            const cMap = yearMap.get(yr)!;
-            const key = cName.toLowerCase();
-            if (cMap.has(key)) {
-              cMap.get(key)!.project_count += 1;
-            } else {
-              cMap.set(key, { id: cId, name: cName, project_count: 1 });
-            }
-          });
-          const fallbackData: YearNode[] = Array.from(yearMap.entries())
-            .sort((a, b) => b[0] - a[0])
-            .map(([yr, cMap]) => {
-              const custsList = Array.from(cMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-              const total = custsList.reduce((sum, c) => sum + c.project_count, 0);
-              return { year: yr, project_count: total, customers: custsList };
-            });
-          setTreeDataBU(prev => ({ ...prev, [activeBU]: fallbackData }));
-        });
-      });
-  }, [activeBU, path]);
+  const projectHubIcon = (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+    </svg>
+  );
 
-  const currentParamYear = searchParams.get('year');
-  const currentCustId = searchParams.get('customer_id');
-  const currentCustName = searchParams.get('customer');
+  // Workspace the user is currently looking at, derived from the URL
+  // (/project-hub/{code}) — null means the merged "all workspaces" view.
+  const currentWsCode = path.startsWith('/project-hub/') ? path.split('/')[2] : null;
 
-  const toggleYear = (year: number) => {
-    setExpandedYearBU(prev => ({
-      ...prev,
-      [activeBU]: prev[activeBU] === year ? null : year
-    }));
-  };
+  const renderProjectsLink = (onNavigate?: () => void) => (
+    <Link href="/project-hub" onClick={onNavigate}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+        path.startsWith('/project-hub') ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+      }`}>
+      {projectHubIcon}
+      Projects
+    </Link>
+  );
 
   const nav = [
-    { href: '/projects', label: 'Projects', icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-      </svg>
-    )},
     { href: '/kpi', label: 'KPI', icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -117,79 +133,6 @@ function NavbarContent() {
       </svg>
     ), show: isAdmin() },
   ].filter(n => n.show !== false);
-
-  const renderTreeContent = () => {
-    const currentTreeData = treeDataBU[activeBU] || [];
-    const currentExpandedYear = expandedYearBU[activeBU];
-    const currentSearch = customerSearchBU[activeBU] || '';
-    const searchLow = currentSearch.trim().toLowerCase();
-
-    return currentTreeData.map(yNode => {
-      const matchingCusts = yNode.customers.filter(c =>
-        !searchLow || c.name.toLowerCase().includes(searchLow)
-      );
-
-      if (searchLow && matchingCusts.length === 0) return null;
-
-      const isExpanded = searchLow ? true : (currentExpandedYear === yNode.year);
-
-      return (
-        <div key={yNode.year} className="space-y-1 mb-2">
-          {/* Year Header */}
-          <button
-            onClick={() => toggleYear(yNode.year)}
-            className="flex items-center justify-between w-full px-2 py-1 rounded hover:bg-slate-800/80 transition-colors text-left group"
-          >
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-[9px] text-slate-400 font-bold w-3">
-                {isExpanded ? '▼' : '▶'}
-              </span>
-              <span className="text-xs font-bold text-slate-300 group-hover:text-white transition-colors">
-                {yNode.year}
-              </span>
-            </div>
-            <span className="text-[10px] font-bold text-slate-500 bg-slate-800 px-1.5 py-0.2 rounded-full">
-              {yNode.project_count}
-            </span>
-          </button>
-
-          {/* Nested Customer List */}
-          {isExpanded && (
-            <div className="pl-3.5 space-y-0.5 border-l border-slate-800/80 ml-2.5">
-              {matchingCusts.map(c => {
-                const href = c.id
-                  ? `/projects?year=${yNode.year}&customer_id=${c.id}&business_unit=${activeBU}`
-                  : `/projects?year=${yNode.year}&customer=${encodeURIComponent(c.name)}&business_unit=${activeBU}`;
-
-                const isItemActive = (path === '/projects' || path === '/project') &&
-                  currentParamYear === String(yNode.year) &&
-                  ((currentCustId && currentCustId === String(c.id)) || (currentCustName && currentCustName.toLowerCase() === c.name.toLowerCase()));
-
-                return (
-                  <Link
-                    key={c.id || c.name}
-                    href={href}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={`flex items-center justify-between px-2.5 py-1 rounded-md text-xs font-medium transition-all truncate ${
-                      isItemActive
-                        ? 'bg-indigo-600/20 text-indigo-300 border-l-2 border-indigo-500 rounded-l-none pl-2'
-                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isItemActive ? 'bg-indigo-400' : 'bg-slate-600'}`} />
-                      <span className="truncate">{c.name}</span>
-                    </div>
-                    <span className="text-[10px] text-slate-500 font-bold ml-1 shrink-0">({c.project_count})</span>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      );
-    });
-  };
 
   return (
     <>
@@ -240,6 +183,8 @@ function NavbarContent() {
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
 
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} />
+
           {/* Dashboard single link */}
           {(() => {
             const active = path.startsWith('/dashboard');
@@ -256,8 +201,10 @@ function NavbarContent() {
             );
           })()}
 
+          {renderProjectsLink()}
+
           {nav.map(n => {
-            const active = path === n.href || (n.href === '/customers' && path.startsWith('/customers')) || (n.href === '/projects' && (path === '/projects' || path === '/project')) || (n.href === '/leave-request' && path.startsWith('/leave-request'));
+            const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (
               <Link key={n.href} href={n.href}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
@@ -272,54 +219,7 @@ function NavbarContent() {
           })}
         </nav>
 
-        {/* Projects Tree Section */}
-        <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
-          <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <Link href="/customers" className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors flex items-center gap-1.5" title="Mở trang Quản lý Khách hàng">
-              <span>🏢</span> CUSTOMERS
-            </Link>
-          </div>
-
-          {/* Workspace Tabs Switcher (from Workspace Master) */}
-          <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
-            {workspaces.length === 0 ? (
-              <span className="flex-1 text-[10px] font-bold py-1 rounded-md text-slate-500 text-center">No Workspaces</span>
-            ) : (
-              workspaces.map(ws => (
-                <button
-                  key={ws.code}
-                  onClick={() => setActiveBU(ws.code)}
-                  className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                    activeBU === ws.code
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {ws.name}
-                </button>
-              ))
-            )}
-          </div>
-
-          {/* Quick Search Input */}
-          <div className="relative px-1 mb-2">
-            <input
-              type="text"
-              placeholder="🔍 Search Customer..."
-              value={customerSearchBU[activeBU] || ''}
-              onChange={e => {
-                const val = e.target.value;
-                setCustomerSearchBU(prev => ({ ...prev, [activeBU]: val }));
-              }}
-              className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
-            />
-          </div>
-
-          {/* Tree View */}
-          <div className="space-y-1">
-            {renderTreeContent()}
-          </div>
-        </div>
+        <div className="flex-grow" />
 
         {/* User Profile Footer Section */}
         <div className="p-3 border-t border-slate-800 space-y-2.5">
@@ -393,8 +293,11 @@ function NavbarContent() {
 
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} onNavigate={() => setMobileMenuOpen(false)} />
+          {renderProjectsLink(() => setMobileMenuOpen(false))}
+
           {nav.map(n => {
-            const active = path === n.href || (n.href === '/customers' && path.startsWith('/customers')) || (n.href === '/projects' && (path === '/projects' || path === '/project')) || (n.href === '/leave-request' && path.startsWith('/leave-request'));
+            const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (
               <Link key={n.href} href={n.href} onClick={() => setMobileMenuOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
@@ -409,51 +312,7 @@ function NavbarContent() {
           })}
         </nav>
 
-        {/* Mobile Projects Tree Section */}
-        <div className="flex-grow px-3 py-2 space-y-2 overflow-y-auto no-scrollbar border-t border-slate-800/60 pt-4">
-          <div className="flex items-center justify-between px-2 mb-1 shrink-0">
-            <Link href="/customers" onClick={() => setMobileMenuOpen(false)} className="text-[10px] font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors flex items-center gap-1.5" title="Mở trang Quản lý Khách hàng">
-              <span>🏢</span> CUSTOMERS
-            </Link>
-          </div>
-
-          {/* Mobile Workspace Tabs Switcher */}
-          <div className="flex bg-slate-900/90 p-0.5 rounded-lg border border-slate-800 my-2">
-            {workspaces.length === 0 ? (
-              <span className="flex-1 text-[10px] font-bold py-1 rounded-md text-slate-500 text-center">No Workspaces</span>
-            ) : (
-              workspaces.map(ws => (
-                <button
-                  key={ws.code}
-                  onClick={() => setActiveBU(ws.code)}
-                  className={`flex-1 text-[10px] font-bold py-1 rounded-md transition-all ${
-                    activeBU === ws.code
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {ws.name}
-                </button>
-              ))
-            )}
-          </div>
-
-          <div className="relative px-1 mb-2">
-            <input
-              type="text"
-              placeholder="🔍 Search Customer..."
-              value={customerSearchBU[activeBU] || ''}
-              onChange={e => {
-                const val = e.target.value;
-                setCustomerSearchBU(prev => ({ ...prev, [activeBU]: val }));
-              }}
-              className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 placeholder-slate-500 outline-none focus:border-indigo-500 transition-colors"
-            />
-          </div>
-          <div className="space-y-1">
-            {renderTreeContent()}
-          </div>
-        </div>
+        <div className="flex-grow" />
 
         {/* Mobile User */}
         <div className="p-3 border-t border-slate-800 space-y-2.5">
