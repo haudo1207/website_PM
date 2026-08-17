@@ -713,7 +713,9 @@ export default function ReportTab() {
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${statusStyle[t.status] || ''}`}>{t.status}</span>
                     </td>
                     <td className="px-4 py-3 text-center text-slate-500 tabular-nums">{formatVNDate(t.end_date_est)}</td>
-                    <td className="px-4 py-3 text-center font-extrabold text-[#0058be]">{t.kpi_base || 0}</td>
+                    <td className="px-4 py-3 text-center font-extrabold text-[#0058be]">
+                      {(t.status === 'Done' || t.status === 'done') ? (t.kpi_base || 0) : <span className="text-slate-300 font-semibold">—</span>}
+                    </td>
                   </tr>
                 ))
               )}

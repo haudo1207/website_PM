@@ -587,8 +587,8 @@ export default function OverviewTab() {
 
     fTasks.forEach(t => {
       pmManday += (t.manday_actual || t.manday_est || 0);
-      pmKpi += (t.kpi_base || 0);
       const isDone = t.status === 'Done' || t.status === 'done';
+      if (isDone) pmKpi += (t.kpi_base || 0); // Only count KPI for completed tasks
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
       const isOverdue = !isDone && !isCancel && (t.days_late > 0);
 
