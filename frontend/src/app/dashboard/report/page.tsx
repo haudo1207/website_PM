@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { getEmail, getName, getToken } from '@/lib/auth';
+import { useRouter } from 'next/navigation';
 import KpiCard from '@/components/dashboard/KpiCard';
 import PieChartCard from '@/components/dashboard/PieChartCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
@@ -27,6 +28,7 @@ import {
 } from '@/app/dashboard/constants';
 
 export default function ReportTab() {
+  const router = useRouter();
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
@@ -253,7 +255,7 @@ export default function ReportTab() {
       const pName = t.projectName || 'Không có';
       const cName = t.customerName || t.customer_name || 'Không có';
       if (!myProjectsMap.has(pName)) {
-        myProjectsMap.set(pName, { name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0 });
+        myProjectsMap.set(pName, { id: t.project_id, name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0 });
       }
       const p = myProjectsMap.get(pName);
       p.tasks++;
@@ -468,7 +470,11 @@ export default function ReportTab() {
                 <tr><td colSpan={7} className="text-center py-6 text-slate-400 font-semibold">Chưa tham gia dự án nào.</td></tr>
               ) : (
                 topRealProjects.map((p, idx) => (
-                  <tr key={p.name} className="border-b border-slate-50 hover:bg-slate-50/50">
+                  <tr 
+                    key={p.name} 
+                    onClick={() => { if (p.id) router.push(`/project/detail?id=${p.id}`); }}
+                    className="border-b border-slate-50 hover:bg-slate-50/80 cursor-pointer transition-colors"
+                  >
                     <td className="px-4 py-3 text-center">
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${idx < 3 ? 'bg-amber-100 text-amber-700' : 'text-slate-400'}`}>#{idx + 1}</span>
                     </td>
@@ -692,7 +698,11 @@ export default function ReportTab() {
                 </tr>
               ) : (
                 tableTasks.map((t: any, i: number) => (
-                  <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
+                  <tr 
+                    key={t.id} 
+                    onClick={() => { if (t.project_id) router.push(`/project/detail?id=${t.project_id}`); }}
+                    className={`border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}
+                  >
                     <td className={`px-4 py-3 font-semibold text-[#0b1c30] whitespace-normal break-words max-w-[250px] sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/95'}`}>
                       <div className="flex items-start gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${priorityDot[t.priority] || 'bg-slate-400'}`} />
