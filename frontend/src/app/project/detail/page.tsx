@@ -1714,7 +1714,13 @@ function ProjectDetailContent() {
   }, 0);
 
   // 4. Trễ deadline
-  const kpiWarning = kpiTasks.filter(x => x.days_late != null && x.days_late > 0).length;
+  const overdueTasksList = kpiTasks.filter(x => {
+    const s = (x.status || '').toLowerCase();
+    const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+    const isCancel = s === 'cancel' || s.includes('hủy');
+    return !isDone && !isCancel && x.days_late != null && x.days_late > 0;
+  });
+  const kpiWarning = overdueTasksList.length;
 
   // 5. Critical thực hiện tuần này
   const today = new Date();
