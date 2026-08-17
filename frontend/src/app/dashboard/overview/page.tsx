@@ -83,7 +83,7 @@ const ProjectDistributionDonut = ({ activeCount, whiteCount }: { activeCount: nu
   );
 };
 
-const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, tasks: any[], projects: any[], onClose: () => void }) => {
+const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number) => void }) => {
   const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
 
   if (!member) return null;
@@ -251,9 +251,13 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
                   const pKpi = pTasks.reduce((acc, t) => acc + (t.status === 'Done' || t.status === 'done' ? (t.kpi_base || 0) : 0), 0);
 
                   return (
-                    <div key={p.id} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
+                    <div
+                      key={p.id}
+                      onClick={() => { onClose(); onNavigate(p.id); }}
+                      className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]"
+                    >
                       <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-extrabold text-[#0b1c30]">{p.name}</h4>
+                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{p.name}</h4>
                         <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">
                           {pOpen} task mở
                         </span>
@@ -280,6 +284,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">KPI</span>
                         </div>
                       </div>
+                      <p className="text-[10px] text-[#0058be] font-bold text-right">Xem dự án ➔</p>
                     </div>
                   );
                 })
@@ -336,7 +341,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose }: { member: any, 
                         const dlStr = t.end_date_est ? t.end_date_est.split('-').reverse().slice(0,2).join('/') : '11/08';
 
                         return (
-                          <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
+                          <tr key={t.id} onClick={() => { const proj = projects.find((p: any) => String(p.id) === String(t.project_id)); if (proj) { onClose(); onNavigate(proj.id); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
                             <td className="px-4 py-3">
                               <p className="font-bold text-[#0b1c30] text-xs">{t.name}</p>
                               <p className="text-[10px] text-slate-400 mt-0.5">Task đang được triển khai trong kỳ.</p>
@@ -643,17 +648,34 @@ export default function OverviewTab() {
     const lowestPerf = finalRanking.length > 1 ? finalRanking[finalRanking.length - 1] : null;
 
     // 6. Active Projects (Only show projects with tasks OR PM assigned)
+    // Apply time filter using end_date_actual (actual completion date) first, then end_date_est
     const allMappedProjects = rawProjects.map((p: any) => {
       const pTasks = rawTasks.filter(t => isSameId(t.project_id, p.id));
       const done = pTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
       const hasPM = Boolean(p.pm_name || p.pm || p.pm_id || p.manager || p.project_manager || p.leader_name || p.owner || p.user_id || p.leader_id);
       const hasTasks = pTasks.length > 0;
+
+      // Check if any task in this project falls within the selected time period
+      // Priority: end_date_actual (actual completion) → end_date_est (estimated) → created_at
+      const hasTaskInPeriod = (selectedYear === 'all' && selectedMonth === 'all' && selectedWeek === 'all')
+        ? true
+        : pTasks.some(t => {
+            const dateStr = t.end_date_actual || t.end_date_est || t.created_at;
+            if (!dateStr) return false;
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return false;
+            if (selectedYear !== 'all' && d.getFullYear() !== selectedYear) return false;
+            if (selectedMonth !== 'all' && (d.getMonth() + 1) !== selectedMonth) return false;
+            if (selectedWeek !== 'all' && getWeekOfMonth(d) !== selectedWeek) return false;
+            return true;
+          });
+
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
         progress: pTasks.length ? Math.round((done / pTasks.length) * 100) : 0,
         totalTasks: pTasks.length, doneTasks: done,
         hasPM, hasTasks,
-        isDisplayable: hasTasks || hasPM
+        isDisplayable: (hasTasks || hasPM) && hasTaskInPeriod
       };
     });
 
@@ -1429,6 +1451,7 @@ export default function OverviewTab() {
           tasks={rawTasks}
           projects={rawProjects}
           onClose={() => setSelectedMemberModal(null)}
+          onNavigate={(projectId) => router.push(`/project/detail?id=${projectId}`)}
         />
       )}
     </div>
