@@ -254,7 +254,6 @@ def member_query_for_user(db: Session, user):
         "marketing": "Marketing",
         "sales": "Sales"
     }
-
     target_depts = []
     for s in scopes:
         s_lower = str(s).strip().lower()
