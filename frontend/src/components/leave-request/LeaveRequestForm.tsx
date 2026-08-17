@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { LeaveRequestFormValues, LeaveType, leaveTypes, locations, calculateManDay } from '@/lib/leave-request';
+import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface LeaveRequestFormProps {
   initialValues?: Partial<LeaveRequestFormValues>;
@@ -166,37 +167,38 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
       <div className="grid gap-5 md:grid-cols-2">
         <div>
           <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">Province / City</label>
-          <select
+          <SearchableSelect
+            label="Tỉnh/Thành"
+            icon=""
+            options={locations.map((item) => item.province)}
             value={formValues.province}
-            onChange={(event) => {
-              const nextProvince = event.target.value;
-              const nextWard = locations.find((item) => item.province === nextProvince)?.wards[0] || '';
-              setFormValues({ ...formValues, province: nextProvince, ward: nextWard });
+            onChange={(val: any) => {
+              // Province is always required — ignore the built-in "reset" option.
+              if (val === 'all') return;
+              const nextWard = locations.find((item) => item.province === val)?.wards[0] || '';
+              setFormValues({ ...formValues, province: val, ward: nextWard });
             }}
-            className="w-full rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#0058be]"
-          >
-            {locations.map((item) => (
-              <option key={item.province} value={item.province}>
-                {item.province}
-              </option>
-            ))}
-          </select>
+            placeholder="Tìm tỉnh/thành..."
+            className="w-full"
+          />
         </div>
 
         <div>
           <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">Ward / Commune</label>
-          <select
+          <SearchableSelect
+            label="Phường/Xã"
+            icon=""
+            options={selectedProvince?.wards || []}
             value={formValues.ward}
-            onChange={(event) => setFormValues({ ...formValues, ward: event.target.value })}
-            className="w-full rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#0058be]"
+            onChange={(val: any) => {
+              // Ward is always required — ignore the built-in "reset" option.
+              if (val === 'all') return;
+              setFormValues({ ...formValues, ward: val });
+            }}
+            placeholder="Tìm phường/xã..."
             disabled={!selectedProvince}
-          >
-            {selectedProvince?.wards.map((ward) => (
-              <option key={ward} value={ward}>
-                {ward}
-              </option>
-            ))}
-          </select>
+            className="w-full"
+          />
         </div>
       </div>
 

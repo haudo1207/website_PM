@@ -554,19 +554,15 @@ export default function SystemAuditView() {
             </div>
 
             {/* Project Filter */}
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">
-              <span>Project:</span>
-              <select
-                value={projectFilter}
-                onChange={e => setProjectFilter(e.target.value)}
-                className="bg-white border border-[#c2c6d6]/60 text-[#0b1c30] rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#0058be] max-w-[160px] truncate"
-              >
-                <option value="all">All Projects</option>
-                {projectsList.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="Project"
+              icon="📁"
+              options={projectsList.map(p => ({ id: p.id, name: p.name }))}
+              value={projectFilter}
+              onChange={val => setProjectFilter(val)}
+              placeholder="Tìm Project..."
+              className="max-w-[160px]"
+            />
 
             {/* Module Filter */}
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#565e74]">

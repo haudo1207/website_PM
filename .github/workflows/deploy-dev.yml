@@ -24,6 +24,51 @@ jobs:
           mkdir -p /home/webpm/kpi-dev-src /home/webpm/kpi-dev
           rsync -a --delete --exclude .git ./ /home/webpm/kpi-dev-src/
           cp deploy/security-dev.compose.yml /home/webpm/kpi-dev/compose.yml
+      - name: Configure dev runtime environment
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          updates = {
+              "DB_POOL_SIZE": "3",
+              "DB_MAX_OVERFLOW": "2",
+              "DB_POOL_TIMEOUT": "30",
+              "OUTLOOK_LOGIN_ENABLED": "true",
+              "OUTLOOK_CLIENT_ID": "accb9e53-bce9-4828-9bf9-7f655ed19090",
+              "OUTLOOK_TENANT_ID": "common",
+          }
+
+          for path in (Path("/home/webpm/kpi-dev/.env"), Path("/home/webpm/kpi-dev/app.env")):
+              if not path.is_file():
+                  raise SystemExit(f"Required runtime env file is missing: {path}")
+              lines = path.read_text().splitlines()
+              output = []
+              seen = set()
+              for line in lines:
+                  if "=" not in line or line.lstrip().startswith("#"):
+                      output.append(line)
+                      continue
+                  key, value = line.split("=", 1)
+                  key = key.strip()
+                  if key == "DATABASE_URL":
+                      value = value.replace(
+                          "aws-0-ap-southeast-1.pooler.supabase.com:5432",
+                          "aws-0-ap-southeast-1.pooler.supabase.com:6543",
+                      )
+                      output.append(f"{key}={value}")
+                      seen.add(key)
+                  elif key in updates:
+                      if key not in seen:
+                          output.append(f"{key}={updates[key]}")
+                          seen.add(key)
+                  else:
+                      output.append(line)
+              for key, value in updates.items():
+                  if key not in seen:
+                      output.append(f"{key}={value}")
+              path.write_text("\n".join(output) + "\n")
+          PY
       - name: Build and deploy
         working-directory: /home/webpm/kpi-dev
         env:
@@ -32,7 +77,10 @@ jobs:
           FRONTEND_PORT: "3100"
         run: |
           set -euo pipefail
-          docker compose --env-file .env -f compose.yml up -d --build --remove-orphans
+          docker compose --env-file .env -f compose.yml build backend frontend
+          docker compose --env-file .env -f compose.yml run --rm --no-deps \
+            backend python -c "from app.main import run_startup_once; run_startup_once()"
+          docker compose --env-file .env -f compose.yml up -d --no-build --remove-orphans
           timeout 180 bash -c 'until curl -fsS http://127.0.0.1:3100/api/health; do sleep 5; done'
           docker system prune -f || true
           docker builder prune -f || true

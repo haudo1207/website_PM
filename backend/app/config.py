@@ -7,7 +7,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./app.db"
     SECRET_KEY: str = "default-development-secret-key-change-in-env"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Portal refresh session (non-rotating in Phase 1).
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 20
+    REFRESH_COOKIE_NAME: str = "portal_refresh"
+    REFRESH_COOKIE_SECURE: bool = True
     INTERNAL_SYNC_TOKEN: str = ""
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     DEFAULT_ADMIN_EMAIL: str = "admin@company.com"
@@ -15,6 +19,12 @@ class Settings(BaseSettings):
     GOOGLE_LOGIN_ENABLED: bool = True
     PASSWORD_LOGIN_ENABLED: bool = False
     AUTH_SUPERADMIN_EMAILS: str = ""
+
+    # Microsoft (Outlook) login — additive to Google Login.
+    # OUTLOOK_TENANT_ID "common" accepts Microsoft personal + Entra accounts.
+    OUTLOOK_LOGIN_ENABLED: bool = False
+    OUTLOOK_CLIENT_ID: str = ""
+    OUTLOOK_TENANT_ID: str = "common"
     AI_BASE_URL: str = "https://api.shopaikey.com/v1"
     AI_API_KEY: str = ""
     AI_MODEL: str = "gpt-4o-mini"
