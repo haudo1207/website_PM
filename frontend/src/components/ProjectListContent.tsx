@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, updateProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
+import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 import SearchableSelect from './common/SearchableSelect';
+import ProjectFormModal from './ProjectFormModal';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
   'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
@@ -91,6 +92,7 @@ interface ProjectListContentProps {
 
 export default function ProjectListContent({ lockedWorkspace, renderTabs }: ProjectListContentProps = {}) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const paramCustId = searchParams.get('customer_id');
   const paramCustName = searchParams.get('customer');
@@ -109,9 +111,13 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [showProjectFormModal, setShowProjectFormModal] = useState(false);
+  const [projectFormMode, setProjectFormMode] = useState<'create' | 'edit'>('create');
+  const [editingProject, setEditingProject] = useState<any>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
-  const [renamingProject, setRenamingProject] = useState<{ id: number; name: string } | null>(null);
-  const [renameValue, setRenameValue] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
 
@@ -200,7 +206,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     setMemberFilter('All');
     setYearFilter('All');
     setPage(1);
-    if (!lockedWorkspace) router.push('/projects');
+    if (!lockedWorkspace) router.replace(pathname);
   };
 
   // Dynamic lists from loaded data memoized
@@ -321,20 +327,23 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               <p className="text-sm text-slate-500 mt-1">Quản lý và theo dõi tiến độ các dự án tuân thủ bảo mật.</p>
             </div>
 
-            {renderTabs && renderTabs()}
+            <div className="flex items-center gap-3">
+              {renderTabs && renderTabs()}
+              {canManage && (
+                <button
+                  onClick={() => { setProjectFormMode('create'); setEditingProject(null); setShowProjectFormModal(true); }}
+                  className="flex items-center gap-1.5 bg-[#0058be] hover:bg-[#00479c] text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors shrink-0"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Tạo dự án
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm relative z-30">
-            <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
-              <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
-              <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
-                <option value="newest">Mới nhất</option>
-                <option value="oldest">Cũ nhất</option>
-                <option value="name_asc">Tên (A-Z)</option>
-                <option value="name_desc">Tên (Z-A)</option>
-              </select>
-            </div>
-
             <div className="relative flex-1 min-w-[240px]">
               <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -342,7 +351,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               <input type="text" placeholder="Tìm kiếm tên dự án, khách hàng..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
                 className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none text-slate-700 focus:border-indigo-500 bg-slate-50/20" />
             </div>
-            
+
             <SearchableSelect
               label="giai đoạn"
               icon="🚩"
@@ -408,6 +417,31 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               placeholder="Tìm năm..."
             />
 
+            {canManage && (
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer shrink-0 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px]">
+                <input
+                  type="checkbox"
+                  checked={paged.length > 0 && paged.every(p => selectedIds.includes(p.id))}
+                  onChange={(e) => {
+                    setSelectedIds(prev => e.target.checked
+                      ? Array.from(new Set([...prev, ...paged.map(p => p.id)]))
+                      : prev.filter(id => !paged.some(p => p.id === id)));
+                  }}
+                  className="w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                />
+                Chọn trang này
+              </label>
+            )}
+            <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
+              <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
+                <option value="newest">Mới nhất</option>
+                <option value="oldest">Cũ nhất</option>
+                <option value="name_asc">Tên (A-Z)</option>
+                <option value="name_desc">Tên (Z-A)</option>
+              </select>
+            </div>
+
             <button onClick={handleResetFilters} className="flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors flex-shrink-0 h-[34px]">
               <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
@@ -421,8 +455,19 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
             {paged.map(p => {
               const phaseBadge = getPhaseBadgeStyle(p.current_phase);
               return (
-                <div key={p.id} onClick={() => router.push(`/project/detail?id=${p.id}`)}
+                <div key={p.id} onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
                   className="bg-white border border-slate-200/80 rounded-xl overflow-hidden flex flex-col cursor-pointer group shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-300 hover:-translate-y-0.5 relative">
+                  {canManage && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(p.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        setSelectedIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(x => x !== p.id));
+                      }}
+                      className="absolute top-3 left-3 z-10 w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                    />
+                  )}
                   <div className="p-6 flex-1 flex flex-col">
                     <div className="flex justify-between items-start mb-3">
                       <span className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200 px-2 py-0.5 rounded">Năm: {p.year || '—'}</span>
@@ -442,16 +487,10 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                             {menuOpenId === p.id && (
                               <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
                                 <button
-                                  onClick={() => { setMenuOpenId(null); router.push(`/project/detail?id=${p.id}`); }}
+                                  onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
                                   className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                                 >
                                   ✏️ Chỉnh sửa
-                                </button>
-                                <button
-                                  onClick={() => { setMenuOpenId(null); setRenamingProject({ id: p.id, name: p.name }); setRenameValue(p.name || ''); }}
-                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                                >
-                                  ✎ Đổi tên
                                 </button>
                                 <button
                                   onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
@@ -603,36 +642,65 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         </div>
       </div>
 
-      {renamingProject && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setRenamingProject(null)}>
-          <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-base font-bold text-[#0b1c30] mb-4">Đổi tên dự án</h2>
-            <input
-              autoFocus
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') setRenamingProject(null); }}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-6 outline-none focus:ring-2 focus:ring-[#0058be]/30 focus:border-[#0058be]"
-              placeholder="Tên dự án"
-            />
+      {selectedIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[#0b1c30] text-white rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+          <span className="text-sm font-semibold">Đã chọn {selectedIds.length} dự án</span>
+          <button onClick={() => setSelectedIds([])} className="text-xs font-semibold text-slate-300 hover:text-white">Bỏ chọn</button>
+          <button
+            onClick={() => setShowBulkDeleteConfirm(true)}
+            className="px-4 py-1.5 rounded-lg text-xs font-bold bg-[#dc2626] hover:bg-red-700 text-white"
+          >
+            🗑 Xóa đã chọn
+          </button>
+        </div>
+      )}
+
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
+            <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa {selectedIds.length} dự án</h2>
+            <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa {selectedIds.length} dự án đã chọn? Hành động này không thể hoàn tác.</p>
             <div className="flex justify-end gap-3">
-              <button onClick={() => setRenamingProject(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
-              <button onClick={async () => {
-                const trimmed = renameValue.trim();
-                if (!trimmed) { flash('Tên dự án không được để trống', true); return; }
-                try {
-                  await updateProject(renamingProject.id, { name: trimmed });
-                  reload();
-                  flash('Đã đổi tên!');
-                } catch (e: any) {
-                  flash(e?.response?.data?.detail || 'Đổi tên thất bại', true);
-                }
-                setRenamingProject(null);
-              }} className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#0058be] hover:bg-[#00479c] text-white shadow-sm">Lưu</button>
+              <button disabled={bulkDeleting} onClick={() => setShowBulkDeleteConfirm(false)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
+              <button
+                disabled={bulkDeleting}
+                onClick={async () => {
+                  setBulkDeleting(true);
+                  try {
+                    const res = await bulkDeleteProjects(selectedIds);
+                    reload();
+                    const okCount = res.deleted_ids?.length || 0;
+                    const failCount = res.failed?.length || 0;
+                    if (failCount === 0) {
+                      flash(`Đã xóa ${okCount} dự án!`);
+                    } else {
+                      flash(`Đã xóa ${okCount}/${selectedIds.length} dự án. ${failCount} dự án không thể xóa (không có quyền hoặc không tồn tại).`, true);
+                    }
+                  } catch (e: any) {
+                    flash(e?.response?.data?.detail || 'Xóa hàng loạt thất bại', true);
+                  }
+                  setSelectedIds([]);
+                  setShowBulkDeleteConfirm(false);
+                  setBulkDeleting(false);
+                }}
+                className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm disabled:opacity-50"
+              >
+                {bulkDeleting ? 'Đang xóa...' : 'Xóa'}
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      <ProjectFormModal
+        isOpen={showProjectFormModal}
+        mode={projectFormMode}
+        editingProject={editingProject}
+        defaultBusiness={lockedWorkspace ? (workspaces.find(w => w.code === lockedWorkspace)?.name || lockedWorkspace) : (businessFilter !== 'All' ? businessFilter : undefined)}
+        onClose={() => setShowProjectFormModal(false)}
+        onSaved={() => reload()}
+        onFlash={flash}
+      />
 
       {deleteId !== null && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">

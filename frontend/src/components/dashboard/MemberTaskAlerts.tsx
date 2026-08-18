@@ -65,7 +65,7 @@ const MemberTaskAlerts = () => {
         )}
       </ul>
       <div className="mt-4">
-        <Link href="/projects" legacyBehavior>
+        <Link href="/project-hub" legacyBehavior>
           <a className="font-semibold text-yellow-900 hover:text-yellow-700 transition-colors">
             Xem lại các công việc →
           </a>

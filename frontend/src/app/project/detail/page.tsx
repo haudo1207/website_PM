@@ -6,9 +6,11 @@ import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
+import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import ProjectFormModal from '@/components/ProjectFormModal';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
@@ -18,7 +20,7 @@ import {
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
-  getMembers, getCustomers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks, getMasterPhases,
+  getMembers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks,
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
@@ -55,10 +57,36 @@ const getRowPhase = (tabName: string): string => {
   return 'A';
 };
 
+type TabKey = 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs';
+const SLUG_TO_TAB: Record<string, TabKey> = {
+  overview: 'overview',
+  tasks: 'tasks',
+  meetings: 'meetings',
+  chats: 'chats',
+  members: 'members',
+  'audit-logs': 'audit_logs',
+};
+const TAB_TO_SLUG: Record<TabKey, string> = {
+  overview: 'overview',
+  tasks: 'tasks',
+  meetings: 'meetings',
+  chats: 'chats',
+  members: 'members',
+  audit_logs: 'audit-logs',
+};
+
 function ProjectDetailContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const id = searchParams.get('id') || '';
+  const tabParam = searchParams.get('tab');
+  const activeMainTab: TabKey = (tabParam && SLUG_TO_TAB[tabParam]) || 'overview';
+
+  useEffect(() => {
+    if (!tabParam && id) {
+      router.replace(`/project/detail/overview?id=${id}`);
+    }
+  }, [tabParam, id]);
 
   const isSavingRef = useRef(false);
 
@@ -137,8 +165,6 @@ function ProjectDetailContent() {
     setIsAIDrawerOpen(true);
   };
 
-  // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'
-  const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'>('overview');
   const [activePhase, setActivePhase] = useState<string>('ALL');
   const [showPhaseModal, setShowPhaseModal] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
@@ -458,6 +484,8 @@ function ProjectDetailContent() {
   const [editingMeeting, setEditingMeeting] = useState<any>(null);
   const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
 
@@ -503,22 +531,10 @@ function ProjectDetailContent() {
 
   const [newForm, setNewForm] = useState<any>({});
 
-  // Edit Project Modal state and form values
+  // Edit Project Modal — form fields/dropdowns now live inside the shared
+  // <ProjectFormModal>; this page only tracks open/closed.
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
-  const [editProjectName, setEditProjectName] = useState('');
-  const [editProjectYear, setEditProjectYear] = useState<number>(new Date().getFullYear());
-  const [editCustomerName, setEditCustomerName] = useState('');
-  const [editCustomerId, setEditCustomerId] = useState<number | null>(null);
-  const [editBusiness, setEditBusiness] = useState<string>('');
-  const [editCurrentPhase, setEditCurrentPhase] = useState('');
-  const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-
-  const [selectedPms, setSelectedPms] = useState<number[]>([]);
-  const [selectedLeaders, setSelectedLeaders] = useState<number[]>([]);
-  const [selectedSales, setSelectedSales] = useState<number[]>([]);
-  const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
-  const [savingProject, setSavingProject] = useState(false);
 
   const [projectMembers, setProjectMembers] = useState<any[]>([]);
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
@@ -529,39 +545,7 @@ function ProjectDetailContent() {
   const [parentRemarks, setParentRemarks] = useState<any[]>([]);
 
   const [membersList, setMembersList] = useState<any[]>([]);
-  const [dbCustomers, setDbCustomers] = useState<any[]>([]);
 
-  const editWorkspaceCode = workspaces.find(w => w.name === editBusiness)?.code || editBusiness.toLowerCase();
-  const editBusinessCustomers = editBusiness === 'All'
-    ? dbCustomers
-    : dbCustomers.filter((c) => (c.business_unit || '').toLowerCase() === editWorkspaceCode);
-  const editWorkspaceCodes = new Set((workspaces || []).map(w => w.code));
-  const selectedCustomerBu = (dbCustomers.find((c) => c.name === editCustomerName)?.business_unit || '').toLowerCase();
-  const editCustomerMismatch = !!editCustomerName && (
-    editBusiness === 'All'
-      ? !!selectedCustomerBu && !editWorkspaceCodes.has(selectedCustomerBu)
-      : selectedCustomerBu !== editWorkspaceCode
-  );
-
-  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
-  const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
-  const [pmDropdownOpen, setPmDropdownOpen] = useState(false);
-  const [leaderDropdownOpen, setLeaderDropdownOpen] = useState(false);
-  const [salesDropdownOpen, setSalesDropdownOpen] = useState(false);
-  const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
-
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [pmSearch, setPmSearch] = useState('');
-  const [leaderSearch, setLeaderSearch] = useState('');
-  const [salesSearch, setSalesSearch] = useState('');
-  const [memberSearch, setMemberSearch] = useState('');
-
-  const customerRef = useRef<HTMLDivElement>(null);
-  const phaseRef = useRef<HTMLDivElement>(null);
-  const pmRef = useRef<HTMLDivElement>(null);
-  const leaderRef = useRef<HTMLDivElement>(null);
-  const salesRef = useRef<HTMLDivElement>(null);
-  const memberRef = useRef<HTMLDivElement>(null);
   const priorityFilterRef = useRef<HTMLDivElement>(null);
   const statusFilterRef = useRef<HTMLDivElement>(null);
   const assignedFilterRef = useRef<HTMLDivElement>(null);
@@ -617,7 +601,7 @@ function ProjectDetailContent() {
     try {
       await deleteProject(Number(id));
       flash('Xóa dự án thành công!');
-      router.push('/project');
+      router.push('/project-hub');
     } catch (err: any) {
       flash('Xóa dự án thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
     }
@@ -774,14 +758,6 @@ function ProjectDetailContent() {
         console.error('Error fetching members:', err);
       });
 
-    getCustomers()
-      .then((data) => {
-        setDbCustomers(data || []);
-      })
-      .catch((err) => {
-        console.error('Error fetching customers:', err);
-      });
-
     getCategories()
       .then((data) => {
         setCategories(data || []);
@@ -822,14 +798,6 @@ function ProjectDetailContent() {
         console.error('Error fetching parent remarks:', err);
       });
 
-    getMasterPhases()
-      .then((data) => {
-        setDbMasterPhases(data || []);
-      })
-      .catch((err) => {
-        console.error('Error fetching master phases:', err);
-      });
-
     getWorkspaces()
       .then((data) => {
         setWorkspaces(data || []);
@@ -842,29 +810,6 @@ function ProjectDetailContent() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (customerDropdownOpen && customerRef.current && !customerRef.current.contains(target)) {
-        setCustomerDropdownOpen(false);
-        setCustomerSearch('');
-      }
-      if (phaseDropdownOpen && phaseRef.current && !phaseRef.current.contains(target)) {
-        setPhaseDropdownOpen(false);
-      }
-      if (pmDropdownOpen && pmRef.current && !pmRef.current.contains(target)) {
-        setPmDropdownOpen(false);
-        setPmSearch('');
-      }
-      if (leaderDropdownOpen && leaderRef.current && !leaderRef.current.contains(target)) {
-        setLeaderDropdownOpen(false);
-        setLeaderSearch('');
-      }
-      if (salesDropdownOpen && salesRef.current && !salesRef.current.contains(target)) {
-        setSalesDropdownOpen(false);
-        setSalesSearch('');
-      }
-      if (memberDropdownOpen && memberRef.current && !memberRef.current.contains(target)) {
-        setMemberDropdownOpen(false);
-        setMemberSearch('');
-      }
       if (addMemberDropdownOpen && addMemberRef.current && !addMemberRef.current.contains(target)) {
         setAddMemberDropdownOpen(false);
         setAddMemberSearch('');
@@ -890,39 +835,7 @@ function ProjectDetailContent() {
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [customerDropdownOpen, phaseDropdownOpen, pmDropdownOpen, leaderDropdownOpen, salesDropdownOpen, memberDropdownOpen, addMemberDropdownOpen, priorityDropdownOpen, statusDropdownOpen, assignedDropdownOpen, supportDropdownOpen, skillSolutionDropdownOpen, skillVendorDropdownOpen]);
-
-  const handleUpdateProject = async () => {
-    if (!editProjectName.trim()) {
-      flash('Tên dự án không được để trống!', true);
-      return;
-    }
-    setSavingProject(true);
-    try {
-      const updated = await updateProject(Number(id), {
-        name: editProjectName.trim(),
-        code: `${editProjectName.trim()}-${editProjectYear}`,
-        year: editProjectYear,
-        customer_name: editCustomerName.trim(),
-        customer_id: editCustomerId,
-        business: editBusiness,
-        data_scope: (workspaces.find(w => w.name === editBusiness)?.code) || editBusiness.toLowerCase(),
-        current_phase: editCurrentPhase.trim(),
-        pm_ids: selectedPms,
-        technical_leader_ids: selectedLeaders,
-        sales_ids: selectedSales,
-        member_ids: selectedMembers
-      });
-      setProject(updated);
-      setShowEditProjectModal(false);
-      flash('Cập nhật thông tin dự án thành công!');
-      loadProject();
-    } catch (err: any) {
-      flash('Cập nhật thông tin dự án thất bại: ' + (err.response?.data?.detail || err.message), true);
-    } finally {
-      setSavingProject(false);
-    }
-  };
+  }, [addMemberDropdownOpen, priorityDropdownOpen, statusDropdownOpen, assignedDropdownOpen, supportDropdownOpen, skillSolutionDropdownOpen, skillVendorDropdownOpen]);
 
   const handleSaveChannelLink = async (channelKey: string, value: string) => {
     setIsSavingLink(true);
@@ -4069,7 +3982,7 @@ value={editValue}
         {/* TOP BAR / NAVIGATION HEADER */}
         <div className="h-[52px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
           <div className="flex items-center gap-3">
-            <span className="text-[#565e74] hover:text-[#0058be] cursor-pointer text-xs font-semibold" onClick={() => router.push('/project')}>Dự án</span>
+            <span className="text-[#565e74] hover:text-[#0058be] cursor-pointer text-xs font-semibold" onClick={() => router.push('/project-hub')}>Dự án</span>
             <span className="text-[#c2c6d6] text-xs">/</span>
             <span className="text-xs font-bold text-[#0b1c30]">{project.name}</span>
           </div>
@@ -4145,25 +4058,18 @@ value={editValue}
                 {isAdmin() && (
                   <>
                     <button
-                      onClick={() => {
-                        setEditProjectName(project.name || '');
-                        setEditProjectYear(project.year || (project.project_code ? parseInt(project.project_code, 10) : new Date().getFullYear()));
-                        setEditCustomerName(project.customer_name || '');
-                        setEditCustomerId(project.customer_id ?? null);
-                        setEditBusiness(project.business || (workspaces[0]?.name || ''));
-                        setEditCurrentPhase(project.current_phase || '');
-
-                        setSelectedPms(project.pm_ids || (project.pm_id ? [project.pm_id] : []));
-                        setSelectedLeaders(project.technical_leader_ids || (project.technical_leader_id ? [project.technical_leader_id] : []));
-                        setSelectedSales(project.sales_ids || (project.sales_id ? [project.sales_id] : []));
-                        setSelectedMembers(project.member_ids || []);
-
-                        setShowEditProjectModal(true);
-                      }}
+                      onClick={() => setShowEditProjectModal(true)}
                       className="bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-slate-200 transition-colors shadow-sm"
                     >
                       <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
                       Chỉnh sửa dự án
+                    </button>
+                    <button
+                      onClick={() => setShowDeleteModal(true)}
+                      className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-rose-200 transition-colors shadow-sm"
+                    >
+                      <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
+                      Xóa dự án
                     </button>
                   </>
                 )}
@@ -4174,7 +4080,7 @@ value={editValue}
           {/* TAB NAVIGATION */}
           <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
             <button
-              onClick={() => setActiveMainTab('overview')}
+              onClick={() => router.push(`/project/detail/overview?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4182,7 +4088,7 @@ value={editValue}
               Overview
             </button>
             <button
-              onClick={() => setActiveMainTab('tasks')}
+              onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4190,7 +4096,7 @@ value={editValue}
               Tasks
             </button>
             <button
-              onClick={() => setActiveMainTab('meetings')}
+              onClick={() => router.push(`/project/detail/meetings?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4198,7 +4104,7 @@ value={editValue}
               Meetings
             </button>
             <button
-              onClick={() => setActiveMainTab('chats')}
+              onClick={() => router.push(`/project/detail/chats?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4206,7 +4112,7 @@ value={editValue}
               Chats
             </button>
             <button
-              onClick={() => setActiveMainTab('members')}
+              onClick={() => router.push(`/project/detail/members?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4215,7 +4121,7 @@ value={editValue}
             </button>
             {isAdmin() && (
               <button
-                onClick={() => setActiveMainTab('audit_logs')}
+                onClick={() => router.push(`/project/detail/audit-logs?id=${id}`)}
                 className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                   }`}
               >
@@ -4993,6 +4899,7 @@ value={editValue}
                           onEdit={meeting => { setEditingMeeting(meeting); setShowMeetingModal(true); }}
                           onDelete={id => setDeleteConfirmId(id)}
                           onSummarize={meeting => { setSummarizingMeeting(meeting); setIsSummarizeOpen(true); }}
+                          onOpenDetail={meeting => { setDetailMeeting(meeting); setIsDetailOpen(true); }}
                         />
                       ))
                     )}
@@ -5013,6 +4920,14 @@ value={editValue}
                     onSave={(updatedMeeting) => {
                       setMeetings(prev => prev.map(x => x.id === updatedMeeting.id ? updatedMeeting : x));
                     }}
+                  />
+
+                  <MeetingDetailModal
+                    isOpen={isDetailOpen}
+                    onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }}
+                    meeting={detailMeeting}
+                    onEdit={m => { setIsDetailOpen(false); setEditingMeeting(m); setShowMeetingModal(true); }}
+                    onSummarize={m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }}
                   />
 
                   {/* Delete Confirm Modal */}
@@ -7010,10 +6925,10 @@ value={editValue}
                     const ph = phases.find(p => String(p.id) === String(phId));
                     if (ph) {
                       setActivePhase(ph.name);
-                      setActiveMainTab('tasks');
+                      router.push(`/project/detail/tasks?id=${id}`);
                       flash(`Đã chuyển tới Phase '${ph.name}'`);
                     } else {
-                      setActiveMainTab('tasks');
+                      router.push(`/project/detail/tasks?id=${id}`);
                     }
                   }}
                 />
@@ -7161,505 +7076,14 @@ value={editValue}
         </div>
       )}
 
-      {/* Modal Chỉnh Sửa Dự Án */}
-      {showEditProjectModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
-            {/* Modal Header */}
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-3 text-[#0058be]">
-                <span className="material-symbols-outlined text-[28px]">edit_document</span>
-                <h3 className="text-base font-bold text-[#0b1c30]">Chỉnh sửa thông tin dự án</h3>
-              </div>
-              <button
-                onClick={() => setShowEditProjectModal(false)}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-
-            {/* Modal Form Content */}
-            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-4">
-              {/* Row 1: Tên dự án, Business & Năm */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Project Name */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Tên dự án <span className="text-rose-500 font-bold">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={editProjectName}
-                    onChange={(e) => setEditProjectName(e.target.value)}
-                    placeholder="Ví dụ: Portal KPI, Web Portal..."
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all placeholder:text-[#727785] text-xs font-semibold"
-                  />
-                </div>
-
-                {/* Business */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Workspace <span className="text-rose-500 font-bold">*</span>
-                  </label>
-                  <select
-                    required
-                    value={editBusiness}
-                    onChange={(e) => setEditBusiness(e.target.value)}
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
-                  >
-                    {workspaces.length === 0 && <option value="">Đang tải...</option>}
-                    {workspaces.map(ws => (
-                      <option key={ws.code} value={ws.name}>{ws.name}</option>
-                    ))}
-                    <option value="All">ALL (phạm vi tất cả team)</option>
-                  </select>
-                </div>
-
-                {/* Project Year */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Năm dự án <span className="text-rose-500 font-bold">*</span>
-                  </label>
-                  <select
-                    required
-                    value={editProjectYear}
-                    onChange={(e) => setEditProjectYear(parseInt(e.target.value, 10))}
-                    className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all text-xs font-semibold cursor-pointer"
-                  >
-                    {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 5 + i).map((y) => (
-                      <option key={y} value={y}>{y}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Row 2: Khách hàng & Giai đoạn */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Customer Dropdown */}
-                <div ref={customerRef} className="space-y-1 relative">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">Khách hàng</label>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCustomerDropdownOpen(!customerDropdownOpen);
-                      setPmDropdownOpen(false);
-                      setLeaderDropdownOpen(false);
-                      setSalesDropdownOpen(false);
-                      setMemberDropdownOpen(false);
-                      setPhaseDropdownOpen(false);
-                    }}
-                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left font-semibold"
-                  >
-                    <span className={editCustomerName ? 'text-[#0b1c30]' : 'text-[#727785]'}>
-                      {editCustomerName || 'Chọn khách hàng (Để trống nếu là dự án nội bộ)'}
-                    </span>
-                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                  </button>
-
-                  {editCustomerMismatch && (
-                    <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
-                      <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>
-                      Khách hàng hiện tại không thuộc Workspace đã chọn. Vui lòng chọn khách hàng khác.
-                    </p>
-                  )}
-
-                  {customerDropdownOpen && (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2"
-                    >
-                      <input
-                        type="text"
-                        value={customerSearch}
-                        onChange={(e) => setCustomerSearch(e.target.value)}
-                        placeholder="Tìm kiếm khách hàng..."
-                        className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
-                      />
-
-                      <div className="max-h-[160px] overflow-y-auto space-y-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditCustomerName('');
-                            setEditCustomerId(null);
-                            setCustomerSearch('');
-                            setCustomerDropdownOpen(false);
-                          }}
-                          className="w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 text-[#727785] rounded transition-colors"
-                        >
-                          Chọn khách hàng (Để trống nếu là dự án nội bộ)
-                        </button>
-
-                        {editBusinessCustomers
-                          .filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()))
-                          .map((c) => (
-                            <button
-                              key={c.id}
-                              type="button"
-                              onClick={() => {
-                                setEditCustomerName(c.name);
-                                setEditCustomerId(c.id);
-                                setCustomerSearch('');
-                                setCustomerDropdownOpen(false);
-                              }}
-                              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors ${editCustomerName === c.name ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                            >
-                              {c.name}
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Phase Selection */}
-                <div ref={phaseRef} className="space-y-1 relative">
-                  <label className="text-[11px] font-semibold text-[#565e74] block">
-                    Giai đoạn hiện tại <span className="text-rose-500 font-bold ml-0.5">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPhaseDropdownOpen(!phaseDropdownOpen);
-                      setCustomerDropdownOpen(false);
-                      setPmDropdownOpen(false);
-                      setLeaderDropdownOpen(false);
-                      setSalesDropdownOpen(false);
-                      setMemberDropdownOpen(false);
-                    }}
-                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] flex items-center justify-between outline-none focus:ring-2 focus:ring-[#0058be]/20 focus:border-[#0058be] transition-all cursor-pointer text-left font-semibold"
-                  >
-                    <span className="text-[#0b1c30]">{editCurrentPhase || 'Chọn giai đoạn...'}</span>
-                    <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                  </button>
-
-                  {phaseDropdownOpen && (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto scrollbar-thin"
-                    >
-                      {(dbMasterPhases.length > 0 ? dbMasterPhases.map((m: any) => m.name) : [
-                        '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
-                        '5. Chờ ra thầu', '6. Tham gia thầu POP', '6. Tham gia thầu nhà phụ',
-                        '7. Trúng Thầu', '7. Rớt thầu', '8. Ký hợp đồng', '9. Đặt hàng',
-                        '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
-                        '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
-                      ]).map((p) => (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => {
-                            setEditCurrentPhase(p);
-                            setPhaseDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-4 py-2 text-xs hover:bg-[#eff4ff]/60 transition-colors ${editCurrentPhase === p ? 'bg-[#eff4ff] text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                        >
-                          {p}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* PM Selection */}
-              <div ref={pmRef} className="space-y-1 relative">
-                <label className="text-[11px] font-semibold text-[#565e74] block">
-                  Project Manager (PM)
-                </label>
-                <div
-                  onClick={() => {
-                    setPmDropdownOpen(!pmDropdownOpen);
-                    setLeaderDropdownOpen(false);
-                    setSalesDropdownOpen(false);
-                    setMemberDropdownOpen(false);
-                    setCustomerDropdownOpen(false);
-                    setPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
-                >
-                  <div className="flex flex-wrap gap-1.5 flex-1">
-                    {selectedPms.length === 0 ? (
-                      <span className="text-[#727785] px-2 py-0.5">Chọn Project Manager (PM)...</span>
-                    ) : (
-                      selectedPms.map(id => {
-                        const m = membersList.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedPms(selectedPms.filter(x => x !== id));
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                </div>
-
-                {pmDropdownOpen && (
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
-                  >
-                    <input
-                      type="text"
-                      value={pmSearch}
-                      onChange={(e) => setPmSearch(e.target.value)}
-                      placeholder="Tìm kiếm PM..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
-                    />
-                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
-                      {membersList
-                        .filter(u => u.display_name?.toLowerCase().includes(pmSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(pmSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = selectedPms.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  setSelectedPms(selectedPms.filter(id => id !== u.id));
-                                } else {
-                                  setSelectedPms([...selectedPms, u.id]);
-                                }
-                              }}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                            >
-                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Technical Leader Selection */}
-              <div ref={leaderRef} className="space-y-1 relative">
-                <label className="text-[11px] font-semibold text-[#565e74] block">
-                  Technical Leader
-                </label>
-                <div
-                  onClick={() => {
-                    setLeaderDropdownOpen(!leaderDropdownOpen);
-                    setPmDropdownOpen(false);
-                    setSalesDropdownOpen(false);
-                    setMemberDropdownOpen(false);
-                    setCustomerDropdownOpen(false);
-                    setPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
-                >
-                  <div className="flex flex-wrap gap-1.5 flex-1">
-                    {selectedLeaders.length === 0 ? (
-                      <span className="text-[#727785] px-2 py-0.5">Chọn Technical Leader...</span>
-                    ) : (
-                      selectedLeaders.map(id => {
-                        const m = membersList.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedLeaders(selectedLeaders.filter(x => x !== id));
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                </div>
-
-                {leaderDropdownOpen && (
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
-                  >
-                    <input
-                      type="text"
-                      value={leaderSearch}
-                      onChange={(e) => setLeaderSearch(e.target.value)}
-                      placeholder="Tìm kiếm Technical Leader..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
-                    />
-                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
-                      {membersList
-                        .filter(u => u.display_name?.toLowerCase().includes(leaderSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(leaderSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = selectedLeaders.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  setSelectedLeaders(selectedLeaders.filter(id => id !== u.id));
-                                } else {
-                                  setSelectedLeaders([...selectedLeaders, u.id]);
-                                }
-                              }}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                            >
-                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Sales Selection */}
-              <div ref={salesRef} className="space-y-1 relative">
-                <label className="text-[11px] font-semibold text-[#565e74] block">
-                  Sales
-                </label>
-                <div
-                  onClick={() => {
-                    setSalesDropdownOpen(!salesDropdownOpen);
-                    setPmDropdownOpen(false);
-                    setLeaderDropdownOpen(false);
-                    setMemberDropdownOpen(false);
-                    setCustomerDropdownOpen(false);
-                    setPhaseDropdownOpen(false);
-                  }}
-                  className="w-full bg-white border border-[#c2c6d6] rounded-lg p-2 text-xs text-[#0b1c30] flex flex-wrap gap-1.5 items-center justify-between min-h-[38px] cursor-pointer focus-within:ring-2 focus-within:ring-[#0058be]/20 focus-within:border-[#0058be] transition-all"
-                >
-                  <div className="flex flex-wrap gap-1.5 flex-1">
-                    {selectedSales.length === 0 ? (
-                      <span className="text-[#727785] px-2 py-0.5">Chọn Sales...</span>
-                    ) : (
-                      selectedSales.map(id => {
-                        const m = membersList.find(x => x.id === id);
-                        return (
-                          <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-semibold text-[10px] flex items-center gap-1">
-                            {m?.display_name || id}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedSales(selectedSales.filter(x => x !== id));
-                              }}
-                              className="text-blue-500 hover:text-blue-700 font-bold ml-0.5"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })
-                    )}
-                  </div>
-                  <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
-                </div>
-
-                {salesDropdownOpen && (
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 mt-1.5 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
-                  >
-                    <input
-                      type="text"
-                      value={salesSearch}
-                      onChange={(e) => setSalesSearch(e.target.value)}
-                      placeholder="Tìm kiếm Sales..."
-                      className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-3 py-1.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0058be]"
-                    />
-                    <div className="overflow-y-auto space-y-1 flex-1 max-h-[140px]">
-                      {membersList
-                        .filter(u => u.display_name?.toLowerCase().includes(salesSearch.toLowerCase()) || u.full_name?.toLowerCase().includes(salesSearch.toLowerCase()))
-                        .map((u) => {
-                          const isSelected = selectedSales.includes(u.id);
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  setSelectedSales(selectedSales.filter(id => id !== u.id));
-                                } else {
-                                  setSelectedSales([...selectedSales, u.id]);
-                                }
-                              }}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${isSelected ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'}`}
-                            >
-                              <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
-                              {isSelected && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-
-            </div>
-
-            {/* Modal Footer */}
-            <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowEditProjectModal(false);
-                  setShowDeleteModal(true);
-                }}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[16px]">delete</span>
-                Xóa dự án
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowEditProjectModal(false)}
-                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  Hủy bỏ
-                </button>
-                <button
-                  type="button"
-                  onClick={handleUpdateProject}
-                  disabled={savingProject}
-                  className="px-5 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                >
-                  {savingProject ? (
-                    <>
-                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Đang lưu...
-                    </>
-                  ) : (
-                    <>Lưu thay đổi</>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <ProjectFormModal
+        isOpen={showEditProjectModal}
+        mode="edit"
+        editingProject={project}
+        onClose={() => setShowEditProjectModal(false)}
+        onSaved={(updated) => { setProject(updated); loadProject(); }}
+        onFlash={flash}
+      />
 
       {/* Modal Xác Nhận Xóa Dự Án */}
       {showDeleteModal && (

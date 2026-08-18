@@ -773,8 +773,8 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     return serialize_project(p, db)
 
 
-@router.delete("/projects/{pid:int}")
-def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def _delete_project_cascade(pid: int, db: Session, current_user) -> None:
+    """Raises HTTPException(404/403) if invalid. Cascade-deletes the project and commits."""
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
         raise HTTPException(404, "Project not found.")
@@ -822,7 +822,31 @@ def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends
         description=f"Xóa dự án '{p_name}' (kèm toàn bộ phase/task/link/member/meeting liên quan)"
     )
     db.commit()
+
+
+@router.delete("/projects/{pid:int}")
+def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    _delete_project_cascade(pid, db, current_user)
     return {"ok": True}
+
+
+@router.post("/projects/bulk-delete")
+def bulk_delete_projects(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "ids là bắt buộc và phải là danh sách khác rỗng.")
+
+    deleted_ids: list = []
+    failed: list = []
+    for raw_id in ids:
+        try:
+            pid = int(raw_id)
+            _delete_project_cascade(pid, db, current_user)
+            deleted_ids.append(pid)
+        except HTTPException as e:
+            failed.append({"id": raw_id, "reason": e.detail})
+
+    return {"deleted_ids": deleted_ids, "failed": failed}
 
 
 # ═══════════════════════════════════════════════════════════

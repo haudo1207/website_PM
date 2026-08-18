@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import datetime
 import logging
+import re
 
 from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
@@ -108,6 +110,30 @@ def meeting_to_dict(m: Meeting) -> dict:
                 elif isinstance(t, str):
                     summary_list.append(f"• {t}")
 
+    db_members = [
+        {
+            "id": mm.id,
+            "member_id": mm.member_id,
+            "display_name": mm.member.display_name if mm.member else "Thành viên",
+            "role": mm.role,
+            "joined_at": mm.joined_at.isoformat() if mm.joined_at else None
+        } for mm in m.members
+    ]
+    
+    custom_members = []
+    if isinstance(m.ai_summary, dict) and "custom_members" in m.ai_summary and isinstance(m.ai_summary["custom_members"], list):
+        custom_members = m.ai_summary["custom_members"]
+
+    final_members = db_members if db_members else custom_members
+
+    host_name = m.creator.display_name if m.creator else "Host mkt.szone"
+    if not final_members:
+        final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}]
+    else:
+        has_host = any("Host" in str(mb.get("role", "")) or mb.get("display_name") == host_name for mb in final_members)
+        if not has_host:
+            final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}] + final_members
+
     return {
         "id": m.id,
         "title": m.title,
@@ -136,16 +162,8 @@ def meeting_to_dict(m: Meeting) -> dict:
         "creator_name": m.creator.display_name if m.creator else None,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
-        "members": [
-            {
-                "id": mm.id,
-                "member_id": mm.member_id,
-                "display_name": mm.member.display_name,
-                "role": mm.role,
-                "joined_at": mm.joined_at.isoformat() if mm.joined_at else None
-            } for mm in m.members
-        ],
-        "member_count": len(m.members)
+        "members": final_members,
+        "member_count": len(final_members)
     }
 
 # ─── LIST ───────────────────────────────────────────────
@@ -457,6 +475,14 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             m.ai_summary = [str(item) for item in ai_summary_input]
         else:
             m.ai_summary = ai_summary_input
+
+    members_input = body.get("members")
+    if members_input is not None and isinstance(members_input, list):
+        if not isinstance(m.ai_summary, dict):
+            m.ai_summary = {"executive_summary": str(m.ai_summary or "")}
+        updated_summary = dict(m.ai_summary)
+        updated_summary["custom_members"] = members_input
+        m.ai_summary = updated_summary
 
     project_id = body.get("project_id")
     project_input = body.get("project")
@@ -829,3 +855,215 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
         return {"success": True, "meeting_link": m.meeting_link}
 
     raise HTTPException(500, "Không thể tạo lại link Google Meet")
+
+
+# ─── N8N INTEGRATION WEBHOOK SCHEMAS & ENDPOINT ───────────────
+class N8nMeetingSummaryPayload(BaseModel):
+    meeting_id: Optional[int] = None
+    meeting_url: Optional[str] = None
+    meeting_code: Optional[str] = None
+    title: str = Field(..., min_length=1)
+    meeting_date: str
+    start_time: Optional[str] = "09:00"
+    end_time: Optional[str] = None
+    platform: Optional[str] = "Google Meet"
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
+    creator_email: Optional[str] = None
+    creator_name: Optional[str] = None
+    transcript: Optional[str] = None
+    executive_summary: Optional[str] = None
+    decisions: Optional[List[str]] = Field(default_factory=list)
+    recommended_tasks: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    sheet_row_id: Optional[str] = None
+
+
+@router.post("/webhook/n8n-summary")
+def ingest_n8n_meeting_summary(
+    payload: N8nMeetingSummaryPayload,
+    db: Session = Depends(get_db),
+    x_n8n_webhook_secret: Optional[str] = Header(None, alias="X-N8N-Webhook-Secret")
+):
+    """
+    Ingest Meeting Summary from Google Sheet / n8n workflow.
+    Validates secret, normalizes summary data, idempotently matches/updates or creates meeting,
+    and preserves existing manual Project/Creator assignments.
+    """
+    from ..config import settings
+    configured_secret = (settings.N8N_WEBHOOK_SECRET or "").strip()
+    if configured_secret:
+        if not x_n8n_webhook_secret or x_n8n_webhook_secret.strip() != configured_secret:
+            logger.warning("n8n webhook authentication failed: invalid or missing secret header.")
+            raise HTTPException(status_code=401, detail="X-N8N-Webhook-Secret không hợp lệ hoặc bị thiếu.")
+
+    # 1. Parse dates and times
+    try:
+        meeting_date = parse_date(payload.meeting_date)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Ngày họp không hợp lệ (yêu cầu YYYY-MM-DD): {payload.meeting_date}")
+
+    start_time = None
+    if payload.start_time:
+        try:
+            start_time = parse_time(payload.start_time)
+        except Exception:
+            start_time = datetime.time(9, 0)
+    else:
+        start_time = datetime.time(9, 0)
+
+    end_time = None
+    if payload.end_time:
+        try:
+            end_time = parse_time(payload.end_time)
+        except Exception:
+            pass
+
+    clean_title = (payload.title or "").strip()
+    if not clean_title:
+        raise HTTPException(status_code=422, detail="Tiêu đề cuộc họp không được để trống.")
+
+    # 2. Normalize AI Summary structure
+    norm_summary = {
+        "executive_summary": payload.executive_summary or "",
+        "decisions": payload.decisions or [],
+        "recommended_tasks": payload.recommended_tasks or [],
+        "source": "n8n_google_sheet",
+        "n8n_metadata": {
+            "sheet_row_id": payload.sheet_row_id,
+            "ingested_at": datetime.datetime.now().isoformat()
+        }
+    }
+
+    # 3. Project auto-mapping
+    mapped_project_id = None
+    if payload.project_id:
+        proj = db.query(Project).filter(Project.id == payload.project_id).first()
+        if proj:
+            mapped_project_id = proj.id
+    elif payload.project_name and payload.project_name.strip():
+        proj = db.query(Project).filter(Project.name.ilike(payload.project_name.strip())).first()
+        if proj:
+            mapped_project_id = proj.id
+
+    # 4. Creator auto-mapping
+    mapped_creator_id = None
+    if payload.creator_email and payload.creator_email.strip():
+        mb = db.query(Member).filter(Member.email.ilike(payload.creator_email.strip())).first()
+        if mb:
+            mapped_creator_id = mb.id
+    elif payload.creator_name and payload.creator_name.strip():
+        mb = db.query(Member).filter(Member.display_name.ilike(payload.creator_name.strip())).first()
+        if not mb:
+            mb = db.query(Member).filter(Member.full_name.ilike(payload.creator_name.strip())).first()
+        if mb:
+            mapped_creator_id = mb.id
+
+    # 5. Idempotent Meeting Matcher
+    matched_meeting = None
+
+    # Priority 1: Match by ID
+    if payload.meeting_id:
+        matched_meeting = db.query(Meeting).filter(Meeting.id == payload.meeting_id).first()
+
+    # Priority 2: Match by meeting_url or meeting_code
+    if not matched_meeting and (payload.meeting_url or payload.meeting_code):
+        url_query = payload.meeting_url or payload.meeting_code
+        code_match = re.search(r"([a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3})", url_query, re.I)
+        if code_match:
+            code_str = code_match.group(1)
+            matched_meeting = db.query(Meeting).filter(Meeting.meeting_url.ilike(f"%{code_str}%")).first()
+        else:
+            matched_meeting = db.query(Meeting).filter(Meeting.meeting_url == url_query.strip()).first()
+
+    # Priority 3: Match by title + meeting_date ONLY if exactly 1 record matches
+    if not matched_meeting and clean_title and meeting_date:
+        candidates = db.query(Meeting).filter(
+            Meeting.title.ilike(clean_title),
+            Meeting.meeting_date == meeting_date
+        ).all()
+
+        if len(candidates) == 1:
+            matched_meeting = candidates[0]
+        elif len(candidates) > 1:
+            logger.warning(
+                f"n8n webhook: Match title '{clean_title}' on {meeting_date} is ambiguous ({len(candidates)} records found). "
+                f"Skipping auto-update to avoid corrupting wrong meeting."
+            )
+
+    # 6. Execute Upsert
+    if matched_meeting:
+        # UPDATE existing meeting
+        if payload.transcript and payload.transcript.strip():
+            matched_meeting.transcript = payload.transcript.strip()
+        matched_meeting.ai_summary = norm_summary
+        matched_meeting.status = "DONE"
+
+        # Preserve existing assignments: only update if currently NULL and new mapping exists
+        if matched_meeting.project_id is None and mapped_project_id is not None:
+            matched_meeting.project_id = mapped_project_id
+        if matched_meeting.created_by is None and mapped_creator_id is not None:
+            matched_meeting.created_by = mapped_creator_id
+
+        db.commit()
+        db.refresh(matched_meeting)
+
+        AuditService.record(
+            db=db,
+            user_id=None,
+            module="Meeting",
+            entity_type="Meeting",
+            entity_id=matched_meeting.id,
+            action="UPDATE",
+            project_id=matched_meeting.project_id,
+            description=f"Cập nhật Meeting Summary từ n8n cho cuộc họp '{matched_meeting.title}'"
+        )
+        db.commit()
+
+        logger.info(f"n8n webhook: Updated existing meeting id={matched_meeting.id} title='{matched_meeting.title}'")
+        return {
+            "success": True,
+            "action": "updated",
+            "meeting_id": matched_meeting.id,
+            "message": f"Đã cập nhật Meeting Summary cho cuộc họp #{matched_meeting.id}"
+        }
+
+    else:
+        # CREATE new meeting (strict check minimum required fields)
+        new_m = Meeting(
+            title=clean_title,
+            description=f"Tự động tạo từ n8n (Row ID: {payload.sheet_row_id or 'N/A'})",
+            platform=payload.platform or "Google Meet",
+            meeting_url=payload.meeting_url,
+            meeting_date=meeting_date,
+            start_time=start_time,
+            end_time=end_time,
+            status="DONE",
+            transcript=payload.transcript,
+            ai_summary=norm_summary,
+            project_id=mapped_project_id,
+            created_by=mapped_creator_id
+        )
+        db.add(new_m)
+        db.commit()
+        db.refresh(new_m)
+
+        AuditService.record(
+            db=db,
+            user_id=None,
+            module="Meeting",
+            entity_type="Meeting",
+            entity_id=new_m.id,
+            action="CREATE",
+            project_id=new_m.project_id,
+            description=f"Tạo cuộc họp mới từ n8n Summary '{new_m.title}'"
+        )
+        db.commit()
+
+        logger.info(f"n8n webhook: Created new meeting id={new_m.id} title='{new_m.title}'")
+        return {
+            "success": True,
+            "action": "created",
+            "meeting_id": new_m.id,
+            "message": f"Đã tạo cuộc họp mới #{new_m.id} từ n8n Summary"
+        }
+

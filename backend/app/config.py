@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
 
+    # n8n Integration Webhook Secret
+    N8N_WEBHOOK_SECRET: str = ""
+
     @property
     def superadmin_emails(self) -> set[str]:
         return {

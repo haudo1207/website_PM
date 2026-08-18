@@ -974,7 +974,7 @@ export default function OverviewTab() {
                           }
                           setInboxOpen(false);
                           if (n.project_id) {
-                            const url = `/project/detail?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
+                            const url = `/project/detail/tasks?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
                             router.push(url);
                           }
                         }}
@@ -1044,7 +1044,7 @@ export default function OverviewTab() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link
-              href="/project"
+              href="/project-hub"
               className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${myAlerts.overdue_count > 0
                   ? 'text-red-600 border-red-300 hover:bg-red-100'
                   : 'text-amber-600 border-amber-300 hover:bg-amber-100'
@@ -1326,7 +1326,7 @@ export default function OverviewTab() {
             activeProjects.map((p: any) => (
               <div
                 key={p.id}
-                onClick={() => router.push(`/project/detail?id=${p.id}`)}
+                onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
                 className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-[#0058be] hover:shadow-md transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99]"
               >
                 <div>
@@ -1527,7 +1527,7 @@ export default function OverviewTab() {
           tasks={rawTasks}
           projects={rawProjects}
           onClose={() => setSelectedMemberModal(null)}
-          onNavigate={(projectId) => router.push(`/project/detail?id=${projectId}`)}
+          onNavigate={(projectId) => router.push(`/project/detail/overview?id=${projectId}`)}
         />
       )}
     </div>

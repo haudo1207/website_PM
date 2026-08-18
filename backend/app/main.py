@@ -1,6 +1,7 @@
 import os
 
-from fastapi import FastAPI, Depends
+from typing import Optional
+from fastapi import FastAPI, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit, notifications as notifications_router
@@ -955,6 +956,15 @@ app.include_router(skills.router,              prefix="/api/skills")
 app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
 app.include_router(leave_requests_router.router, prefix="/api/leave-requests")
+@app.post("/api/meetings/webhook/n8n-summary")
+def ingest_n8n_meeting_summary_public(
+    payload: meetings_router.N8nMeetingSummaryPayload,
+    db: Session = Depends(get_db),
+    x_n8n_webhook_secret: Optional[str] = Header(None, alias="X-N8N-Webhook-Secret")
+):
+    """Public Webhook endpoint for n8n meeting summary ingestion (authenticates via X-N8N-Webhook-Secret)."""
+    return meetings_router.ingest_n8n_meeting_summary(payload=payload, db=db, x_n8n_webhook_secret=x_n8n_webhook_secret)
+
 app.include_router(meetings_router.router,    prefix="/api/meetings")
 app.include_router(performance_settings.router, prefix="/api/performance-settings")
 app.include_router(accounts.router,            prefix="/api/accounts")
@@ -976,6 +986,37 @@ def health():
         "commit": os.environ.get("APP_COMMIT", "dev"),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+@app.get("/api/meetings/google/auth-direct")
+def google_auth_direct_public():
+    """Public helper endpoint to launch Google OAuth authorization flow directly from browser."""
+    from .config import settings
+    from google_auth_oauthlib.flow import Flow
+    from fastapi.responses import RedirectResponse
+    from fastapi import HTTPException
+    
+    client_id = settings.GOOGLE_CLIENT_ID
+    client_secret = settings.GOOGLE_CLIENT_SECRET
+    if not client_id or not client_secret:
+        raise HTTPException(400, "Thiếu GOOGLE_CLIENT_ID hoặc GOOGLE_CLIENT_SECRET trong .env")
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        redirect_uri=settings.GOOGLE_REDIRECT_URI,
+    )
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    return RedirectResponse(url=auth_url)
 
 @app.get("/api/meetings/google/callback")
 def google_callback_public(code: str, state: str = None, db: Session = Depends(get_db)):

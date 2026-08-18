@@ -56,6 +56,7 @@ export default function MembersView({ onFlash }: Props) {
   const [filterTeam, setFilterTeam] = useState('');
   const [filterPosition, setFilterPosition] = useState('');
   const [filterDepartment, setFilterDepartment] = useState('');
+  const [filterLeader, setFilterLeader] = useState('');
 
   // modal
   const [showModal, setShowModal] = useState(false);
@@ -86,8 +87,9 @@ export default function MembersView({ onFlash }: Props) {
     if (filterTeam) params.team = filterTeam;
     if (filterPosition) params.position = filterPosition;
     if (filterDepartment) params.department = filterDepartment;
+    if (filterLeader) params.leader_name = filterLeader;
     getMembers(params).then(setMembers).catch(() => { });
-  }, [search, filterTeam, filterPosition, filterDepartment]);
+  }, [search, filterTeam, filterPosition, filterDepartment, filterLeader]);
 
   useEffect(() => {
     loadMembers();
@@ -255,8 +257,18 @@ export default function MembersView({ onFlash }: Props) {
               placeholder="Tìm Team..."
             />
 
-            {(filterTeam || filterPosition || filterDepartment || search) && (
-              <button onClick={() => { setSearch(''); setFilterTeam(''); setFilterPosition(''); setFilterDepartment(''); }}
+            <SearchableSelect
+              label="Leader"
+              icon="👤"
+              align="right"
+              options={availableLeaders.map(l => ({ id: l.name, name: l.name }))}
+              value={filterLeader}
+              onChange={val => setFilterLeader(val === 'all' ? '' : String(val))}
+              placeholder="Tìm Leader..."
+            />
+
+            {(filterTeam || filterPosition || filterDepartment || filterLeader || search) && (
+              <button onClick={() => { setSearch(''); setFilterTeam(''); setFilterPosition(''); setFilterDepartment(''); setFilterLeader(''); }}
                 className="text-xs text-slate-500 hover:text-red-600 font-medium transition-colors">
                 Xóa lọc
               </button>

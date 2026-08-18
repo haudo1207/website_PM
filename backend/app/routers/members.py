@@ -174,6 +174,7 @@ def list_members(
     year: Optional[int] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    leader_name: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -291,6 +292,8 @@ def list_members(
         q = q.filter(Member.position == position)
     if department:
         q = q.filter(Member.department == department)
+    if leader_name:
+        q = q.filter(Member.leader_name == leader_name)
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:
