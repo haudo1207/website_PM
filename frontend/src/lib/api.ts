@@ -195,7 +195,7 @@ export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
 
 // Members
-export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; skill_id?: number }) =>
+export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; skill_id?: number; leader_name?: string }) =>
   api.get('/members', { params }).then(r => r.data);
 export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.data);
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
