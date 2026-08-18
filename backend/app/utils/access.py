@@ -380,7 +380,7 @@ def require_route_project_access(
     """Authorize project, phase, group, task, or meeting path parameters."""
     print(f"--- ACCESS CHECK ---")
     print(f"Path: {request.url.path}")
-    if request.url.path.endswith("/google/callback") or "/health/google" in request.url.path:
+    if request.url.path.endswith("/google/callback") or "/health/google" in request.url.path or "/webhook/n8n-summary" in request.url.path:
         return None
 
     params = request.path_params
