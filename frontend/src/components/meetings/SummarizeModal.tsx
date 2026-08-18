@@ -195,11 +195,6 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
               <strong className="text-[#1769d2] text-sm block">{meeting.title || 'Cuộc họp'}</strong>
               <span className="text-[#59687f] block font-medium mt-0.5">{timeInfo}</span>
             </div>
-            {meeting.ai_summary?.source === 'n8n_google_sheet' && (
-              <span className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold bg-teal-100 text-teal-800 border border-teal-300 shadow-2xs">
-                ✦ Từ n8n Sheet
-              </span>
-            )}
           </div>
 
           {/* Quick Assignment Controls */}

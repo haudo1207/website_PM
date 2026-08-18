@@ -110,6 +110,30 @@ def meeting_to_dict(m: Meeting) -> dict:
                 elif isinstance(t, str):
                     summary_list.append(f"• {t}")
 
+    db_members = [
+        {
+            "id": mm.id,
+            "member_id": mm.member_id,
+            "display_name": mm.member.display_name if mm.member else "Thành viên",
+            "role": mm.role,
+            "joined_at": mm.joined_at.isoformat() if mm.joined_at else None
+        } for mm in m.members
+    ]
+    
+    custom_members = []
+    if isinstance(m.ai_summary, dict) and "custom_members" in m.ai_summary and isinstance(m.ai_summary["custom_members"], list):
+        custom_members = m.ai_summary["custom_members"]
+
+    final_members = db_members if db_members else custom_members
+
+    host_name = m.creator.display_name if m.creator else "Host mkt.szone"
+    if not final_members:
+        final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}]
+    else:
+        has_host = any("Host" in str(mb.get("role", "")) or mb.get("display_name") == host_name for mb in final_members)
+        if not has_host:
+            final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}] + final_members
+
     return {
         "id": m.id,
         "title": m.title,
@@ -138,16 +162,8 @@ def meeting_to_dict(m: Meeting) -> dict:
         "creator_name": m.creator.display_name if m.creator else None,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
-        "members": [
-            {
-                "id": mm.id,
-                "member_id": mm.member_id,
-                "display_name": mm.member.display_name,
-                "role": mm.role,
-                "joined_at": mm.joined_at.isoformat() if mm.joined_at else None
-            } for mm in m.members
-        ],
-        "member_count": len(m.members)
+        "members": final_members,
+        "member_count": len(final_members)
     }
 
 # ─── LIST ───────────────────────────────────────────────
@@ -459,6 +475,14 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             m.ai_summary = [str(item) for item in ai_summary_input]
         else:
             m.ai_summary = ai_summary_input
+
+    members_input = body.get("members")
+    if members_input is not None and isinstance(members_input, list):
+        if not isinstance(m.ai_summary, dict):
+            m.ai_summary = {"executive_summary": str(m.ai_summary or "")}
+        updated_summary = dict(m.ai_summary)
+        updated_summary["custom_members"] = members_input
+        m.ai_summary = updated_summary
 
     project_id = body.get("project_id")
     project_input = body.get("project")
