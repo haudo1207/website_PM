@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search } from 'lucide-react';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users, CheckSquare, Square } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -35,10 +35,12 @@ export default function MeetingDetailModal({
   const [projectSearch, setProjectSearch] = useState('');
   const [isAssigningProject, setIsAssigningProject] = useState(false);
 
-  // Add Member Modal State
+  // Add Member Modal State (Multi-Select Supported)
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [accountsList, setAccountsList] = useState<any[]>([]);
-  const [memberName, setMemberName] = useState('');
+  const [selectedMemberNames, setSelectedMemberNames] = useState<string[]>([]);
+  const [customMemberInput, setCustomMemberInput] = useState('');
+  const [memberSearch, setMemberSearch] = useState('');
   const [memberRole, setMemberRole] = useState('Thành viên');
   const [isAddingMember, setIsAddingMember] = useState(false);
 
@@ -135,8 +137,17 @@ export default function MeetingDetailModal({
     }
   };
 
+  const toggleSelectMember = (name: string) => {
+    setSelectedMemberNames(prev =>
+      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
+    );
+  };
+
   const handleOpenAddMember = async () => {
     setIsAddMemberOpen(true);
+    setSelectedMemberNames([]);
+    setCustomMemberInput('');
+    setMemberSearch('');
     try {
       const res = await getAccounts();
       const items = res?.data || res || [];
@@ -148,7 +159,16 @@ export default function MeetingDetailModal({
 
   const handleAddMemberSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!memberName.trim()) return;
+    
+    const namesToAdd = [...selectedMemberNames];
+    if (customMemberInput.trim() && !namesToAdd.includes(customMemberInput.trim())) {
+      namesToAdd.push(customMemberInput.trim());
+    }
+
+    if (namesToAdd.length === 0) {
+      alert("Vui lòng chọn ít nhất 1 thành viên hoặc tự nhập tên thành viên!");
+      return;
+    }
 
     setIsAddingMember(true);
     try {
@@ -158,11 +178,15 @@ export default function MeetingDetailModal({
       );
       const baseList = hasHost ? localMembers : [hostObj, ...localMembers];
 
-      const newMemberObj = {
-        display_name: memberName.trim(),
-        role: memberRole
-      };
-      const updatedMembers = [...baseList, newMemberObj];
+      const existingNamesSet = new Set(baseList.map((m: any) => m.display_name || m.full_name || m.name));
+      const newMemberObjects = namesToAdd
+        .filter(name => !existingNamesSet.has(name))
+        .map(name => ({
+          display_name: name,
+          role: memberRole
+        }));
+
+      const updatedMembers = [...baseList, ...newMemberObjects];
       const data = await updateMeeting(meeting.id, { members: updatedMembers });
 
       setLocalMembers(updatedMembers);
@@ -174,8 +198,9 @@ export default function MeetingDetailModal({
         );
       }
       setIsAddMemberOpen(false);
-      setMemberName('');
-      triggerToast(`✓ Đã thêm thành viên "${memberName.trim()}"!`);
+      setSelectedMemberNames([]);
+      setCustomMemberInput('');
+      triggerToast(`✓ Đã thêm ${namesToAdd.length} thành viên tham dự!`);
     } catch (err: any) {
       alert(err?.response?.data?.detail || 'Lỗi khi thêm thành viên');
     } finally {
@@ -274,13 +299,25 @@ export default function MeetingDetailModal({
                 )}
 
                 {isUnassignedProject ? (
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#fef3c7] text-[#92400e]">
-                    ⚠️ Chưa gán Dự án
-                  </span>
+                  <button 
+                    type="button"
+                    onClick={handleOpenAssignProject}
+                    className="px-3 py-1 rounded-full text-[11px] font-extrabold bg-[#fef3c7] hover:bg-[#fde68a] text-[#92400e] border border-[#f59e0b]/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    title="Bấm để chọn và gán dự án"
+                  >
+                    <span>⚠️ Chưa gán Dự án</span>
+                    <span className="underline text-[10px] font-bold opacity-80">(Bấm để gán)</span>
+                  </button>
                 ) : (
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-[#0058be]">
-                    📁 {projectName}
-                  </span>
+                  <button 
+                    type="button"
+                    onClick={handleOpenAssignProject}
+                    className="px-3 py-1 rounded-full text-[11px] font-bold bg-blue-50 hover:bg-blue-100 text-[#0058be] border border-blue-200 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    title="Bấm để thay đổi dự án"
+                  >
+                    <span>📁 {projectName}</span>
+                    <span className="text-[10px] opacity-75 font-semibold">(Đổi)</span>
+                  </button>
                 )}
 
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f1f5f9] text-[#64748b]">
@@ -439,19 +476,21 @@ export default function MeetingDetailModal({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                     <div>
                       <span className="text-[#64748b] block mb-1">Dự án</span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {isUnassignedProject ? (
                           <span className="px-2.5 py-1 rounded-lg bg-[#fef3c7] text-[#92400e] font-bold text-[11px]">
                             ⚠️ Chưa gán dự án
                           </span>
                         ) : (
-                          <span className="font-bold text-[#0b1c30]">{projectName}</span>
+                          <span className="font-bold text-[#0b1c30] text-xs">{projectName}</span>
                         )}
                         <button 
+                          type="button"
                           onClick={handleOpenAssignProject} 
-                          className="px-2.5 py-1 text-[11px] font-bold text-[#6366f1] bg-[#f5f3ff] hover:bg-[#eee9fe] rounded-lg transition-colors cursor-pointer"
+                          className="px-3 py-1.5 text-xs font-extrabold text-[#6366f1] bg-[#f5f3ff] hover:bg-[#6366f1] hover:text-white border border-[#c7d2fe] hover:border-[#6366f1] rounded-xl transition-all shadow-2xs cursor-pointer flex items-center gap-1.5 active:scale-95"
                         >
-                          Gán dự án
+                          <FolderPlus size={14} />
+                          <span>{isUnassignedProject ? '+ Gán Dự Án Ngay' : 'Đổi Dự Án'}</span>
                         </button>
                       </div>
                     </div>
@@ -980,42 +1019,111 @@ export default function MeetingDetailModal({
         </div>
       )}
 
-      {/* Thêm Thành Viên Modal */}
+      {/* Thêm Thành Viên Modal (Multi-Select Supported) */}
       {isAddMemberOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-extrabold text-[#0b1c30] flex items-center gap-2">
-                <span>👤 Thêm thành viên tham dự</span>
-              </h3>
-              <button onClick={() => setIsAddMemberOpen(false)} className="text-[#94a3b8] hover:text-[#0b1c30] text-xs font-bold">✕</button>
+              <div>
+                <h3 className="text-sm font-extrabold text-[#0b1c30] flex items-center gap-2">
+                  <Users size={18} className="text-[#6366f1]" />
+                  <span>Thêm thành viên tham dự (Chọn nhiều)</span>
+                </h3>
+                <p className="text-[11px] text-[#64748b] mt-0.5">Tích chọn nhiều nhân sự công ty hoặc tự nhập tên người ngoài</p>
+              </div>
+              <button onClick={() => setIsAddMemberOpen(false)} className="text-[#94a3b8] hover:text-[#0b1c30] text-xs font-bold p-1">✕</button>
             </div>
 
             <form onSubmit={handleAddMemberSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-[#64748b] uppercase mb-1">Tên thành viên / Email *</label>
+              {/* Search Input */}
+              <div className="relative">
+                <Search size={15} className="absolute left-3 top-2.5 text-[#94a3b8]" />
                 <input
                   type="text"
-                  required
-                  list="accounts-list"
-                  placeholder="Nhập tên hoặc chọn từ danh sách nhân sự..."
-                  value={memberName}
-                  onChange={e => setMemberName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0b1c30] focus:outline-none focus:border-[#6366f1]"
+                  placeholder="Tìm tên hoặc email nhân sự..."
+                  value={memberSearch}
+                  onChange={e => setMemberSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0b1c30] focus:outline-none focus:border-[#6366f1]"
                 />
-                <datalist id="accounts-list">
-                  {accountsList.map((acc: any, i: number) => (
-                    <option key={i} value={acc.full_name || acc.display_name || acc.email} />
-                  ))}
-                </datalist>
               </div>
 
+              {/* Staff Multi-Select List */}
               <div>
-                <label className="block text-[10px] font-bold text-[#64748b] uppercase mb-1">Vai trò trong cuộc họp</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-bold text-[#64748b] uppercase">Danh sách nhân sự công ty</label>
+                  <span className="text-[11px] font-bold text-[#6366f1]">Đã chọn: {selectedMemberNames.length} người</span>
+                </div>
+
+                <div className="max-h-48 overflow-y-auto space-y-1 p-2 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl">
+                  {accountsList.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-4">Đang tải danh sách nhân sự...</p>
+                  ) : (
+                    accountsList
+                      .filter(acc => {
+                        const name = acc.full_name || acc.display_name || acc.email || '';
+                        return name.toLowerCase().includes(memberSearch.toLowerCase());
+                      })
+                      .map((acc, idx) => {
+                        const name = acc.full_name || acc.display_name || acc.email || `Nhân sự #${acc.id}`;
+                        const isChecked = selectedMemberNames.includes(name);
+                        const isAlreadyInMeeting = localMembers.some(m => (m.display_name || m.name) === name);
+
+                        return (
+                          <label
+                            key={acc.id || idx}
+                            className={`flex items-center justify-between p-2 rounded-lg transition-all text-xs cursor-pointer ${
+                              isAlreadyInMeeting 
+                                ? 'opacity-50 bg-slate-100 cursor-not-allowed'
+                                : isChecked 
+                                ? 'bg-[#f5f3ff] border border-[#e0e7ff] text-[#4338ca]' 
+                                : 'hover:bg-white text-[#0b1c30]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <input
+                                type="checkbox"
+                                disabled={isAlreadyInMeeting}
+                                checked={isChecked || isAlreadyInMeeting}
+                                onChange={() => !isAlreadyInMeeting && toggleSelectMember(name)}
+                                className="w-4 h-4 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer"
+                              />
+                              <div className="w-7 h-7 rounded-full bg-[#e0e7ff] text-[#4338ca] font-bold text-[10px] flex items-center justify-center shrink-0">
+                                {name[0]?.toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-bold truncate leading-tight">{name}</p>
+                                <p className="text-[10px] text-[#64748b] truncate">{acc.email || acc.role || 'Thành viên công ty'}</p>
+                              </div>
+                            </div>
+                            {isAlreadyInMeeting && (
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-md">Đã tham gia</span>
+                            )}
+                          </label>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+
+              {/* Custom External Name Input */}
+              <div>
+                <label className="block text-[10px] font-bold text-[#64748b] uppercase mb-1">Hoặc tự nhập tên người ngoài (Nếu có)</label>
+                <input
+                  type="text"
+                  placeholder="Nhập tên người tham dự ngoài công ty..."
+                  value={customMemberInput}
+                  onChange={e => setCustomMemberInput(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0b1c30] focus:outline-none focus:border-[#6366f1]"
+                />
+              </div>
+
+              {/* Role Select */}
+              <div>
+                <label className="block text-[10px] font-bold text-[#64748b] uppercase mb-1">Vai trò cho các thành viên được chọn</label>
                 <select
                   value={memberRole}
                   onChange={e => setMemberRole(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0b1c30] font-medium focus:outline-none focus:border-[#6366f1]"
+                  className="w-full px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0b1c30] font-medium focus:outline-none focus:border-[#6366f1]"
                 >
                   <option value="Thành viên">Thành viên (Participant)</option>
                   <option value="PM / Chủ trì">PM / Chủ trì</option>
@@ -1024,13 +1132,24 @@ export default function MeetingDetailModal({
                 </select>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setIsAddMemberOpen(false)} className="px-4 py-2 text-xs font-bold text-[#64748b] bg-white border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors">
-                  Hủy
-                </button>
-                <button type="submit" disabled={isAddingMember} className="px-4 py-2 text-xs font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] rounded-xl transition-colors shadow-sm">
-                  {isAddingMember ? 'Đang thêm...' : 'Thêm thành viên'}
-                </button>
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <span className="text-xs font-bold text-[#6366f1]">
+                  Tổng thêm: {selectedMemberNames.length + (customMemberInput.trim() ? 1 : 0)} người
+                </span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setIsAddMemberOpen(false)} className="px-4 py-2 text-xs font-bold text-[#64748b] bg-white border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors">
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isAddingMember || (selectedMemberNames.length === 0 && !customMemberInput.trim())}
+                    className="px-4 py-2 text-xs font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] disabled:opacity-50 rounded-xl transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Check size={15} />
+                    <span>{isAddingMember ? 'Đang thêm...' : `Xác nhận thêm (${selectedMemberNames.length + (customMemberInput.trim() ? 1 : 0)})`}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
