@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, bulkDeleteProjects, updateProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
+import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 import SearchableSelect from './common/SearchableSelect';
+import ProjectFormModal from './ProjectFormModal';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
   'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
@@ -91,6 +92,7 @@ interface ProjectListContentProps {
 
 export default function ProjectListContent({ lockedWorkspace, renderTabs }: ProjectListContentProps = {}) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const paramCustId = searchParams.get('customer_id');
   const paramCustName = searchParams.get('customer');
@@ -109,12 +111,13 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [showProjectFormModal, setShowProjectFormModal] = useState(false);
+  const [projectFormMode, setProjectFormMode] = useState<'create' | 'edit'>('create');
+  const [editingProject, setEditingProject] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
-  const [renamingProject, setRenamingProject] = useState<{ id: number; name: string } | null>(null);
-  const [renameValue, setRenameValue] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
 
@@ -203,7 +206,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     setMemberFilter('All');
     setYearFilter('All');
     setPage(1);
-    if (!lockedWorkspace) router.push('/projects');
+    if (!lockedWorkspace) router.replace(pathname);
   };
 
   // Dynamic lists from loaded data memoized
@@ -328,7 +331,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               {renderTabs && renderTabs()}
               {canManage && (
                 <button
-                  onClick={() => router.push('/projects/new')}
+                  onClick={() => { setProjectFormMode('create'); setEditingProject(null); setShowProjectFormModal(true); }}
                   className="flex items-center gap-1.5 bg-[#0058be] hover:bg-[#00479c] text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors shrink-0"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -484,16 +487,10 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                             {menuOpenId === p.id && (
                               <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
                                 <button
-                                  onClick={() => { setMenuOpenId(null); router.push(`/project/detail/overview?id=${p.id}`); }}
+                                  onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
                                   className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                                 >
                                   ✏️ Chỉnh sửa
-                                </button>
-                                <button
-                                  onClick={() => { setMenuOpenId(null); setRenamingProject({ id: p.id, name: p.name }); setRenameValue(p.name || ''); }}
-                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                                >
-                                  ✎ Đổi tên
                                 </button>
                                 <button
                                   onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
@@ -695,36 +692,15 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         </div>
       )}
 
-      {renamingProject && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setRenamingProject(null)}>
-          <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-base font-bold text-[#0b1c30] mb-4">Đổi tên dự án</h2>
-            <input
-              autoFocus
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') setRenamingProject(null); }}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-6 outline-none focus:ring-2 focus:ring-[#0058be]/30 focus:border-[#0058be]"
-              placeholder="Tên dự án"
-            />
-            <div className="flex justify-end gap-3">
-              <button onClick={() => setRenamingProject(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
-              <button onClick={async () => {
-                const trimmed = renameValue.trim();
-                if (!trimmed) { flash('Tên dự án không được để trống', true); return; }
-                try {
-                  await updateProject(renamingProject.id, { name: trimmed });
-                  reload();
-                  flash('Đã đổi tên!');
-                } catch (e: any) {
-                  flash(e?.response?.data?.detail || 'Đổi tên thất bại', true);
-                }
-                setRenamingProject(null);
-              }} className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#0058be] hover:bg-[#00479c] text-white shadow-sm">Lưu</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ProjectFormModal
+        isOpen={showProjectFormModal}
+        mode={projectFormMode}
+        editingProject={editingProject}
+        defaultBusiness={lockedWorkspace ? (workspaces.find(w => w.code === lockedWorkspace)?.name || lockedWorkspace) : (businessFilter !== 'All' ? businessFilter : undefined)}
+        onClose={() => setShowProjectFormModal(false)}
+        onSaved={() => reload()}
+        onFlash={flash}
+      />
 
       {deleteId !== null && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">

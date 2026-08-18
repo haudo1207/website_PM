@@ -987,7 +987,7 @@ export default function OverviewTab() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link
-              href="/project"
+              href="/project-hub"
               className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${myAlerts.overdue_count > 0
                   ? 'text-red-600 border-red-300 hover:bg-red-100'
                   : 'text-amber-600 border-amber-300 hover:bg-amber-100'
