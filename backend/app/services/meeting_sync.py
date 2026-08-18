@@ -305,9 +305,18 @@ def get_shared_google_access_token(db=None) -> str:
         if tok:
             refresh_token = tok.refresh_token
 
-    if not client_id or not client_secret or not refresh_token:
-        logger.warning("Thiếu GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET hoặc GOOGLE_REFRESH_TOKEN trong .env")
-        raise ValueError("Thiếu cấu hình GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET hoặc GOOGLE_REFRESH_TOKEN trong .env")
+    missing = []
+    if not client_id:
+        missing.append("GOOGLE_CLIENT_ID")
+    if not client_secret:
+        missing.append("GOOGLE_CLIENT_SECRET")
+    if not refresh_token:
+        missing.append("GOOGLE_REFRESH_TOKEN")
+
+    if missing:
+        msg = f"Thiếu cấu hình {', '.join(missing)} trong .env"
+        logger.warning(msg)
+        raise ValueError(msg)
 
     resp = requests.post(
         "https://oauth2.googleapis.com/token",

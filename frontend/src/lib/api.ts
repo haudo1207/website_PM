@@ -1,19 +1,126 @@
-import axios from 'axios';
-import { getToken, logout } from './auth';
+import axios, { AxiosRequestConfig } from 'axios';
+import { getToken, setToken, logout } from './auth';
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
-const api = axios.create({ baseURL: BASE });
+const api = axios.create({ baseURL: BASE, withCredentials: true });
 
-api.interceptors.request.use(cfg => {
-  const t = getToken();
-  if (t) cfg.headers.Authorization = `Bearer ${t}`;
+const PROACTIVE_REFRESH_THRESHOLD_SECONDS = 60;
+
+type AuthAwareConfig = AxiosRequestConfig & { _skipAuth?: boolean; _retried?: boolean };
+
+interface RefreshResponse {
+  access_token: string;
+  token_type: string;
+  role: string;
+  full_name: string;
+  avatar_url?: string | null;
+  email?: string | null;
+}
+
+let refreshPromise: Promise<string | null> | null = null;
+
+function decodeExp(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(decodeURIComponent(escape(window.atob(base64))));
+    return typeof json.exp === 'number' ? json.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    try {
+      const res = await api.post<RefreshResponse>('/auth/refresh', null, { _skipAuth: true } as AuthAwareConfig);
+      setToken(res.data.access_token);
+      return res.data.access_token;
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        // Session failure (expired/revoked/disabled) → clean logout.
+        logout();
+        return null;
+      }
+      // Temporary network/server failure: keep session state, do NOT logout.
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
+export async function restoreSession(): Promise<boolean> {
+  const token = getToken();
+  if (token) {
+    const exp = decodeExp(token);
+    if (exp !== null && exp - Math.floor(Date.now() / 1000) > PROACTIVE_REFRESH_THRESHOLD_SECONDS) {
+      return true;
+    }
+  }
+  const fresh = await refreshAccessToken();
+  return !!fresh;
+}
+
+async function ensureFreshToken(): Promise<string | null> {
+  const token = getToken();
+  if (!token) return null;
+  const exp = decodeExp(token);
+  if (exp === null) return token;
+  const remaining = exp - Math.floor(Date.now() / 1000);
+  if (remaining > PROACTIVE_REFRESH_THRESHOLD_SECONDS) return token;
+  return refreshAccessToken();
+}
+
+api.interceptors.request.use(async cfg => {
+  if ((cfg as AuthAwareConfig)._skipAuth) return cfg;
+  const token = await ensureFreshToken();
+  if (token) cfg.headers.Authorization = `Bearer ${token}`;
   return cfg;
 });
 
 api.interceptors.response.use(
   r => r,
-  err => {
-    if (err.response?.status === 401) logout();
+  async err => {
+    const cfg = err?.config as AuthAwareConfig | undefined;
+    const status = err?.response?.status;
+    const errorCode = err?.response?.headers?.['x-error-code'];
+    if (!cfg) return Promise.reject(err);
+    const isAuthEndpoint = typeof cfg.url === 'string' && cfg.url.startsWith('/auth/');
+
+    if (status === 401 && !cfg._skipAuth) {
+      if (isAuthEndpoint) {
+        return Promise.reject(err);
+      }
+      if (errorCode === 'TOKEN_EXPIRED' && !cfg._retried) {
+        // Explicitly expired Access JWT → refresh once, retry exactly once.
+        const fresh = await refreshAccessToken();
+        if (fresh) {
+          cfg._retried = true;
+          cfg.headers = { ...cfg.headers, Authorization: `Bearer ${fresh}` };
+          return api(cfg);
+        }
+        return Promise.reject(err);
+      }
+      if (!getToken() && !cfg._retried) {
+        // No Access JWT in memory (browser/computer restart, deep-link refresh):
+        // attempt session restore from the HttpOnly refresh cookie, retry once.
+        const fresh = await refreshAccessToken();
+        if (fresh) {
+          cfg._retried = true;
+          cfg.headers = { ...cfg.headers, Authorization: `Bearer ${fresh}` };
+          return api(cfg);
+        }
+        return Promise.reject(err);
+      }
+      // Any other authentication failure (invalid/tampered token, disabled
+      // user...) → do NOT refresh → clean logout.
+      logout();
+    }
     return Promise.reject(err);
   }
 );
@@ -28,11 +135,56 @@ export interface AuthConfig {
   google_login_enabled: boolean;
   google_client_id: string;
   password_login_enabled: boolean;
+  outlook_login_enabled: boolean;
+  outlook_client_id: string;
+  outlook_tenant_id: string;
 }
 
 export const getAuthConfig = () => api.get<AuthConfig>('/auth/config').then(r => r.data);
 export const googleLogin = (credential: string) =>
   api.post('/auth/google', { credential }).then(r => r.data);
+export const outlookLogin = (credential: string) =>
+  api.post('/auth/outlook', { credential }).then(r => r.data);
+
+export interface MeProfile {
+  id: number;
+  email: string;
+  full_name: string;
+  avatar_url?: string | null;
+  role: string;
+  data_scope: string;
+  member_id?: number | null;
+  is_active: boolean;
+  login_method: string;
+  position?: string | null;
+  department?: string | null;
+  skills: string[];
+  member: {
+    display_name: string;
+    team?: string | null;
+    phone?: string | null;
+    experience_year?: number | null;
+    leader_name?: string | null;
+  } | null;
+}
+export const getMe = () => api.get<MeProfile>('/users/me').then(r => r.data);
+
+export interface LoginHistoryItem {
+  id: number;
+  action: string;
+  outcome: string;
+  login_method?: string | null;
+  browser?: string | null;
+  os?: string | null;
+  device_type?: string | null;
+  ip_address?: string | null;
+  ip_risk?: string | null;
+  is_new_ip: boolean;
+  is_new_device: boolean;
+  created_at: string | null;
+}
+export const getMyLoginHistory = (limit = 20) =>
+  api.get<LoginHistoryItem[]>('/users/me/login-history', { params: { limit } }).then(r => r.data);
 
 // ═══════════════════════════════════════════════════════════
 // PROJECTS (v5)
@@ -54,6 +206,8 @@ export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r
 export const createProject = (data: object) => api.post('/projects', data).then(r => r.data);
 export const updateProject = (id: number, data: object) => api.patch(`/projects/${id}`, data).then(r => r.data);
 export const deleteProject = (id: number) => api.delete(`/projects/${id}`).then(r => r.data);
+export const bulkDeleteProjects = (ids: number[]) =>
+  api.post('/projects/bulk-delete', { ids }).then(r => r.data);
 
 // Project Members
 export const getProjectMembers = (pid: number) => api.get(`/projects/${pid}/members`).then(r => r.data);
@@ -195,7 +349,7 @@ export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
 
 // Members
-export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; skill_id?: number; leader_name?: string }) =>
+export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string }) =>
   api.get('/members', { params }).then(r => r.data);
 export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.data);
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
@@ -207,6 +361,10 @@ export const getLeaders = () => api.get('/members/meta/leaders').then(r => r.dat
 // Customers
 export const getCustomers = (businessUnit?: string) =>
   api.get('/system-categories/customers', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
+// Project Hub — Customers derived from linked Projects (Customer.business_unit
+// is unreliable, see access.customer_query_for_user on the backend).
+export const getCustomersByWorkspace = (code: string) =>
+  api.get(`/system-categories/customers/by-workspace/${code}`).then(r => r.data);
 export const createCustomer = (data: { name: string; description?: string; business_unit?: string }) =>
   api.post('/system-categories/customers', data).then(r => r.data);
 export const updateCustomer = (id: number, data: { name: string; description?: string; business_unit?: string }) =>
@@ -278,8 +436,8 @@ export const deleteMasterPhase = (id: number) => api.delete(`/system-categories/
 // Accounts Management
 export const getAccounts = () => api.get('/accounts').then(r => r.data);
 export const getAvailableMembers = () => api.get('/accounts/available-members').then(r => r.data);
-export const createAccount = (data: { email: string; password?: string; role: string; data_scope: string; full_name?: string; member_id?: number }) => api.post('/accounts', data).then(r => r.data);
-export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string; member_id?: number | null }) => api.put(`/accounts/${id}`, data).then(r => r.data);
+export const createAccount = (data: { email: string; password?: string; role: string; data_scope: string; full_name?: string; member_id?: number; outlook_mail?: string }) => api.post('/accounts', data).then(r => r.data);
+export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string; member_id?: number | null; outlook_mail?: string | null }) => api.put(`/accounts/${id}`, data).then(r => r.data);
 export const resetAccountPassword = (id: number, password: string) => api.post(`/accounts/${id}/reset-password`, { password }).then(r => r.data);
 export const lockAccount = (id: number) => api.post(`/accounts/${id}/lock`).then(r => r.data);
 export const unlockAccount = (id: number) => api.post(`/accounts/${id}/unlock`).then(r => r.data);
@@ -443,3 +601,21 @@ export const getSessionTimeline = (sessionId: string) =>
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);
 
+// Notifications
+export const remindLeader = (taskId: number, message?: string) =>
+  api.post('/notifications/remind', { task_id: taskId, message }).then(r => r.data);
+
+export const remindLeaderBulk = (projectId?: number) =>
+  api.post('/notifications/remind-bulk', { project_id: projectId }).then(r => r.data);
+
+export const getMyAlerts = () =>
+  api.get('/notifications/my-alerts').then(r => r.data);
+
+export const remindTaskGroup = (taskGroupId: number, message?: string) =>
+  api.post('/notifications/remind-group', { task_group_id: taskGroupId, message }).then(r => r.data);
+
+export const getInboxNotifications = () =>
+  api.get('/notifications/inbox').then(r => r.data);
+
+export const markNotificationRead = (id: number) =>
+  api.patch(`/notifications/${id}/read`).then(r => r.data);

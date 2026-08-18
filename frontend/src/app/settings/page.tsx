@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import SystemCategoriesView from '@/components/SystemCategoriesView';
 import KPIsView from '@/components/KPIsView';
@@ -43,7 +44,7 @@ import {
 } from '@/lib/api';
 
 export default function SettingsPage() {
-  const [users, setUsers] = useState<any[]>([]);
+  const queryClient = useQueryClient();
   const [saved, setSaved] = useState('');
   const [activeTab, setActiveTab] = useState<'skills' | 'system_categories' | 'kpis' | 'ai_prompts' | 'project_templates'>('skills');
 
@@ -53,17 +54,8 @@ export default function SettingsPage() {
   const [userSkillsForm, setUserSkillsForm] = useState<number[]>([]);
 
   // Categories & Skills Master Data
-  const [categories, setCategories] = useState<any[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<number | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
-
-  // System Categories Data
-  const [dbPositions, setDbPositions] = useState<any[]>([]);
-  const [dbDepartments, setDbDepartments] = useState<any[]>([]);
-  const [dbStatuses, setDbStatuses] = useState<any[]>([]);
-  const [dbTeams, setDbTeams] = useState<any[]>([]);
-  const [dbCustomers, setDbCustomers] = useState<any[]>([]);
-  const [dbWorkspaces, setDbWorkspaces] = useState<any[]>([]);
 
   // Form states for creating master data
   const [newCatName, setNewCatName] = useState('');
@@ -85,30 +77,47 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!isSuperAdmin()) {
-      router.push('/dashboard');
+      router.push('/dashboard/overview');
     } else {
       setAuthorized(true);
-      getUsers().then(setUsers).catch(() => { });
-      reloadCategories();
-      reloadSystemCategories();
     }
   }, [router]);
 
+  const { data: usersData } = useQuery({
+    queryKey: ['settings-users'],
+    queryFn: () => getUsers(),
+    enabled: authorized,
+  });
+  const users: any[] = usersData || [];
+
+  const { data: categoriesData } = useQuery({
+    queryKey: ['settings-categories'],
+    queryFn: () => getCategories(),
+    enabled: authorized,
+  });
+  const categories: any[] = categoriesData || [];
   const reloadCategories = () => {
-    getCategories()
-      .then(data => {
-        setCategories(data);
-      })
-      .catch(() => { });
+    queryClient.invalidateQueries({ queryKey: ['settings-categories'] });
   };
 
+  const { data: systemCategoriesData } = useQuery({
+    queryKey: ['settings-system-categories'],
+    queryFn: async () => {
+      const [positions, departments, statuses, teams, customers, workspaces] = await Promise.all([
+        getPositions(), getDepartments(), getStatuses(), getTeams(), getCustomers(), getWorkspaces(),
+      ]);
+      return { positions, departments, statuses, teams, customers, workspaces };
+    },
+    enabled: authorized,
+  });
+  const dbPositions = systemCategoriesData?.positions || [];
+  const dbDepartments = systemCategoriesData?.departments || [];
+  const dbStatuses = systemCategoriesData?.statuses || [];
+  const dbTeams = systemCategoriesData?.teams || [];
+  const dbCustomers = systemCategoriesData?.customers || [];
+  const dbWorkspaces = systemCategoriesData?.workspaces || [];
   const reloadSystemCategories = () => {
-    getPositions().then(setDbPositions).catch(() => {});
-    getDepartments().then(setDbDepartments).catch(() => {});
-    getStatuses().then(setDbStatuses).catch(() => {});
-    getTeams().then(setDbTeams).catch(() => {});
-    getCustomers().then(setDbCustomers).catch(() => {});
-    getWorkspaces().then(setDbWorkspaces).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ['settings-system-categories'] });
   };
 
   const flash = (msg: string) => {
@@ -123,7 +132,7 @@ export default function SettingsPage() {
       await createUser(form);
       flash('Đã tạo tài khoản thành công');
       setForm({ email: '', full_name: '', password: '', role: 'member', skills: [], position: '', department: '' });
-      getUsers().then(setUsers);
+      queryClient.invalidateQueries({ queryKey: ['settings-users'] });
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi - Email có thể đã tồn tại');
     }
@@ -140,7 +149,7 @@ export default function SettingsPage() {
       await updateUser(skillsModalUser.id, { skills: userSkillsForm });
       flash('Đã cập nhật kỹ năng cho thành viên');
       setSkillsModalUser(null);
-      getUsers().then(setUsers);
+      queryClient.invalidateQueries({ queryKey: ['settings-users'] });
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi cập nhật kỹ năng');
     }

@@ -1,7 +1,9 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import MembersView from '@/components/MembersView';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import { useRouter } from 'next/navigation';
 import { isAdmin, isSuperAdmin, isLeader } from '@/lib/auth';
 import {
@@ -33,6 +35,7 @@ interface Account {
   email: string;
   full_name: string;
   avatar_url?: string | null;
+  outlook_mail?: string | null;
   role: string;
   data_scope: string;
   is_active: boolean;
@@ -69,11 +72,7 @@ export default function AccountsPage() {
   const roleOptions = isLeaderUser ? ROLE_OPTIONS.filter(option => LEADER_MANAGED_ROLES.has(option.value)) : ROLE_OPTIONS;
   const canLeaderManageAccount = (account: Account) => !isLeaderUser || LEADER_MANAGED_ROLES.has(account.role);
   const [authorized, setAuthorized] = useState(false);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [availableMembers, setAvailableMembers] = useState<MemberInfo[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [saved, setSaved] = useState('');
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'accounts' | 'members'>('accounts');
 
   // filters
@@ -84,42 +83,46 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: '', full_name: '', member_id: 0 });
+  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: '', full_name: '', member_id: 0, outlook_mail: '' });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: '', member_id: 0 });
+  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: '', member_id: 0, outlook_mail: '' });
 
   // Reset password modal
 
   useEffect(() => {
     if (!isAdmin()) {
-      router.push('/dashboard');
+      router.push('/dashboard/overview');
     } else {
       setAuthorized(true);
-      reload();
     }
   }, [router]);
 
-  const reload = async () => {
-    setLoading(true);
-    try {
+  const { data: accountsData, isLoading: loading, refetch: reload } = useQuery({
+    queryKey: ['accounts-list'],
+    queryFn: async () => {
       const [accs, members, wss] = await Promise.all([
         getAccounts(),
         getAvailableMembers(),
         getWorkspaces().catch(() => [])
       ]);
-      setAccounts(accs);
-      setAvailableMembers(members);
-      setWorkspaces(wss || []);
-      setCreateForm(f => ({ ...f, data_scope: f.data_scope || (wss?.[0]?.code || '') }));
-      setEditForm(f => ({ ...f, data_scope: f.data_scope || (wss?.[0]?.code || '') }));
-    } catch {
-      flash('Lỗi tải dữ liệu');
-    } finally {
-      setLoading(false);
-    }
-  };
+      return { accounts: accs, availableMembers: members, workspaces: wss || [] };
+    },
+    enabled: authorized,
+    staleTime: 2 * 60_000,
+  });
+  const accounts: Account[] = accountsData?.accounts || [];
+  const availableMembers: MemberInfo[] = accountsData?.availableMembers || [];
+  const workspaces: Workspace[] = accountsData?.workspaces || [];
+
+  // Default data_scope for the create/edit forms once workspaces load —
+  // was previously set as a side effect inside reload() itself.
+  useEffect(() => {
+    if (workspaces.length === 0) return;
+    setCreateForm(f => ({ ...f, data_scope: f.data_scope || workspaces[0].code }));
+    setEditForm(f => ({ ...f, data_scope: f.data_scope || workspaces[0].code }));
+  }, [workspaces]);
 
   const flash = (msg: string) => {
     setSaved(msg);
@@ -143,6 +146,8 @@ export default function AccountsPage() {
         acc.full_name,
         acc.member?.display_name,
         acc.member?.full_name,
+        acc.email,
+        acc.outlook_mail,
       ].some(value => (value || '').toLowerCase().includes(nameQuery));
 
       const roleMatch = !filterRole || acc.role === filterRole;
@@ -152,6 +157,35 @@ export default function AccountsPage() {
       return nameMatch && roleMatch && scopeMatch && statusMatch;
     });
   }, [accounts, searchName, filterRole, filterScope, filterStatus]);
+
+  const memberSelectOptions = useMemo(() => [
+    { id: 0, name: '— Không liên kết thành viên —' },
+    ...availableMembers.map(m => ({
+      id: m.id,
+      name: `${m.display_name} — ${m.full_name}${m.team ? ` (${m.team})` : ''}`
+    }))
+  ], [availableMembers]);
+
+  const editMemberSelectOptions = useMemo(() => {
+    const list: { id: number; name: string }[] = [
+      { id: 0, name: '— Không liên kết thành viên —' }
+    ];
+    if (editAccount?.member) {
+      list.push({
+        id: editAccount.member.id,
+        name: `${editAccount.member.display_name} — ${editAccount.member.full_name}${editAccount.member.team ? ` (${editAccount.member.team})` : ''}`
+      });
+    }
+    availableMembers.forEach(m => {
+      if (!editAccount?.member || m.id !== editAccount.member.id) {
+        list.push({
+          id: m.id,
+          name: `${m.display_name} — ${m.full_name}${m.team ? ` (${m.team})` : ''}`
+        });
+      }
+    });
+    return list;
+  }, [availableMembers, editAccount]);
 
   // Create
   const handleCreate = async (e: React.FormEvent) => {
@@ -163,10 +197,11 @@ export default function AccountsPage() {
         data_scope: createForm.data_scope,
         full_name: createForm.full_name,
         member_id: createForm.member_id || undefined,
+        outlook_mail: createForm.outlook_mail || undefined,
       });
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), full_name: '', member_id: 0 });
+      setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), full_name: '', member_id: 0, outlook_mail: '' });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -193,7 +228,7 @@ export default function AccountsPage() {
   const openEdit = (acc: Account) => {
     if (!canLeaderManageAccount(acc)) return;
     setEditAccount(acc);
-    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || (workspaces?.[0]?.code || ''), member_id: acc.member_id || 0 });
+    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || (workspaces?.[0]?.code || ''), member_id: acc.member_id || 0, outlook_mail: acc.outlook_mail || '' });
   };
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -367,6 +402,7 @@ export default function AccountsPage() {
                       <tr className="border-b border-slate-200">
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">ID</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Email</th>
+                        <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Microsoft Mail</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Họ tên</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Role</th>
                         <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wider">Workspace</th>
@@ -377,9 +413,9 @@ export default function AccountsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                   {loading ? (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400 italic">Đang tải...</td></tr>
                   ) : filteredAccounts.length === 0 ? (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 italic">Chưa có tài khoản nào</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400 italic">Chưa có tài khoản nào</td></tr>
                   ) : (
                     filteredAccounts.map(acc => (
                       <tr key={acc.id} className="hover:bg-slate-50/50 transition-colors">
@@ -396,6 +432,7 @@ export default function AccountsPage() {
                             <span>{acc.email}</span>
                           </div>
                         </td>
+                        <td className="px-4 py-3 text-slate-600">{acc.outlook_mail || <span className="text-slate-300">–</span>}</td>
                         <td className="px-4 py-3 text-slate-600">{acc.full_name || '—'}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${ROLE_COLORS[acc.role] || 'bg-slate-100 text-slate-600'}`}>
@@ -467,16 +504,15 @@ export default function AccountsPage() {
               {/* Member Selection */}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên (tùy chọn)</label>
-                <select
-                  value={createForm.member_id}
-                  onChange={e => handleMemberSelect(Number(e.target.value))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  <option value={0}>— Không liên kết thành viên —</option>
-                  {availableMembers.map(m => (
-                    <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  label="thành viên"
+                  icon="👤"
+                  options={memberSelectOptions}
+                  value={createForm.member_id || 0}
+                  onChange={val => handleMemberSelect(Number(val) || 0)}
+                  placeholder="Tìm thành viên để liên kết..."
+                  className="w-full"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -488,6 +524,16 @@ export default function AccountsPage() {
                     onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
                     placeholder="user@company.com"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Microsoft Mail</label>
+                  <input
+                    type="email"
+                    value={createForm.outlook_mail}
+                    onChange={e => setCreateForm(f => ({ ...f, outlook_mail: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                    placeholder="user@outlook.com"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -577,6 +623,16 @@ export default function AccountsPage() {
                 />
               </div>
               <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Microsoft Mail</label>
+                <input
+                  type="email"
+                  value={editForm.outlook_mail}
+                  onChange={e => setEditForm(f => ({ ...f, outlook_mail: e.target.value }))}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  placeholder="user@outlook.com"
+                />
+              </div>
+              <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Họ tên</label>
                 <input
                   value={editForm.full_name}
@@ -586,23 +642,15 @@ export default function AccountsPage() {
               </div>
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên</label>
-                <select
-                  value={editForm.member_id}
-                  onChange={e => setEditForm(f => ({ ...f, member_id: Number(e.target.value) }))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  <option value={0}>— Không liên kết thành viên —</option>
-                  {editAccount.member && (
-                    <option value={editAccount.member.id}>
-                      {editAccount.member.display_name} — {editAccount.member.full_name}{editAccount.member.team ? ` (${editAccount.member.team})` : ''}
-                    </option>
-                  )}
-                  {availableMembers
-                    .filter(m => m.id !== editAccount.member?.id)
-                    .map(m => (
-                      <option key={m.id} value={m.id}>{m.display_name} — {m.full_name}{m.team ? ` (${m.team})` : ''}</option>
-                    ))}
-                </select>
+                <SearchableSelect
+                  label="thành viên"
+                  icon="👤"
+                  options={editMemberSelectOptions}
+                  value={editForm.member_id || 0}
+                  onChange={val => setEditForm(f => ({ ...f, member_id: Number(val) || 0 }))}
+                  placeholder="Tìm thành viên để liên kết..."
+                  className="w-full"
+                />
               </div>
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò</label>

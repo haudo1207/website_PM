@@ -16,6 +16,7 @@ from ..models.project_template import (
 )
 from ..models.skill_master import Group, Skill
 from ..utils.auth import get_current_user, require_super_admin
+from ..utils.audit_service import AuditService
 
 router = APIRouter(tags=["project-templates"])
 
@@ -77,7 +78,7 @@ def get_project_template(template_id: int, db: Session = Depends(get_db), _=Depe
 
 
 @router.post("/project-templates")
-def create_project_template(body: dict, db: Session = Depends(get_db), _=Depends(require_super_admin)):
+def create_project_template(body: dict, db: Session = Depends(get_db), current_user=Depends(require_super_admin)):
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Template name is required")
@@ -116,14 +117,21 @@ def create_project_template(body: dict, db: Session = Depends(get_db), _=Depends
                 db.add(task)
     db.commit()
     db.refresh(template)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Template", entity_type="ProjectTemplate",
+        entity_id=template.id, action="CREATE", resource_name=template.name,
+        description=f"Tạo project template '{template.name}'"
+    )
+    db.commit()
     return serialize_template(template)
 
 
 @router.put("/project-templates/{template_id}")
-def update_project_template(template_id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_super_admin)):
+def update_project_template(template_id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_super_admin)):
     template = db.query(ProjectTemplate).filter(ProjectTemplate.id == template_id).first()
     if not template:
         raise HTTPException(404, "Template not found")
+    old_dict = {"name": template.name, "description": template.description, "is_active": template.is_active}
     if "name" in body:
         name = (body.get("name") or "").strip()
         if not name:
@@ -170,21 +178,41 @@ def update_project_template(template_id: int, body: dict, db: Session = Depends(
 
     db.commit()
     db.refresh(template)
+    AuditService.record_diff(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Template", entity_type="ProjectTemplate",
+        entity_id=template.id, old_dict=old_dict,
+        new_dict={"name": template.name, "description": template.description, "is_active": template.is_active},
+        field_labels={"name": "Tên", "description": "Mô tả", "is_active": "Đang áp dụng"},
+    )
+    if "phases" in body:
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Project Template", entity_type="ProjectTemplate",
+            entity_id=template.id, action="UPDATE", resource_name=template.name,
+            description=f"Cập nhật cấu trúc phase/task-group/task của template '{template.name}'"
+        )
+    db.commit()
     return serialize_template(template)
 
 
 @router.delete("/project-templates/{template_id}")
-def delete_project_template(template_id: int, db: Session = Depends(get_db), _=Depends(require_super_admin)):
+def delete_project_template(template_id: int, db: Session = Depends(get_db), current_user=Depends(require_super_admin)):
     template = db.query(ProjectTemplate).filter(ProjectTemplate.id == template_id).first()
     if not template:
         raise HTTPException(404, "Template not found")
+    tpl_name = template.name
     db.delete(template)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Template", entity_type="ProjectTemplate",
+        entity_id=template_id, action="DELETE", resource_name=tpl_name,
+        description=f"Xóa project template '{tpl_name}'"
+    )
     db.commit()
     return {"ok": True}
 
 
 @router.post("/project-templates/{template_id}/apply/{project_id}")
-def apply_project_template(template_id: int, project_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def apply_project_template(template_id: int, project_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     template = db.query(ProjectTemplate).filter(ProjectTemplate.id == template_id).first()
     if not template:
         raise HTTPException(404, "Template not found")
@@ -258,5 +286,12 @@ def apply_project_template(template_id: int, project_id: int, db: Session = Depe
                 )
                 db.add(created_task)
 
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=project.id, action="UPDATE", project_id=project.id, resource_name=project.name,
+        severity="CRITICAL",
+        description=f"Áp dụng template '{template.name}' — xóa và ghi đè toàn bộ Phase/Task Group/Task hiện có của dự án '{project.name}' ({created_phase_count} phase mới)"
+    )
     db.commit()
     return {"ok": True, "applied": True, "overwritten": True}

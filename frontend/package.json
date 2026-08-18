@@ -11,6 +11,8 @@
     "start": "next start"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.18.0",
+    "@tanstack/react-query": "^5.101.4",
     "@types/react-datepicker": "^6.2.0",
     "axios": "^1.6.8",
     "csv-parser": "^3.2.1",

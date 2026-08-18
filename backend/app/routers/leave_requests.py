@@ -8,6 +8,7 @@ from ..models.leave_request import LeaveRequest
 from ..models.user import User
 from ..utils.auth import get_current_user, require_admin
 from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER
+from ..utils.audit_service import AuditService
 
 router = APIRouter()
 
@@ -125,14 +126,23 @@ def update_leave_request(id: int, body: dict, db: Session = Depends(get_db), cur
     # Only admin can change status
     if 'status' in body and current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
         raise HTTPException(403, "Chỉ admin mới có quyền thay đổi trạng thái")
-    
+
+    old_status = lr.status
     for field in ['leave_type', 'start_date', 'end_date', 'man_day', 'month', 'year', 'time',
                   'province', 'ward', 'address', 'reason', 'status']:
         if field in body:
             setattr(lr, field, body[field])
-    
+
     db.commit()
     db.refresh(lr)
+    if 'status' in body and lr.status != old_status and lr.status in ('Approved', 'Rejected'):
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Leave Request", entity_type="LeaveRequest",
+            entity_id=lr.id, action=lr.status.upper(), target_user_id=lr.user_id,
+            field_name="status", old_value=old_status, new_value=lr.status,
+            description=f"{'Duyệt' if lr.status == 'Approved' else 'Từ chối'} đơn nghỉ phép #{lr.id} của user #{lr.user_id}"
+        )
+        db.commit()
     lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
     return leave_to_dict(lr)
 
@@ -161,9 +171,17 @@ def approve_leave_request(id: int, body: dict, db: Session = Depends(get_db), cu
     status = body.get('status')
     if status not in ['Approved', 'Rejected']:
         raise HTTPException(400, "Status phải là Approved hoặc Rejected")
-    
+
+    old_status = lr.status
     lr.status = status
     db.commit()
     db.refresh(lr)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Leave Request", entity_type="LeaveRequest",
+        entity_id=lr.id, action=status.upper(), target_user_id=lr.user_id,
+        field_name="status", old_value=old_status, new_value=status,
+        description=f"{'Duyệt' if status == 'Approved' else 'Từ chối'} đơn nghỉ phép #{lr.id} của user #{lr.user_id}"
+    )
+    db.commit()
     lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
     return leave_to_dict(lr)

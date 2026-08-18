@@ -2,8 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { X, Sparkles, AlertTriangle, CheckCircle, Send, FileText } from 'lucide-react';
 
-import { pushMeetingTasks, getProjects, getAccounts } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib/api';
 import { getToken } from '@/lib/auth';
+import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface Props {
   isOpen: boolean;
@@ -21,6 +22,10 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
   const [projectsList, setProjectsList] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
 
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [selectedCreatorId, setSelectedCreatorId] = useState<number | null>(null);
+  const [isSavingAssignment, setIsSavingAssignment] = useState(false);
+
   const [isLoading, setIsLoading] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [pushSuccess, setPushSuccess] = useState('');
@@ -32,6 +37,8 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
       setTranscript(meeting.transcript || '');
       setExecutiveSummary(meeting.executive_summary || '');
       setDecisions(meeting.decisions || []);
+      setSelectedProjectId(meeting.project_id || null);
+      setSelectedCreatorId(meeting.created_by || null);
 
       const existingTasks = Array.isArray(meeting.recommended_tasks)
         ? meeting.recommended_tasks.map((t: any) => ({ ...t, checked: true }))
@@ -49,6 +56,7 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
       setPushSuccess('');
     }
   }, [meeting, isOpen]);
+
 
   useEffect(() => {
     if (isOpen) {
@@ -127,6 +135,30 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
     }
   };
 
+  const handleSaveAssignment = async () => {
+    if (!meeting?.id) return;
+    setIsSavingAssignment(true);
+    setError('');
+    setPushSuccess('');
+    try {
+      const res = await updateMeeting(meeting.id, {
+        ...meeting,
+        project_id: selectedProjectId,
+        created_by: selectedCreatorId
+      });
+      if (res.success) {
+        setPushSuccess('✓ Đã cập nhật Dự án và Người tạo cuộc họp thành công!');
+        if (onSave) onSave(res.data);
+      } else {
+        setError('Không thể lưu thông tin phân công.');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || err.message || 'Lỗi khi lưu phân công cuộc họp');
+    } finally {
+      setIsSavingAssignment(false);
+    }
+  };
+
   if (!isOpen || !meeting) return null;
 
   const attendeeCount = Array.isArray(meeting.members) 
@@ -134,6 +166,9 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
     : (meeting.member_count !== undefined ? meeting.member_count : (meeting.people || 0));
 
   const timeInfo = `${meeting.date || meeting.meeting_date || 'Chưa đặt ngày'} · ${meeting.time || meeting.start_time || 'Chưa đặt giờ'} · ${attendeeCount} người tham dự`;
+
+  const currentProjectName = projectsList.find(p => p.id === selectedProjectId)?.name || meeting.project_name || meeting.project || 'Dự án chung';
+  const currentCreatorName = membersList.find(m => m.id === selectedCreatorId)?.display_name || membersList.find(m => m.id === selectedCreatorId)?.full_name || meeting.creator_name || 'Chưa chọn người tạo';
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
@@ -153,11 +188,61 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
           </button>
         </div>
 
-        {/* Meeting Info Subheader Banner */}
-        <div className="p-3.5 bg-[#eef6ff] border border-[#cfe4ff] rounded-xl text-xs space-y-1">
-          <strong className="text-[#1769d2] text-sm block">{meeting.title || 'Cuộc họp'}</strong>
-          <span className="text-[#59687f] block font-medium">{timeInfo}</span>
+        {/* Meeting Info Subheader Banner + Quick Project & Creator Selection */}
+        <div className="p-3.5 bg-[#eef6ff] border border-[#cfe4ff] rounded-xl text-xs space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <strong className="text-[#1769d2] text-sm block">{meeting.title || 'Cuộc họp'}</strong>
+              <span className="text-[#59687f] block font-medium mt-0.5">{timeInfo}</span>
+            </div>
+          </div>
+
+          {/* Quick Assignment Controls */}
+          <div className="pt-2 border-t border-[#cfe4ff]/60 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] font-extrabold text-[#1769d2] uppercase block mb-1">Gán Dự án:</label>
+              <SearchableSelect
+                label="dự án"
+                options={Array.from(new Set([currentProjectName, ...projectsList.map(p => p.name)]))}
+                value={currentProjectName}
+                onChange={(val: any) => {
+                  const found = projectsList.find(p => p.name === val);
+                  setSelectedProjectId(found ? found.id : null);
+                }}
+                placeholder="Tìm dự án..."
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-extrabold text-[#1769d2] uppercase block mb-1">Người tạo (Creator):</label>
+              <SearchableSelect
+                label="người tạo"
+                options={Array.from(new Set([currentCreatorName, ...membersList.map(m => m.full_name || m.display_name)]))}
+                value={currentCreatorName}
+                onChange={(val: any) => {
+                  const found = membersList.find(m => (m.full_name || m.display_name) === val);
+                  setSelectedCreatorId(found ? found.id : null);
+                }}
+                placeholder="Tìm người tạo..."
+                className="w-full"
+              />
+            </div>
+          </div>
+
+          {(selectedProjectId !== meeting.project_id || selectedCreatorId !== meeting.created_by) && (
+            <div className="pt-1 flex justify-end">
+              <button
+                type="button"
+                onClick={handleSaveAssignment}
+                disabled={isSavingAssignment}
+                className="px-3 py-1.5 bg-[#1769d2] hover:bg-[#1258b3] text-white font-bold text-[11px] rounded-lg transition-all shadow-xs disabled:opacity-50"
+              >
+                {isSavingAssignment ? 'Đang lưu...' : 'Lưu phân công'}
+              </button>
+            </div>
+          )}
         </div>
+
 
         {/* Toggle Transcript / Edit */}
         <div className="flex items-center justify-between pt-1">
@@ -278,40 +363,42 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-xs">
                             {/* Project Select */}
                             <div>
-                              <select
-                                aria-label="Project"
-                                value={t.project_name || ''}
-                                onChange={e => {
+                              <SearchableSelect
+                                label="dự án"
+                                icon=""
+                                options={Array.from(new Set([
+                                  t.project_name || meeting.project || 'Dự án chung',
+                                  ...projectsList.map(p => p.name),
+                                ]))}
+                                value={t.project_name || meeting.project || 'Dự án chung'}
+                                onChange={(val: any) => {
                                   const updated = [...tasks];
-                                  updated[i].project_name = e.target.value;
+                                  updated[i].project_name = val === 'all' ? '' : val;
                                   setTasks(updated);
                                 }}
-                                className="w-full bg-white border border-[#dce3ee] rounded-lg p-1.5 text-[11px] font-semibold text-[#17253d] focus:outline-none focus:border-[#1769d2]"
-                              >
-                                <option value={t.project_name || meeting.project || 'Dự án chung'}>{t.project_name || meeting.project || 'Dự án chung'}</option>
-                                {projectsList.map(p => (
-                                  <option key={p.id} value={p.name}>{p.name}</option>
-                                ))}
-                              </select>
+                                placeholder="Tìm dự án..."
+                                className="w-full"
+                              />
                             </div>
 
                             {/* Member Select */}
                             <div>
-                              <select
-                                aria-label="Member"
+                              <SearchableSelect
+                                label="người phụ trách"
+                                icon=""
+                                options={Array.from(new Set([
+                                  ...(t.assigned_name ? [t.assigned_name] : []),
+                                  ...membersList.map(m => m.full_name || m.display_name),
+                                ]))}
                                 value={t.assigned_name || ''}
-                                onChange={e => {
+                                onChange={(val: any) => {
                                   const updated = [...tasks];
-                                  updated[i].assigned_name = e.target.value;
+                                  updated[i].assigned_name = val === 'all' ? '' : val;
                                   setTasks(updated);
                                 }}
-                                className="w-full bg-white border border-[#dce3ee] rounded-lg p-1.5 text-[11px] font-semibold text-[#17253d] focus:outline-none focus:border-[#1769d2]"
-                              >
-                                <option value={t.assigned_name || ''}>{t.assigned_name || 'Chọn người phụ trách'}</option>
-                                {membersList.map(m => (
-                                  <option key={m.id} value={m.full_name || m.display_name}>{m.full_name || m.display_name}</option>
-                                ))}
-                              </select>
+                                placeholder="Tìm người phụ trách..."
+                                className="w-full"
+                              />
                             </div>
 
                             {/* Deadline Date Picker */}

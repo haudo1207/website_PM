@@ -11,7 +11,9 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
-from sqlalchemy import func, extract
+from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name
+from ..utils.audit_service import AuditService
+from sqlalchemy import func, extract, false
 
 TEAM_POSITIONS = {
   "Infrastructure": [
@@ -37,6 +39,22 @@ TEAM_POSITIONS = {
     "B2B Sales", "Business Development", "Customer Success", "Sales/Customer Care"
   ]
 }
+
+def calc_kpi_bonus(kpi: float) -> float:
+    if kpi < 90: return 0.0
+    if kpi < 95: return 0.90
+    if kpi < 100: return 0.95
+    if kpi < 105: return 1.00
+    if kpi < 110: return 1.05
+    if kpi < 115: return 1.10
+    if kpi < 120: return 1.15
+    if kpi < 125: return 1.20
+    if kpi < 130: return 1.25
+    if kpi < 135: return 1.30
+    if kpi < 140: return 1.35
+    if kpi < 145: return 1.40
+    if kpi < 150: return 1.45
+    return 1.50
 
 def get_primary_team(positions):
     for team, team_positions in TEAM_POSITIONS.items():
@@ -150,6 +168,7 @@ def list_members(
     team: Optional[str] = None,
     position: Optional[str] = None,
     department: Optional[str] = None,
+    workspace: Optional[str] = None,
     skill_id: Optional[int] = None,
     month: Optional[int] = None,
     year: Optional[int] = None,
@@ -157,7 +176,7 @@ def list_members(
     end_date: Optional[str] = None,
     leader_name: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    current_user=Depends(get_current_user)
 ):
     # Subquery to calculate KPI from Tasks for each member
     # Using UNION ALL to combine assigned and support portions of the task
@@ -275,8 +294,22 @@ def list_members(
         q = q.filter(Member.department == department)
     if leader_name:
         q = q.filter(Member.leader_name == leader_name)
+    if workspace:
+        ws = resolve_workspace(db, workspace)
+        if ws:
+            q = q.filter(User.data_scope == ws.code)
+        else:
+            q = q.filter(false())
     if skill_id:
         q = q.filter(Member.skills.any(Skill.id == skill_id))
+
+    # Workspace data scope: members are limited to the caller's Workspace
+    # (linked account scope + members assigned to projects within scope).
+    # Applies to Leader, Member and Viewer — the effective Workspace always
+    # comes from the authenticated user, so the workspace query parameter can
+    # never bypass the caller's assigned Workspace (super_admin / scope=all
+    # keep seeing every member, exactly as before).
+    q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()
     
@@ -290,28 +323,16 @@ def list_members(
         md_total = float(manday_total) if manday_total else 0.0
         md_est_t = float(manday_est_total) if manday_est_total else 0.0
         kpi_base_t = float(kpi_base_total) if kpi_base_total else 0.0
-        
-        avg = 0.0
-        bonus = 0.0
-        
-        # Chỉ tính Trung bình và Bonus nếu người dùng đang lọc theo một Tháng cụ thể
-        if month:
-            # 1. Trung bình KPI (Tổng điểm KPI / Số tuần của chu kỳ đó)
-            avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
-            
-            # 2. KPI Bonus (dựa trên ảnh bảng Achievement)
-            if total >= 150:
-                bonus = 1.50
-            elif total >= 100:
-                step = (int(total) - 100) // 5
-                bonus = 1.00 + (step * 0.05)
-            
+        avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
+        bonus = calc_kpi_bonus(avg)
+
         d['kpi_total'] = total
         d['kpi_avg'] = avg
         d['kpi_bonus'] = round(bonus, 2)
         d['manday_total'] = md_total
         d['manday_est_total'] = float(md_est_t)
         d['kpi_base_total'] = float(kpi_base_t)
+        d['workspace'] = scope_display_name(db, m.user.data_scope) if m.user else None
         
         out.append(d)
         
@@ -329,7 +350,7 @@ def get_member(id: int, db: Session = Depends(get_db), _=Depends(get_current_use
 
 # ─── CREATE ──────────────────────────────────────────────
 @router.post("")
-def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def create_member(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     display_name = str(body.get("display_name", "")).strip()
     full_name = str(body.get("full_name", "")).strip()
 
@@ -373,6 +394,12 @@ def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_a
     db.add(m)
     db.commit()
     db.refresh(m)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+        entity_id=m.id, action="CREATE", resource_name=m.display_name,
+        description=f"Tạo thành viên '{m.display_name}'"
+    )
+    db.commit()
     # reload with skills
     m = db.query(Member).options(joinedload(Member.skills)).filter(Member.id == m.id).first()
     return member_to_dict(m)
@@ -380,7 +407,7 @@ def create_member(body: dict, db: Session = Depends(get_db), _=Depends(require_a
 
 # ─── UPDATE ──────────────────────────────────────────────
 @router.put("/{id}")
-def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+def update_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     m = db.query(Member).options(joinedload(Member.skills)).filter(Member.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy thành viên")
@@ -399,6 +426,11 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(
     ).first()
     if dup:
         raise HTTPException(400, f"Display Name '{display_name}' đã tồn tại")
+
+    old_dict = {
+        "display_name": m.display_name, "full_name": m.full_name, "email": m.email,
+        "team": m.team, "position": m.position, "department": m.department,
+    }
 
     birth_date = m.birth_date
     bd_str = body.get("birth_date", "")
@@ -431,17 +463,33 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), _=Depends(
         m.skills = skills
 
     db.commit()
+    AuditService.record_diff(
+        db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+        entity_id=m.id, old_dict=old_dict,
+        new_dict={"display_name": m.display_name, "full_name": m.full_name, "email": m.email,
+                  "team": m.team, "position": m.position, "department": m.department},
+        field_labels={"display_name": "Display Name", "full_name": "Họ tên", "email": "Email",
+                      "team": "Team", "position": "Vị trí", "department": "Phòng ban"},
+    )
+    db.commit()
     m = db.query(Member).options(joinedload(Member.skills)).filter(Member.id == id).first()
     return member_to_dict(m)
 
 
 # ─── DELETE ──────────────────────────────────────────────
 @router.delete("/{id}")
-def delete_member(id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+def delete_member(id: int, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     m = db.query(Member).filter(Member.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy thành viên")
+    m_name = m.display_name
     db.delete(m)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+        entity_id=id, action="DELETE", resource_name=m_name,
+        description=f"Xóa thành viên '{m_name}'"
+    )
     db.commit()
     return {"message": "Đã xóa thành viên thành công"}
 
@@ -559,6 +607,7 @@ def sync_candidate(
         member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
         
     final_display_name = make_unique_display_name(db, display_name, member_id=member.id if member else None)
+    is_new_member = member is None
 
     if member:
         # Update existing member
@@ -605,6 +654,13 @@ def sync_candidate(
     try:
         db.commit()
         db.refresh(member)
+        AuditService.record(
+            db=db, user_id=None, module="Member", entity_type="Member",
+            entity_id=member.id, action="CREATE" if is_new_member else "UPDATE",
+            resource_name=member.display_name, source="API",
+            description=f"{'Tạo' if is_new_member else 'Cập nhật'} thành viên '{member.display_name}' qua sync-candidate (recruitment token)"
+        )
+        db.commit()
         return {"status": "success", "member_id": member.id, "display_name": member.display_name}
     except Exception as e:
         db.rollback()
@@ -650,9 +706,16 @@ def remove_candidate(
         return {"status": "not_found", "message": "Không tìm thấy thành viên để xóa"}
 
     try:
+        m_id, m_name = member.id, member.display_name
         db.delete(member)
         db.commit()
-        return {"status": "success", "message": f"Đã gỡ bỏ thành viên {member.display_name}"}
+        AuditService.record(
+            db=db, user_id=None, module="Member", entity_type="Member",
+            entity_id=m_id, action="DELETE", resource_name=m_name, source="API",
+            description=f"Gỡ bỏ thành viên '{m_name}' qua remove-candidate (recruitment token)"
+        )
+        db.commit()
+        return {"status": "success", "message": f"Đã gỡ bỏ thành viên {m_name}"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Lỗi database khi gỡ bỏ: {str(e)}")
@@ -661,7 +724,7 @@ def remove_candidate(
 @router.post("/sync-from-recruitment")
 def sync_from_recruitment(
     db: Session = Depends(get_db),
-    _=Depends(require_admin)
+    current_user=Depends(require_admin)
 ):
     import requests
     import re
@@ -863,6 +926,12 @@ def sync_from_recruitment(
         message = f"Đồng bộ thành công {success_count} ứng viên."
         if deleted_count > 0:
             message += f" Đã gỡ bỏ {deleted_count} ứng viên không còn ở trạng thái đã nhận."
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
+            entity_id=None, action="UPDATE",
+            description=f"Đồng bộ hàng loạt từ hệ thống tuyển dụng: {success_count} ứng viên cập nhật/tạo mới, {deleted_count} bị gỡ bỏ"
+        )
+        db.commit()
         return {"status": "success", "count": success_count, "message": message}
     except Exception as e:
         db.rollback()

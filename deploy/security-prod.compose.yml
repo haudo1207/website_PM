@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     build: ${SOURCE_DIR}/backend
     env_file: ./.env
+    environment:
+      RUN_DB_STARTUP_ON_IMPORT: "false"
     volumes:
       - ./secrets:/app/secrets:ro
     healthcheck:
@@ -16,32 +18,14 @@ services:
       retries: 10
       start_period: 30s
 
-  worker:
-    # Scheduled sync code still lives in the preserved legacy worker image.
-    image: portal-kpi-legacy-worker:20260716
-    pull_policy: never
-    container_name: task_worker
-    restart: unless-stopped
-    command: celery -A app.worker.celery_app:celery_app worker --loglevel=info --concurrency=2
-    env_file: ./.env
-    volumes:
-      - ./secrets:/app/secrets:ro
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  scheduler:
-    image: portal-kpi-legacy-worker:20260716
-    pull_policy: never
-    container_name: task_scheduler
-    restart: unless-stopped
-    command: celery -A app.worker.celery_app:celery_app beat --loglevel=info
-    env_file: ./.env
-    volumes:
-      - ./secrets:/app/secrets:ro
-    depends_on:
-      backend:
-        condition: service_healthy
+  # worker/scheduler (Celery, portal-kpi-legacy-worker:20260716) removed —
+  # ran deprecated Google-Sheet-era tasks (check_sheet/check_all_sheets, both
+  # explicit no-ops), no periodic schedule configured, and no service in this
+  # stack defines a `redis` host, so both containers only ever logged
+  # "Temporary failure in name resolution" retrying against redis:6379 since
+  # the day they started — never a single successful connection, never a
+  # single task invocation. Nothing in the current app enqueues Celery tasks
+  # (redis/celery aren't even in backend/requirements.txt).
 
   frontend:
     image: portal-security-prod-frontend:${APP_COMMIT}

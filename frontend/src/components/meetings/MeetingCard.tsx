@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Share2, Check, ExternalLink, Video } from 'lucide-react';
+import { Video, Folder, Calendar, Clock, User, Sparkles, MoreVertical, ChevronRight, ExternalLink } from 'lucide-react';
 
 interface MeetingCardProps {
   meeting: any;
@@ -9,225 +9,187 @@ interface MeetingCardProps {
   onDelete?: (id: string) => void;
   onSummarize?: (meeting: any) => void;
   onSync?: (meeting: any) => Promise<any>;
+  onOpenDetail?: (meeting: any) => void;
 }
 
-export default function MeetingCard({ meeting, onDelete, onSummarize }: MeetingCardProps) {
-  const [copied, setCopied] = useState(false);
+export default function MeetingCard({ meeting, onDelete, onSummarize, onOpenDetail }: MeetingCardProps) {
+  const [showMenu, setShowMenu] = useState(false);
 
-  const statusUpper = String(meeting.status || 'CHƯA DIỄN RA').toUpperCase();
+  const statusUpper = String(meeting.status || 'SẮP TỚI').toUpperCase();
   const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
   const isProcessing = statusUpper === 'ĐANG XỬ LÝ AI' || (meeting as any).ai_status === 'processing';
   
-  const attendeeCount = Array.isArray(meeting.members) 
-    ? meeting.members.length 
-    : (meeting.member_count !== undefined ? meeting.member_count : (meeting.people || 0));
-
-  const durationStr = meeting.duration ? `${meeting.duration} phút` : (meeting.time ? '30 phút' : 'Chưa đặt');
+  const durationStr = meeting.duration ? `${meeting.duration} phút` : (meeting.time ? '30 phút' : '30 phút');
   const execSummary = meeting.executive_summary || (meeting.summary && meeting.summary.length ? meeting.summary[0] : '');
-  const hasAISummary = Boolean(execSummary && isDone);
-  const tasksCount = Array.isArray(meeting.recommended_tasks) ? meeting.recommended_tasks.length : 0;
+  const hasAISummary = Boolean(execSummary || meeting.ai_summary);
+
+  const creatorName = meeting.creator_name || meeting.creator?.display_name || meeting.created_by_name || 'Host mkt.szone';
+  const platformName = meeting.platform || 'Google Meet';
+  const isN8nSource = meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata;
 
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
-  const meetingLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : '';
-
-  const creatorName = meeting.creator_name || meeting.creator?.display_name || meeting.created_by_name || 'Trang Nguyễn';
-
-  const handleShare = () => {
-    if (!meetingLink) {
-      alert("Cuộc họp này chưa có đường link. Bạn có thể tạo link bằng nút 'Tạo meeting' hoặc 'Sửa'.");
-      return;
-    }
-    navigator.clipboard.writeText(meetingLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleDownloadTranscript = () => {
-    const transcriptText = meeting.transcript || meeting.ai_summary || execSummary;
-    if (!transcriptText || (typeof transcriptText === 'string' && !transcriptText.trim())) {
-      alert("Cuộc họp này chưa có file biên bản (transcript) để tải về.");
-      return;
-    }
-    const content = typeof transcriptText === 'string' 
-      ? transcriptText 
-      : (Array.isArray(transcriptText) ? transcriptText.join('\n') : JSON.stringify(transcriptText, null, 2));
-      
-    const cleanTitle = (meeting.title || 'Bien_ban_cuoc_hop').replace(/[^a-zA-Z0-9_\-\s]/g, '').trim().replace(/\s+/g, '_');
-    const filename = `${cleanTitle}_Bien_ban.txt`;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
+  const baseLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
+  const hostJoinLink = baseLink.includes('authuser=')
+    ? baseLink
+    : `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=mkt.szone@gmail.com`;
 
   return (
-    <div className="bg-white rounded-2xl border border-[#e4eaf3] p-5 shadow-xs hover:shadow-md transition-all space-y-4">
-      {/* Top Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-bold text-[#17253d] text-[15px]">{meeting.title || 'Cuộc họp chưa có tên'}</h3>
-            
-            {/* Real Status Badge */}
-            {isDone ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                Completed
-              </span>
-            ) : isProcessing ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300">
-                Processing
-              </span>
-            ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-50 text-blue-700 border border-blue-200">
-                Chưa diễn ra
-              </span>
-            )}
-          </div>
-          
-          <div className="mt-1 flex items-center gap-2 flex-wrap">
-            {/* Real AI Summary Badge */}
-            {hasAISummary ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                AI Summary sẵn sàng
-              </span>
-            ) : isProcessing ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                🔴 AI đang xử lý
-              </span>
-            ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                Chưa có AI Summary
-              </span>
-            )}
-
-            {meeting.platform && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
-                {meeting.platform}
-              </span>
-            )}
-          </div>
+    <div className="bg-white rounded-2xl border border-[#e2e8f0] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Left Column: Meeting Info & Badges */}
+      <div className="flex items-start gap-3.5 flex-1 min-w-0">
+        <div className="w-11 h-11 rounded-2xl bg-[#f5f3ff] text-[#6366f1] flex items-center justify-center shrink-0 border border-[#e0e7ff] mt-0.5">
+          {hasAISummary ? <Video size={20} className="text-[#6366f1]" /> : <Folder size={20} className="text-amber-600" />}
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Share Link Button */}
+        <div className="space-y-2 min-w-0 flex-1">
+          {/* Title & Badges Row */}
+          <div>
+            <h3 
+              onClick={() => onOpenDetail?.(meeting)} 
+              className="font-bold text-[#0b1c30] text-sm sm:text-[15px] hover:text-[#6366f1] cursor-pointer transition-colors leading-snug"
+            >
+              {meeting.title || 'Cuộc họp chưa có tên'}
+            </h3>
+
+            <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+              {isDone ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#dcfce7] text-[#166534]">
+                  Completed
+                </span>
+              ) : isProcessing ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">
+                  Processing
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700">
+                  Scheduled
+                </span>
+              )}
+
+              {hasAISummary ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#f5f3ff] text-[#6366f1]">
+                  AI Summary sẵn sàng
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">
+                  Chưa có AI Summary
+                </span>
+              )}
+
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f1f5f9] text-[#64748b]">
+                {platformName}
+              </span>
+            </div>
+          </div>
+
+          {/* Sub Metadata Row */}
+          <div className="flex items-center gap-4 text-[12px] text-[#64748b] flex-wrap font-medium pt-0.5">
+            <span className="flex items-center gap-1">
+              <Calendar size={13} className="text-[#94a3b8]" />
+              {meeting.date || meeting.meeting_date || 'Chưa đặt ngày'}
+            </span>
+            <span className="flex items-center gap-1">
+              <Clock size={13} className="text-[#94a3b8]" />
+              {meeting.time || meeting.start_time || 'Chưa đặt giờ'}
+            </span>
+            <span className="flex items-center gap-1">
+              <User size={13} className="text-[#94a3b8]" />
+              {creatorName}
+            </span>
+            <span className="flex items-center gap-1">
+              <Clock size={13} className="text-[#94a3b8]" />
+              {durationStr}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Middle Column: AI Summary Box (Light Purple Tint Container) */}
+      <div className="w-full md:w-[320px] lg:w-[360px] shrink-0 cursor-pointer" onClick={() => onOpenDetail?.(meeting)}>
+        {hasAISummary ? (
+          <div className="bg-[#f8f6ff] border border-[#eee9fe] rounded-2xl p-3 sm:p-3.5 space-y-1">
+            <div className="flex items-center gap-1.5 text-[#6366f1] text-[11px] font-bold uppercase tracking-wider">
+              <Sparkles size={13} />
+              <span>AI Summary sẵn sàng</span>
+            </div>
+            <p className="text-[12px] text-[#475569] leading-relaxed line-clamp-2 font-normal">
+              {execSummary}
+            </p>
+          </div>
+        ) : (
+          <div className="bg-[#f8fafc] border border-[#e2e8f0] rounded-2xl p-3 sm:p-3.5 space-y-1">
+            <div className="flex items-center gap-1.5 text-[#64748b] text-[11px] font-bold uppercase tracking-wider">
+              <span className="w-2 h-2 rounded-full border-2 border-slate-400"></span>
+              <span>Chưa có AI Summary</span>
+            </div>
+            <p className="text-[12px] text-[#94a3b8] leading-relaxed italic">
+              Sẽ được tạo sau khi kết thúc
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Right Column: Actions */}
+      <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap sm:flex-nowrap">
+        {/* Join as Host link */}
+        <a
+          href={hostJoinLink}
+          target="_blank"
+          rel="noreferrer"
+          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center gap-1"
+          title="Vào Google Meet bằng tài khoản Host mkt.szone@gmail.com để duyệt người tham gia và bật ghi âm"
+        >
+          <Video size={14} />
+          <span>Tham gia (Host)</span>
+          <ExternalLink size={11} />
+        </a>
+
+        <button
+          type="button"
+          onClick={() => onOpenDetail?.(meeting)}
+          className="px-3 py-2 bg-white hover:bg-[#f8fafc] border border-[#cbd5e1] text-[#475569] hover:text-[#0b1c30] text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center gap-1"
+        >
+          <span>Xem chi tiết</span>
+          <ChevronRight size={14} />
+        </button>
+
+        <div className="relative">
           <button
             type="button"
-            onClick={handleShare}
-            className="text-xs font-semibold text-[#1769d2] hover:text-[#1258b3] flex items-center gap-1 bg-blue-50 px-2.5 py-1 rounded-lg transition-colors border border-blue-100"
-            title="Sao chép đường link cuộc họp"
+            onClick={() => setShowMenu(!showMenu)}
+            className="p-2 text-[#94a3b8] hover:text-[#0b1c30] rounded-xl hover:bg-slate-100 transition-colors border border-transparent hover:border-slate-200"
           >
-            {copied ? (
-              <>
-                <Check size={13} className="text-emerald-600" />
-                <span className="text-emerald-600 font-bold">Đã chép link!</span>
-              </>
-            ) : (
-              <>
-                <Share2 size={13} />
-                <span>Chia sẻ link</span>
-              </>
-            )}
+            <MoreVertical size={16} />
           </button>
 
-          {onDelete && (
-            <button onClick={() => onDelete(meeting.id)} className="text-[11px] text-slate-400 hover:text-red-500 font-medium ml-1">Xóa</button>
+          {showMenu && (
+            <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-30 text-xs font-medium">
+              <button
+                onClick={() => { setShowMenu(false); onOpenDetail?.(meeting); }}
+                className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0b1c30]"
+              >
+                Xem chi tiết
+              </button>
+              <button
+                onClick={() => { setShowMenu(false); onSummarize?.(meeting); }}
+                className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-purple-700"
+              >
+                Chạy AI Tóm tắt
+              </button>
+              {onDelete && (
+                <button
+                  onClick={() => { setShowMenu(false); onDelete(meeting.id); }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-red-600 border-t border-slate-100"
+                >
+                  Xóa cuộc họp
+                </button>
+              )}
+            </div>
           )}
         </div>
-      </div>
-
-      {/* Real Metadata Line */}
-      <div className="text-[11px] text-[#718096] flex items-center justify-between gap-3 flex-wrap font-medium">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span>📅 {meeting.date || meeting.meeting_date || 'Chưa chọn'} · {meeting.time || meeting.start_time || 'Chưa chọn'}</span>
-          <span>👤 {creatorName}</span>
-          <span>⏱ {durationStr}</span>
-        </div>
-
-        {/* Direct Join Link */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <a
-            href={`${(meetingLink || 'https://meet.google.com/new').startsWith('http') ? (meetingLink || 'https://meet.google.com/new') : `https://${meetingLink}`}${(meetingLink || '').includes('?') ? '&' : '?'}authuser=mkt.szone@gmail.com`}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-xs"
-            title="Vào Google Meet với tư cách Host mkt.szone@gmail.com để Duyệt người tham gia & Bật Ghi âm cuộc họp"
-          >
-            <Video size={14} />
-            <span>🎥 Tham gia cuộc họp (Host mkt.szone)</span>
-            <ExternalLink size={11} />
-          </a>
-        </div>
-      </div>
-
-      {/* Dynamic Stepper Workflow (4 steps) */}
-      <div className="grid grid-cols-4 gap-1.5 text-[10px] font-extrabold text-center">
-        <span className="py-1.5 px-2 rounded-lg bg-[#dcfce7] text-[#07865f]">1. Ghi nhận</span>
-        
-        <span className={`py-1.5 px-2 rounded-lg ${hasAISummary ? 'bg-[#dcfce7] text-[#07865f]' : isProcessing ? 'bg-[#fff7e8] text-[#c26900]' : 'bg-[#edf2f7] text-[#8190a6]'}`}>
-          2. AI Summary
-        </span>
-        
-        <span className={`py-1.5 px-2 rounded-lg ${hasAISummary && tasksCount > 0 ? 'bg-[#ede9fe] text-[#6d28d9]' : 'bg-[#edf2f7] text-[#8190a6]'}`}>
-          3. Duyệt task
-        </span>
-        
-        <span className="py-1.5 px-2 rounded-lg bg-[#edf2f7] text-[#8190a6]">
-          4. Push Project
-        </span>
-      </div>
-
-      {/* Dynamic AI Summary Box */}
-      {hasAISummary ? (
-        <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 space-y-1">
-          <b className="text-[11px] text-[#6d28d9] uppercase tracking-wider block">✦ AI TÓM TẮT</b>
-          <p className="text-[12px] text-[#516079] leading-relaxed">
-            {execSummary}
-          </p>
-        </div>
-      ) : (
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-1">
-          <b className="text-[11px] text-slate-500 uppercase tracking-wider block">✦ AI TÓM TẮT</b>
-          <p className="text-[12px] text-slate-500 leading-relaxed italic">
-            Cuộc họp chưa diễn ra hoặc chưa có biên bản. Dán/nhập biên bản cuộc họp để AI tự động tóm tắt và tách task.
-          </p>
-        </div>
-      )}
-
-      {/* Dynamic Action Buttons */}
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          type="button"
-          onClick={() => onSummarize?.(meeting)}
-          disabled={isProcessing}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs ${
-            isProcessing
-              ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-              : hasAISummary && tasksCount > 0
-              ? 'bg-[#1769d2] hover:bg-[#1258b3] text-white'
-              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-          }`}
-        >
-          {isProcessing
-            ? 'Đang xử lý...'
-            : hasAISummary && tasksCount > 0
-            ? `Xem ${tasksCount} task AI tạo`
-            : 'Tạo tóm tắt & Task AI'}
-        </button>
-
-        <button
-          type="button"
-          onClick={handleDownloadTranscript}
-          className="px-4 py-2 rounded-xl text-xs font-bold text-[#445168] bg-white border border-[#dce3ee] hover:bg-slate-50 transition-all shadow-xs flex items-center gap-1.5"
-          title="Tải về file biên bản cuộc họp (.txt)"
-        >
-          <span>⇩ Biên bản</span>
-        </button>
       </div>
     </div>
   );
 }
+
+

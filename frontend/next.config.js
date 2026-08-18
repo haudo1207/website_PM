@@ -18,6 +18,10 @@ const nextConfig = {
           source: '/api/:path*',
           destination: `${backendUrl}/api/:path*`,
         },
+        {
+          source: '/project/detail/:tab(overview|tasks|meetings|chats|members|audit-logs)',
+          destination: '/project/detail?tab=:tab',
+        },
       ],
     }
   },

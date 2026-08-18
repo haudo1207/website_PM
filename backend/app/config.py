@@ -7,7 +7,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./app.db"
     SECRET_KEY: str = "default-development-secret-key-change-in-env"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Portal refresh session (non-rotating in Phase 1).
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 20
+    REFRESH_COOKIE_NAME: str = "portal_refresh"
+    REFRESH_COOKIE_SECURE: bool = True
     INTERNAL_SYNC_TOKEN: str = ""
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     DEFAULT_ADMIN_EMAIL: str = "admin@company.com"
@@ -15,12 +19,29 @@ class Settings(BaseSettings):
     GOOGLE_LOGIN_ENABLED: bool = True
     PASSWORD_LOGIN_ENABLED: bool = False
     AUTH_SUPERADMIN_EMAILS: str = ""
+
+    # Microsoft (Outlook) login — additive to Google Login.
+    # OUTLOOK_TENANT_ID "common" accepts Microsoft personal + Entra accounts.
+    OUTLOOK_LOGIN_ENABLED: bool = False
+    OUTLOOK_CLIENT_ID: str = ""
+    OUTLOOK_TENANT_ID: str = "common"
     AI_BASE_URL: str = "https://api.shopaikey.com/v1"
     AI_API_KEY: str = ""
     AI_MODEL: str = "gpt-4o-mini"
     AI_TIMEOUT_SECONDS: int = 60
     CHECK_INTERVAL_SECONDS: int = 3600
     REDIS_URL: str = ""
+
+    # DB connection pool — was hard-coded pool_size=2/max_overflow=0 in database.py,
+    # which exhausts under concurrent Dashboard load and forces requests to queue.
+    # Kept conservative: measured on the dev DB (Supabase pooler) max_connections=60
+    # with ~24 already used by Supabase's own infra (Supavisor/PostgREST/pg_cron),
+    # leaving ~36 free. pool_size+max_overflow is a per-worker ceiling, and prod
+    # runs 2 brands sharing one DB — override via .env per environment once
+    # UVICORN_WORKERS > 1 is actually rolled out, based on real headroom there.
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    DB_POOL_TIMEOUT: int = 30
 
     # Zoom Server-to-Server OAuth
     ZOOM_ACCOUNT_ID: str = ""
@@ -40,6 +61,9 @@ class Settings(BaseSettings):
 
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
+
+    # n8n Integration Webhook Secret
+    N8N_WEBHOOK_SECRET: str = ""
 
     @property
     def superadmin_emails(self) -> set[str]:

@@ -1,9 +1,10 @@
 'use client';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
-import { isAdmin, isSuperAdmin } from '@/lib/auth';
+import { getProjects, deleteProject, bulkDeleteProjects, updateProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
+import { isAdmin } from '@/lib/auth';
 import SearchableSelect from './common/SearchableSelect';
 
 const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
@@ -78,7 +79,17 @@ const getPaginationRange = (current: number, total: number) => {
   return result;
 };
 
-export default function ProjectListContent() {
+interface ProjectListContentProps {
+  /** Workspace code to lock the list to (Project Hub). Hides the Workspace
+   * filter and prevents switching away from it. Undefined/omitted keeps the
+   * original standalone /projects behavior unchanged. */
+  lockedWorkspace?: string;
+  /** Project Hub — renders a tab bar (Projects/Customers) right below the
+   * page header. Undefined/omitted keeps the original standalone page look. */
+  renderTabs?: () => ReactNode;
+}
+
+export default function ProjectListContent({ lockedWorkspace, renderTabs }: ProjectListContentProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramCustId = searchParams.get('customer_id');
@@ -86,38 +97,66 @@ export default function ProjectListContent() {
   const paramYear = searchParams.get('year');
 
   const canManage = isAdmin();
-  const [projects, setProjects] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState('All');
   const [phaseFilter, setPhaseFilter] = useState('All');
   const [customerFilter, setCustomerFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
   const [salesFilter, setSalesFilter] = useState('All');
+  const [memberFilter, setMemberFilter] = useState('All');
   const [yearFilter, setYearFilter] = useState('All');
   const [sortBy, setSortBy] = useState('newest');
 
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [renamingProject, setRenamingProject] = useState<{ id: number; name: string } | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
 
-  const reload = async () => {
-    try {
-      const [projs, custs, wss] = await Promise.all([
+  // Close the per-card "..." menu on any click outside it — the button/dropdown
+  // themselves stop propagation, so only genuine outside clicks reach here.
+  useEffect(() => {
+    if (menuOpenId === null) return;
+    const handler = () => setMenuOpenId(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [menuOpenId]);
+
+  const { data: listData, refetch: reload } = useQuery({
+    queryKey: ['project-list'],
+    queryFn: async () => {
+      const [projs, custs] = await Promise.all([
         getProjects(),
         getCustomers(),
-        getWorkspaces().catch(() => [])
       ]);
-      setProjects(projs || []);
-      setCustomers(custs || []);
-      setWorkspaces(wss || []);
-    } catch {
-      // Fallback safe load
-    }
-  };
-  useEffect(() => { reload(); }, []);
+      return {
+        projects: projs || [],
+        customers: custs || [],
+      };
+    },
+  });
+  // Shared cache key with Navbar/Project Hub/CustomersProjectsView — this
+  // near-static list is fetched once and reused across the whole app.
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const projects: any[] = listData?.projects || [];
+  const customers: any[] = listData?.customers || [];
+  const workspaces: Workspace[] = workspacesData || [];
+
+  // Project Hub: lock the Workspace filter to the current tab's Workspace.
+  useEffect(() => {
+    if (!lockedWorkspace) return;
+    const ws = workspaces.find(w => w.code === lockedWorkspace);
+    setBusinessFilter(ws?.name || lockedWorkspace);
+  }, [lockedWorkspace, workspaces]);
 
   // Sync URL query params to filter states
   useEffect(() => {
@@ -156,14 +195,15 @@ export default function ProjectListContent() {
 
   const handleResetFilters = () => {
     setSearch('');
-    setBusinessFilter('All');
+    if (!lockedWorkspace) setBusinessFilter('All');
     setPhaseFilter('All');
     setCustomerFilter('All');
     setPmFilter('All');
     setSalesFilter('All');
+    setMemberFilter('All');
     setYearFilter('All');
     setPage(1);
-    router.push('/projects');
+    if (!lockedWorkspace) router.push('/projects');
   };
 
   // Dynamic lists from loaded data memoized
@@ -181,6 +221,24 @@ export default function ProjectListContent() {
     const names: string[] = [];
     projects.forEach(p => {
       (p.sales_name || '').split(',').map((s: string) => s.trim()).filter((s: string) => s).forEach((n: string) => names.push(n));
+    });
+    return Array.from(new Set(names)).sort();
+  }, [projects]);
+
+  const uniqueMembers = useMemo(() => {
+    const names: string[] = [];
+    projects.forEach(p => {
+      if (p.member_names) {
+        p.member_names.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
+      if (Array.isArray(p.members)) {
+        p.members.forEach((m: any) => { if (m?.name) names.push(m.name); });
+      }
+      if (p.pm_name) names.push(p.pm_name);
+      if (p.technical_leader_name) names.push(p.technical_leader_name);
+      if (p.sales_name) {
+        p.sales_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
     });
     return Array.from(new Set(names)).sort();
   }, [projects]);
@@ -210,18 +268,38 @@ export default function ProjectListContent() {
       const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
       const matchSales = salesFilter === 'All' ||
         (p.sales_name || '').split(',').map((s: string) => s.trim()).includes(salesFilter);
+      const matchMember = memberFilter === 'All' || (() => {
+        const mLower = memberFilter.toLowerCase();
+        const projMemberNames: string[] = [];
+        if (p.member_names) projMemberNames.push(...p.member_names.split(',').map((s: string) => s.trim()));
+        if (Array.isArray(p.members)) p.members.forEach((m: any) => { if (m?.name) projMemberNames.push(m.name); });
+        if (p.pm_name) projMemberNames.push(p.pm_name);
+        if (p.technical_leader_name) projMemberNames.push(p.technical_leader_name);
+        if (p.sales_name) projMemberNames.push(...p.sales_name.split(',').map((s: string) => s.trim()));
+        return projMemberNames.some(name => name.toLowerCase() === mLower);
+      })();
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
-      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchYear;
+      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, yearFilter, wsNameByCode]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode]);
 
   // Sort memoized
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      if (sortBy === 'newest') return b.id - a.id;
-      if (sortBy === 'oldest') return a.id - b.id;
-      if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
-      if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
+      if (sortBy === 'newest') {
+        const timeA = new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
+        if (timeB !== timeA) return timeB - timeA;
+        return b.id - a.id;
+      }
+      if (sortBy === 'oldest') {
+        const timeA = new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return a.id - b.id;
+      }
+      if (sortBy === 'name_asc') return a.name.localeCompare(b.name, 'vi');
+      if (sortBy === 'name_desc') return b.name.localeCompare(a.name, 'vi');
       return 0;
     });
   }, [filtered, sortBy]);
@@ -245,21 +323,49 @@ export default function ProjectListContent() {
               <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Danh sách dự án</h1>
               <p className="text-sm text-slate-500 mt-1">Quản lý và theo dõi tiến độ các dự án tuân thủ bảo mật.</p>
             </div>
-            
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-slate-200 rounded-lg shadow-sm">
-                <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
-                <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
-                  <option value="newest">Mới nhất</option>
-                  <option value="oldest">Cũ nhất</option>
-                  <option value="name_asc">Tên (A-Z)</option>
-                  <option value="name_desc">Tên (Z-A)</option>
-                </select>
-              </div>
+
+            <div className="flex items-center gap-3">
+              {renderTabs && renderTabs()}
+              {canManage && (
+                <button
+                  onClick={() => router.push('/projects/new')}
+                  className="flex items-center gap-1.5 bg-[#0058be] hover:bg-[#00479c] text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors shrink-0"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Tạo dự án
+                </button>
+              )}
             </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm relative z-30">
+            {canManage && (
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer shrink-0 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px]">
+                <input
+                  type="checkbox"
+                  checked={paged.length > 0 && paged.every(p => selectedIds.includes(p.id))}
+                  onChange={(e) => {
+                    setSelectedIds(prev => e.target.checked
+                      ? Array.from(new Set([...prev, ...paged.map(p => p.id)]))
+                      : prev.filter(id => !paged.some(p => p.id === id)));
+                  }}
+                  className="w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                />
+                Chọn trang này
+              </label>
+            )}
+            <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
+              <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
+                <option value="newest">Mới nhất</option>
+                <option value="oldest">Cũ nhất</option>
+                <option value="name_asc">Tên (A-Z)</option>
+                <option value="name_desc">Tên (Z-A)</option>
+              </select>
+            </div>
+
             <div className="relative flex-1 min-w-[240px]">
               <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -305,13 +411,24 @@ export default function ProjectListContent() {
             />
 
             <SearchableSelect
-              label="Workspace"
-              icon="🗂️"
-              options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
-              value={businessFilter}
-              onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
-              placeholder="Tìm Workspace..."
+              label="thành viên"
+              icon="👥"
+              options={uniqueMembers.map(m => ({ id: m, name: m }))}
+              value={memberFilter}
+              onChange={val => { setMemberFilter(String(val)); setPage(1); }}
+              placeholder="Tìm thành viên..."
             />
+
+            {!lockedWorkspace && (
+              <SearchableSelect
+                label="Workspace"
+                icon="🗂️"
+                options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
+                value={businessFilter}
+                onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
+                placeholder="Tìm Workspace..."
+              />
+            )}
 
             <SearchableSelect
               label="năm"
@@ -335,12 +452,60 @@ export default function ProjectListContent() {
             {paged.map(p => {
               const phaseBadge = getPhaseBadgeStyle(p.current_phase);
               return (
-                <div key={p.id} onClick={() => router.push(`/project/detail?id=${p.id}`)}
+                <div key={p.id} onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
                   className="bg-white border border-slate-200/80 rounded-xl overflow-hidden flex flex-col cursor-pointer group shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-300 hover:-translate-y-0.5 relative">
+                  {canManage && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(p.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        setSelectedIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(x => x !== p.id));
+                      }}
+                      className="absolute top-3 left-3 z-10 w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                    />
+                  )}
                   <div className="p-6 flex-1 flex flex-col">
                     <div className="flex justify-between items-start mb-3">
                       <span className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200 px-2 py-0.5 rounded">Năm: {p.year || '—'}</span>
-                      <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
+                        {canManage && (
+                          <div className="relative" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => setMenuOpenId(prev => prev === p.id ? null : p.id)}
+                              className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0 cursor-pointer"
+                              title="Tuỳ chọn dự án"
+                            >
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z" />
+                              </svg>
+                            </button>
+                            {menuOpenId === p.id && (
+                              <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
+                                <button
+                                  onClick={() => { setMenuOpenId(null); router.push(`/project/detail/overview?id=${p.id}`); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                >
+                                  ✏️ Chỉnh sửa
+                                </button>
+                                <button
+                                  onClick={() => { setMenuOpenId(null); setRenamingProject({ id: p.id, name: p.name }); setRenameValue(p.name || ''); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                >
+                                  ✎ Đổi tên
+                                </button>
+                                <button
+                                  onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
+                                >
+                                  🗑 Xóa dự án
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <h3 className="text-base font-bold text-slate-800 mb-0.5 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
                     <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic flex items-center gap-1.5"><span className="not-italic text-sm">🏢</span> {p.customer_name || 'Chưa có khách hàng'}</p>
@@ -480,6 +645,87 @@ export default function ProjectListContent() {
         </div>
       </div>
 
+      {selectedIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[#0b1c30] text-white rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+          <span className="text-sm font-semibold">Đã chọn {selectedIds.length} dự án</span>
+          <button onClick={() => setSelectedIds([])} className="text-xs font-semibold text-slate-300 hover:text-white">Bỏ chọn</button>
+          <button
+            onClick={() => setShowBulkDeleteConfirm(true)}
+            className="px-4 py-1.5 rounded-lg text-xs font-bold bg-[#dc2626] hover:bg-red-700 text-white"
+          >
+            🗑 Xóa đã chọn
+          </button>
+        </div>
+      )}
+
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
+            <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa {selectedIds.length} dự án</h2>
+            <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa {selectedIds.length} dự án đã chọn? Hành động này không thể hoàn tác.</p>
+            <div className="flex justify-end gap-3">
+              <button disabled={bulkDeleting} onClick={() => setShowBulkDeleteConfirm(false)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
+              <button
+                disabled={bulkDeleting}
+                onClick={async () => {
+                  setBulkDeleting(true);
+                  try {
+                    const res = await bulkDeleteProjects(selectedIds);
+                    reload();
+                    const okCount = res.deleted_ids?.length || 0;
+                    const failCount = res.failed?.length || 0;
+                    if (failCount === 0) {
+                      flash(`Đã xóa ${okCount} dự án!`);
+                    } else {
+                      flash(`Đã xóa ${okCount}/${selectedIds.length} dự án. ${failCount} dự án không thể xóa (không có quyền hoặc không tồn tại).`, true);
+                    }
+                  } catch (e: any) {
+                    flash(e?.response?.data?.detail || 'Xóa hàng loạt thất bại', true);
+                  }
+                  setSelectedIds([]);
+                  setShowBulkDeleteConfirm(false);
+                  setBulkDeleting(false);
+                }}
+                className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm disabled:opacity-50"
+              >
+                {bulkDeleting ? 'Đang xóa...' : 'Xóa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renamingProject && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setRenamingProject(null)}>
+          <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-base font-bold text-[#0b1c30] mb-4">Đổi tên dự án</h2>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setRenamingProject(null); }}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-6 outline-none focus:ring-2 focus:ring-[#0058be]/30 focus:border-[#0058be]"
+              placeholder="Tên dự án"
+            />
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setRenamingProject(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
+              <button onClick={async () => {
+                const trimmed = renameValue.trim();
+                if (!trimmed) { flash('Tên dự án không được để trống', true); return; }
+                try {
+                  await updateProject(renamingProject.id, { name: trimmed });
+                  reload();
+                  flash('Đã đổi tên!');
+                } catch (e: any) {
+                  flash(e?.response?.data?.detail || 'Đổi tên thất bại', true);
+                }
+                setRenamingProject(null);
+              }} className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#0058be] hover:bg-[#00479c] text-white shadow-sm">Lưu</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteId !== null && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
@@ -488,11 +734,8 @@ export default function ProjectListContent() {
             <div className="flex justify-end gap-3">
               <button onClick={() => setDeleteId(null)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
               <button onClick={async () => {
-                if (!isSuperAdmin()) {
-                  flash('Chỉ Super Admin mới có quyền xóa dự án!', true);
-                  setDeleteId(null);
-                  return;
-                }
+                // Backend enforces the real rule (super_admin, or a leader scoped
+                // to this project) — no need to duplicate it here.
                 try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null);
               }}
                 className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm">Xóa</button>

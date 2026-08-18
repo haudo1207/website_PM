@@ -1,10 +1,13 @@
 'use client';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin, isAdmin } from '@/lib/auth';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import {
   getCustomers,
+  getCustomersByWorkspace,
   createCustomer,
   updateCustomer,
   deleteCustomer,
@@ -22,6 +25,14 @@ import {
 
 interface CustomersProjectsViewProps {
   onFlash: (msg: string, isError?: boolean) => void;
+  /** Project Hub — locks the view to a single Workspace: hides the Workspace
+   * tabs/header and fetches Customers via the Project-derived endpoint
+   * (Customer.business_unit is unreliable, see backend access.customer_query_for_user)
+   * instead of the legacy `Customer.business_unit`-based one. */
+  lockedWorkspace?: string;
+  /** Optional tab switcher (e.g. Projects/Customers) rendered on the same
+   * header row as the title — mirrors ProjectListContent's `renderTabs`. */
+  renderTabs?: () => React.ReactNode;
 }
 
 const PROJECT_PHASES = [
@@ -39,18 +50,11 @@ interface ComboboxOption {
 
 
 
-export default function CustomersProjectsView({ onFlash }: CustomersProjectsViewProps) {
+export default function CustomersProjectsView({ onFlash, lockedWorkspace, renderTabs }: CustomersProjectsViewProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
-  // Data states
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [allCustomers, setAllCustomers] = useState<any[]>([]);
-  const [projects, setProjects] = useState<any[]>([]);
-  const [members, setMembers] = useState<any[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  
   // Loading states
-  const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Selection states
@@ -166,79 +170,89 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [modalPmDropdownOpen, modalLeaderDropdownOpen, modalSalesDropdownOpen, modalMemberDropdownOpen, modalPhaseDropdownOpen]);
 
-  // Master phases state from settings
-  const [dbMasterPhases, setDbMasterPhases] = useState<any[]>([]);
-
-  // Fetch initial data
-  useEffect(() => {
-    getWorkspaces()
-      .then(ws => {
-        setWorkspaces(ws || []);
-        setActiveBU(prev => prev || (ws?.[0]?.code || ''));
-      })
-      .catch(() => {});
-  }, []);
+  // Workspace list for the (non-locked) tab switcher — shared cache key with
+  // Navbar/Project Hub so switching pages doesn't refetch this near-static data.
+  const workspacesQuery = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    enabled: !lockedWorkspace,
+    staleTime: 5 * 60_000,
+  });
+  const workspaces: Workspace[] = workspacesQuery.data || [];
 
   useEffect(() => {
-    if (!activeBU) return;
-    loadData();
-  }, [activeBU]);
-
-  // Trigger reloadProjects when V2 filter/sort options change
-  useEffect(() => {
-    reloadProjects();
-  }, [selectedPmIds, selectedSalesIds, selectedMemberIds, sortMode]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [custs, projs, mems, mPhases, allCusts] = await Promise.all([
-        getCustomers(activeBU).catch(e => { console.error('getCustomers error:', e); return []; }),
-        getProjects({
-          business_unit: activeBU,
-          pm_ids: selectedPmIds.length > 0 ? selectedPmIds.join(',') : undefined,
-          sales_ids: selectedSalesIds.length > 0 ? selectedSalesIds.join(',') : undefined,
-          member_ids: selectedMemberIds.length > 0 ? selectedMemberIds.join(',') : undefined,
-          sort: sortMode
-        }).catch(e => { console.error('getProjects error:', e); return []; }),
-        getMembers().catch(e => { console.error('getMembers error:', e); return []; }),
-        getMasterPhases().catch(e => { console.error('getMasterPhases error:', e); return []; }),
-        getCustomers().catch(e => { console.error('getCustomers all error:', e); return []; })
-      ]);
-      setCustomers(custs || []);
-      setAllCustomers(allCusts || []);
-      setProjects(projs || []);
-      setMembers(mems || []);
-      setDbMasterPhases(mPhases || []);
-
-      // Auto-select first customer if available
-      if (custs && custs.length > 0) {
-        setSelectedCustomerId(custs[0].id);
-      } else {
-        setSelectedCustomerId(null);
-      }
-    } catch (err: any) {
-      console.error('loadData error:', err);
-      onFlash(err.response?.data?.detail || err.message || 'Lỗi tải dữ liệu cấu hình hệ thống', true);
-    } finally {
-      setLoading(false);
+    if (lockedWorkspace) {
+      setActiveBU(lockedWorkspace);
+    } else if (workspaces.length > 0) {
+      setActiveBU(prev => prev || workspaces[0].code);
     }
+  }, [lockedWorkspace, workspaces]);
+
+  // Base data (Customers/Members/MasterPhases) — cached per Workspace, does
+  // not refetch on PM/Sales/Member/sort filter changes.
+  const baseDataKey = ['workspace-base-data', activeBU, lockedWorkspace ? 'by-project' : 'by-business-unit'];
+  const baseQuery = useQuery({
+    queryKey: baseDataKey,
+    queryFn: async () => {
+      const [custs, mems, mPhases, allCusts] = await Promise.all([
+        (lockedWorkspace ? getCustomersByWorkspace(activeBU) : getCustomers(activeBU)).catch((e: any) => { console.error('getCustomers error:', e); return []; }),
+        getMembers().catch((e: any) => { console.error('getMembers error:', e); return []; }),
+        getMasterPhases().catch((e: any) => { console.error('getMasterPhases error:', e); return []; }),
+        getCustomers().catch((e: any) => { console.error('getCustomers all error:', e); return []; }),
+      ]);
+      return { customers: custs || [], members: mems || [], masterPhases: mPhases || [], allCustomers: allCusts || [] };
+    },
+    enabled: !!activeBU,
+  });
+  const customers: any[] = baseQuery.data?.customers || [];
+  const members: any[] = baseQuery.data?.members || [];
+  const dbMasterPhases: any[] = baseQuery.data?.masterPhases || [];
+  const allCustomers: any[] = baseQuery.data?.allCustomers || [];
+
+  // Projects — cached per Workspace + filter/sort combo (its own key so a
+  // filter change doesn't force-refetch Customers/Members/MasterPhases).
+  const projectsKey = ['workspace-projects', activeBU, selectedPmIds, selectedSalesIds, selectedMemberIds, sortMode];
+  const projectsQuery = useQuery({
+    queryKey: projectsKey,
+    queryFn: () => getProjects({
+      business_unit: activeBU,
+      pm_ids: selectedPmIds.length > 0 ? selectedPmIds.join(',') : undefined,
+      sales_ids: selectedSalesIds.length > 0 ? selectedSalesIds.join(',') : undefined,
+      member_ids: selectedMemberIds.length > 0 ? selectedMemberIds.join(',') : undefined,
+      sort: sortMode
+    }).catch((e: any) => { console.error('getProjects error:', e); return []; }),
+    enabled: !!activeBU,
+  });
+  const projects: any[] = projectsQuery.data || [];
+  const loading = baseQuery.isLoading || projectsQuery.isLoading;
+
+  // Auto-select the first Customer once per Workspace switch (matches the
+  // legacy behavior) — but never on a silent background revalidation, so an
+  // in-progress selection isn't yanked away by cache/focus refetches.
+  const autoSelectedForBU = useRef<string | null>(null);
+  useEffect(() => {
+    if (!baseQuery.data || autoSelectedForBU.current === activeBU) return;
+    autoSelectedForBU.current = activeBU;
+    const custs = baseQuery.data.customers;
+    setSelectedCustomerId(custs.length > 0 ? custs[0].id : null);
+  }, [activeBU, baseQuery.data]);
+
+  // Compatibility wrappers — every existing call site (CRUD handlers) keeps
+  // calling loadData()/reloadProjects() exactly as before; only the
+  // implementation changed to invalidate the React Query cache instead of
+  // doing a bespoke fetch + setState.
+  const loadData = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['workspace-base-data', activeBU] }),
+      queryClient.invalidateQueries({ queryKey: ['workspace-projects', activeBU] }),
+    ]);
+    const fresh = queryClient.getQueryData<{ customers: any[] }>(baseDataKey);
+    const custs = fresh?.customers || [];
+    setSelectedCustomerId(custs.length > 0 ? custs[0].id : null);
   };
 
-  // Safe reload for project updates without full loading state
   const reloadProjects = async () => {
-    try {
-      const projs = await getProjects({
-        business_unit: activeBU,
-        pm_ids: selectedPmIds.length > 0 ? selectedPmIds.join(',') : undefined,
-        sales_ids: selectedSalesIds.length > 0 ? selectedSalesIds.join(',') : undefined,
-        member_ids: selectedMemberIds.length > 0 ? selectedMemberIds.join(',') : undefined,
-        sort: sortMode
-      });
-      setProjects(projs || []);
-    } catch (err) {
-      console.error(err);
-    }
+    await queryClient.invalidateQueries({ queryKey: ['workspace-projects', activeBU] });
   };
 
   // Filtered Customers based on search
@@ -345,10 +359,9 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       const created = await createCustomer({ name: newCustomerName.trim(), business_unit: activeBU });
       setNewCustomerName('');
       onFlash(`Đã thêm khách hàng thành công`);
-      
-      // Update local state and select the new customer
-      const updatedCusts = await getCustomers(activeBU);
-      setCustomers(updatedCusts || []);
+
+      // Refresh the list and select the newly created customer
+      await queryClient.invalidateQueries({ queryKey: ['workspace-base-data', activeBU] });
       if (created && created.id) {
         setSelectedCustomerId(created.id);
       }
@@ -371,9 +384,8 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
       await updateCustomer(id, { name: editingCustomerName.trim() });
       setEditingCustomerId(null);
       onFlash('Đã cập nhật tên khách hàng');
-      
-      const updatedCusts = await getCustomers();
-      setCustomers(updatedCusts || []);
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace-base-data', activeBU] });
       // Also reload projects to reflect updated customer names
       reloadProjects();
     } catch (err: any) {
@@ -608,34 +620,36 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
   return (
     <div className="space-y-6" style={{ contentVisibility: 'auto' }}>
       
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">CUSTOMER MANAGEMENT</h1>
-          <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Workspace</p>
-        </div>
+      {/* Page Header — hidden when Project Hub locks this view to a single
+          Workspace (Project Hub already shows the Workspace name there). */}
+      {!lockedWorkspace && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Quản lý khách hàng &amp; dự án</h1>
+            <p className="text-sm text-slate-500 mt-1">Quản lý danh mục Khách hàng → Năm → Dự án theo Workspace</p>
+          </div>
 
-        {/* Workspace Selector Tabs (from Workspace Master) */}
-        <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
-          {workspaces.length === 0 ? (
-            <span className="px-5 py-2 rounded-lg text-xs font-bold text-slate-400">No Workspaces</span>
-          ) : (
-            workspaces.map(ws => (
-              <button
-                key={ws.code}
-                onClick={() => setActiveBU(ws.code)}
-                className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-                  activeBU === ws.code
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                }`}
-              >
-                <span>🗂️</span> {ws.name}
-              </button>
-            ))
-          )}
+          {/* Workspace filter (dropdown) — mirrors the Workspace filter on the
+              Projects tab instead of a dedicated pill row. */}
+          <div className="flex items-center gap-3 self-start sm:self-auto">
+            {workspaces.length === 0 ? (
+              <span className="text-xs font-semibold text-slate-400">No Workspaces</span>
+            ) : (
+              <SearchableSelect
+                label="Workspace"
+                icon="🏢"
+                options={workspaces.map(ws => ({ id: ws.code, name: ws.name }))}
+                value={activeBU}
+                onChange={val => setActiveBU(String(val))}
+                placeholder="Tìm Workspace..."
+                align="right"
+                className="w-[200px]"
+              />
+            )}
+            {renderTabs && renderTabs()}
+          </div>
         </div>
-      </div>
+      )}
 
 
 
@@ -645,7 +659,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 1: CUSTOMERS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-206px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">🏢 Khách hàng</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customers.length}</span>
@@ -773,7 +787,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 2: YEARS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-206px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📅 Năm</span>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customerYears.length}</span>
@@ -850,7 +864,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
         {/* ============================================================== */}
         {/* COLUMN 3: PROJECTS */}
         {/* ============================================================== */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-190px)] min-h-[480px] max-h-[750px] transition-all">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-206px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📁 Dự án</span>
             <div className="flex items-center gap-2">
@@ -951,7 +965,7 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                       </div>
 
                       <button
-                        onClick={() => router.push(`/project/detail?id=${proj.id}`)}
+                        onClick={() => router.push(`/project/detail/overview?id=${proj.id}`)}
                         className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-2.5 py-1 rounded text-[10px] font-bold tracking-wide uppercase transition-all shadow-2xs"
                       >
                         [Open Project]
@@ -1063,16 +1077,15 @@ export default function CustomersProjectsView({ onFlash }: CustomersProjectsView
                       <label className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider block">
                         Khách hàng <span className="text-amber-500 font-bold ml-0.5">*</span>
                       </label>
-                      <select
+                      <SearchableSelect
+                        label="khách hàng"
+                        icon=""
+                        options={modalBusinessCustomers.map(c => ({ id: c.id, name: c.name }))}
                         value={projectForm.customerId}
-                        onChange={e => setProjectForm({ ...projectForm, customerId: e.target.value })}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-semibold"
-                      >
-                        <option value="">-- Chọn khách hàng --</option>
-                        {modalBusinessCustomers.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
+                        onChange={(val: any) => setProjectForm({ ...projectForm, customerId: val === 'all' ? '' : val })}
+                        placeholder="Tìm khách hàng..."
+                        className="w-full"
+                      />
                       {modalCustomerMismatch && (
                         <p className="text-[11px] font-medium text-amber-600 flex items-start gap-1">
                           <span className="material-symbols-outlined text-[14px] mt-[1px]">warning</span>

@@ -1,13 +1,16 @@
-from fastapi import FastAPI, Depends
+import os
+
+from typing import Optional
+from fastapi import FastAPI, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit
+from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit, notifications as notifications_router
 from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
 from .database import engine, Base, get_db
-from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model
+from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
 from .models import lunch_record as lunch_record_model
 from .models import phase as phase_model
@@ -15,10 +18,9 @@ from .models import task_group as task_group_model
 from .models import task as task_model
 from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
+from .models import notification as notification_model
+from .models import workspace_access as workspace_access_model
 from sqlalchemy import text
-
-# Create all tables (new v5 schema)
-Base.metadata.create_all(bind=engine)
 
 def apply_schema_updates():
     """Small idempotent migrations for existing installs without Alembic."""
@@ -42,6 +44,23 @@ def apply_schema_updates():
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub_unique "
             "ON users (google_sub) WHERE google_sub IS NOT NULL"
+        ))
+        # Microsoft (Outlook) login identities — mirrors the google_sub pattern.
+        # outlook_mail is the admin pre-provisioned Microsoft Mail used to match
+        # the login; outlook_sub is the linked Microsoft identity on first login.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS outlook_mail VARCHAR"
+        ))
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS outlook_sub VARCHAR"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_mail_unique "
+            "ON users (outlook_mail) WHERE outlook_mail IS NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_sub_unique "
+            "ON users (outlook_sub) WHERE outlook_sub IS NOT NULL"
         ))
         # Consolidate the legacy three-role model into the new 4-role model.
         # Permissions remain independent from project data scope.
@@ -225,6 +244,28 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS description TEXT"))
 
+        # Create notifications table
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                recipient_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+                sender_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                task_id INTEGER REFERENCES tasks_v2(id) ON DELETE SET NULL,
+                task_group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL,
+                project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                message VARCHAR NOT NULL,
+                notification_type VARCHAR DEFAULT 'task_reminder',
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS task_group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL;"))
+        conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_recipient_id ON notifications (recipient_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_task_id ON notifications (task_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_task_group_id ON notifications (task_group_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_project_id ON notifications (project_id);"))
+
         # Add new columns to chat_ai_tasks
         conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS skill_solution_id INTEGER NULL"))
         conn.execute(text("ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS skill_vendor_id INTEGER NULL"))
@@ -267,10 +308,37 @@ def apply_schema_updates():
         conn.execute(text("UPDATE audit_logs SET business_unit = 'INFRA' WHERE LOWER(business_unit) = 'infrastructure'"))
         conn.execute(text("UPDATE audit_logs SET business_unit = 'DEV' WHERE LOWER(business_unit) = 'markee'"))
 
-try:
-    apply_schema_updates()
-except Exception as e:
-    print(f"[!] Schema updates notice: {e}")
+        # Performance: index the tasks_v2 FK columns hit hardest by Dashboard
+        # Overview's per-member/per-skill JOIN and GROUP BY queries.
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_assigned_id ON tasks_v2 (assigned_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_support_id ON tasks_v2 (support_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_solution_id ON tasks_v2 (skill_solution_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_skill_vendor_id ON tasks_v2 (skill_vendor_id)"))
+
+        # The Project model's last_activity_at column (sort projects by most
+        # recently touched) was never given a matching migration here — every
+        # pre-existing `projects` row is missing it on any install where the
+        # table already existed before this column was added, breaking any
+        # query that touches Project (Dashboard, Meetings, project edit, ...).
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ"))
+        conn.execute(text("UPDATE projects SET last_activity_at = COALESCE(updated_at, created_at, now()) WHERE last_activity_at IS NULL"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_last_activity_at ON projects (last_activity_at)"))
+
+        # ── Portal refresh sessions (Phase 1 persistent login) ──
+        # Opaque refresh tokens are stored hashed; the raw token lives only in
+        # the HttpOnly cookie. No rotation in Phase 1.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP WITH TIME ZONE,
+                revoked_at TIMESTAMP WITH TIME ZONE
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens (user_id)"))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -803,6 +871,33 @@ def init_db_defaults():
                 db.add(MasterPhase(name=p_name, sort_order=idx, is_active=True))
             print("[*] Seeded initial Master Phases")
 
+        # Backfill user_workspace_access from the existing single data_scope
+        # column. Additive/idempotent — gives every current Leader/Member/Viewer
+        # exactly the one Workspace they already had, so effective access is
+        # unchanged until an admin explicitly grants extra Workspaces later.
+        from sqlalchemy import exists as sql_exists
+        from .models.workspace_access import UserWorkspaceAccess
+        from .models.system_category import Workspace
+        from .utils.access import WORKSPACE_SCOPED_ROLES, ALL_SCOPE
+
+        already_has_row = sql_exists().where(UserWorkspaceAccess.user_id == User.id)
+        users_needing_backfill = (
+            db.query(User)
+            .filter(User.role.in_(WORKSPACE_SCOPED_ROLES))
+            .filter(User.data_scope != ALL_SCOPE)
+            .filter(~already_has_row)
+            .all()
+        )
+        if users_needing_backfill:
+            ws_by_code = {w.code.strip().lower(): w for w in db.query(Workspace).all() if w.code}
+            backfilled = 0
+            for u in users_needing_backfill:
+                ws = ws_by_code.get(str(u.data_scope or "").strip().lower())
+                if ws:
+                    db.add(UserWorkspaceAccess(user_id=u.id, workspace_id=ws.id))
+                    backfilled += 1
+            print(f"[*] Backfilled user_workspace_access for {backfilled}/{len(users_needing_backfill)} user(s)")
+
         db.commit()
     except RuntimeError:
         db.rollback()
@@ -813,11 +908,25 @@ def init_db_defaults():
     finally:
         db.close()
 
-# Run database auto-seeding safely
-try:
-    init_db_defaults()
-except Exception as e:
-    print(f"[!] Database defaults notice: {e}")
+# Uvicorn workers only serve requests. CI runs these schema/default updates in
+# one pre-deploy container so workers never race on DDL or pooled DB locks.
+def run_startup_once():
+    """Apply idempotent schema/default updates in one pre-deploy process."""
+    Base.metadata.create_all(bind=engine)
+    try:
+        apply_schema_updates()
+    except Exception as e:
+        print(f"[!] Schema updates notice: {e}")
+    try:
+        init_db_defaults()
+    except Exception as e:
+        print(f"[!] Database defaults notice: {e}")
+
+
+# Docker deployments call run_startup_once() explicitly before starting web
+# workers. Opt-in import execution remains available for one-process utilities.
+if os.getenv("RUN_DB_STARTUP_ON_IMPORT", "false").lower() in {"1", "true", "yes", "on"}:
+    run_startup_once()
 
 
 app = FastAPI(
@@ -827,7 +936,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://kpi.markeeai.com",
+        "https://kpi.securityzone.vn",
+        "https://dev.kpi.markeeai.com",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -842,6 +956,15 @@ app.include_router(skills.router,              prefix="/api/skills")
 app.include_router(system_categories.router,   prefix="/api/system-categories")
 app.include_router(members.router,             prefix="/api/members")
 app.include_router(leave_requests_router.router, prefix="/api/leave-requests")
+@app.post("/api/meetings/webhook/n8n-summary")
+def ingest_n8n_meeting_summary_public(
+    payload: meetings_router.N8nMeetingSummaryPayload,
+    db: Session = Depends(get_db),
+    x_n8n_webhook_secret: Optional[str] = Header(None, alias="X-N8N-Webhook-Secret")
+):
+    """Public Webhook endpoint for n8n meeting summary ingestion (authenticates via X-N8N-Webhook-Secret)."""
+    return meetings_router.ingest_n8n_meeting_summary(payload=payload, db=db, x_n8n_webhook_secret=x_n8n_webhook_secret)
+
 app.include_router(meetings_router.router,    prefix="/api/meetings")
 app.include_router(performance_settings.router, prefix="/api/performance-settings")
 app.include_router(accounts.router,            prefix="/api/accounts")
@@ -850,6 +973,7 @@ app.include_router(lunch_router.router,         prefix="/api/lunch")
 app.include_router(chat_ai.router,              prefix="/api")
 app.include_router(project_templates_router.router, prefix="/api")
 app.include_router(system_audit.router,         prefix="/api")
+app.include_router(notifications_router.router, prefix="/api/notifications")
 
 @app.get("/health")
 @app.get("/api/health")
@@ -862,6 +986,37 @@ def health():
         "commit": os.environ.get("APP_COMMIT", "dev"),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+@app.get("/api/meetings/google/auth-direct")
+def google_auth_direct_public():
+    """Public helper endpoint to launch Google OAuth authorization flow directly from browser."""
+    from .config import settings
+    from google_auth_oauthlib.flow import Flow
+    from fastapi.responses import RedirectResponse
+    from fastapi import HTTPException
+    
+    client_id = settings.GOOGLE_CLIENT_ID
+    client_secret = settings.GOOGLE_CLIENT_SECRET
+    if not client_id or not client_secret:
+        raise HTTPException(400, "Thiếu GOOGLE_CLIENT_ID hoặc GOOGLE_CLIENT_SECRET trong .env")
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        redirect_uri=settings.GOOGLE_REDIRECT_URI,
+    )
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    return RedirectResponse(url=auth_url)
 
 @app.get("/api/meetings/google/callback")
 def google_callback_public(code: str, state: str = None, db: Session = Depends(get_db)):
@@ -933,10 +1088,10 @@ import asyncio
 async def start_auto_sync_loop():
     async def _loop():
         await asyncio.sleep(5)  # Allow FastAPI to complete startup first
-        from .database import SessionLocal
+        from .database import BackgroundSessionLocal
         from .services.meeting_sync import auto_sync_all_ended_meetings
         while True:
-            db = SessionLocal()
+            db = BackgroundSessionLocal()
             try:
                 await asyncio.to_thread(auto_sync_all_ended_meetings, db)
             except Exception as e:

@@ -23,7 +23,7 @@ from ..models.task import Task
 from ..models.member import Member
 from ..models.project import Project, project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
-from ..utils.access import require_project, require_route_project_access
+from ..utils.access import require_project, require_route_project_access, project_query_for_user, user_scope, ALL_SCOPE, ROLE_LEADER
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
 # Đảm bảo có import date/datetime để tính ngày
@@ -92,22 +92,11 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
 
 
 def sync_group_actual_dates(tg, db):
-    """Sync TaskGroup end_date_actual (max) from child tasks, considering only 'Done' tasks.
+    """Sync TaskGroup end_date_actual (max) from child tasks.
     
-    If the TaskGroup status is 'Done' and end_date_actual has been auto-set
-    (from when the group was marked Done), keep it — do not override."""
-    # Nếu TaskGroup đang Done và đã có end_date_actual (tự động set khi chuyển Done),
-    # giữ nguyên, không ghi đè bởi task con
-    if tg.status and tg.status.strip().lower() == "done" and tg.end_date_actual:
-        return tg
-
-    rows = db.query(Task.end_date_actual).filter(
-        Task.task_group_id == tg.id,
-        Task.status.in_(["Done", "done"]),  # Only consider tasks with status 'Done'
-        Task.end_date_actual.isnot(None)
-    ).all()
-    actual_end_dates = [r[0] for r in rows]
-    tg.end_date_actual = max(actual_end_dates) if actual_end_dates else None
+    Removed the child task synchronization as per user request.
+    If the TaskGroup is marked Done, it will just keep its end_date_actual.
+    """
     return tg
 
 
@@ -497,7 +486,7 @@ def safe_float(val):
         return 0.0
 
 
-def serialize_task(t, db):
+def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None):
     assigned_name = None
     support_name = None
     solution_name = None
@@ -505,31 +494,43 @@ def serialize_task(t, db):
 
     try:
         if t.assigned_id:
-            m = db.query(Member).filter(Member.id == t.assigned_id).first()
-            assigned_name = m.display_name if m else None
+            if members_map is not None:
+                assigned_name = members_map.get(t.assigned_id)
+            else:
+                m = db.query(Member).filter(Member.id == t.assigned_id).first()
+                assigned_name = m.display_name if m else None
     except Exception:
         pass
 
     try:
         if t.support_id:
-            m = db.query(Member).filter(Member.id == t.support_id).first()
-            support_name = m.display_name if m else None
+            if members_map is not None:
+                support_name = members_map.get(t.support_id)
+            else:
+                m = db.query(Member).filter(Member.id == t.support_id).first()
+                support_name = m.display_name if m else None
     except Exception:
         pass
 
     try:
         if t.skill_solution_id:
-            from ..models.skill_master import Group
-            g = db.query(Group).filter(Group.id == t.skill_solution_id).first()
-            solution_name = g.name if g else None
+            if groups_map is not None:
+                solution_name = groups_map.get(t.skill_solution_id)
+            else:
+                from ..models.skill_master import Group
+                g = db.query(Group).filter(Group.id == t.skill_solution_id).first()
+                solution_name = g.name if g else None
     except Exception:
         pass
 
     try:
         if t.skill_vendor_id:
-            from ..models.skill_master import Skill
-            s = db.query(Skill).filter(Skill.id == t.skill_vendor_id).first()
-            vendor_name = s.name if s else None
+            if skills_map is not None:
+                vendor_name = skills_map.get(t.skill_vendor_id)
+            else:
+                from ..models.skill_master import Skill
+                s = db.query(Skill).filter(Skill.id == t.skill_vendor_id).first()
+                vendor_name = s.name if s else None
     except Exception:
         pass
 
@@ -579,12 +580,16 @@ def serialize_task(t, db):
 
 @router.get("/task-groups/{gid}/tasks")
 def list_tasks(gid: int, db: Session = Depends(get_db)):
+    from ..models.skill_master import Group, Skill
     try:
         tasks = db.query(Task).filter(Task.task_group_id == gid).order_by(Task.sort_order, Task.id).all()
+        members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+        groups_map = {g.id: g.name for g in db.query(Group).all()}
+        skills_map = {s.id: s.name for s in db.query(Skill).all()}
         out = []
         for t in tasks:
             try:
-                out.append(serialize_task(t, db))
+                out.append(serialize_task(t, db, members_map, groups_map, skills_map))
             except Exception as e:
                 print(f"Error serializing task {getattr(t, 'id', None)} in list_tasks: {e}")
         return out
@@ -594,22 +599,40 @@ def list_tasks(gid: int, db: Session = Depends(get_db)):
 
 
 @router.get("/all-tasks-global")
-def list_all_tasks_global(db: Session = Depends(get_db)):
-    """Get all tasks across all projects in 1 single query to prevent DB connection pool exhaustion."""
+def list_all_tasks_global(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Get all tasks across all projects in a fixed, small number of queries
+    regardless of task count — avoids the previous N+1 (per-task Member/Group/
+    Skill lookups inside serialize_task) that made this endpoint issue
+    thousands of queries on a full task list."""
     from ..models.project import Project
     from ..models.phase import Phase
     from ..models.task_group import TaskGroup
     from ..models.task import Task
+    from ..models.skill_master import Group, Skill
 
-    results = (
+    # Leader data scope: only tasks belonging to the Leader's Workspace.
+    leader_scoped = (
+        getattr(current_user, "role", None) == ROLE_LEADER
+        and user_scope(current_user) != ALL_SCOPE
+    )
+
+    base_query = (
         db.query(Task, TaskGroup, Phase, Project)
         .join(TaskGroup, Task.task_group_id == TaskGroup.id)
         .join(Phase, TaskGroup.phase_id == Phase.id)
         .join(Project, Phase.project_id == Project.id)
-        .all()
     )
+    if leader_scoped:
+        scoped_project_ids = (
+            project_query_for_user(db, current_user).with_entities(Project.id).subquery()
+        )
+        base_query = base_query.filter(Project.id.in_(scoped_project_ids))
 
-    members = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+    results = base_query.all()
+
+    members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+    groups_map = {g.id: g.name for g in db.query(Group).all()}
+    skills_map = {s.id: s.name for s in db.query(Skill).all()}
 
     output = []
     found_task_ids = set()
@@ -617,7 +640,7 @@ def list_all_tasks_global(db: Session = Depends(get_db)):
     today = date.today()
     for task, tg, phase, project in results:
         try:
-            t_dict = serialize_task(task, db)
+            t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
             t_dict["name"] = task.detail or f"Task #{task.id}"
             t_dict["project_id"] = project.id
             t_dict["projectName"] = project.name
@@ -625,30 +648,30 @@ def list_all_tasks_global(db: Session = Depends(get_db)):
             t_dict["year"] = project.year
             t_dict["task_group_name"] = tg.name
             t_dict["phase_name"] = phase.name
-            t_dict["assigned_name"] = members.get(task.assigned_id, t_dict.get("assigned_name"))
-            t_dict["support_name"] = members.get(task.support_id, t_dict.get("support_name"))
-            
+
             # Compute days_late
             days_late = 0
             if task.status not in ["Done", "done", "Cancel", "cancel"] and task.end_date_est:
                 if task.end_date_est < today:
                     days_late = (today - task.end_date_est).days
             t_dict["days_late"] = days_late
-            
+
             output.append(t_dict)
             found_task_ids.add(task.id)
         except Exception as e:
             print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
 
-    # Fallback for any standalone tasks
-    all_tasks = db.query(Task).all()
-    for task in all_tasks:
-        if task.id not in found_task_ids:
+    # Fallback for any standalone tasks — filtered in SQL (id NOT IN), not a
+    # full-table fetch-then-filter-in-Python like before.
+    if not leader_scoped:
+        remaining = (
+            db.query(Task).filter(Task.id.notin_(found_task_ids)).all()
+            if found_task_ids else db.query(Task).all()
+        )
+        for task in remaining:
             try:
-                t_dict = serialize_task(task, db)
+                t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
                 t_dict["name"] = task.detail or f"Task #{task.id}"
-                t_dict["assigned_name"] = members.get(task.assigned_id, t_dict.get("assigned_name"))
-                t_dict["support_name"] = members.get(task.support_id, t_dict.get("support_name"))
                 output.append(t_dict)
             except Exception:
                 pass
@@ -656,11 +679,103 @@ def list_all_tasks_global(db: Session = Depends(get_db)):
     return output
 
 
+@router.get("/all-tasks-global/summary")
+def get_all_tasks_global_summary(db: Session = Depends(get_db)):
+    """Server-side aggregates for Dashboard Overview instead of shipping every
+    task row to the browser. Additive — /all-tasks-global is left untouched
+    so the current Overview page keeps working unmodified; the frontend can
+    migrate its per-leader/per-project rollups to this once ready."""
+    from sqlalchemy import case
+
+    today = date.today()
+    done_expr = case((Task.status == "Done", 1), else_=0)
+    overdue_expr = case(
+        (
+            (Task.status.notin_(["Done", "done", "Cancel", "cancel"]))
+            & (Task.end_date_est.isnot(None))
+            & (Task.end_date_est < today),
+            1,
+        ),
+        else_=0,
+    )
+
+    by_status = {
+        status or "Unknown": count
+        for status, count in db.query(Task.status, sql_func.count(Task.id)).group_by(Task.status).all()
+    }
+
+    def member_rows(column):
+        return (
+            db.query(
+                column,
+                sql_func.count(Task.id),
+                sql_func.sum(done_expr),
+                sql_func.sum(overdue_expr),
+                sql_func.sum(Task.manday_actual),
+            )
+            .filter(column.isnot(None))
+            .group_by(column)
+            .all()
+        )
+
+    by_member = {}
+    for member_id, total, done, overdue, manday in member_rows(Task.assigned_id):
+        row = by_member.setdefault(member_id, {
+            "member_id": member_id,
+            "assigned_total": 0, "assigned_done": 0, "assigned_overdue": 0,
+            "support_total": 0, "support_done": 0, "support_overdue": 0,
+            "manday_actual": 0.0,
+        })
+        row["assigned_total"] = total
+        row["assigned_done"] = int(done or 0)
+        row["assigned_overdue"] = int(overdue or 0)
+        row["manday_actual"] += float(manday or 0)
+    for member_id, total, done, overdue, manday in member_rows(Task.support_id):
+        row = by_member.setdefault(member_id, {
+            "member_id": member_id,
+            "assigned_total": 0, "assigned_done": 0, "assigned_overdue": 0,
+            "support_total": 0, "support_done": 0, "support_overdue": 0,
+            "manday_actual": 0.0,
+        })
+        row["support_total"] = total
+        row["support_done"] = int(done or 0)
+        row["support_overdue"] = int(overdue or 0)
+        row["manday_actual"] += float(manday or 0)
+
+    project_rows = (
+        db.query(Project.id, Project.name, sql_func.count(Task.id), sql_func.sum(done_expr))
+        .select_from(Task)
+        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+        .join(Phase, TaskGroup.phase_id == Phase.id)
+        .join(Project, Phase.project_id == Project.id)
+        .group_by(Project.id, Project.name)
+        .all()
+    )
+    by_project = [
+        {"project_id": pid, "name": name, "total": total, "done": int(done or 0)}
+        for pid, name, total, done in project_rows
+    ]
+
+    return {
+        "total_tasks": sum(by_status.values()),
+        "by_status": by_status,
+        "by_member": list(by_member.values()),
+        "by_project": by_project,
+    }
+
+
 @router.get("/projects/{pid}/all-tasks")
 def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends(get_db)):
-    """Get all tasks for a project, optionally filtered by phase. Used by Master view."""
+    """Get all tasks for a project, optionally filtered by phase. Used by Master view.
+    Batch-loads Member/Group/Skill once instead of letting serialize_task query
+    them per task — this endpoint is opened every time a project is viewed."""
+    from ..models.skill_master import Group, Skill
+
     output = []
     found_task_ids = set()
+    members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+    groups_map = {g.id: g.name for g in db.query(Group).all()}
+    skills_map = {s.id: s.name for s in db.query(Skill).all()}
 
     try:
         query = (
@@ -675,7 +790,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
         results = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id).all()
         for task, tg, phase in results:
             try:
-                t_dict = serialize_task(task, db)
+                t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
                 t_dict["task_group_name"] = tg.name
                 t_dict["task_group_status"] = tg.status
                 t_dict["phase_name"] = phase.name
@@ -702,7 +817,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
                             try:
                                 tg = tg_map.get(t.task_group_id)
                                 ph = phase_map.get(tg.phase_id) if tg else None
-                                t_dict = serialize_task(t, db)
+                                t_dict = serialize_task(t, db, members_map, groups_map, skills_map)
                                 t_dict["task_group_name"] = tg.name if tg else ""
                                 t_dict["task_group_status"] = tg.status if tg else "Waiting"
                                 t_dict["phase_name"] = ph.name if ph else ""

@@ -26,6 +26,7 @@ from ..utils.access import (
     default_workspace,
     get_workspaces,
     is_valid_scope,
+    preload_workspace_maps,
     resolve_workspace,
     valid_data_scopes,
     ROLE_SUPER_ADMIN,
@@ -37,7 +38,7 @@ from ..utils.access import (
     require_route_project_access,
     user_scope,
 )
-from ..utils.auth import get_current_user, require_super_admin
+from ..utils.auth import get_current_user, require_super_admin, require_manager
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
@@ -146,7 +147,7 @@ def serialize_project(p, db):
     }
 
 
-def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members):
+def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members, by_code=None, by_name=None):
     """Serialize a project using list-level data loaded in a few batch queries."""
     pms = role_members.get("PM", [])
     leaders = role_members.get("Leader", [])
@@ -161,8 +162,8 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "project_code": str(p.year) if p.year else p.code,
         "customer_name": p.customer.name if p.customer else p.customer_name,
         "customer_id": p.customer_id,
-        "business": business_label_for_project(db, p),
-        "business_unit": business_unit_for_project(db, p),
+        "business": business_label_for_project(db, p, by_code, by_name),
+        "business_unit": business_unit_for_project(db, p, by_code, by_name),
         "year": p.year,
         "pm_id": p.pm_id,
         "pm_name": ", ".join(m[1] for m in pms if m[1]) or None,
@@ -333,6 +334,7 @@ def list_projects(
         role_members[project_id][role].append(member)
         all_members[project_id].append(member)
 
+    by_code, by_name = preload_workspace_maps(db)
     return [
         serialize_project_summary(
             p,
@@ -341,6 +343,8 @@ def list_projects(
             task_stats.get(p.id, (0, 0, 0)),
             role_members[p.id],
             all_members[p.id],
+            by_code,
+            by_name,
         )
         for p in projects
     ]
@@ -552,7 +556,7 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
     return result
 
 
-@router.get("/projects/{pid}")
+@router.get("/projects/{pid:int}")
 def get_project(pid: int, db: Session = Depends(get_db)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
@@ -560,7 +564,7 @@ def get_project(pid: int, db: Session = Depends(get_db)):
     return serialize_project(p, db)
 
 
-@router.patch("/projects/{pid}")
+@router.patch("/projects/{pid:int}")
 def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
@@ -728,6 +732,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
                 db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Member"))
                 inserted.add((m_id, "Member"))
 
+    p.last_activity_at = sql_func.now()
     db.commit()
     db.refresh(p)
 
@@ -768,8 +773,8 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
     return serialize_project(p, db)
 
 
-@router.delete("/projects/{pid}")
-def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def _delete_project_cascade(pid: int, db: Session, current_user) -> None:
+    """Raises HTTPException(404/403) if invalid. Cascade-deletes the project and commits."""
     p = db.query(Project).filter(Project.id == pid).first()
     if not p:
         raise HTTPException(404, "Project not found.")
@@ -808,16 +813,47 @@ def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends
     except Exception as err:
         print("Cascade clean warning:", err)
 
+    p_name = p.name
     db.delete(p)
     db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=pid, action="DELETE_PROJECT", resource_name=p_name,
+        description=f"Xóa dự án '{p_name}' (kèm toàn bộ phase/task/link/member/meeting liên quan)"
+    )
+    db.commit()
+
+
+@router.delete("/projects/{pid:int}")
+def delete_project(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    _delete_project_cascade(pid, db, current_user)
     return {"ok": True}
+
+
+@router.post("/projects/bulk-delete")
+def bulk_delete_projects(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "ids là bắt buộc và phải là danh sách khác rỗng.")
+
+    deleted_ids: list = []
+    failed: list = []
+    for raw_id in ids:
+        try:
+            pid = int(raw_id)
+            _delete_project_cascade(pid, db, current_user)
+            deleted_ids.append(pid)
+        except HTTPException as e:
+            failed.append({"id": raw_id, "reason": e.detail})
+
+    return {"deleted_ids": deleted_ids, "failed": failed}
 
 
 # ═══════════════════════════════════════════════════════════
 # PROJECT MEMBERS
 # ═══════════════════════════════════════════════════════════
 
-@router.get("/projects/{pid}/members")
+@router.get("/projects/{pid:int}/members")
 def list_project_members(pid: int, db: Session = Depends(get_db)):
     rows = (
         db.query(project_members.c.member_id, project_members.c.role, Member)
@@ -837,8 +873,8 @@ def list_project_members(pid: int, db: Session = Depends(get_db)):
     ]
 
 
-@router.post("/projects/{pid}/members")
-def add_project_member(pid: int, body: dict, db: Session = Depends(get_db)):
+@router.post("/projects/{pid:int}/members")
+def add_project_member(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     member_id = body.get("member_id")
     role = body.get("role", "Member")
     if not member_id:
@@ -856,16 +892,32 @@ def add_project_member(pid: int, body: dict, db: Session = Depends(get_db)):
         project_id=pid, member_id=member_id, role=role
     ))
     db.commit()
+    member = db.query(Member).filter(Member.id == member_id).first()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=pid, action="UPDATE", project_id=pid,
+        resource_name=member.display_name if member else str(member_id),
+        description=f"Thêm '{member.display_name if member else member_id}' vào dự án với vai trò {role}"
+    )
+    db.commit()
     return {"ok": True}
 
 
-@router.delete("/projects/{pid}/members/{mid}")
-def remove_project_member(pid: int, mid: int, db: Session = Depends(get_db)):
+@router.delete("/projects/{pid:int}/members/{mid}")
+def remove_project_member(pid: int, mid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    member = db.query(Member).filter(Member.id == mid).first()
     db.execute(
         project_members.delete().where(
             project_members.c.project_id == pid,
             project_members.c.member_id == mid
         )
+    )
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=pid, action="UPDATE", project_id=pid,
+        resource_name=member.display_name if member else str(mid),
+        description=f"Gỡ '{member.display_name if member else mid}' khỏi dự án"
     )
     db.commit()
     return {"ok": True}
@@ -911,7 +963,7 @@ def serialize_phase(ph, db):
     }
 
 
-@router.get("/projects/{pid}/phases")
+@router.get("/projects/{pid:int}/phases")
 def list_phases(pid: int, db: Session = Depends(get_db)):
     try:
         phases = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order, Phase.id).all()
@@ -921,7 +973,7 @@ def list_phases(pid: int, db: Session = Depends(get_db)):
         return []
 
 
-@router.post("/projects/{pid}/phases")
+@router.post("/projects/{pid:int}/phases")
 def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     name = body.get("name", "").strip()
     if not name:
@@ -969,7 +1021,7 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_us
     }
 
 
-@router.patch("/projects/{pid}/phases/{phid}")
+@router.patch("/projects/{pid:int}/phases/{phid}")
 def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
@@ -996,7 +1048,7 @@ def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db),
     return serialize_phase(ph, db)
 
 
-@router.delete("/projects/{pid}/phases/{phid}")
+@router.delete("/projects/{pid:int}/phases/{phid}")
 def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
@@ -1052,13 +1104,13 @@ def serialize_link(link, db):
     }
 
 
-@router.get("/projects/{pid}/chat-groups")
+@router.get("/projects/{pid:int}/chat-groups")
 def list_chat_groups(pid: int, db: Session = Depends(get_db)):
     links = db.query(ProjectLink).filter(ProjectLink.project_id == pid).order_by(ProjectLink.sort_order, ProjectLink.id).all()
     return [serialize_link(l, db) for l in links]
 
 
-@router.post("/projects/{pid}/chat-groups")
+@router.post("/projects/{pid:int}/chat-groups")
 def create_chat_group(pid: int, body: dict, db: Session = Depends(get_db)):
     name = body.get("name", "").strip()
     url = body.get("link", body.get("url", "")).strip()
@@ -1094,7 +1146,7 @@ def create_chat_group(pid: int, body: dict, db: Session = Depends(get_db)):
     return serialize_link(link, db)
 
 
-@router.patch("/projects/{pid}/chat-groups/{lid}")
+@router.patch("/projects/{pid:int}/chat-groups/{lid}")
 def update_chat_group(pid: int, lid: int, body: dict, db: Session = Depends(get_db)):
     link = db.query(ProjectLink).filter(ProjectLink.id == lid, ProjectLink.project_id == pid).first()
     if not link:
@@ -1116,7 +1168,7 @@ def update_chat_group(pid: int, lid: int, body: dict, db: Session = Depends(get_
     return serialize_link(link, db)
 
 
-@router.delete("/projects/{pid}/chat-groups/{lid}")
+@router.delete("/projects/{pid:int}/chat-groups/{lid}")
 def delete_chat_group(pid: int, lid: int, db: Session = Depends(get_db)):
     link = db.query(ProjectLink).filter(ProjectLink.id == lid, ProjectLink.project_id == pid).first()
     if not link:
@@ -1162,7 +1214,7 @@ def create_platform(body: dict, db: Session = Depends(get_db)):
 # AUDIT LOGS
 # ═══════════════════════════════════════════════════════════
 
-@router.get("/projects/{pid}/audit-logs")
+@router.get("/projects/{pid:int}/audit-logs")
 def list_project_audit_logs(
     pid: int,
     module: Optional[str] = None,
@@ -1174,7 +1226,7 @@ def list_project_audit_logs(
     page: int = 1,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_manager)
 ):
     require_project(db, current_user, pid)
     q = db.query(AuditLog).filter(AuditLog.project_id == pid)
@@ -1213,7 +1265,7 @@ def list_project_audit_logs(
     }
 
 
-@router.get("/projects/{pid}/audit-logs/export")
+@router.get("/projects/{pid:int}/audit-logs/export")
 def export_project_audit_logs(
     pid: int,
     module: Optional[str] = None,
@@ -1221,7 +1273,7 @@ def export_project_audit_logs(
     user_id: Optional[int] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_manager)
 ):
     import csv
     import io
@@ -1271,3 +1323,56 @@ def export_project_audit_logs(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=audit_logs_project_{pid}.csv"}
     )
+
+
+PROJECT_ACTIVITY_MODULES = ["Project", "Phase", "Task Group", "Task", "Meeting"]
+
+
+@router.get("/projects/recent-activity")
+def list_recent_project_activity(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_manager)
+):
+    """Aggregated project-activity feed (Task/Project/Phase/Task Group/Meeting events)
+    across every project the caller can access \u2014 powers the Dashboard Overview
+    'Ho\u1ea1t \u0111\u1ed9ng g\u1ea7n \u0111\u00e2y' section. Unlike /system-audit/logs, this is not admin-only
+    and does not exclude operational project modules."""
+    accessible_project_ids = project_query_for_user(db, current_user).with_entities(Project.id).subquery()
+    all_matching_logs = (
+        db.query(AuditLog)
+        .filter(AuditLog.project_id.in_(accessible_project_ids))
+        .filter(AuditLog.module.in_(PROJECT_ACTIVITY_MODULES))
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(limit * 5)  # over-fetch since multi-field updates collapse into one event below
+        .all()
+    )
+
+    grouped_events = []
+    seen_event_ids = set()
+    for log in all_matching_logs:
+        evt_key = log.event_id or f"single-{log.id}"
+        if evt_key in seen_event_ids:
+            continue
+        seen_event_ids.add(evt_key)
+
+        same_event_logs = [l for l in all_matching_logs if (l.event_id or f"single-{l.id}") == evt_key]
+        base_dict = log.to_dict()
+        changes = [
+            {
+                "field_name": l.field_name or "General",
+                "old_value": l.old_value or "",
+                "new_value": l.new_value or "",
+            }
+            for l in same_event_logs
+            if l.field_name or l.old_value or l.new_value
+        ]
+        base_dict["changes"] = changes
+        if len(changes) > 1:
+            base_dict["description"] = f"{base_dict['user_name']} \u0111\u00e3 c\u1eadp nh\u1eadt {log.module} '{log.resource_name or log.entity_id}' ({len(changes)} thay \u0111\u1ed5i)"
+
+        grouped_events.append(base_dict)
+        if len(grouped_events) >= limit:
+            break
+
+    return {"items": grouped_events}

@@ -128,7 +128,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
         
         {/* Header */}
