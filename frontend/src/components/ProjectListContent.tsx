@@ -341,31 +341,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm relative z-30">
-            {canManage && (
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer shrink-0 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px]">
-                <input
-                  type="checkbox"
-                  checked={paged.length > 0 && paged.every(p => selectedIds.includes(p.id))}
-                  onChange={(e) => {
-                    setSelectedIds(prev => e.target.checked
-                      ? Array.from(new Set([...prev, ...paged.map(p => p.id)]))
-                      : prev.filter(id => !paged.some(p => p.id === id)));
-                  }}
-                  className="w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
-                />
-                Chọn trang này
-              </label>
-            )}
-            <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
-              <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
-              <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
-                <option value="newest">Mới nhất</option>
-                <option value="oldest">Cũ nhất</option>
-                <option value="name_asc">Tên (A-Z)</option>
-                <option value="name_desc">Tên (Z-A)</option>
-              </select>
-            </div>
-
             <div className="relative flex-1 min-w-[240px]">
               <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -373,7 +348,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               <input type="text" placeholder="Tìm kiếm tên dự án, khách hàng..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
                 className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none text-slate-700 focus:border-indigo-500 bg-slate-50/20" />
             </div>
-            
+
             <SearchableSelect
               label="giai đoạn"
               icon="🚩"
@@ -438,6 +413,31 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               onChange={val => { setYearFilter(String(val)); setPage(1); }}
               placeholder="Tìm năm..."
             />
+
+            {canManage && (
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer shrink-0 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px]">
+                <input
+                  type="checkbox"
+                  checked={paged.length > 0 && paged.every(p => selectedIds.includes(p.id))}
+                  onChange={(e) => {
+                    setSelectedIds(prev => e.target.checked
+                      ? Array.from(new Set([...prev, ...paged.map(p => p.id)]))
+                      : prev.filter(id => !paged.some(p => p.id === id)));
+                  }}
+                  className="w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                />
+                Chọn trang này
+              </label>
+            )}
+            <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
+              <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
+                <option value="newest">Mới nhất</option>
+                <option value="oldest">Cũ nhất</option>
+                <option value="name_asc">Tên (A-Z)</option>
+                <option value="name_desc">Tên (Z-A)</option>
+              </select>
+            </div>
 
             <button onClick={handleResetFilters} className="flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors flex-shrink-0 h-[34px]">
               <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
