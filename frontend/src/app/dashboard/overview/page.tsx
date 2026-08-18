@@ -11,7 +11,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
-import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth } from '@/app/dashboard/constants';
+import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
 
 const getShortName = (name: string) => {
   if (!name) return 'Unknown';
@@ -81,6 +81,34 @@ const ProjectDistributionDonut = ({ activeCount, whiteCount }: { activeCount: nu
       </div>
     </div>
   );
+};
+
+const getTaskKpiForMember = (t: any, memberId: any) => {
+  const isDone = t.status === 'Done' || t.status === 'done';
+  if (!isDone) return 0;
+
+  const isAssigned = t.assigned_id != null && String(t.assigned_id) === String(memberId);
+  const isSupport = t.support_id != null && String(t.support_id) === String(memberId);
+
+  if (isAssigned && isSupport) {
+    if (typeof t.kpi_assigned === 'number' && typeof t.kpi_support === 'number') {
+      return t.kpi_assigned + t.kpi_support;
+    }
+    return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+  }
+  if (isAssigned) {
+    if (typeof t.kpi_assigned === 'number') return t.kpi_assigned;
+    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    const ratio = t.kpi_ratio_assign != null ? t.kpi_ratio_assign : (t.support_id != null ? 90 : 100);
+    return kpiVal * (ratio / 100);
+  }
+  if (isSupport) {
+    if (typeof t.kpi_support === 'number') return t.kpi_support;
+    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    const ratio = t.kpi_ratio_support != null ? t.kpi_ratio_support : 10;
+    return kpiVal * (ratio / 100);
+  }
+  return 0;
 };
 
 const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number) => void }) => {
@@ -248,7 +276,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
                   const nextTask = pTasks.find(t => t.end_date_est || t.created_at);
                   const deadlineStr = nextTask ? (nextTask.end_date_est || '11/08').split('-').reverse().slice(0, 2).join('/') : '11/08';
                   const pManday = pTasks.reduce((acc, t) => acc + (t.manday_actual || t.manday_est || 0), 0);
-                  const pKpi = pTasks.reduce((acc, t) => acc + (t.status === 'Done' || t.status === 'done' ? (t.kpi_base || 0) : 0), 0);
+                  const pKpi = pTasks.reduce((acc, t) => acc + (t.status === 'Done' || t.status === 'done' ? getTaskKpiForMember(t, member.id) : 0), 0);
 
                   return (
                     <div
@@ -422,8 +450,16 @@ export default function OverviewTab() {
     // Fetch my-alerts in parallel — not part of the cached bundle below.
     getMyAlerts().then(data => setMyAlerts(data)).catch(() => { });
 
+    let memberApiUrl = `/api/members?_t=${ts}`;
+    if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+      memberApiUrl += `&month=${selectedMonth}`;
+    }
+    if (selectedYear !== 'all' && typeof selectedYear === 'number') {
+      memberApiUrl += `&year=${selectedYear}`;
+    }
+
     const [membersRes, projRes, tasksRes, activityRes, leadersRes] = await Promise.all([
-      axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(memberApiUrl, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects/recent-activity?limit=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
@@ -437,14 +473,14 @@ export default function OverviewTab() {
       recentActivity: activityRes.data?.items || [],
       rawLeaders: leadersRes.data || [],
     };
-  }, []);
+  }, [selectedMonth, selectedYear]);
 
   // React Query: shows the last-cached bundle instantly on revisit (no
   // loading flash), then silently refetches in the background — replaces
   // the old module-level `cachedOverviewData` variable, which only lived
   // until a full page reload and never refreshed itself automatically.
   const { data: overviewData, isFetching: loading, refetch } = useQuery({
-    queryKey: ['dashboard-overview'],
+    queryKey: ['dashboard-overview', selectedMonth, selectedYear],
     queryFn: fetchOverview,
     staleTime: 2 * 60_000,
   });
@@ -560,12 +596,26 @@ export default function OverviewTab() {
     // 3. Filter Tasks by Team & Date
     let fTasks = rawTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => {
-      const tDateStr = t.end_date_est || t.end_date_actual || t.created_at;
+      const isDone = t.status === 'Done' || t.status === 'done';
+      const tDateStr = isDone ? (t.end_date_actual || t.end_date_est || t.created_at) : (t.end_date_est || t.created_at);
       if (!tDateStr) return true;
       const tDate = new Date(tDateStr);
       if (isNaN(tDate.getTime())) return true;
-      if (selectedYear !== 'all' && tDate.getFullYear() !== selectedYear) return false;
-      if (selectedMonth !== 'all' && (tDate.getMonth() + 1) !== selectedMonth) return false;
+
+      if (selectedYear !== 'all' && typeof selectedYear === 'number' && tDate.getFullYear() !== selectedYear) return false;
+
+      if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+        const cycle = CYCLE_TEMPLATE[selectedMonth];
+        if (cycle) {
+          const yr = (selectedYear !== 'all' && typeof selectedYear === 'number') ? selectedYear : tDate.getFullYear();
+          const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+          const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+          if (tDate < startDt || tDate > endDt) return false;
+        } else {
+          if ((tDate.getMonth() + 1) !== selectedMonth) return false;
+        }
+      }
+
       if (selectedWeek !== 'all' && getWeekOfMonth(tDate) !== selectedWeek) return false;
       return true;
     });
@@ -613,12 +663,14 @@ export default function OverviewTab() {
       myTasks.forEach(t => {
         md += (t.manday_actual || t.manday_est || 0);
         const done = t.status === 'Done' || t.status === 'done';
-        if (done) { d++; k += (t.kpi_base || 0); }
+        if (done) { d++; k += getTaskKpiForMember(t, m.id); }
         else {
           i++;
           if (t.days_late > 0) o++;
         }
       });
+      const kpiVal = typeof m.kpi_total === 'number' ? m.kpi_total : k;
+      const mandayVal = typeof m.manday_total === 'number' ? m.manday_total : md;
       return {
         id: m.id,
         name: m.display_name || m.full_name,
@@ -628,8 +680,8 @@ export default function OverviewTab() {
         done: d,
         inProgress: i,
         overdue: o,
-        manday: Math.round(md * 10) / 10,
-        kpi: Math.round(k * 10) / 10,
+        manday: Math.round(mandayVal * 10) / 10,
+        kpi: Math.round(kpiVal * 10) / 10,
         rawMember: m
       };
     });
@@ -685,20 +737,25 @@ export default function OverviewTab() {
       activeTeamList.forEach(m => {
         const mTasks = rawTasks.filter(t => (isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id)) && (t.status === 'Done' || t.status === 'done'));
         let mkpi = 0;
+        const cycle = CYCLE_TEMPLATE[i];
         mTasks.forEach(t => {
-          const tdStr = t.end_date_est || t.end_date_actual || t.created_at;
-          if (tdStr) {
+          const tdStr = t.end_date_actual || t.end_date_est || t.created_at;
+          if (tdStr && cycle) {
             const td = new Date(tdStr);
-            if (td.getFullYear() === matrixYear && (td.getMonth() + 1) === i) {
-              mkpi += (t.kpi_base || 0);
+            if (!isNaN(td.getTime())) {
+              const startDt = new Date(`${matrixYear + cycle.startYo}-${cycle.startMd}T00:00:00`);
+              const endDt = new Date(`${matrixYear + cycle.endYo}-${cycle.endMd}T23:59:59`);
+              if (td >= startDt && td <= endDt) {
+                mkpi += getTaskKpiForMember(t, m.id);
+              }
             }
           }
         });
         const weeksInMonth = MONTH_WEEKS_COUNT[i] || 4;
         let avgKpi = mkpi > 0 ? (mkpi / weeksInMonth) : 0;
-        rowSum[`m_${m.id}`] = mkpi;
-        rowAvg[`m_${m.id}`] = avgKpi.toFixed(1);
-        rowBon[`m_${m.id}`] = getKpiMultiplier(avgKpi).toFixed(2);
+        rowSum[`m_${m.id}`] = Number(mkpi.toFixed(1));
+        rowAvg[`m_${m.id}`] = Number(avgKpi.toFixed(1));
+        rowBon[`m_${m.id}`] = Number(getKpiMultiplier(avgKpi).toFixed(1));
       });
       sumM.push(rowSum);
       avgM.push(rowAvg);
@@ -1387,8 +1444,10 @@ export default function OverviewTab() {
                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
                     {activeTeamMembers.map(m => {
                       const val = r[`m_${m.id}`];
-                      const bg = val > 100 ? 'bg-amber-300' : (val > 50 ? 'bg-amber-100' : 'bg-white');
-                      return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                      const numVal = typeof val === 'number' ? val : (val ? Number(val) : 0);
+                      const displayVal = numVal.toFixed(1);
+                      const bg = numVal > 100 ? 'bg-amber-300' : (numVal > 50 ? 'bg-amber-100' : 'bg-white');
+                      return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{displayVal}</td>
                     })}
                   </tr>
                 ))}
@@ -1416,8 +1475,10 @@ export default function OverviewTab() {
                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
                     {activeTeamMembers.map(m => {
                       const val = r[`m_${m.id}`];
-                      const bg = val > 10 ? 'bg-green-200' : (val > 5 ? 'bg-green-100' : 'bg-white');
-                      return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                      const numVal = typeof val === 'number' ? val : (val ? Number(val) : 0);
+                      const displayVal = numVal.toFixed(1);
+                      const bg = numVal > 10 ? 'bg-green-200' : (numVal > 5 ? 'bg-green-100' : 'bg-white');
+                      return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{displayVal}</td>
                     })}
                   </tr>
                 ))}
@@ -1445,8 +1506,10 @@ export default function OverviewTab() {
                     <td className="p-2 border border-slate-200 text-left font-bold text-[#0b1c30] bg-white sticky left-0 z-10">{r.month}</td>
                     {activeTeamMembers.map(m => {
                       const val = r[`m_${m.id}`];
-                      const bg = val > 0 ? 'bg-indigo-100 text-indigo-800' : 'bg-white text-slate-400';
-                      return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{val}</td>
+                      const numVal = typeof val === 'number' ? val : (val ? Number(val) : 0);
+                      const displayVal = numVal.toFixed(1);
+                      const bg = numVal > 0 ? 'bg-indigo-100 text-indigo-800' : 'bg-white text-slate-400';
+                      return <td key={m.id} className={`p-2 border border-slate-200 font-semibold ${bg}`}>{displayVal}</td>
                     })}
                   </tr>
                 ))}

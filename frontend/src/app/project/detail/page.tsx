@@ -4455,6 +4455,80 @@ value={editValue}
                       })()}
                     </div>
 
+                    {/* OVERDUE TASKS LIST SECTION */}
+                    <div className="mt-6 bg-white border border-red-200 rounded-xl p-5 shadow-sm flex flex-col">
+                      <div className="flex items-center justify-between border-b border-red-100 pb-3 mb-4 bg-red-50/20 px-3 py-2 rounded-lg">
+                        <h3 className="text-sm font-bold text-red-600 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px]">warning</span>
+                          Danh sách Task trễ hạn ({overdueTasksList.length})
+                        </h3>
+                        <span className="text-[10px] font-semibold text-red-500">
+                          Cần đôn đốc xử lý gấp
+                        </span>
+                      </div>
+
+                      {overdueTasksList.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-6">Không có task trễ hạn.</p>
+                      ) : (
+                        <div className="overflow-x-auto custom-scrollbar">
+                          <table className="w-full text-xs text-left border-collapse">
+                            <thead>
+                              <tr className="border-b border-slate-100 text-slate-400 uppercase text-[9px] font-extrabold tracking-wider bg-slate-50">
+                                <th className="px-4 py-2">Tên Task</th>
+                                <th className="px-4 py-2">Người phụ trách</th>
+                                <th className="px-4 py-2 text-center">Độ ưu tiên</th>
+                                <th className="px-4 py-2 text-center">Hạn chót</th>
+                                <th className="px-4 py-2 text-center">Số ngày trễ</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {overdueTasksList.map((t: any) => {
+                                const prio = (t.priority || 'Normal').toUpperCase();
+                                const dlStr = t.end_date_est ? t.end_date_est.split('-').reverse().slice(0, 2).join('/') : '—';
+                                const initials = (t.assigned_name || '??').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                                return (
+                                  <tr key={t.id} className="hover:bg-red-50/30 transition-colors">
+                                    <td className="px-4 py-3 font-bold text-[#0b1c30] max-w-[300px] break-words">
+                                      {t.detail_task}
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      {t.assigned_name ? (
+                                        <div className="flex items-center gap-1.5">
+                                          <div className="w-5 h-5 rounded-full bg-blue-100 text-[#0058be] flex items-center justify-center text-[9px] font-extrabold">
+                                            {initials}
+                                          </div>
+                                          <span className="font-semibold text-slate-800">{t.assigned_name}</span>
+                                        </div>
+                                      ) : (
+                                        <span className="text-slate-400 italic">Chưa giao</span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                                      <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                        prio === 'CRITICAL' ? 'bg-purple-100 text-purple-700' :
+                                        prio === 'HIGH' ? 'bg-orange-100 text-orange-700' :
+                                        prio === 'INTERRUPT' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                                      }`}>
+                                        {prio}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-center font-semibold text-slate-600 whitespace-nowrap">
+                                      {dlStr}
+                                    </td>
+                                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                                      <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-600 border border-red-200">
+                                        Trễ {t.days_late} ngày
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 </div>
               )}
