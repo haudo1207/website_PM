@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users } from 'lucide-react';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 
