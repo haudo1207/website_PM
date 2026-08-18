@@ -57,7 +57,7 @@ export const MONTH_WEEKS_COUNT: Record<number, number> = {
   9: 4,
   10: 5,
   11: 4,
-  12: 4
+  12: 4,
 };
 
 export function getWeekOfMonth(date: Date) {
@@ -69,3 +69,19 @@ export function getWeekOfMonth(date: Date) {
   if (day <= 28) return 4;
   return 5;
 }
+
+export const CYCLE_TEMPLATE: Record<number, { startMd: string; endMd: string; startYo: number; endYo: number }> = {
+  1:  { startMd: '12-22', endMd: '01-18', startYo: -1, endYo: 0 },
+  2:  { startMd: '01-19', endMd: '02-22', startYo: 0, endYo: 0 },
+  3:  { startMd: '02-23', endMd: '03-22', startYo: 0, endYo: 0 },
+  4:  { startMd: '03-23', endMd: '04-19', startYo: 0, endYo: 0 },
+  5:  { startMd: '04-20', endMd: '05-24', startYo: 0, endYo: 0 },
+  6:  { startMd: '05-25', endMd: '06-21', startYo: 0, endYo: 0 },
+  7:  { startMd: '06-22', endMd: '07-19', startYo: 0, endYo: 0 },
+  8:  { startMd: '07-20', endMd: '08-23', startYo: 0, endYo: 0 },
+  9:  { startMd: '08-24', endMd: '09-20', startYo: 0, endYo: 0 },
+  10: { startMd: '09-21', endMd: '10-25', startYo: 0, endYo: 0 },
+  11: { startMd: '10-26', endMd: '11-22', startYo: 0, endYo: 0 },
+  12: { startMd: '11-23', endMd: '12-20', startYo: 0, endYo: 0 },
+};
+

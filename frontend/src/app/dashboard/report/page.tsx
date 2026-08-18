@@ -4,10 +4,19 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { getEmail, getName, getToken } from '@/lib/auth';
+import { useRouter } from 'next/navigation';
 import KpiCard from '@/components/dashboard/KpiCard';
 import PieChartCard from '@/components/dashboard/PieChartCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
+import { 
+  priorityDot,
+  statusStyle,
+  activityColor,
+  MONTH_WEEKS_COUNT,
+  getWeekOfMonth,
+  CYCLE_TEMPLATE
+} from '@/app/dashboard/constants';
 
 const formatVNDate = (dStr: string) => {
   if (!dStr) return '—';
@@ -18,15 +27,10 @@ const formatVNDate = (dStr: string) => {
   return `${day}/${month}/${d.getFullYear()}`;
 };
 
-import { 
-  priorityDot,
-  statusStyle,
-  activityColor,
-  MONTH_WEEKS_COUNT,
-  getWeekOfMonth
-} from '@/app/dashboard/constants';
-
 export default function ReportTab() {
+  // Quick Filter Highlight state
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>(null);
+  const router = useRouter();
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
@@ -42,6 +46,8 @@ export default function ReportTab() {
   const [openFilterDropdown, setOpenFilterDropdown] = useState<string | null>(null);
 
   const applyQuickFilter = (type: string) => {
+    setActiveQuickFilter(type);
+    
     const now = new Date();
     if (type === 'Tuần trước') {
       const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -123,15 +129,75 @@ export default function ReportTab() {
   const realMemberData = reportData?.realMemberData ?? null;
   const rawMyTasks: any[] = reportData?.rawMyTasks || [];
 
+  const getMyTaskKpi = useCallback((t: any) => {
+    const isDone = t.status === 'Done' || t.status === 'done';
+    if (!isDone) return 0;
+
+    const memberId = realMemberData?.id;
+    const memberDisplayName = (realMemberData?.display_name || '').toLowerCase().trim();
+    const memberFullName = (realMemberData?.full_name || '').toLowerCase().trim();
+
+    let isAssigned = false;
+    let isSupport = false;
+
+    if (memberId != null) {
+      if (t.assigned_id != null && String(t.assigned_id) === String(memberId)) isAssigned = true;
+      if (t.support_id != null && String(t.support_id) === String(memberId)) isSupport = true;
+    }
+    if (!isAssigned && !isSupport) {
+      const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
+      const suppNameLow = (t.support_name || '').toLowerCase().trim();
+      if (memberDisplayName && assignNameLow === memberDisplayName) isAssigned = true;
+      if (memberDisplayName && suppNameLow === memberDisplayName) isSupport = true;
+      if (memberFullName && assignNameLow === memberFullName) isAssigned = true;
+      if (memberFullName && suppNameLow === memberFullName) isSupport = true;
+    }
+
+    if (isAssigned && isSupport) {
+      if (typeof t.kpi_assigned === 'number' && typeof t.kpi_support === 'number') {
+        return t.kpi_assigned + t.kpi_support;
+      }
+      return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    }
+    if (isAssigned) {
+      if (typeof t.kpi_assigned === 'number') return t.kpi_assigned;
+      const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+      const ratio = t.kpi_ratio_assign != null ? t.kpi_ratio_assign : (t.support_id != null ? 90 : 100);
+      return kpiVal * (ratio / 100);
+    }
+    if (isSupport) {
+      if (typeof t.kpi_support === 'number') return t.kpi_support;
+      const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+      const ratio = t.kpi_ratio_support != null ? t.kpi_ratio_support : 10;
+      return kpiVal * (ratio / 100);
+    }
+    return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+  }, [realMemberData]);
+
   const { chartStats, chartWeeklyProgress, chartMonthlyProgress } = useMemo(() => {
     let dCount = 0, iCount = 0, oCount = 0, cKpi = 0;
 
     const cTasks = rawMyTasks.filter((t: any) => {
-      if (!t.end_date_est) return true;
-      const d = new Date(t.end_date_est);
+      const isDone = t.status === 'Done' || t.status === 'done';
+      const tDateStr = isDone ? (t.end_date_actual || t.end_date_est || t.created_at) : (t.end_date_est || t.created_at);
+      if (!tDateStr) return true;
+      const d = new Date(tDateStr);
       if (isNaN(d.getTime())) return true;
-      if (selectedYear !== 'all' && d.getFullYear() !== selectedYear) return false;
-      if (selectedMonth !== 'all' && (d.getMonth() + 1) !== selectedMonth) return false;
+
+      if (selectedYear !== 'all' && typeof selectedYear === 'number' && d.getFullYear() !== selectedYear) return false;
+
+      if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+        const cycle = CYCLE_TEMPLATE[selectedMonth];
+        if (cycle) {
+          const yr = (selectedYear !== 'all' && typeof selectedYear === 'number') ? selectedYear : d.getFullYear();
+          const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+          const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+          if (d < startDt || d > endDt) return false;
+        } else {
+          if ((d.getMonth() + 1) !== selectedMonth) return false;
+        }
+      }
+
       if (selectedWeek !== 'all' && getWeekOfMonth(d) !== selectedWeek) return false;
       return true;
     });
@@ -141,7 +207,7 @@ export default function ReportTab() {
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
       const daysLateNum = typeof t.days_late === 'number' ? t.days_late : 0;
       const isOverdue = !isDone && !isCancel && daysLateNum > 0;
-      if (isDone) { dCount++; cKpi += (t.kpi_base || 0); }
+      if (isDone) { dCount++; cKpi += getMyTaskKpi(t); }
       else if (!isCancel) { iCount++; if (isOverdue) oCount++; }
     });
 
@@ -156,7 +222,7 @@ export default function ReportTab() {
         return !isNaN(d.getTime()) && getWeekOfMonth(d) === wNum;
       });
       const wDone = wTasks.filter((t: any) => t.status === 'Done' || t.status === 'done');
-      const wKpi = wDone.reduce((acc: number, t: any) => acc + (t.kpi_base || 0), 0);
+      const wKpi = wDone.reduce((acc: number, t: any) => acc + getMyTaskKpi(t), 0);
       return {
         name: `Tuần ${wNum}`,
         kpi: Math.round(wKpi),
@@ -169,7 +235,7 @@ export default function ReportTab() {
       chartWeeklyProgress: wProgress,
       chartMonthlyProgress: [{ name: selectedMonth !== 'all' ? `Tháng ${selectedMonth}` : 'Tất cả', kpi: Math.round(cKpi), tasks: cTasks.length }]
     };
-  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek]);
+  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, getMyTaskKpi]);
 
   // Derived state based on filters
   const {
@@ -193,17 +259,27 @@ export default function ReportTab() {
     const now = new Date();
 
     const filteredTasks = rawMyTasks.filter(t => {
-      if (!t.end_date_est) return true;
-      const taskDate = new Date(t.end_date_est);
+      const isDone = t.status === 'Done' || t.status === 'done';
+      const tDateStr = isDone ? (t.end_date_actual || t.end_date_est || t.created_at) : (t.end_date_est || t.created_at);
+      if (!tDateStr) return true;
+      const taskDate = new Date(tDateStr);
       if (isNaN(taskDate.getTime())) return true;
 
-      if (selectedYear !== 'all' && taskDate.getFullYear() !== selectedYear) return false;
-      if (selectedMonth !== 'all' && (taskDate.getMonth() + 1) !== selectedMonth) return false;
+      if (selectedYear !== 'all' && typeof selectedYear === 'number' && taskDate.getFullYear() !== selectedYear) return false;
 
-      if (selectedWeek !== 'all') {
-        const taskWeek = getWeekOfMonth(taskDate);
-        if (taskWeek !== selectedWeek) return false;
+      if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+        const cycle = CYCLE_TEMPLATE[selectedMonth];
+        if (cycle) {
+          const yr = (selectedYear !== 'all' && typeof selectedYear === 'number') ? selectedYear : taskDate.getFullYear();
+          const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+          const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+          if (taskDate < startDt || taskDate > endDt) return false;
+        } else {
+          if ((taskDate.getMonth() + 1) !== selectedMonth) return false;
+        }
       }
+
+      if (selectedWeek !== 'all' && getWeekOfMonth(taskDate) !== selectedWeek) return false;
       return true;
     });
 
@@ -218,7 +294,7 @@ export default function ReportTab() {
 
       if (isDone) {
         doneCount++;
-        dynamicKpi += (t.kpi_base || 0);
+        dynamicKpi += getMyTaskKpi(t);
         acts.push({ action: `Hoàn thành: ${t.name}`, time: 'Đã hoàn thành', type: 'done' });
       } else if (isCancel) {
         acts.push({ action: `Đã hủy: ${t.name}`, time: 'Hủy tác vụ', type: 'cancel' });
@@ -253,12 +329,14 @@ export default function ReportTab() {
       const pName = t.projectName || 'Không có';
       const cName = t.customerName || t.customer_name || 'Không có';
       if (!myProjectsMap.has(pName)) {
-        myProjectsMap.set(pName, { name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0 });
+        myProjectsMap.set(pName, { id: t.project_id, name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0 });
       }
       const p = myProjectsMap.get(pName);
       p.tasks++;
-      if (t.status === 'Done' || t.status === 'done') p.done++;
-      p.kpi += (t.kpi_base || 0);
+      if (t.status === 'Done' || t.status === 'done') {
+        p.done++;
+        p.kpi += getMyTaskKpi(t);
+      }
     });
     const topProjects = Array.from(myProjectsMap.values())
       .sort((a, b) => b.kpi - a.kpi)
@@ -273,7 +351,7 @@ export default function ReportTab() {
       inProgress: inProgressCount,
       overdue: overdueCount,
       manday: Math.round(mandayTotal * 10) / 10,
-      kpi: dynamicKpi
+      kpi: Math.round(dynamicKpi * 10) / 10
     };
 
     const kpiPoints = dynamicKpi;
@@ -396,12 +474,15 @@ export default function ReportTab() {
           <div className="flex items-center gap-1 overflow-x-auto">
             {['Tuần trước', 'Tuần này', 'Tuần tới', 'Tháng trước', 'Tháng này', 'Tháng tới'].map(label => (
               <button
-                key={label}
-                onClick={() => applyQuickFilter(label)}
-                className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-[11px] font-bold transition-all text-slate-600 cursor-pointer whitespace-nowrap shadow-sm active:scale-95"
-              >
-                {label}
-              </button>
+                  key={label}
+                  onClick={() => applyQuickFilter(label)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm active:scale-95 ${activeQuickFilter === label
+                      ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
+                      : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
+                    }`}
+                >
+                  {label}
+                </button>
             ))}
           </div>
 
@@ -468,7 +549,11 @@ export default function ReportTab() {
                 <tr><td colSpan={7} className="text-center py-6 text-slate-400 font-semibold">Chưa tham gia dự án nào.</td></tr>
               ) : (
                 topRealProjects.map((p, idx) => (
-                  <tr key={p.name} className="border-b border-slate-50 hover:bg-slate-50/50">
+                  <tr 
+                    key={p.name} 
+                    onClick={() => { if (p.id) router.push(`/project/detail?id=${p.id}`); }}
+                    className="border-b border-slate-50 hover:bg-slate-50/80 cursor-pointer transition-colors"
+                  >
                     <td className="px-4 py-3 text-center">
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${idx < 3 ? 'bg-amber-100 text-amber-700' : 'text-slate-400'}`}>#{idx + 1}</span>
                     </td>
@@ -692,7 +777,11 @@ export default function ReportTab() {
                 </tr>
               ) : (
                 tableTasks.map((t: any, i: number) => (
-                  <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
+                  <tr 
+                    key={t.id} 
+                    onClick={() => { if (t.project_id) router.push(`/project/detail?id=${t.project_id}`); }}
+                    className={`border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}
+                  >
                     <td className={`px-4 py-3 font-semibold text-[#0b1c30] whitespace-normal break-words max-w-[250px] sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/95'}`}>
                       <div className="flex items-start gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${priorityDot[t.priority] || 'bg-slate-400'}`} />
@@ -713,7 +802,9 @@ export default function ReportTab() {
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${statusStyle[t.status] || ''}`}>{t.status}</span>
                     </td>
                     <td className="px-4 py-3 text-center text-slate-500 tabular-nums">{formatVNDate(t.end_date_est)}</td>
-                    <td className="px-4 py-3 text-center font-extrabold text-[#0058be]">{t.kpi_base || 0}</td>
+                    <td className="px-4 py-3 text-center font-extrabold text-[#0058be]">
+                      {(t.status === 'Done' || t.status === 'done') ? getMyTaskKpi(t) : <span className="text-slate-300 font-semibold">—</span>}
+                    </td>
                   </tr>
                 ))
               )}
