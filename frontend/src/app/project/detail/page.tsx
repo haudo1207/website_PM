@@ -6,6 +6,7 @@ import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
+import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
@@ -483,6 +484,8 @@ function ProjectDetailContent() {
   const [editingMeeting, setEditingMeeting] = useState<any>(null);
   const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
   const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
 
@@ -4822,6 +4825,7 @@ value={editValue}
                           onEdit={meeting => { setEditingMeeting(meeting); setShowMeetingModal(true); }}
                           onDelete={id => setDeleteConfirmId(id)}
                           onSummarize={meeting => { setSummarizingMeeting(meeting); setIsSummarizeOpen(true); }}
+                          onOpenDetail={meeting => { setDetailMeeting(meeting); setIsDetailOpen(true); }}
                         />
                       ))
                     )}
@@ -4842,6 +4846,14 @@ value={editValue}
                     onSave={(updatedMeeting) => {
                       setMeetings(prev => prev.map(x => x.id === updatedMeeting.id ? updatedMeeting : x));
                     }}
+                  />
+
+                  <MeetingDetailModal
+                    isOpen={isDetailOpen}
+                    onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }}
+                    meeting={detailMeeting}
+                    onEdit={m => { setIsDetailOpen(false); setEditingMeeting(m); setShowMeetingModal(true); }}
+                    onSummarize={m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }}
                   />
 
                   {/* Delete Confirm Modal */}
