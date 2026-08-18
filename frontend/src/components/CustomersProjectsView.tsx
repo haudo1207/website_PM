@@ -965,7 +965,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
                       </div>
 
                       <button
-                        onClick={() => router.push(`/project/detail?id=${proj.id}`)}
+                        onClick={() => router.push(`/project/detail/overview?id=${proj.id}`)}
                         className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-2.5 py-1 rounded text-[10px] font-bold tracking-wide uppercase transition-all shadow-2xs"
                       >
                         [Open Project]

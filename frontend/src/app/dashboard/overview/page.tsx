@@ -917,7 +917,7 @@ export default function OverviewTab() {
                           }
                           setInboxOpen(false);
                           if (n.project_id) {
-                            const url = `/project/detail?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
+                            const url = `/project/detail/tasks?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
                             router.push(url);
                           }
                         }}
@@ -1269,7 +1269,7 @@ export default function OverviewTab() {
             activeProjects.map((p: any) => (
               <div
                 key={p.id}
-                onClick={() => router.push(`/project/detail?id=${p.id}`)}
+                onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
                 className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-[#0058be] hover:shadow-md transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99]"
               >
                 <div>
@@ -1464,7 +1464,7 @@ export default function OverviewTab() {
           tasks={rawTasks}
           projects={rawProjects}
           onClose={() => setSelectedMemberModal(null)}
-          onNavigate={(projectId) => router.push(`/project/detail?id=${projectId}`)}
+          onNavigate={(projectId) => router.push(`/project/detail/overview?id=${projectId}`)}
         />
       )}
     </div>

@@ -291,7 +291,7 @@ export default function SystemAuditTab() {
             displayedProjects.map(p => (
               <Link
                 key={p.id}
-                href={`/project/detail?id=${p.id}`}
+                href={`/project/detail/overview?id=${p.id}`}
                 className="group p-4 bg-slate-50/60 border border-slate-200/80 rounded-xl hover:border-blue-400 hover:shadow-md hover:bg-blue-50/30 transition-all cursor-pointer block"
               >
                 <div className="flex items-center justify-between mb-2">
@@ -338,7 +338,7 @@ export default function SystemAuditTab() {
                 projectsAtRisk.map(p => (
                   <Link
                     key={p.id}
-                    href={`/project/detail?id=${p.id}`}
+                    href={`/project/detail/overview?id=${p.id}`}
                     className="flex items-center justify-between p-3 bg-red-50/60 rounded-xl border border-red-100 hover:border-red-300 hover:bg-red-50 transition-all cursor-pointer block"
                   >
                     <div>
@@ -547,7 +547,7 @@ export default function SystemAuditTab() {
                 analytics.top_updated_projects.slice(0, 5).map((p, i) => (
                   <Link
                     key={p.project_id || i}
-                    href={`/project/detail?id=${p.project_id}`}
+                    href={`/project/detail/overview?id=${p.project_id}`}
                     className="flex items-center justify-between p-2 px-3 rounded-lg bg-[#f8fafc] border border-slate-100/80 hover:border-amber-300 hover:bg-amber-50/50 transition-all cursor-pointer block"
                   >
                     <span className="text-xs font-bold text-[#0b1c30] truncate max-w-[130px]">{i + 1}. {p.name}</span>

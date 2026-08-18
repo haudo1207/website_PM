@@ -206,6 +206,8 @@ export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r
 export const createProject = (data: object) => api.post('/projects', data).then(r => r.data);
 export const updateProject = (id: number, data: object) => api.patch(`/projects/${id}`, data).then(r => r.data);
 export const deleteProject = (id: number) => api.delete(`/projects/${id}`).then(r => r.data);
+export const bulkDeleteProjects = (ids: number[]) =>
+  api.post('/projects/bulk-delete', { ids }).then(r => r.data);
 
 // Project Members
 export const getProjectMembers = (pid: number) => api.get(`/projects/${pid}/members`).then(r => r.data);

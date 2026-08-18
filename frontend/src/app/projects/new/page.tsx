@@ -176,7 +176,7 @@ export default function NewProjectPage() {
         status: 'Planning',
       });
 
-      router.push(`/project/detail?id=${res.id}`);
+      router.push(`/project/detail/overview?id=${res.id}`);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.response?.data?.detail || 'Lỗi khi tạo dự án. Vui lòng kiểm tra lại.');

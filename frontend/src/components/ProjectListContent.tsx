@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, updateProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
+import { getProjects, deleteProject, bulkDeleteProjects, updateProject, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 import SearchableSelect from './common/SearchableSelect';
 
@@ -109,6 +109,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [renamingProject, setRenamingProject] = useState<{ id: number; name: string } | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -321,10 +324,38 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               <p className="text-sm text-slate-500 mt-1">Quản lý và theo dõi tiến độ các dự án tuân thủ bảo mật.</p>
             </div>
 
-            {renderTabs && renderTabs()}
+            <div className="flex items-center gap-3">
+              {renderTabs && renderTabs()}
+              {canManage && (
+                <button
+                  onClick={() => router.push('/projects/new')}
+                  className="flex items-center gap-1.5 bg-[#0058be] hover:bg-[#00479c] text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors shrink-0"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Tạo dự án
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-end gap-3.5 shadow-sm relative z-30">
+            {canManage && (
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer shrink-0 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px]">
+                <input
+                  type="checkbox"
+                  checked={paged.length > 0 && paged.every(p => selectedIds.includes(p.id))}
+                  onChange={(e) => {
+                    setSelectedIds(prev => e.target.checked
+                      ? Array.from(new Set([...prev, ...paged.map(p => p.id)]))
+                      : prev.filter(id => !paged.some(p => p.id === id)));
+                  }}
+                  className="w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                />
+                Chọn trang này
+              </label>
+            )}
             <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
               <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
               <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
@@ -421,8 +452,19 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
             {paged.map(p => {
               const phaseBadge = getPhaseBadgeStyle(p.current_phase);
               return (
-                <div key={p.id} onClick={() => router.push(`/project/detail?id=${p.id}`)}
+                <div key={p.id} onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
                   className="bg-white border border-slate-200/80 rounded-xl overflow-hidden flex flex-col cursor-pointer group shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-300 hover:-translate-y-0.5 relative">
+                  {canManage && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(p.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        setSelectedIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(x => x !== p.id));
+                      }}
+                      className="absolute top-3 left-3 z-10 w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                    />
+                  )}
                   <div className="p-6 flex-1 flex flex-col">
                     <div className="flex justify-between items-start mb-3">
                       <span className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200 px-2 py-0.5 rounded">Năm: {p.year || '—'}</span>
@@ -442,7 +484,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                             {menuOpenId === p.id && (
                               <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
                                 <button
-                                  onClick={() => { setMenuOpenId(null); router.push(`/project/detail?id=${p.id}`); }}
+                                  onClick={() => { setMenuOpenId(null); router.push(`/project/detail/overview?id=${p.id}`); }}
                                   className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                                 >
                                   ✏️ Chỉnh sửa
@@ -602,6 +644,56 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
           </div>
         </div>
       </div>
+
+      {selectedIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[#0b1c30] text-white rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+          <span className="text-sm font-semibold">Đã chọn {selectedIds.length} dự án</span>
+          <button onClick={() => setSelectedIds([])} className="text-xs font-semibold text-slate-300 hover:text-white">Bỏ chọn</button>
+          <button
+            onClick={() => setShowBulkDeleteConfirm(true)}
+            className="px-4 py-1.5 rounded-lg text-xs font-bold bg-[#dc2626] hover:bg-red-700 text-white"
+          >
+            🗑 Xóa đã chọn
+          </button>
+        </div>
+      )}
+
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
+            <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa {selectedIds.length} dự án</h2>
+            <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa {selectedIds.length} dự án đã chọn? Hành động này không thể hoàn tác.</p>
+            <div className="flex justify-end gap-3">
+              <button disabled={bulkDeleting} onClick={() => setShowBulkDeleteConfirm(false)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
+              <button
+                disabled={bulkDeleting}
+                onClick={async () => {
+                  setBulkDeleting(true);
+                  try {
+                    const res = await bulkDeleteProjects(selectedIds);
+                    reload();
+                    const okCount = res.deleted_ids?.length || 0;
+                    const failCount = res.failed?.length || 0;
+                    if (failCount === 0) {
+                      flash(`Đã xóa ${okCount} dự án!`);
+                    } else {
+                      flash(`Đã xóa ${okCount}/${selectedIds.length} dự án. ${failCount} dự án không thể xóa (không có quyền hoặc không tồn tại).`, true);
+                    }
+                  } catch (e: any) {
+                    flash(e?.response?.data?.detail || 'Xóa hàng loạt thất bại', true);
+                  }
+                  setSelectedIds([]);
+                  setShowBulkDeleteConfirm(false);
+                  setBulkDeleting(false);
+                }}
+                className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm disabled:opacity-50"
+              >
+                {bulkDeleting ? 'Đang xóa...' : 'Xóa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {renamingProject && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setRenamingProject(null)}>

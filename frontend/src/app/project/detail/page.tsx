@@ -55,10 +55,36 @@ const getRowPhase = (tabName: string): string => {
   return 'A';
 };
 
+type TabKey = 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs';
+const SLUG_TO_TAB: Record<string, TabKey> = {
+  overview: 'overview',
+  tasks: 'tasks',
+  meetings: 'meetings',
+  chats: 'chats',
+  members: 'members',
+  'audit-logs': 'audit_logs',
+};
+const TAB_TO_SLUG: Record<TabKey, string> = {
+  overview: 'overview',
+  tasks: 'tasks',
+  meetings: 'meetings',
+  chats: 'chats',
+  members: 'members',
+  audit_logs: 'audit-logs',
+};
+
 function ProjectDetailContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const id = searchParams.get('id') || '';
+  const tabParam = searchParams.get('tab');
+  const activeMainTab: TabKey = (tabParam && SLUG_TO_TAB[tabParam]) || 'overview';
+
+  useEffect(() => {
+    if (!tabParam && id) {
+      router.replace(`/project/detail/overview?id=${id}`);
+    }
+  }, [tabParam, id]);
 
   const isSavingRef = useRef(false);
 
@@ -137,8 +163,6 @@ function ProjectDetailContent() {
     setIsAIDrawerOpen(true);
   };
 
-  // Main Tabs State: 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'
-  const [activeMainTab, setActiveMainTab] = useState<'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs'>('overview');
   const [activePhase, setActivePhase] = useState<string>('ALL');
   const [showPhaseModal, setShowPhaseModal] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
@@ -4174,7 +4198,7 @@ value={editValue}
           {/* TAB NAVIGATION */}
           <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
             <button
-              onClick={() => setActiveMainTab('overview')}
+              onClick={() => router.push(`/project/detail/overview?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4182,7 +4206,7 @@ value={editValue}
               Overview
             </button>
             <button
-              onClick={() => setActiveMainTab('tasks')}
+              onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4190,7 +4214,7 @@ value={editValue}
               Tasks
             </button>
             <button
-              onClick={() => setActiveMainTab('meetings')}
+              onClick={() => router.push(`/project/detail/meetings?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4198,7 +4222,7 @@ value={editValue}
               Meetings
             </button>
             <button
-              onClick={() => setActiveMainTab('chats')}
+              onClick={() => router.push(`/project/detail/chats?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4206,7 +4230,7 @@ value={editValue}
               Chats
             </button>
             <button
-              onClick={() => setActiveMainTab('members')}
+              onClick={() => router.push(`/project/detail/members?id=${id}`)}
               className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
@@ -4215,7 +4239,7 @@ value={editValue}
             </button>
             {isAdmin() && (
               <button
-                onClick={() => setActiveMainTab('audit_logs')}
+                onClick={() => router.push(`/project/detail/audit-logs?id=${id}`)}
                 className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                   }`}
               >
@@ -6936,10 +6960,10 @@ value={editValue}
                     const ph = phases.find(p => String(p.id) === String(phId));
                     if (ph) {
                       setActivePhase(ph.name);
-                      setActiveMainTab('tasks');
+                      router.push(`/project/detail/tasks?id=${id}`);
                       flash(`Đã chuyển tới Phase '${ph.name}'`);
                     } else {
-                      setActiveMainTab('tasks');
+                      router.push(`/project/detail/tasks?id=${id}`);
                     }
                   }}
                 />
