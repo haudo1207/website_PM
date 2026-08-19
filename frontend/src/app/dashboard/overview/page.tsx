@@ -11,7 +11,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
-import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
+import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 
 const getShortName = (name: string) => {
   if (!name) return 'Unknown';
@@ -120,11 +120,12 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
   const memberTasks = tasks.filter(t => (t.assigned_id != null && String(t.assigned_id) === String(member.id)) || (t.support_id != null && String(t.support_id) === String(member.id)));
   const openTasks = memberTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel');
   const doneTasks = memberTasks.filter(t => t.status === 'Done' || t.status === 'done');
-  const overdueTasks = openTasks.filter(t => (t.days_late || 0) > 0);
-  const criticalTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'critical');
-  const highTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'high');
-  const normalTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
-  const interruptTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
+  const overdueTasks = openTasks.filter(t => calculateDaysLate(t) > 0);
+  const openCriticalTasks = openTasks.filter(t => (t.priority || '').toLowerCase() === 'critical');
+  const criticalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'critical');
+  const highTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'high');
+  const normalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
+  const interruptTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
 
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
 
@@ -135,7 +136,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
   const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
 
   const filteredTasks = memberTasks.filter(t => {
-    if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && (t.days_late || 0) > 0;
+    if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && calculateDaysLate(t) > 0;
     if (taskFilter === 'critical') return (t.priority || '').toLowerCase() === 'critical';
     if (taskFilter === 'high') return (t.priority || '').toLowerCase() === 'high';
     return true;
@@ -221,7 +222,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
               <div className="bg-amber-50/40 border border-amber-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
                 <div>
                   <span className="text-[9px] font-extrabold text-amber-500 uppercase tracking-wider">Critical mở</span>
-                  <p className="text-2xl font-black text-amber-700 mt-1">{criticalTasks.length}</p>
+                  <p className="text-2xl font-black text-amber-700 mt-1">{openCriticalTasks.length}</p>
                 </div>
                 <p className="text-[10px] text-slate-400 leading-tight mt-3">Task ưu tiên cao, ảnh hưởng trực tiếp tiến độ dự án.</p>
               </div>
@@ -630,7 +631,8 @@ export default function OverviewTab() {
       const isDone = t.status === 'Done' || t.status === 'done';
       if (isDone) pmKpi += (t.kpi_base || 0); // Only count KPI for completed tasks
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
-      const isOverdue = !isDone && !isCancel && (t.days_late > 0);
+      const daysLateNum = calculateDaysLate(t);
+      const isOverdue = daysLateNum > 0;
 
       if (isDone) pmDone++;
       else {
@@ -641,7 +643,7 @@ export default function OverviewTab() {
             id: t.id,
             name: t.name,
             assignee: t.assigned_name || 'Unassigned',
-            daysLate: t.days_late,
+            daysLate: daysLateNum,
             deadline: t.end_date_est || 'N/A',
             customerName: t.customerName || t.customer_name || 'Không có',
             projectName: t.projectName || t.project_name || 'Không có'
@@ -666,7 +668,7 @@ export default function OverviewTab() {
         if (done) { d++; k += getTaskKpiForMember(t, m.id); }
         else {
           i++;
-          if (t.days_late > 0) o++;
+          if (calculateDaysLate(t) > 0) o++;
         }
       });
       const kpiVal = typeof m.kpi_total === 'number' ? m.kpi_total : k;

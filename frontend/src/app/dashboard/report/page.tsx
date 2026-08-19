@@ -15,7 +15,8 @@ import {
   activityColor,
   MONTH_WEEKS_COUNT,
   getWeekOfMonth,
-  CYCLE_TEMPLATE
+  CYCLE_TEMPLATE,
+  calculateDaysLate
 } from '@/app/dashboard/constants';
 
 const formatVNDate = (dStr: string) => {
@@ -205,8 +206,8 @@ export default function ReportTab() {
     cTasks.forEach((t: any) => {
       const isDone = t.status === 'Done' || t.status === 'done';
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
-      const daysLateNum = typeof t.days_late === 'number' ? t.days_late : 0;
-      const isOverdue = !isDone && !isCancel && daysLateNum > 0;
+      const daysLateNum = calculateDaysLate(t);
+      const isOverdue = daysLateNum > 0;
       if (isDone) { dCount++; cKpi += getMyTaskKpi(t); }
       else if (!isCancel) { iCount++; if (isOverdue) oCount++; }
     });
@@ -288,9 +289,9 @@ export default function ReportTab() {
       
       const isDone = t.status === 'Done' || t.status === 'done';
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
-      const daysLateNum = typeof t.days_late === 'number' ? t.days_late : 0;
+      const daysLateNum = calculateDaysLate(t);
 
-      const isOverdue = !isDone && !isCancel && daysLateNum > 0;
+      const isOverdue = daysLateNum > 0;
 
       if (isDone) {
         doneCount++;
