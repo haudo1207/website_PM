@@ -85,3 +85,34 @@ export const CYCLE_TEMPLATE: Record<number, { startMd: string; endMd: string; st
   12: { startMd: '11-23', endMd: '12-20', startYo: 0, endYo: 0 },
 };
 
+export function calculateDaysLate(task: any): number {
+  if (!task) return 0;
+  const status = (task.status || '').toLowerCase();
+  if (status === 'done' || status === 'completed' || status === 'cancel' || status.includes('hoàn') || status.includes('finish') || status.includes('hủy')) {
+    return 0;
+  }
+
+  const endEstStr = task.end_date_est;
+  if (!endEstStr) {
+    return typeof task.days_late === 'number' && task.days_late > 0 ? task.days_late : 0;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const endEst = new Date(endEstStr);
+  if (isNaN(endEst.getTime())) {
+    return typeof task.days_late === 'number' && task.days_late > 0 ? task.days_late : 0;
+  }
+  endEst.setHours(0, 0, 0, 0);
+
+  if (endEst < today) {
+    const diffTime = today.getTime() - endEst.getTime();
+    const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    return days > 0 ? days : (typeof task.days_late === 'number' && task.days_late > 0 ? task.days_late : 1);
+  }
+
+  return 0;
+}
+
+

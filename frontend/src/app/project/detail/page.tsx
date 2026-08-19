@@ -25,6 +25,7 @@ import {
   remindLeader, remindTaskGroup
 } from '@/lib/api';
 import { isAdmin, isMember } from '@/lib/auth';
+import { calculateDaysLate } from '@/app/dashboard/constants';
 
 const ROMAN_PAIRS: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
 const to_roman = (n: number): string => {
@@ -1359,7 +1360,7 @@ function ProjectDetailContent() {
       // 1. Update the task that was changed
       await updateTask(task.task_group_id, taskId, payload);
       flash('Đã cập nhật task thành công!');
-      
+
       // 2. If the status was changed, check and update the parent Task Group
       if (payload.status) {
         const { tasks: updatedItems, groups: updatedGroups } = await reloadAll(true);
@@ -1385,7 +1386,7 @@ function ProjectDetailContent() {
           if (parentGroup.end_date_actual !== formattedDate) {
             await updateTaskGroup(parentGroup.phase_id, parentGroup.id, { end_date_actual: formattedDate });
             // Reload again to get the updated group reflected everywhere
-            await reloadAll(true); 
+            await reloadAll(true);
           }
         }
       } else {
@@ -1713,12 +1714,9 @@ function ProjectDetailContent() {
     return sum + (isNaN(md) ? 0 : md);
   }, 0);
 
-  // 4. Trễ deadline
+  // 4. Trễ deadline (Chưa hoàn thành và quá hạn)
   const overdueTasksList = kpiTasks.filter(x => {
-    const s = (x.status || '').toLowerCase();
-    const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
-    const isCancel = s === 'cancel' || s.includes('hủy');
-    return !isDone && !isCancel && x.days_late != null && x.days_late > 0;
+    return calculateDaysLate(x) > 0;
   });
   const kpiWarning = overdueTasksList.length;
 
@@ -2949,7 +2947,7 @@ function ProjectDetailContent() {
 
             if (colUpper === 'LINK') {
               const currentLinks = (task.link || task.ticket_id || '').split('\n').filter(Boolean);
-              
+
               return (
                 <td key={col} className="px-2 py-1 min-w-[320px]">
                   <div className="flex flex-col gap-1.5">
@@ -2959,18 +2957,18 @@ function ProjectDetailContent() {
                           const isUrl = /^https?:\/\//i.test(link);
                           let label = link;
                           if (isUrl) {
-                              try {
-                                  const u = new URL(link);
-                                  const host = u.hostname.replace('www.', '');
-                                  if (host.includes('docs.google.com')) label = 'Google Docs';
-                                  else if (host.includes('figma.com')) label = 'Figma Design';
-                                  else if (host.includes('drive.google.com')) label = 'Google Drive';
-                                  else if (host.includes('github.com')) label = 'GitHub';
-                                  else if (host.includes('jira')) label = 'Jira Ticket';
-                                  else if (host.includes('notion')) label = 'Notion Page';
-                                  else if (host.includes('confluence')) label = 'Confluence';
-                                  else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
-                              } catch {}
+                            try {
+                              const u = new URL(link);
+                              const host = u.hostname.replace('www.', '');
+                              if (host.includes('docs.google.com')) label = 'Google Docs';
+                              else if (host.includes('figma.com')) label = 'Figma Design';
+                              else if (host.includes('drive.google.com')) label = 'Google Drive';
+                              else if (host.includes('github.com')) label = 'GitHub';
+                              else if (host.includes('jira')) label = 'Jira Ticket';
+                              else if (host.includes('notion')) label = 'Notion Page';
+                              else if (host.includes('confluence')) label = 'Confluence';
+                              else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
+                            } catch { }
                           }
                           return (
                             <div key={idx} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden opacity-75">
@@ -3016,10 +3014,10 @@ function ProjectDetailContent() {
                       }}
                       onBlur={() => {
                         if (editValue.trim()) {
-                           const newLinks = [...currentLinks, editValue.trim()];
-                           handleCellSave(task.id, col, newLinks.join('\n'));
+                          const newLinks = [...currentLinks, editValue.trim()];
+                          handleCellSave(task.id, col, newLinks.join('\n'));
                         } else {
-                           setEditingCell(null);
+                          setEditingCell(null);
                         }
                       }}
                       className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none"
@@ -3029,7 +3027,7 @@ function ProjectDetailContent() {
                 </td>
               );
             }
-            
+
             if (colUpper.includes('DATE') || (colUpper.includes('ACTUAL') && colUpper.includes('END'))) {
               return (
                 <td key={col} className="px-2 py-1 min-w-[130px]">
@@ -3211,26 +3209,26 @@ function ProjectDetailContent() {
                     const isUrl = /^https?:\/\//i.test(link);
                     let label = link;
                     if (isUrl) {
-                        try {
-                            const u = new URL(link);
-                            const host = u.hostname.replace('www.', '');
-                            if (host.includes('docs.google.com')) label = 'Google Docs';
-                            else if (host.includes('figma.com')) label = 'Figma Design';
-                            else if (host.includes('drive.google.com')) label = 'Google Drive';
-                            else if (host.includes('github.com')) label = 'GitHub';
-                            else if (host.includes('jira')) label = 'Jira Ticket';
-                            else if (host.includes('notion')) label = 'Notion Page';
-                            else if (host.includes('confluence')) label = 'Confluence';
-                            else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
-                        } catch {}
+                      try {
+                        const u = new URL(link);
+                        const host = u.hostname.replace('www.', '');
+                        if (host.includes('docs.google.com')) label = 'Google Docs';
+                        else if (host.includes('figma.com')) label = 'Figma Design';
+                        else if (host.includes('drive.google.com')) label = 'Google Drive';
+                        else if (host.includes('github.com')) label = 'GitHub';
+                        else if (host.includes('jira')) label = 'Jira Ticket';
+                        else if (host.includes('notion')) label = 'Notion Page';
+                        else if (host.includes('confluence')) label = 'Confluence';
+                        else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
+                      } catch { }
                     }
-                    
+
                     return (
                       <div key={index} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden">
                         <span
                           className="px-2 py-0.5 cursor-pointer hover:bg-blue-100 transition-colors max-w-[160px] truncate"
                           title={link}
-                          onClick={(e) => { e.stopPropagation(); if(isUrl) window.open(link, '_blank', 'noopener,noreferrer'); }}
+                          onClick={(e) => { e.stopPropagation(); if (isUrl) window.open(link, '_blank', 'noopener,noreferrer'); }}
                         >
                           🔗 {label}
                         </span>
@@ -3677,7 +3675,7 @@ function ProjectDetailContent() {
               // Special editable cell for REMARK
               if (colUpper === 'REMARK') {
                 if (editingGroupRemark === group.id) {
-                   return (
+                  return (
                     <ParentRemarkSelectCell
                       key={col}
                       col={col}
@@ -3686,17 +3684,17 @@ function ProjectDetailContent() {
                       onCancel={() => setEditingGroupRemark(null)}
                       onClear={() => handleSyncRemarkToChildren(group.id, '')} // Huỷ REMARK CHA hiện tại: xoá trống remark cho tất cả task con
                     />
-                   );
+                  );
                 }
                 return (
-                   <td key={col} className="px-4 py-2.5 text-center text-xs">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setEditingGroupRemark(group.id); }}
-                        className="text-[10.5px] text-emerald-600 hover:bg-emerald-100 bg-emerald-50 px-2 py-1 rounded font-bold border border-emerald-200 transition-colors shadow-sm whitespace-nowrap"
-                      >
-                        Chọn Remark
-                      </button>
-                   </td>
+                  <td key={col} className="px-4 py-2.5 text-center text-xs">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditingGroupRemark(group.id); }}
+                      className="text-[10.5px] text-emerald-600 hover:bg-emerald-100 bg-emerald-50 px-2 py-1 rounded font-bold border border-emerald-200 transition-colors shadow-sm whitespace-nowrap"
+                    >
+                      Chọn Remark
+                    </button>
+                  </td>
                 );
               }
 
@@ -3714,7 +3712,7 @@ function ProjectDetailContent() {
                         onBlur={async (e) => {
                           const newDate = e.target.value ? fromPickerDate(e.target.value) : null;
                           const originalDate = group.end_date_actual_override;
-                          
+
                           if (newDate !== originalDate) {
                             try {
                               await updateTaskGroup(group.phase_id, group.id, { end_date_actual_override: newDate });
@@ -3731,13 +3729,13 @@ function ProjectDetailContent() {
                             const newDate = e.currentTarget.value ? fromPickerDate(e.currentTarget.value) : null;
                             const originalDate = group.end_date_actual_override;
                             if (newDate !== originalDate) {
-                                try {
-                                    await updateTaskGroup(group.phase_id, group.id, { end_date_actual_override: newDate });
-                                    flash('Đã cập nhật ngày hoàn thành thực tế!');
-                                    reloadAll(true);
-                                } catch (err: any) {
-                                    alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
-                                }
+                              try {
+                                await updateTaskGroup(group.phase_id, group.id, { end_date_actual_override: newDate });
+                                flash('Đã cập nhật ngày hoàn thành thực tế!');
+                                reloadAll(true);
+                              } catch (err: any) {
+                                alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+                              }
                             }
                             setEditingGroupDate(null);
                           } else if (e.key === 'Escape') {
@@ -3753,22 +3751,22 @@ function ProjectDetailContent() {
                 // Display mode with edit icon for END ACTUAL
                 const cellStyle = "px-4 py-2.5 text-xs font-bold text-[#1e293b] whitespace-nowrap";
                 return (
-                    <td key={col} className={`${cellStyle} group cursor-pointer hover:bg-indigo-100/60`} onClick={() => setEditingGroupDate(group.id)}>
-                        <div className="flex items-center justify-between w-full">
-                            <span className="font-mono" title={`Tự động: ${formatDateToShow(group.end_date_actual_auto || '')}`}>
-                                {group.status && group.status.toLowerCase() === 'done' ? (
-                                    group.end_date_actual_override ? (
-                                        <strong className="text-indigo-700" title="Ngày đã ghi đè thủ công">{formatDateToShow(group.end_date_actual_override)}</strong>
-                                    ) : (
-                                        val || <span className="text-slate-400 italic">Trống</span>
-                                    )
-                                ) : (
-                                    <span className="text-slate-400 italic">—</span>
-                                )}
-                            </span>
-                            <span className="opacity-0 group-hover:opacity-60 text-[10px] transition-opacity shrink-0">✏️</span>
-                        </div>
-                    </td>
+                  <td key={col} className={`${cellStyle} group cursor-pointer hover:bg-indigo-100/60`} onClick={() => setEditingGroupDate(group.id)}>
+                    <div className="flex items-center justify-between w-full">
+                      <span className="font-mono" title={`Tự động: ${formatDateToShow(group.end_date_actual_auto || '')}`}>
+                        {group.status && group.status.toLowerCase() === 'done' ? (
+                          group.end_date_actual_override ? (
+                            <strong className="text-indigo-700" title="Ngày đã ghi đè thủ công">{formatDateToShow(group.end_date_actual_override)}</strong>
+                          ) : (
+                            val || <span className="text-slate-400 italic">Trống</span>
+                          )
+                        ) : (
+                          <span className="text-slate-400 italic">—</span>
+                        )}
+                      </span>
+                      <span className="opacity-0 group-hover:opacity-60 text-[10px] transition-opacity shrink-0">✏️</span>
+                    </div>
+                  </td>
                 );
               }
 
@@ -3879,7 +3877,7 @@ function ProjectDetailContent() {
                     <input
                       type={colUpper.includes('MANDAY') ? 'number' : 'text'}
                       step={colUpper.includes('MANDAY') ? 'any' : undefined}
-value={editValue}
+                      value={editValue}
                       autoFocus
                       onChange={e => setEditValue(e.target.value)}
                       onBlur={() => handleGroupCellSave(group, col, editValue)}
@@ -3939,11 +3937,10 @@ value={editValue}
                             alert(err.response?.data?.detail || 'Lỗi khi gửi thông báo nhắc duyệt!');
                           }
                         }}
-                        className={`px-2 py-0.5 rounded text-[10.5px] font-bold flex items-center gap-1 transition-all shrink-0 ${
-                          allDone
+                        className={`px-2 py-0.5 rounded text-[10.5px] font-bold flex items-center gap-1 transition-all shrink-0 ${allDone
                             ? 'bg-amber-100 hover:bg-amber-200 text-amber-700 border border-amber-300 shadow-sm cursor-pointer animate-pulse'
                             : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-pointer hover:bg-slate-200'
-                        }`}
+                          }`}
                         title={allDone ? "Nhắc Leader duyệt Task Cha này" : "Phải hoàn thành tất cả task con (Done) mới được gửi thông báo"}
                       >
                         <span>🔔 Nhắc Leader</span>
@@ -4504,11 +4501,10 @@ value={editValue}
                                       )}
                                     </td>
                                     <td className="px-4 py-3 text-center whitespace-nowrap">
-                                      <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                                        prio === 'CRITICAL' ? 'bg-purple-100 text-purple-700' :
-                                        prio === 'HIGH' ? 'bg-orange-100 text-orange-700' :
-                                        prio === 'INTERRUPT' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
-                                      }`}>
+                                      <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase ${prio === 'CRITICAL' ? 'bg-purple-100 text-purple-700' :
+                                          prio === 'HIGH' ? 'bg-orange-100 text-orange-700' :
+                                            prio === 'INTERRUPT' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                                        }`}>
                                         {prio}
                                       </span>
                                     </td>
@@ -4696,51 +4692,51 @@ value={editValue}
                                   <div className="flex items-center gap-2">
                                     <span>{col}</span>
                                     {colUpper === 'PRIORITY' && (
-                                                      <div className="relative" ref={priorityFilterRef}>
-                                                        <button
-                                                          onClick={() => setPriorityDropdownOpen(!priorityDropdownOpen)}
-                                                          className={`p-1 rounded-md hover:bg-slate-200 ${priorityFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
-                                                        >
-                                                          <span className="material-symbols-outlined text-base">filter_list</span>
-                                                        </button>
-                                                        {priorityDropdownOpen && (
-                                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 w-32">
-                                                            {['All', 'Normal', 'High', 'Critical', 'Interrupt'].map(opt => (
-                                                              <button
-                                                                key={opt}
-                                                                onClick={() => { setPriorityFilter(opt); setPriorityDropdownOpen(false); }}
-                                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${priorityFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
-                                                              >
-                                                                {opt}
-                                                              </button>
-                                                            ))}
-                                                          </div>
-                                                        )}
-                                                      </div>
-                                                    )}
+                                      <div className="relative" ref={priorityFilterRef}>
+                                        <button
+                                          onClick={() => setPriorityDropdownOpen(!priorityDropdownOpen)}
+                                          className={`p-1 rounded-md hover:bg-slate-200 ${priorityFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
+                                        >
+                                          <span className="material-symbols-outlined text-base">filter_list</span>
+                                        </button>
+                                        {priorityDropdownOpen && (
+                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 w-32">
+                                            {['All', 'Normal', 'High', 'Critical', 'Interrupt'].map(opt => (
+                                              <button
+                                                key={opt}
+                                                onClick={() => { setPriorityFilter(opt); setPriorityDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${priorityFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
+                                              >
+                                                {opt}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
                                     {colUpper === 'STATUS' && (
-                                                      <div className="relative" ref={statusFilterRef}>
-                                                        <button
-                                                          onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
-                                                          className={`p-1 rounded-md hover:bg-slate-200 ${statusFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
-                                                        >
-                                                          <span className="material-symbols-outlined text-base">filter_list</span>
-                                                        </button>
-                                                        {statusDropdownOpen && (
-                                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-32">
-                                                            {['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'].map(opt => (
-                                                              <button
-                                                                key={opt}
-                                                                onClick={() => { setStatusFilter(opt); setStatusDropdownOpen(false); }}
-                                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${statusFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
-                                                              >
-                                                                {opt}
-                                                              </button>
-                                                            ))}
-                                                          </div>
-                                                        )}
-                                                      </div>
-                                                    )}
+                                      <div className="relative" ref={statusFilterRef}>
+                                        <button
+                                          onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                                          className={`p-1 rounded-md hover:bg-slate-200 ${statusFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
+                                        >
+                                          <span className="material-symbols-outlined text-base">filter_list</span>
+                                        </button>
+                                        {statusDropdownOpen && (
+                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-32">
+                                            {['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'].map(opt => (
+                                              <button
+                                                key={opt}
+                                                onClick={() => { setStatusFilter(opt); setStatusDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${statusFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
+                                              >
+                                                {opt}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
                                     {colUpper === 'ASSIGNED' && (() => {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()];
                                       return (
@@ -4927,10 +4923,10 @@ value={editValue}
                             const meetingDateObj = new Date(dateStr);
                             if (!isNaN(meetingDateObj.getTime())) {
                               return meetingDateObj.getFullYear() === d.fullDate.getFullYear() &&
-                                     meetingDateObj.getMonth() === d.fullDate.getMonth() &&
-                                     meetingDateObj.getDate() === d.fullDate.getDate();
+                                meetingDateObj.getMonth() === d.fullDate.getMonth() &&
+                                meetingDateObj.getDate() === d.fullDate.getDate();
                             }
-                          } catch (e) {}
+                          } catch (e) { }
                           return false;
                         });
 
@@ -4952,9 +4948,8 @@ value={editValue}
                                   <div
                                     key={item.id}
                                     onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
-                                    className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${
-                                      isPM ? 'bg-[#fff7e8] border-l-[#f59e0b]' : 'bg-[#edf5ff] border-l-[#1769d2]'
-                                    }`}
+                                    className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${isPM ? 'bg-[#fff7e8] border-l-[#f59e0b]' : 'bg-[#edf5ff] border-l-[#1769d2]'
+                                      }`}
                                   >
                                     <div className="text-[13px] font-medium text-[#0b1c30] leading-snug">
                                       <span className="font-normal">{item.time || (isPM ? '14:00' : '09:00')}</span> {item.title}
@@ -6905,9 +6900,8 @@ value={editValue}
                                       setAddMemberDropdownOpen(false);
                                       setAddMemberSearch('');
                                     }}
-                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${
-                                      selectedMemberId === String(u.id) ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'
-                                    }`}
+                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#eff4ff]/60 rounded transition-colors flex items-center justify-between ${selectedMemberId === String(u.id) ? 'bg-[#eff4ff]/60 text-[#0058be] font-bold' : 'text-[#0b1c30]'
+                                      }`}
                                   >
                                     <span>{u.display_name} <span className="text-[10px] text-slate-400 font-normal">({u.team || 'No Team'})</span></span>
                                     {selectedMemberId === String(u.id) && <span className="text-emerald-600 font-bold text-[14px]">✓</span>}
@@ -8738,7 +8732,7 @@ function ParentRemarkSelectCell({ col, parentRemarks, onSelect, onClear, onCance
           <div className="text-[11px] text-slate-400 italic px-1 py-2">
             Chưa có Remark Cha nào. Vui lòng tạo trong Settings → KPIs.
           </div>
-) : (
+        ) : (
           <div className="flex flex-col gap-1 max-h-[220px] overflow-y-auto">
             {parentRemarks.map((pr) => {
               const kpiVal = parseFloat(pr.kpi);

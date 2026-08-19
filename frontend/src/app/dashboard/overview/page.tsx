@@ -11,7 +11,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
-import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
+import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 
 const getShortName = (name: string) => {
   if (!name) return 'Unknown';
@@ -630,7 +630,8 @@ export default function OverviewTab() {
       const isDone = t.status === 'Done' || t.status === 'done';
       if (isDone) pmKpi += (t.kpi_base || 0); // Only count KPI for completed tasks
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
-      const isOverdue = !isDone && !isCancel && (t.days_late > 0);
+      const daysLateNum = calculateDaysLate(t);
+      const isOverdue = daysLateNum > 0;
 
       if (isDone) pmDone++;
       else {
@@ -641,7 +642,7 @@ export default function OverviewTab() {
             id: t.id,
             name: t.name,
             assignee: t.assigned_name || 'Unassigned',
-            daysLate: t.days_late,
+            daysLate: daysLateNum,
             deadline: t.end_date_est || 'N/A',
             customerName: t.customerName || t.customer_name || 'Không có',
             projectName: t.projectName || t.project_name || 'Không có'
@@ -666,7 +667,7 @@ export default function OverviewTab() {
         if (done) { d++; k += getTaskKpiForMember(t, m.id); }
         else {
           i++;
-          if (t.days_late > 0) o++;
+          if (calculateDaysLate(t) > 0) o++;
         }
       });
       const kpiVal = typeof m.kpi_total === 'number' ? m.kpi_total : k;
