@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback, useRef, Fragment, Suspense, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
@@ -79,15 +79,21 @@ const TAB_TO_SLUG: Record<TabKey, string> = {
 function ProjectDetailContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
   const id = searchParams.get('id') || '';
-  const tabParam = searchParams.get('tab');
-  const activeMainTab: TabKey = (tabParam && SLUG_TO_TAB[tabParam]) || 'overview';
+  // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
+  // next.config.js rewrites that path server-side to /project/detail?tab=tasks
+  // purely to pick which page component to render; it does NOT change what the
+  // browser/React see as the URL, so reading `tab` via useSearchParams() here
+  // would always be null. usePathname() reflects the real client-side URL.
+  const pathTabSlug = pathname.split('/').filter(Boolean).pop() || '';
+  const activeMainTab: TabKey = SLUG_TO_TAB[pathTabSlug] || 'overview';
 
   useEffect(() => {
-    if (!tabParam && id) {
+    if (!SLUG_TO_TAB[pathTabSlug] && id) {
       router.replace(`/project/detail/overview?id=${id}`);
     }
-  }, [tabParam, id]);
+  }, [pathTabSlug, id]);
 
   const isSavingRef = useRef(false);
 
