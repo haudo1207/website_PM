@@ -217,7 +217,11 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   }, [customers, projects]);
 
   const uniquePms = useMemo(() => {
-    return Array.from(new Set(projects.map(p => p.pm_name).filter(Boolean)));
+    const names: string[] = [];
+    projects.forEach(p => {
+      (p.pm_name || '').split(',').map((s: string) => s.trim()).filter((s: string) => s).forEach((n: string) => names.push(n));
+    });
+    return Array.from(new Set(names)).sort();
   }, [projects]);
 
   const uniqueSales = useMemo(() => {
@@ -268,7 +272,8 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
         (paramCustId && String(p.customer_id) === String(paramCustId));
-      const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
+      const matchPm = pmFilter === 'All' ||
+        (p.pm_name || '').split(',').map((s: string) => s.trim()).includes(pmFilter);
       const matchSales = salesFilter === 'All' ||
         (p.sales_name || '').split(',').map((s: string) => s.trim()).includes(salesFilter);
       const matchMember = memberFilter === 'All' || (() => {
