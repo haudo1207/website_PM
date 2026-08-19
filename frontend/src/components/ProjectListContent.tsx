@@ -241,8 +241,12 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       if (Array.isArray(p.members)) {
         p.members.forEach((m: any) => { if (m?.name) names.push(m.name); });
       }
-      if (p.pm_name) names.push(p.pm_name);
-      if (p.technical_leader_name) names.push(p.technical_leader_name);
+      if (p.pm_name) {
+        p.pm_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
+      if (p.technical_leader_name) {
+        p.technical_leader_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
       if (p.sales_name) {
         p.sales_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
       }
@@ -281,8 +285,8 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         const projMemberNames: string[] = [];
         if (p.member_names) projMemberNames.push(...p.member_names.split(',').map((s: string) => s.trim()));
         if (Array.isArray(p.members)) p.members.forEach((m: any) => { if (m?.name) projMemberNames.push(m.name); });
-        if (p.pm_name) projMemberNames.push(p.pm_name);
-        if (p.technical_leader_name) projMemberNames.push(p.technical_leader_name);
+        if (p.pm_name) projMemberNames.push(...p.pm_name.split(',').map((s: string) => s.trim()));
+        if (p.technical_leader_name) projMemberNames.push(...p.technical_leader_name.split(',').map((s: string) => s.trim()));
         if (p.sales_name) projMemberNames.push(...p.sales_name.split(',').map((s: string) => s.trim()));
         return projMemberNames.some(name => name.toLowerCase() === mLower);
       })();
