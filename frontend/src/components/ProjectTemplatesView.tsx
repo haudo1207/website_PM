@@ -4,22 +4,31 @@ import {
   getProjectTemplates,
   createProjectTemplate,
   updateProjectTemplate,
-  deleteProjectTemplate
+  deleteProjectTemplate,
+  getCategories,
+  getPriorities
 } from '@/lib/api';
+
+const FALLBACK_PRIORITIES = ['Normal', 'High', 'Critical', 'Interrupt'];
 
 interface TemplateTask {
   id?: number;
+  _uid?: string;
   detail: string;
   priority?: string;
   manday_est?: number;
   status?: string;
+  skill_solution_id?: number | null;
+  skill_vendor_id?: number | null;
   sort_order?: number;
 }
 
 interface TemplateTaskGroup {
   id?: number;
+  _uid?: string;
   name: string;
   description?: string;
+  manday_est?: number | null;
   sort_order?: number;
   tasks?: TemplateTask[];
 }
@@ -58,6 +67,17 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
 
   // Expanded state for viewing template details
   const [expandedTemplateId, setExpandedTemplateId] = useState<number | null>(null);
+
+  // Skill Solution/Vendor + Priority options, shared by every Task Con row
+  const [categories, setCategories] = useState<any[]>([]);
+  const [priorities, setPriorities] = useState<any[]>([]);
+  const skillGroups = categories.filter(c => c.is_active).flatMap(c => c.groups || []);
+  const priorityOptions = priorities.length > 0 ? priorities.map((p: any) => p.name) : FALLBACK_PRIORITIES;
+
+  useEffect(() => {
+    getCategories().then(data => setCategories(data || [])).catch(() => setCategories([]));
+    getPriorities().then(data => setPriorities(data || [])).catch(() => setPriorities([]));
+  }, []);
 
   const reload = async () => {
     setLoading(true);
@@ -135,12 +155,15 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
           .map((g, gIdx) => ({
             name: g.name.trim(),
             description: g.description || '',
+            manday_est: g.manday_est || null,
             sort_order: gIdx + 1,
             tasks: (g.tasks || []).filter(t => t.detail.trim()).map((t, tIdx) => ({
               detail: t.detail.trim(),
               priority: t.priority || 'Normal',
               manday_est: t.manday_est || 1,
               status: t.status || 'Waiting',
+              skill_solution_id: t.skill_solution_id || null,
+              skill_vendor_id: t.skill_vendor_id || null,
               sort_order: tIdx + 1
             }))
           }))
@@ -191,7 +214,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
     setPhases(prev => prev.map((p, i) => {
       if (i !== phaseIdx) return p;
       const groups = p.task_groups || [];
-      return { ...p, task_groups: [...groups, { name: '', description: '', sort_order: groups.length + 1, tasks: [] }] };
+      return { ...p, task_groups: [...groups, { _uid: crypto.randomUUID(), name: '', description: '', manday_est: null, sort_order: groups.length + 1, tasks: [] }] };
     }));
   };
 
@@ -217,7 +240,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
       const groups = (p.task_groups || []).map((g, gi) => {
         if (gi !== groupIdx) return g;
         const tasks = g.tasks || [];
-        return { ...g, tasks: [...tasks, { detail: '', priority: 'Normal', manday_est: 1, status: 'Waiting', sort_order: tasks.length + 1 }] };
+        return { ...g, tasks: [...tasks, { _uid: crypto.randomUUID(), detail: '', priority: 'Normal', manday_est: 1, status: 'Waiting', skill_solution_id: null, skill_vendor_id: null, sort_order: tasks.length + 1 }] };
       });
       return { ...p, task_groups: groups };
     }));
@@ -228,7 +251,11 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
       if (i !== phaseIdx) return p;
       const groups = (p.task_groups || []).map((g, gi) => {
         if (gi !== groupIdx) return g;
-        const tasks = (g.tasks || []).map((t, ti) => ti === taskIdx ? { ...t, [field]: value } : t);
+        const tasks = (g.tasks || []).map((t, ti) => {
+          if (ti !== taskIdx) return t;
+          if (field === 'skill_solution_id') return { ...t, skill_solution_id: value, skill_vendor_id: null };
+          return { ...t, [field]: value };
+        });
         return { ...g, tasks };
       });
       return { ...p, task_groups: groups };
@@ -481,7 +508,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
                           </p>
                         ) : (
                           (phase.task_groups || []).map((group, gIdx) => (
-                            <div key={gIdx} className="border border-slate-100 rounded-lg p-2 space-y-2 bg-slate-50/50">
+                            <div key={group.id ?? group._uid ?? gIdx} className="border border-slate-100 rounded-lg p-2 space-y-2 bg-slate-50/50">
                               <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-bold text-slate-400 w-5 text-center shrink-0">{gIdx + 1}.</span>
                                 <input
@@ -490,6 +517,16 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
                                   onChange={e => updateTaskGroup(pIdx, gIdx, 'name', e.target.value)}
                                   placeholder="Tên task cha (VD: Sales trao đổi với khách hàng)"
                                   className="flex-1 bg-white border border-slate-200 rounded px-2 py-1 text-xs font-semibold text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                                />
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.5}
+                                  value={group.manday_est ?? ''}
+                                  onChange={e => updateTaskGroup(pIdx, gIdx, 'manday_est', e.target.value ? Number(e.target.value) : null)}
+                                  placeholder="Manday"
+                                  title="Manday EST cho task cha"
+                                  className="w-16 bg-white border border-slate-200 rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] shrink-0"
                                 />
                                 <button
                                   onClick={() => addTask(pIdx, gIdx)}
@@ -509,26 +546,75 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
 
                               {/* Child Tasks */}
                               {(group.tasks || []).length > 0 && (
-                                <div className="pl-7 space-y-1.5">
-                                  {(group.tasks || []).map((task, tIdx) => (
-                                    <div key={tIdx} className="flex items-center gap-2">
-                                      <span className="text-[9px] font-bold text-slate-400 w-4 text-center shrink-0">•</span>
-                                      <input
-                                        type="text"
-                                        value={task.detail}
-                                        onChange={e => updateTask(pIdx, gIdx, tIdx, 'detail', e.target.value)}
-                                        placeholder="Chi tiết task con (tùy chọn)"
-                                        className="flex-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-emerald-500"
-                                      />
-                                      <button
-                                        onClick={() => removeTask(pIdx, gIdx, tIdx)}
-                                        className="text-red-400 hover:text-red-600 p-0.5 shrink-0"
-                                        title="Xóa task con"
-                                      >
-                                        <span className="material-symbols-outlined text-[12px]">close</span>
-                                      </button>
-                                    </div>
-                                  ))}
+                                <div className="pl-7 space-y-2">
+                                  {(group.tasks || []).map((task, tIdx) => {
+                                    const availableSkills = skillGroups.find((g: any) => g.id === task.skill_solution_id)?.skills?.filter((s: any) => s.is_active) || [];
+                                    return (
+                                      <div key={task.id ?? task._uid ?? tIdx} className="border border-slate-100 rounded p-1.5 bg-white space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <span
+                                            className="w-10 shrink-0 bg-[#f1f5f9] border border-slate-200 rounded px-1 py-0.5 text-[10px] font-mono font-bold text-slate-500 text-center"
+                                            title="Task ID (tự động đánh số)"
+                                          >
+                                            {gIdx + 1}.{tIdx + 1}
+                                          </span>
+                                          <input
+                                            type="text"
+                                            value={task.detail}
+                                            onChange={e => updateTask(pIdx, gIdx, tIdx, 'detail', e.target.value)}
+                                            placeholder="Tên task con"
+                                            className="flex-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-emerald-500"
+                                          />
+                                          <button
+                                            onClick={() => removeTask(pIdx, gIdx, tIdx)}
+                                            className="text-red-400 hover:text-red-600 p-0.5 shrink-0"
+                                            title="Xóa task con"
+                                          >
+                                            <span className="material-symbols-outlined text-[12px]">close</span>
+                                          </button>
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-1.5 pl-12">
+                                          <select
+                                            value={task.priority || 'Normal'}
+                                            onChange={e => updateTask(pIdx, gIdx, tIdx, 'priority', e.target.value)}
+                                            title="Priority"
+                                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500"
+                                          >
+                                            {priorityOptions.map((p: string) => <option key={p} value={p}>{p}</option>)}
+                                          </select>
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            step={0.5}
+                                            value={task.manday_est ?? ''}
+                                            onChange={e => updateTask(pIdx, gIdx, tIdx, 'manday_est', e.target.value ? Number(e.target.value) : null)}
+                                            placeholder="Manday"
+                                            title="Manday EST"
+                                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500"
+                                          />
+                                          <select
+                                            value={task.skill_solution_id ?? ''}
+                                            onChange={e => updateTask(pIdx, gIdx, tIdx, 'skill_solution_id', e.target.value ? Number(e.target.value) : null)}
+                                            title="Skill Solution"
+                                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500"
+                                          >
+                                            <option value="">Skill Solution</option>
+                                            {skillGroups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                                          </select>
+                                          <select
+                                            value={task.skill_vendor_id ?? ''}
+                                            onChange={e => updateTask(pIdx, gIdx, tIdx, 'skill_vendor_id', e.target.value ? Number(e.target.value) : null)}
+                                            title="Skill Vendor"
+                                            disabled={!task.skill_solution_id}
+                                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-300"
+                                          >
+                                            <option value="">Skill Vendor</option>
+                                            {availableSkills.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                          </select>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Numeric, func
 from sqlalchemy.orm import relationship
 from ..database import Base
 
@@ -38,6 +38,7 @@ class ProjectTemplateTaskGroup(Base):
     phase_id = Column(Integer, ForeignKey("project_template_phases.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
+    manday_est = Column(Numeric(5, 2), nullable=True)
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
 
@@ -52,9 +53,13 @@ class ProjectTemplateTask(Base):
     task_group_id = Column(Integer, ForeignKey("project_template_task_groups.id", ondelete="CASCADE"), nullable=False, index=True)
     detail = Column(String(500), nullable=False)
     priority = Column(String(50), default="Normal", nullable=False)
-    manday_est = Column(Integer, default=1, nullable=False)
+    manday_est = Column(Numeric(5, 2), default=1, nullable=False)
     status = Column(String(50), default="Waiting", nullable=False)
+    skill_solution_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
+    skill_vendor_id = Column(Integer, ForeignKey("skills.id", ondelete="SET NULL"), nullable=True)
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
 
     task_group = relationship("ProjectTemplateTaskGroup", back_populates="tasks")
+    skill_solution = relationship("Group", foreign_keys=[skill_solution_id], lazy="select")
+    skill_vendor = relationship("Skill", foreign_keys=[skill_vendor_id], lazy="select")

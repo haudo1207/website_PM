@@ -372,6 +372,52 @@ def apply_schema_updates():
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens (user_id)"))
 
+        # ── Project Template: Task Cha MandayEST, Task Con Skill Solution/Vendor ──
+        conn.execute(text(
+            "ALTER TABLE project_template_task_groups ADD COLUMN IF NOT EXISTS manday_est NUMERIC(5,2)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_template_tasks ALTER COLUMN manday_est TYPE NUMERIC(5,2)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_template_tasks ADD COLUMN IF NOT EXISTS skill_solution_id INTEGER"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_template_tasks ADD COLUMN IF NOT EXISTS skill_vendor_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'project_template_tasks_skill_solution_id_fkey'
+                      AND conrelid = 'project_template_tasks'::regclass
+                ) THEN
+                    ALTER TABLE project_template_tasks
+                    ADD CONSTRAINT project_template_tasks_skill_solution_id_fkey
+                    FOREIGN KEY (skill_solution_id) REFERENCES groups(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'project_template_tasks_skill_vendor_id_fkey'
+                      AND conrelid = 'project_template_tasks'::regclass
+                ) THEN
+                    ALTER TABLE project_template_tasks
+                    ADD CONSTRAINT project_template_tasks_skill_vendor_id_fkey
+                    FOREIGN KEY (skill_vendor_id) REFERENCES skills(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+
 def init_db_defaults():
     from .database import SessionLocal
     from .models.user import User

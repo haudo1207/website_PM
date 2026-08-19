@@ -7,7 +7,7 @@ from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
-from ..models.project import Project
+from ..models.project import Project, project_members
 from ..models.project_template import (
     ProjectTemplate,
     ProjectTemplatePhase,
@@ -47,6 +47,7 @@ def serialize_task_group(group: ProjectTemplateTaskGroup):
         "id": group.id,
         "name": group.name,
         "description": group.description,
+        "manday_est": float(group.manday_est) if group.manday_est is not None else None,
         "sort_order": group.sort_order or 0,
         "tasks": [serialize_task(task) for task in sorted(group.tasks, key=lambda item: item.sort_order or 0)],
     }
@@ -57,8 +58,12 @@ def serialize_task(task: ProjectTemplateTask):
         "id": task.id,
         "detail": task.detail,
         "priority": task.priority,
-        "manday_est": task.manday_est,
+        "manday_est": float(task.manday_est) if task.manday_est is not None else None,
         "status": task.status,
+        "skill_solution_id": task.skill_solution_id,
+        "skill_solution_name": task.skill_solution.name if task.skill_solution else None,
+        "skill_vendor_id": task.skill_vendor_id,
+        "skill_vendor_name": task.skill_vendor.name if task.skill_vendor else None,
         "sort_order": task.sort_order or 0,
     }
 
@@ -101,6 +106,7 @@ def create_project_template(body: dict, db: Session = Depends(get_db), current_u
                 phase_id=phase.id,
                 name=(group_payload.get("name") or "").strip(),
                 description=group_payload.get("description"),
+                manday_est=group_payload.get("manday_est"),
                 sort_order=group_payload.get("sort_order", 0),
             )
             db.add(group)
@@ -112,6 +118,8 @@ def create_project_template(body: dict, db: Session = Depends(get_db), current_u
                     priority=task_payload.get("priority", "Normal"),
                     manday_est=task_payload.get("manday_est", 1),
                     status=task_payload.get("status", "Waiting"),
+                    skill_solution_id=task_payload.get("skill_solution_id"),
+                    skill_vendor_id=task_payload.get("skill_vendor_id"),
                     sort_order=task_payload.get("sort_order", 0),
                 )
                 db.add(task)
@@ -161,6 +169,7 @@ def update_project_template(template_id: int, body: dict, db: Session = Depends(
                     phase_id=phase.id,
                     name=(group_payload.get("name") or "").strip(),
                     description=group_payload.get("description"),
+                    manday_est=group_payload.get("manday_est"),
                     sort_order=group_payload.get("sort_order", 0),
                 )
                 db.add(group)
@@ -172,6 +181,8 @@ def update_project_template(template_id: int, body: dict, db: Session = Depends(
                         priority=task_payload.get("priority", "Normal"),
                         manday_est=task_payload.get("manday_est", 1),
                         status=task_payload.get("status", "Waiting"),
+                        skill_solution_id=task_payload.get("skill_solution_id"),
+                        skill_vendor_id=task_payload.get("skill_vendor_id"),
                         sort_order=task_payload.get("sort_order", 0),
                     )
                     db.add(task)
@@ -241,6 +252,22 @@ def apply_project_template(template_id: int, project_id: int, db: Session = Depe
     fallback_group = db.query(Group).order_by(Group.id.asc()).first()
     fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
 
+    # Task defaults come from the target project's own team, not the whole
+    # system: Assigned = first Member of the project, Support = the project's PM.
+    member_role_row = db.execute(
+        project_members.select()
+        .where(project_members.c.project_id == project.id, project_members.c.role == "Member")
+        .order_by(project_members.c.id.asc())
+    ).first()
+    any_member_row = member_role_row or db.execute(
+        project_members.select()
+        .where(project_members.c.project_id == project.id)
+        .order_by(project_members.c.id.asc())
+    ).first()
+    first_project_member_id = (member_role_row or any_member_row).member_id if (member_role_row or any_member_row) else None
+    default_assigned_id = first_project_member_id or project.pm_id or (fallback_member.id if fallback_member else None)
+    default_support_id = project.pm_id or first_project_member_id or default_assigned_id
+
     created_phase_count = 0
     for phase in sorted(template.phases, key=lambda item: item.sort_order or 0):
         if not phase.is_active:
@@ -256,33 +283,37 @@ def apply_project_template(template_id: int, project_id: int, db: Session = Depe
         db.flush()
         created_phase_count += 1
 
-        for group in sorted(phase.task_groups, key=lambda item: item.sort_order or 0):
+        for group_idx, group in enumerate(sorted(phase.task_groups, key=lambda item: item.sort_order or 0), start=1):
             created_group = TaskGroup(
                 phase_id=created_phase.id,
                 name=group.name,
                 description=group.description,
+                manday_est=float(group.manday_est) if group.manday_est is not None else None,
                 sort_order=created_phase_count,
             )
             db.add(created_group)
             db.flush()
 
-            for task in sorted(group.tasks, key=lambda item: item.sort_order or 0):
-                if not fallback_member or not fallback_group or not fallback_skill:
+            for task_idx, task in enumerate(sorted(group.tasks, key=lambda item: item.sort_order or 0), start=1):
+                skill_solution_id = task.skill_solution_id or (fallback_group.id if fallback_group else None)
+                skill_vendor_id = task.skill_vendor_id or (fallback_skill.id if fallback_skill else None)
+                if not default_assigned_id or not default_support_id or not skill_solution_id or not skill_vendor_id:
                     continue
                 created_task = Task(
                     task_group_id=created_group.id,
+                    task_code=f"{group_idx}.{task_idx}",
                     detail=task.detail,
                     priority=task.priority,
                     manday_est=float(task.manday_est or 1),
                     status=task.status,
                     start_date=date.today(),
-                    assigned_id=fallback_member.id,
-                    support_id=fallback_member.id,
-                    kpi_ratio_assign=100,
-                    kpi_ratio_support=0,
-                    skill_solution_id=fallback_group.id,
-                    skill_vendor_id=fallback_skill.id,
-                    sort_order=0,
+                    assigned_id=default_assigned_id,
+                    support_id=default_support_id,
+                    kpi_ratio_assign=90,
+                    kpi_ratio_support=10,
+                    skill_solution_id=skill_solution_id,
+                    skill_vendor_id=skill_vendor_id,
+                    sort_order=task_idx,
                 )
                 db.add(created_task)
 
