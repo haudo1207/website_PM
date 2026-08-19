@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 from datetime import datetime
+import logging
 
 from ..database import get_db
 from ..models.leave_request import LeaveRequest
@@ -9,6 +10,8 @@ from ..models.user import User
 from ..utils.auth import get_current_user, require_admin
 from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER
 from ..utils.audit_service import AuditService
+
+logger = logging.getLogger("leave_requests")
 
 router = APIRouter()
 
@@ -110,6 +113,21 @@ def create_leave_request(body: dict, db: Session = Depends(get_db), current_user
     db.commit()
     db.refresh(leave_request)
     lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == leave_request.id).first()
+
+    # ── Telegram notification (non-blocking) ─────────────────────────
+    # The Leave Request is already saved successfully. Notifying admins is an
+    # additional, best-effort step: a Telegram failure must never roll back or
+    # fail the request creation, and must never return a 5xx.
+    try:
+        from ..services.telegram import send_leave_request_notification
+        sent = send_leave_request_notification(db, lr)
+        if sent:
+            logger.info("Telegram notified %s recipient(s) about Leave Request #%s",
+                        sent, lr.id)
+    except Exception as exc:
+        logger.error("Telegram notification failed for Leave Request #%s: %s",
+                     lr.id, exc)
+
     return leave_to_dict(lr)
 
 # UPDATE LEAVE REQUEST

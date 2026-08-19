@@ -17,6 +17,9 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     position = Column(String, nullable=True)
     department = Column(String, nullable=True)
+    # Telegram chat id of the account used to send Leave Request notifications.
+    # Nullable because not every admin/super_admin will have connected Telegram.
+    telegram_chat_id = Column(String, nullable=True, unique=True, index=True)
     # all: access every project; otherwise must match projects.data_scope.
     data_scope = Column(String(50), nullable=False, default="infrastructure", server_default="infrastructure")
     created_at = Column(DateTime, server_default=func.now())

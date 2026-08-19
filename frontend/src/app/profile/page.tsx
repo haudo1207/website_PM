@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
-import { getMe, getWorkspaces, getMyLoginHistory, LoginHistoryItem } from '@/lib/api';
+import { getMe, getWorkspaces, getMyLoginHistory, getTelegramStatus, generateTelegramConnectUrl, disconnectTelegram, LoginHistoryItem } from '@/lib/api';
 
 const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Super Admin',
@@ -56,6 +56,7 @@ function ProfileSkeleton() {
 
 export default function ProfilePage() {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [telegramLoading, setTelegramLoading] = useState(false);
 
   const { data: bundle, isLoading: loading } = useQuery({
     queryKey: ['profile'],
@@ -78,6 +79,14 @@ export default function ProfilePage() {
     enabled: historyOpen,
   });
 
+  const isAdmin = profile ? (profile.role === 'super_admin' || profile.role === 'admin') : false;
+
+  const { data: telegram, refetch: refetchTelegram } = useQuery({
+    queryKey: ['telegram-status'],
+    queryFn: () => getTelegramStatus(),
+    enabled: isAdmin,
+  });
+
   const scopeLabel = useMemo(() => {
     if (!profile) return '';
     if (profile.data_scope === 'all') return 'Tất cả dự án';
@@ -86,6 +95,28 @@ export default function ProfilePage() {
   }, [profile, workspaces]);
 
   const toggleHistory = () => setHistoryOpen(o => !o);
+
+  const handleConnectTelegram = async () => {
+    setTelegramLoading(true);
+    try {
+      const { url } = await generateTelegramConnectUrl();
+      window.open(url, '_blank');
+    } catch (err) {
+      alert('Không thể tạo liên kết Telegram. Vui lòng thử lại sau.');
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
+  const handleDisconnectTelegram = async () => {
+    if (!confirm('Bạn có chắc muốn ngắt kết nối Telegram?')) return;
+    try {
+      await disconnectTelegram();
+      refetchTelegram();
+    } catch (err) {
+      alert('Không thể ngắt kết nối Telegram.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#f0f2f5] text-[#0b1c30]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
@@ -241,6 +272,45 @@ export default function ProfilePage() {
                             </div>
                           </div>
                         ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* Telegram connection card (admin/super_admin only) */}
+                  {isAdmin && (
+                    <div className="rounded-2xl border border-[#c2c6d6]/50 bg-white shadow-sm p-4 sm:p-6">
+                      <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wide mb-4">Telegram</h3>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">📨</span>
+                          <span className="text-sm text-[#565e74]">
+                            {telegram?.connected ? 'Status: Connected' : 'Status: Not Connected'}
+                          </span>
+                          {telegram?.connected && <span className="text-emerald-500">✓</span>}
+                        </div>
+                      </div>
+                      {!telegram?.enabled ? (
+                        <p className="mt-3 text-xs text-[#565e74]">Telegram chưa được cấu hình trên hệ thống.</p>
+                      ) : telegram?.connected ? (
+                        <button
+                          onClick={handleDisconnectTelegram}
+                          className="mt-3 rounded-lg border border-[#c2c6d6] px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50"
+                        >
+                          Disconnect Telegram
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={handleConnectTelegram}
+                            disabled={telegramLoading}
+                            className="mt-3 rounded-lg bg-[#0058be] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#004da8] disabled:opacity-50"
+                          >
+                            {telegramLoading ? 'Đang tạo liên kết...' : 'Connect Telegram'}
+                          </button>
+                          <p className="mt-2 text-xs text-[#565e74]">
+                            Kết nối Telegram để nhận thông báo Leave Request mới. Liên kết có hiệu lực trong 15 phút.
+                          </p>
+                        </>
                       )}
                     </div>
                   )}

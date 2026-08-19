@@ -9,6 +9,7 @@ from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
+from .routers import telegram as telegram_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -20,6 +21,7 @@ from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
 from .models import notification as notification_model
 from .models import workspace_access as workspace_access_model
+from .models import telegram_connection as telegram_connection_model
 from sqlalchemy import text
 
 def apply_schema_updates():
@@ -355,7 +357,6 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ"))
         conn.execute(text("UPDATE projects SET last_activity_at = COALESCE(updated_at, created_at, now()) WHERE last_activity_at IS NULL"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_last_activity_at ON projects (last_activity_at)"))
-
         # ── Portal refresh sessions (Phase 1 persistent login) ──
         # Opaque refresh tokens are stored hashed; the raw token lives only in
         # the HttpOnly cookie. No rotation in Phase 1.
@@ -371,6 +372,31 @@ def apply_schema_updates():
             )
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens (user_id)"))
+        # ── Telegram integration (Leave Request notifications) ──
+        # Store the Telegram chat_id of the admin/super_admin account so the
+        # backend can send them Leave Request notifications. Nullable because
+        # not every admin/super_admin will have connected Telegram.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_telegram_chat_id_unique "
+            "ON users (telegram_chat_id) WHERE telegram_chat_id IS NOT NULL"
+        ))
+        # Short-lived, single-use connection tokens used to link an account to
+        # a Telegram chat (see models/telegram_connection.py).
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS telegram_connections (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+                token VARCHAR(64) UNIQUE NOT NULL,
+                expires_at TIMESTAMPTZ,
+                used BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_telegram_connections_user_id ON telegram_connections (user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_telegram_connections_token ON telegram_connections (token)"))
 
         # ── Project Template: Task Cha MandayEST, Task Con Skill Solution/Vendor ──
         conn.execute(text(
@@ -1052,6 +1078,7 @@ app.include_router(chat_ai.router,              prefix="/api")
 app.include_router(project_templates_router.router, prefix="/api")
 app.include_router(system_audit.router,         prefix="/api")
 app.include_router(notifications_router.router, prefix="/api/notifications")
+app.include_router(telegram_router.router,      prefix="/api/telegram")
 
 @app.get("/health")
 @app.get("/api/health")

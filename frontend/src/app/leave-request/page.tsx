@@ -459,6 +459,8 @@ export default function LeaveRequestPage() {
   const [view, setView] = useState<'list' | 'calendar' | 'lunch'>('list');
   const todayDefault = dateToYMD(new Date());
   const [calendarDate, setCalendarDate] = useState<string>(todayDefault);
+  // Month selector for the Calendar Team view (YYYY-MM).
+  const [calendarMonth, setCalendarMonth] = useState<string>(todayDefault.slice(0, 7));
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const actionBtnRef = useRef<HTMLElement | null>(null);
@@ -510,7 +512,26 @@ export default function LeaveRequestPage() {
     return Number.isFinite(parsed) ? parsed : null;
   }, [searchParams]);
 
+  // Telegram "View Leave Request" deep link: /leave-request?view=<id>
+  // Auto-opens the detail modal for the given request.
+  const viewId = useMemo(() => {
+    const idParam = searchParams.get('view');
+    if (!idParam) return null;
+    const parsed = Number(idParam);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [searchParams]);
+
   const editingRequest = useMemo(() => requests.find((item) => item.id === editingId) ?? null, [editingId, requests]);
+
+  // When arriving via a Telegram "View Leave Request" link, open the modal for
+  // that request as soon as the list is loaded.
+  useEffect(() => {
+    if (viewId == null) return;
+    const target = requests.find((item) => item.id === viewId);
+    if (target) {
+      setViewingRequest(target);
+    }
+  }, [viewId, requests]);
 
   // Same shape as the old setRequests(prev => ...) calls, just writing to the
   // React Query cache instead of local state so the list stays in sync with
@@ -591,6 +612,50 @@ export default function LeaveRequestPage() {
     return map;
   }, [teamMembers]);
 
+  // Per-member leave summary for the selected month (YYYY-MM). For every team
+  // member we compute: total approved leave days in the month and the list of
+  // approved leave requests that fall (partially) into that month.
+  const monthlyLeaveByMember = useMemo(() => {
+    const [yearStr, monthStr] = calendarMonth.split('-');
+    if (!yearStr || !monthStr) return {} as Record<number, { totalDays: number; leaves: any[] }>;
+
+    const result: Record<number, { totalDays: number; leaves: any[] }> = {};
+    teamMembers.forEach((m) => {
+      result[m.id] = { totalDays: 0, leaves: [] };
+    });
+
+    const monthStart = new Date(Number(yearStr), Number(monthStr) - 1, 1);
+    const monthEnd = new Date(Number(yearStr), Number(monthStr), 0); // last day of month
+
+    requests.forEach((req) => {
+      if (req.status !== 'Approved') return;
+
+      const memberId = req.member_id ?? memberByUserId[req.user_id];
+      if (!memberId || !result[memberId]) return;
+
+      const s = new Date(req.start_date);
+      const e = new Date(req.end_date);
+      if (s > monthEnd || e < monthStart) return; // no overlap with the month
+
+      // Count man-days that fall within the selected month.
+      let overlapDays = 0;
+      const cursor = new Date(Math.max(s.getTime(), monthStart.getTime()));
+      const realEnd = new Date(Math.min(e.getTime(), monthEnd.getTime()));
+      while (cursor <= realEnd) {
+        overlapDays += 1;
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      result[memberId].leaves.push({
+        ...req,
+        _overlapDays: overlapDays,
+      });
+      result[memberId].totalDays += overlapDays;
+    });
+
+    return result;
+  }, [calendarMonth, requests, teamMembers, memberByUserId]);
+
   const calendarStatusByMember = useMemo(() => {
     const target = new Date(calendarDate);
     const map: Record<number, { off: boolean; leave?: any }> = {};
@@ -642,6 +707,83 @@ export default function LeaveRequestPage() {
     });
     return Array.from(teamMap.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filteredCalendarMembers]);
+
+  // ── View-only work calendar helpers ──────────────────────────
+  // The Calendar is a read-only month grid: it opens showing the current month
+  // and immediately displays who is working / on leave for every day, exactly
+  // like a physical work calendar/book. No selection or click is required.
+
+  // Parse the selected month (YYYY-MM) into a Date representing the 1st.
+  const calendarCursor = useMemo(() => {
+    const [y, m] = (calendarMonth || '').split('-').map(Number);
+    if (!y || !m) return new Date();
+    return new Date(y, m - 1, 1);
+  }, [calendarMonth]);
+
+  const calendarMonthLabel = useMemo(() =>
+    calendarCursor.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' }),
+  [calendarCursor]);
+
+  function shiftCalendarMonth(delta: number) {
+    const d = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + delta, 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    setCalendarMonth(`${y}-${m}`);
+  }
+
+  function goToday() {
+    const now = new Date();
+    setCalendarMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  }
+
+  // Map member id -> display name, used to label who is on leave in the grid.
+  const memberNameById = useMemo(() => {
+    const map: Record<number, string> = {};
+    teamMembers.forEach((m) => { map[m.id] = m.name; });
+    return map;
+  }, [teamMembers]);
+
+  // Builds the visual month grid: leading blanks for the first weekday, then a
+  // cell per day. Each day carries the list of approved-leave entries that
+  // overlap it, so the calendar shows at a glance who is off and who is working.
+  const calendarDays = useMemo(() => {
+    const first = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth(), 1);
+    const daysInMonth = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + 1, 0).getDate();
+    const dateKey = (dt: Date) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    const last = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + 1, 0);
+
+    const byDate: Record<string, any[]> = {};
+    for (const req of requests) {
+      if (req.status !== 'Approved') continue;
+      const s = new Date(req.start_date);
+      const e = new Date(req.end_date);
+      if (e < first || s > last) continue;
+      const cursor = new Date(Math.max(s.getTime(), first.getTime()));
+      const realEnd = new Date(Math.min(e.getTime(), last.getTime()));
+      while (cursor <= realEnd) {
+        const key = dateKey(cursor);
+        if (!byDate[key]) byDate[key] = [];
+        byDate[key].push(req);
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+
+    const todayKey = dateKey(new Date());
+    const cells: ({ day: number; leaves: any[]; isToday: boolean; isWeekend: boolean } | null)[] = [];
+    const lead = first.getDay(); // 0 = Sunday
+    for (let i = 0; i < lead; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth(), d);
+      const key = dateKey(dt);
+      cells.push({
+        day: d,
+        leaves: byDate[key] || [],
+        isToday: key === todayKey,
+        isWeekend: dt.getDay() === 0 || dt.getDay() === 6,
+      });
+    }
+    return cells;
+  }, [calendarCursor, requests]);
 
   const totalPages = Math.max(1, Math.ceil(requests.length / ITEMS_PER_PAGE));
   const pageItems = useMemo(() => {
@@ -1017,107 +1159,126 @@ export default function LeaveRequestPage() {
                   isAdmin={isAdmin}
                 />
               ) : (
-                /* ========== CALENDAR VIEW ========== */
+                /* ========== CALENDAR VIEW (view-only work calendar) ========== */
                 <>
-                  <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                  <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
+                      <h3 className="text-lg font-bold text-[#0b1c30]">Lịch làm việc tháng</h3>
                       <p className="text-sm text-[#565e74]">
-                        Team working status for a selected day. Select date to view who's working and who's off.
+                        Lịch nghỉ (đã duyệt) của các thành viên. Ngày không đánh dấu là ngày làm việc bình thường.
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-end gap-3">
-                      <div>
-                        <label className="mb-1 block text-sm font-semibold">Date</label>
-                        <input
-                          type="date"
-                          value={calendarDate}
-                          onChange={(e) => setCalendarDate(e.target.value)}
-                          className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-sm font-semibold">Team</label>
-                        <select
-                          value={calendarSelectedTeam}
-                          onChange={(e) => setCalendarSelectedTeam(e.target.value)}
-                          className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm outline-none"
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center gap-1 rounded-lg border border-[#c2c6d6] bg-white p-1 text-sm">
+                        <button
+                          onClick={() => shiftCalendarMonth(-1)}
+                          className="rounded-md px-2.5 py-1 text-[#565e74] hover:bg-[#f8f9ff]"
+                          title="Tháng trước"
                         >
-                          {calendarTeams.map((team) => (
-                            <option key={team} value={team}>{team}</option>
-                          ))}
-                        </select>
+                          ‹
+                        </button>
+                        <span className="min-w-[160px] text-center font-semibold text-[#0b1c30]">{calendarMonthLabel}</span>
+                        <button
+                          onClick={() => shiftCalendarMonth(1)}
+                          className="rounded-md px-2.5 py-1 text-[#565e74] hover:bg-[#f8f9ff]"
+                          title="Tháng sau"
+                        >
+                          ›
+                        </button>
                       </div>
+                      <button
+                        onClick={goToday}
+                        className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-1.5 text-sm font-semibold text-[#0058be] hover:bg-[#f8f9ff]"
+                      >
+                        Hôm nay
+                      </button>
+                      <select
+                        value={calendarSelectedTeam}
+                        onChange={(e) => setCalendarSelectedTeam(e.target.value)}
+                        className="rounded-lg border border-[#c2c6d6] bg-white px-3 py-1.5 text-sm outline-none"
+                      >
+                        {calendarTeams.map((team) => (
+                          <option key={team} value={team}>{team}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
-                  {/* Calendar summary */}
-                  <div className="mb-4 grid grid-cols-3 gap-3">
-                    <div className="rounded-lg border bg-white p-3 text-center">
-                      <div className="text-lg font-bold text-[#0b1c30]">{filteredCalendarMembers.length}</div>
-                      <div className="text-xs text-[#565e74]">Total</div>
-                    </div>
-                    <div className="rounded-lg border bg-emerald-50 p-3 text-center">
-                      <div className="text-lg font-bold text-emerald-600">
-                        {filteredCalendarMembers.filter((m) => !calendarStatusByMember[m.id]?.off).length}
-                      </div>
-                      <div className="text-xs text-[#565e74]">Working</div>
-                    </div>
-                    <div className="rounded-lg border bg-rose-50 p-3 text-center">
-                      <div className="text-lg font-bold text-rose-600">
-                        {filteredCalendarMembers.filter((m) => calendarStatusByMember[m.id]?.off).length}
-                      </div>
-                      <div className="text-xs text-[#565e74]">Off</div>
-                    </div>
+                  {/* Legend */}
+                  <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-[#565e74]">
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-3 w-3 rounded ring-1 ring-rose-200 bg-rose-50" /> Ngày có người nghỉ
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-3 w-3 rounded bg-white ring-1 ring-[#c2c6d6]" /> Ngày làm việc bình thường
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-3 w-3 rounded border-2 border-[#0058be] bg-white" /> Hôm nay
+                    </span>
                   </div>
 
-                  <div className="grid gap-6">
-                    {calendarTeamsGrouped.length === 0 && (
-                      <div className="py-8 text-center text-sm text-[#565e74]">
-                        Loading team members...
+                  {/* Day-of-week header */}
+                  <div className="grid grid-cols-7 border-b border-[#c2c6d6] bg-[#f8f9ff]">
+                    {['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map((d) => (
+                      <div key={d} className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-[#565e74]">
+                        {d}
                       </div>
-                    )}
-                    {calendarTeamsGrouped.map(([team, members]) => (
-                      <div key={team}>
-                        <h3 className="mb-3 text-base font-bold text-[#0b1c30]">{team}</h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {members.map((m) => {
-                            const s = calendarStatusByMember[m.id];
-                            return (
-                              <div
-                                key={m.id}
-                                onClick={() => setSelectedMember(m as any)}
-                                className={`rounded-lg border bg-white p-4 transition-shadow hover:shadow-sm cursor-pointer ${
-                                  s.off ? 'border-rose-200 bg-rose-50/40' : 'border-emerald-200 bg-emerald-50/40'
+                    ))}
+                  </div>
+
+                  {/* Month grid (aspect-ratio cells, view-only) */}
+                  <div className="grid grid-cols-7">
+                    {calendarDays.map((cell, idx) => (
+                      <div
+                        key={idx}
+                        className={`min-h-[92px] border-b border-r border-[#eef2f7] p-1.5 ${
+                          idx % 7 === 0 ? 'border-l' : ''
+                        } ${cell ? (cell.isWeekend ? 'bg-[#fbfcff]' : 'bg-white') : 'bg-[#fafafa]'}`}
+                      >
+                        {cell && (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span
+                                className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-sm font-semibold ${
+                                  cell.isToday
+                                    ? 'bg-[#0058be] text-white'
+                                    : cell.leaves.length > 0
+                                    ? 'bg-rose-100 text-rose-700'
+                                    : 'text-[#0b1c30]'
                                 }`}
                               >
-                                <div className="flex items-start justify-between">
-                                  <div className="min-w-0 flex-1">
-                                    <div className="font-semibold text-[#0b1c30] truncate">{m.name}</div>
-                                    <div className="text-xs text-[#565e74]">{m.role}</div>
-                                  </div>
-                                  <div className="flex-shrink-0 ml-3">
-                                    {s.off ? (
-                                      <span className="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700">
-                                        Off
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                                        Working
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                                {s.off && s.leave && (
-                                  <div className="mt-3 pt-2 border-t border-rose-100 text-xs text-[#565e74]">
-                                    <span className="font-semibold">{s.leave.leave_type}</span>
-                                    <span className="text-[#999]"> • </span>
-                                    {formatDateLabel(s.leave.start_date)} - {formatDateLabel(s.leave.end_date)}
-                                  </div>
+                                {cell.day}
+                              </span>
+                              {cell.leaves.length > 0 && (
+                                <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
+                                  {cell.leaves.length} nghỉ
+                                </span>
+                              )}
+                            </div>
+                            {cell.leaves.length > 0 && (
+                              <ul className="mt-1.5 space-y-1">
+                                {cell.leaves.slice(0, 3).map((leaf: any) => {
+                                  const memberId = leaf.member_id ?? memberByUserId[leaf.user_id];
+                                  const name = memberId ? (memberNameById[memberId] || `User ${leaf.user_id}`) : `User ${leaf.user_id}`;
+                                  return (
+                                    <li
+                                      key={leaf.id}
+                                      title={`${name} — ${leaf.leave_type}`}
+                                      className="truncate rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-700"
+                                    >
+                                      {name} · {leaf.leave_type}
+                                    </li>
+                                  );
+                                })}
+                                {cell.leaves.length > 3 && (
+                                  <li className="px-1.5 text-[11px] font-semibold text-rose-600">
+                                    +{cell.leaves.length - 3} người khác
+                                  </li>
                                 )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                              </ul>
+                            )}
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>
