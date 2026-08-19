@@ -35,11 +35,13 @@ export interface ProjectFormModalProps {
   onClose: () => void;
   onSaved: (project: any) => void;
   onFlash: (msg: string, isError?: boolean) => void;
+  /** When provided (edit mode only), shows a "Xóa dự án" button in the footer. */
+  onRequestDelete?: () => void;
 }
 
 export default function ProjectFormModal({
   isOpen, mode, editingProject, defaultCustomerId, defaultBusiness, defaultYear,
-  onClose, onSaved, onFlash,
+  onClose, onSaved, onFlash, onRequestDelete,
 }: ProjectFormModalProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -555,6 +557,16 @@ export default function ProjectFormModal({
 
           <div className="px-6 py-3.5 bg-white border-t border-slate-200/90 shadow-[0_-4px_16px_rgba(0,0,0,0.05)] flex items-center justify-between z-10 responsive-modal-footer">
             <div className="flex items-center gap-2">
+              {mode === 'edit' && onRequestDelete && (
+                <button
+                  type="button"
+                  onClick={onRequestDelete}
+                  className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 border border-rose-200 transition-colors cursor-pointer mr-2"
+                >
+                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                  Xóa dự án
+                </button>
+              )}
               {!projectForm.name.trim() || !projectForm.customerId ? (
                 <span className="text-amber-700 bg-amber-50 border border-amber-200/80 px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1.5 animate-in fade-in">
                   <span className="text-amber-600 font-extrabold">⚠</span> Thiếu {!projectForm.name.trim() ? 'Tên dự án' : 'Khách hàng'} (*)

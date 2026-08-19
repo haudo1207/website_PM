@@ -4059,22 +4059,13 @@ function ProjectDetailContent() {
               </div>
               <div className="flex gap-2">
                 {isAdmin() && (
-                  <>
-                    <button
-                      onClick={() => setShowEditProjectModal(true)}
-                      className="bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-slate-200 transition-colors shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
-                      Chỉnh sửa dự án
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteModal(true)}
-                      className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-rose-200 transition-colors shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-[18px] mr-2">delete</span>
-                      Xóa dự án
-                    </button>
-                  </>
+                  <button
+                    onClick={() => setShowEditProjectModal(true)}
+                    className="bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-slate-200 transition-colors shadow-sm"
+                  >
+                    <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
+                    Chỉnh sửa dự án
+                  </button>
                 )}
               </div>
             </div>
@@ -7083,6 +7074,7 @@ function ProjectDetailContent() {
         onClose={() => setShowEditProjectModal(false)}
         onSaved={(updated) => { setProject(updated); loadProject(); }}
         onFlash={flash}
+        onRequestDelete={() => { setShowEditProjectModal(false); setShowDeleteModal(true); }}
       />
 
       {/* Modal Xác Nhận Xóa Dự Án */}
