@@ -2867,6 +2867,21 @@ function ProjectDetailContent() {
             if (colUpper === 'LINK') {
               const currentLinks = (task.link || task.ticket_id || '').split('\n').filter(Boolean);
 
+              const handleAddLink = (rawLink: string) => {
+                const newLink = rawLink.trim();
+                if (!newLink) {
+                  setEditingCell(null);
+                  return;
+                }
+                // Auto-prepend https:// for bare domains (e.g. "docs.google.com/..."),
+                // leave non-URL text (ticket IDs, etc.) untouched.
+                const normalizedLink = !/^https?:\/\//i.test(newLink) && /^[a-zA-Z0-9-]+\./.test(newLink)
+                  ? 'https://' + newLink
+                  : newLink;
+                const newLinks = [...currentLinks, normalizedLink];
+                handleCellSave(task.id, col, newLinks.join('\n'));
+              };
+
               return (
                 <td key={col} className="px-2 py-1 min-w-[320px]">
                   <div className="flex flex-col gap-1.5">
@@ -2920,21 +2935,14 @@ function ProjectDetailContent() {
                       onKeyDown={e => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
-                          const newLink = editValue.trim();
-                          if (newLink) {
-                            const newLinks = [...currentLinks, newLink];
-                            handleCellSave(task.id, col, newLinks.join('\n'));
-                          } else {
-                            setEditingCell(null);
-                          }
+                          handleAddLink(editValue);
                         } else if (e.key === 'Escape') {
                           setEditingCell(null);
                         }
                       }}
                       onBlur={() => {
                         if (editValue.trim()) {
-                          const newLinks = [...currentLinks, editValue.trim()];
-                          handleCellSave(task.id, col, newLinks.join('\n'));
+                          handleAddLink(editValue);
                         } else {
                           setEditingCell(null);
                         }
@@ -7614,11 +7622,18 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(true);
   const containerRef = useRef<HTMLTableDataCellElement>(null);
+  const lastSyncedEditValue = useRef<string>('');
 
+  // Only resync searchTerm when editValue itself changes to a different member —
+  // otherwise every unrelated parent re-render wipes out what the user is typing.
   useEffect(() => {
+    if (editValue === lastSyncedEditValue.current) return;
+    lastSyncedEditValue.current = editValue;
     const currentMember = projectMembers.find(m => String(m.id) === String(editValue));
     if (currentMember) {
       setSearchTerm(currentMember.display_name || '');
+    } else if (!editValue) {
+      setSearchTerm('');
     }
   }, [editValue, projectMembers]);
 
