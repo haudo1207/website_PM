@@ -53,7 +53,7 @@ def resolve_workspace(db: Session, value, by_code=None, by_name=None):
         return None
     if by_code is not None:
         return by_code.get(v) or by_name.get(v)
-    ws = db.query(Workspace).filter(Workspace.code == v).first()
+    ws = db.query(Workspace).filter(sql_func.lower(Workspace.code) == v).first()
     if not ws:
         ws = db.query(Workspace).filter(sql_func.lower(Workspace.name) == v).first()
     return ws

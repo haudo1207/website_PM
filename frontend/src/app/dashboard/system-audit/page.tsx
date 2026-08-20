@@ -31,7 +31,7 @@ export default function SystemAuditTab() {
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/system-audit/analytics?_t=${ts}`, config).catch(() => ({ data: {} })),
-      axios.get(`/api/system-audit/logs?page=${auditPage}&page_size=15&_t=${ts}`, config).catch(() => ({ data: { items: [], total: 0 } })),
+      axios.get(`/api/system-audit/logs?page=${auditPage}&page_size=15&module=${auditModule}&_t=${ts}`, config).catch(() => ({ data: { items: [], total: 0 } })),
       axios.get(`/api/system-categories/master-phases?_t=${ts}`, config).catch(() => ({ data: [] })),
     ]);
     const projects = projRes.data || [];
@@ -150,10 +150,10 @@ export default function SystemAuditTab() {
         auditLogs: logs,
         auditTotal: total,
       };
-  }, [auditPage]);
+  }, [auditPage, auditModule]);
 
   const { data: auditData, isFetching: loading, refetch } = useQuery({
-    queryKey: ['dashboard-system-audit', auditPage],
+    queryKey: ['dashboard-system-audit', auditPage, auditModule],
     queryFn: fetchSystemAuditData,
     staleTime: 2 * 60_000,
   });
@@ -436,7 +436,7 @@ export default function SystemAuditTab() {
               <option value="task">Task</option>
               <option value="phase">Phase</option>
               <option value="user">User / Account</option>
-              <option value="setting">Setting</option>
+              <option value="settings">Setting</option>
             </select>
           </div>
         </div>
