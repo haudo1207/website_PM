@@ -2117,6 +2117,9 @@ function ProjectDetailContent() {
         notes: selectedTask.notes || '',
         remark: selectedTask.remark || '',
         ticket_id: selectedTask.ticket_id || '',
+        kpi_ratio: selectedTask.kpi_ratio_assign !== undefined ? `${selectedTask.kpi_ratio_assign}/${selectedTask.kpi_ratio_support || 0}` : '90/10',
+        skill_solution_id: selectedTask.skill_solution_id ? String(selectedTask.skill_solution_id) : '',
+        skill_vendor_id: selectedTask.skill_vendor_id ? String(selectedTask.skill_vendor_id) : '',
       });
     }
   }, [selectedTask]);
@@ -2150,6 +2153,13 @@ function ProjectDetailContent() {
         ticket_id: drawerForm.ticket_id || null,
       };
 
+      const kpiRatio = drawerForm.kpi_ratio || '90/10';
+      const kpiParts = kpiRatio.split('/');
+      payload.kpi_ratio_assign = parseInt(kpiParts[0], 10) || 90;
+      payload.kpi_ratio_support = parseInt(kpiParts[1], 10) || 10;
+      payload.skill_solution_id = drawerForm.skill_solution_id ? parseInt(drawerForm.skill_solution_id, 10) : null;
+      payload.skill_vendor_id = drawerForm.skill_vendor_id ? parseInt(drawerForm.skill_vendor_id, 10) : null;
+
       const wasDone = selectedTask.status && (
         selectedTask.status.toLowerCase() === 'done' ||
         selectedTask.status.toLowerCase() === 'completed' ||
@@ -2177,6 +2187,7 @@ function ProjectDetailContent() {
       await updateTask(selectedTask.task_group_id, selectedTask.id, payload);
       flash('Đã cập nhật task thành công!');
       await reloadAll(true);
+      setSelectedTask(null);
     } catch (err: any) {
       alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -7174,9 +7185,9 @@ function ProjectDetailContent() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
-              {/* Task Name / Detail */}
+              {/* Detail Task */}
               <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Task Name</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Detail Task</label>
                 <textarea
                   value={drawerForm.detail || ''}
                   onChange={e => setDrawerForm({ ...drawerForm, detail: e.target.value })}
@@ -7231,6 +7242,28 @@ function ProjectDetailContent() {
                   </select>
                 </div>
 
+                {/* Manday Est & Start Date */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Manday Est</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    value={drawerForm.manday_est || ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, manday_est: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Start Date</label>
+                  <input
+                    type="date"
+                    value={drawerForm.start_date ? toPickerDate(drawerForm.start_date) : ''}
+                    onChange={e => setDrawerForm({ ...drawerForm, start_date: fromPickerDate(e.target.value) })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  />
+                </div>
+
                 {/* Assigned & Support */}
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Assigned</label>
@@ -7256,50 +7289,74 @@ function ProjectDetailContent() {
                     className="w-full"
                   />
                 </div>
+              </div>
 
-                {/* Dates */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Start Date</label>
-                  <input
-                    type="date"
-                    value={drawerForm.start_date ? toPickerDate(drawerForm.start_date) : ''}
-                    onChange={e => setDrawerForm({ ...drawerForm, start_date: fromPickerDate(e.target.value) })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">End Date (Est)</label>
-                  <input
-                    type="date"
-                    value={drawerForm.end_date_est ? toPickerDate(drawerForm.end_date_est) : ''}
-                    onChange={e => setDrawerForm({ ...drawerForm, end_date_est: fromPickerDate(e.target.value) })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  />
-                </div>
+              {/* KPI RATIO */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">KPI Ratio</label>
+                <input
+                  type="text"
+                  value={drawerForm.kpi_ratio || '90/10'}
+                  onChange={e => setDrawerForm({ ...drawerForm, kpi_ratio: e.target.value })}
+                  placeholder="90/10"
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-mono"
+                />
+              </div>
 
-                {/* Manday */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Manday Est</label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="0"
-                    value={drawerForm.manday_est || ''}
-                    onChange={e => setDrawerForm({ ...drawerForm, manday_est: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Manday Actual</label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="0"
-                    value={drawerForm.manday_actual || ''}
-                    onChange={e => setDrawerForm({ ...drawerForm, manday_actual: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  />
-                </div>
+              {/* Skill Solution */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Skill Solution</label>
+                <SearchableSelect
+                  label="Solution Group"
+                  icon=""
+                  options={categories
+                    .filter(c => c.is_active)
+                    .flatMap(c => c.groups || [])
+                    .map((g: any) => ({ id: g.id, name: g.name }))}
+                  value={drawerForm.skill_solution_id || ''}
+                  onChange={(val: any) => {
+                    const grpId = val === 'all' ? '' : val;
+                    setDrawerForm({
+                      ...drawerForm,
+                      skill_solution_id: grpId,
+                      skill_vendor_id: ''
+                    });
+                  }}
+                  placeholder="Tìm Solution Group..."
+                  className="w-full"
+                />
+              </div>
+
+              {/* Skill Vendor */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Skill Vendor</label>
+                {(() => {
+                  let availSkills: any[] = [];
+                  if (drawerForm.skill_solution_id) {
+                    const grpObj = categories
+                      .filter(c => c.is_active)
+                      .flatMap(c => c.groups || [])
+                      .find((g: any) => String(g.id) === String(drawerForm.skill_solution_id));
+                    if (grpObj) availSkills = (grpObj.skills || []).filter((s: any) => s.is_active);
+                  } else {
+                    availSkills = categories
+                      .filter(c => c.is_active)
+                      .flatMap(c => c.groups || [])
+                      .flatMap((g: any) => g.skills || [])
+                      .filter((s: any) => s.is_active);
+                  }
+                  return (
+                    <SearchableSelect
+                      label="Skill Vendor"
+                      icon=""
+                      options={availSkills.map((s: any) => ({ id: s.id, name: s.name }))}
+                      value={drawerForm.skill_vendor_id || ''}
+                      onChange={(val: any) => setDrawerForm({ ...drawerForm, skill_vendor_id: val === 'all' ? '' : val })}
+                      placeholder="Tìm Skill Vendor..."
+                      className="w-full"
+                    />
+                  );
+                })()}
               </div>
 
               {/* Notes */}
