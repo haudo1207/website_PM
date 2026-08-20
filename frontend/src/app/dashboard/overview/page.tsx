@@ -459,12 +459,13 @@ export default function OverviewTab() {
       memberApiUrl += `&year=${selectedYear}`;
     }
 
-    const [membersRes, projRes, tasksRes, activityRes, leadersRes] = await Promise.all([
+    const [membersRes, projRes, tasksRes, activityRes, leadersRes, leadersScopeRes] = await Promise.all([
       axios.get(memberApiUrl, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects/recent-activity?limit=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
       axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(`/api/members/workspace-leaders?_t=${ts}`, config).catch(() => ({ data: { leaders: null } })),
     ]);
 
     return {
@@ -473,6 +474,9 @@ export default function OverviewTab() {
       rawTasks: tasksRes.data || [],
       recentActivity: activityRes.data?.items || [],
       rawLeaders: leadersRes.data || [],
+      // Backend-authoritative Leader identities the current user may see.
+      // null (fetch failure) → keep existing behavior (no visibility filter).
+      allowedLeaders: Array.isArray(leadersScopeRes.data?.leaders) ? leadersScopeRes.data.leaders : null,
     };
   }, [selectedMonth, selectedYear]);
 
@@ -490,6 +494,7 @@ export default function OverviewTab() {
   const rawProjects: any[] = overviewData?.rawProjects || [];
   const rawTasks: any[] = overviewData?.rawTasks || [];
   const rawLeaders: any[] = overviewData?.rawLeaders || [];
+  const allowedLeaders: string[] | null = overviewData?.allowedLeaders ?? null;
   const recentActivity: any[] = overviewData?.recentActivity || [];
 
   const applyQuickFilter = (type: string) => {
@@ -578,6 +583,17 @@ export default function OverviewTab() {
       const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
       return { ...ld, totalTasks: lTasks.length, doneTasks: done };
     }).sort((a, b) => b.count - a.count);
+
+    // Workspace-scope the Leader cards: only Leader identities attributed to
+    // the caller's Workspace(s) are visible (backend `/members/workspace-leaders`).
+    // 'Không có Leader' is a UI catch-all label, not a Leader identity, so it stays.
+    let visibleLeaders = lList;
+    if (Array.isArray(allowedLeaders)) {
+      const allowed = new Set(allowedLeaders.map((n: string) => String(n).trim().toLowerCase()));
+      visibleLeaders = lList.filter(ld =>
+        ld.name === 'Không có Leader' || allowed.has(String(ld.name).trim().toLowerCase())
+      );
+    }
 
     const totTasks = rawTasks.length;
     const totDone = rawTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
@@ -765,7 +781,7 @@ export default function OverviewTab() {
     }
 
     return {
-      leaders: lList,
+      leaders: visibleLeaders,
       totalAllTasks: totTasks,
       totalAllDoneTasks: totDone,
       activeTeamMembers: activeTeamList,
@@ -781,7 +797,7 @@ export default function OverviewTab() {
       averageMatrix: avgM,
       bonusMatrix: bonM
     };
-  }, [rawMembers, rawTasks, rawProjects, rawLeaders, selectedLeader, selectedYear, selectedMonth, selectedWeek, matrixYear]);
+  }, [rawMembers, rawTasks, rawProjects, rawLeaders, allowedLeaders, selectedLeader, selectedYear, selectedMonth, selectedWeek, matrixYear]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always

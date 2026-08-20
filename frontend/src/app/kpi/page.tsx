@@ -28,11 +28,11 @@ export default function KPIPage() {
     const [levelOptions, setLevelOptions] = useState<any[]>([]);
     const [workspaceOptions, setWorkspaceOptions] = useState<any[]>([]);
     const [teamOptions, setTeamOptions] = useState<any[]>([]);
-    // Workspace data scope: for Member/Viewer the assigned Workspace is the
-    // effective KPI data scope (fixed filter); other roles keep existing behavior.
+    // Workspace data scope: for Leader/Member/Viewer the assigned Workspace is
+    // the effective KPI data scope (fixed filter); other roles keep existing behavior.
     const [userRole, setUserRole] = useState("");
     const [userScope, setUserScope] = useState("");
-    const isScopedUser = (userRole === 'member' || userRole === 'viewer') && userScope !== 'all';
+    const isScopedUser = (userRole === 'member' || userRole === 'viewer' || userRole === 'leader') && userScope !== 'all';
     const lockedWorkspaceName = useMemo(() => {
         if (!isScopedUser || !userScope) return "";
         const w = workspaceOptions.find(o => (o.code || "").toLowerCase() === String(userScope).toLowerCase());

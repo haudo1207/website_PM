@@ -11,7 +11,7 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
-from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name
+from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names
 from ..utils.audit_service import AuditService
 from sqlalchemy import func, extract, false
 
@@ -337,6 +337,20 @@ def list_members(
         out.append(d)
         
     return out
+
+
+# ─── GET WORKSPACE-SCOPED LEADERS (Dashboard Leader card visibility) ──
+# Declared before /{id} so the literal path is not captured by the int route.
+@router.get("/workspace-leaders")
+def list_workspace_leaders(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Distinct Leader names the caller is allowed to see on the Dashboard.
+
+    Backend-authoritative: the set is computed solely from the caller's
+    assigned Workspace(s) (account scope + department attribution), so a caller
+    cannot widen it through query parameters. super_admin / scope=all receive
+    the full unrestricted leader list.
+    """
+    return {"leaders": workspace_leader_names(db, current_user)}
 
 
 # ─── GET ONE ─────────────────────────────────────────────
