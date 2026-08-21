@@ -936,4 +936,110 @@ def sync_from_recruitment(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Lỗi database trong quá trình đồng bộ: {str(e)}")
+# ─── KPI SUMMARY FOR RECRUITMENT ──────────────────────────────
+@router.get("/kpi-summary")
+def get_kpi_summary(
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    x_sync_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    # Verify token
+    expected_token = settings.INTERNAL_SYNC_TOKEN or "markee-kpi-sync-secret-key-2026"
+    if not x_sync_token or x_sync_token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized sync token")
+
+    q_assigned = db.query(
+        Task.assigned_id.label('member_id'),
+        Task.kpi_assigned.label('kpi_final'),
+        (Task.manday_actual * Task.kpi_ratio_assign / 100.0).label('manday_actual'),
+        (Task.manday_est * Task.kpi_ratio_assign / 100.0).label('manday_est'),
+        (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
+        Task.id.label('task_id')
+    ).filter(
+        Task.status == 'Done',
+        Task.end_date_actual.isnot(None),
+        Task.assigned_id.isnot(None)
+    )
+
+    q_support = db.query(
+        Task.support_id.label('member_id'),
+        Task.kpi_support.label('kpi_final'),
+        (Task.manday_actual * Task.kpi_ratio_support / 100.0).label('manday_actual'),
+        (Task.manday_est * Task.kpi_ratio_support / 100.0).label('manday_est'),
+        (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
+        Task.id.label('task_id')
+    ).filter(
+        Task.status == 'Done',
+        Task.end_date_actual.isnot(None),
+        Task.support_id.isnot(None)
+    )
+
+    CYCLE_TEMPLATE = {
+        1:  ("-12-22", "-01-18", -1, 0, 4),
+        2:  ("-01-19", "-02-22", 0, 0, 5),
+        3:  ("-02-23", "-03-22", 0, 0, 4),
+        4:  ("-03-23", "-04-19", 0, 0, 4),
+        5:  ("-04-20", "-05-24", 0, 0, 5),
+        6:  ("-05-25", "-06-21", 0, 0, 4),
+        7:  ("-06-22", "-07-19", 0, 0, 4),
+        8:  ("-07-20", "-08-23", 0, 0, 5),
+        9:  ("-08-24", "-09-20", 0, 0, 4),
+        10: ("-09-21", "-10-25", 0, 0, 5),
+        11: ("-10-26", "-11-22", 0, 0, 4),
+        12: ("-11-23", "-12-20", 0, 0, 4),
+    }
+    weeks_divisor = 52
+
+    import datetime
+    if month and not year:
+        year = datetime.datetime.now().year
+
+    if year:
+        if month and month in CYCLE_TEMPLATE:
+            s_md, e_md, s_yo, e_yo, weeks = CYCLE_TEMPLATE[month]
+            weeks_divisor = weeks
+            start_dt = f"{year + s_yo}{s_md}"
+            end_dt = f"{year + e_yo}{e_md}"
+            q_assigned = q_assigned.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
+            q_support = q_support.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
+        else:
+            q_assigned = q_assigned.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
+            q_support = q_support.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
+    else:
+        if month:
+            from sqlalchemy import extract
+            q_assigned = q_assigned.filter(extract('month', Task.end_date_actual) == month)
+            q_support = q_support.filter(extract('month', Task.end_date_actual) == month)
+
+    union_q = q_assigned.union_all(q_support).subquery('union_q')
+
+    task_query = db.query(
+        union_q.c.member_id.label('member_id'),
+        func.sum(union_q.c.kpi_final).label('kpi_total')
+    ).group_by(union_q.c.member_id)
+
+    kpi_subq = task_query.subquery()
+
+    results = db.query(
+        Member.email,
+        func.coalesce(kpi_subq.c.kpi_total, 0).label("kpi_total")
+    ).outerjoin(
+        kpi_subq, Member.id == kpi_subq.c.member_id
+    ).all()
+
+    out = {}
+    for email, kpi_total in results:
+        if not email:
+            continue
+        email_clean = email.strip().lower()
+        total = float(kpi_total) if kpi_total else 0.0
+        avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
+        bonus = calc_kpi_bonus(avg)
+        out[email_clean] = {
+            "kpi_total": total,
+            "kpi_bonus": round(bonus, 2)
+        }
+    return {"members": out}
+
 
