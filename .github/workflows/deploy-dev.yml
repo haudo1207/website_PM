@@ -40,8 +40,9 @@ jobs:
               "GOOGLE_CLIENT_ID": "780122821631-42d0p2cons73hn7eonrd605dcmnmemt1.apps.googleusercontent.com",
               "GOOGLE_CLIENT_SECRET": "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",
               "GOOGLE_REFRESH_TOKEN": "1//0gc4RYP77PoncCgYIARAAGBASNwF-L9IryEHtLi-sw-gXGHoLGTEQf9PhJDimncDu9wCck2BIGAD7LjIBiPo-3EtE38VOa81lNXA",
-              "GEMINI_API_KEY": "sk-bFe2qMrsoVQMGX2DaxcsZRzcaArE5jUxWHlkNHqGfOodMgDL",
-              "AI_API_KEY": "sk-bFe2qMrsoVQMGX2DaxcsZRzcaArE5jUxWHlkNHqGfOodMgDL",
+              "AI_BASE_URL": "https://api.shopaikey.com/v1",
+              "GEMINI_API_KEY": "sk-w9W6LeRIVhSXu7YFaM12hU7ZLjg38tJ34IBy59CB9NxrEkOr",
+              "AI_API_KEY": "sk-w9W6LeRIVhSXu7YFaM12hU7ZLjg38tJ34IBy59CB9NxrEkOr",
           }
 
           for path in (Path("/home/webpm/kpi-dev/.env"), Path("/home/webpm/kpi-dev/app.env")):
