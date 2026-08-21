@@ -53,7 +53,7 @@ def resolve_workspace(db: Session, value, by_code=None, by_name=None):
         return None
     if by_code is not None:
         return by_code.get(v) or by_name.get(v)
-    ws = db.query(Workspace).filter(Workspace.code == v).first()
+    ws = db.query(Workspace).filter(sql_func.lower(Workspace.code) == v).first()
     if not ws:
         ws = db.query(Workspace).filter(sql_func.lower(Workspace.name) == v).first()
     return ws
@@ -270,6 +270,75 @@ def member_query_for_user(db: Session, user):
         conditions.append(sql_func.lower(Member.department).in_([d.lower() for d in target_depts]))
 
     return query.filter(or_(*conditions))
+
+
+# ── Workspace → department mapping for Member/Leader attribution ─────────
+# Mirrors the department-matching rule used inside member_query_for_user() so
+# the Dashboard Leader visibility stays consistent with the Member dataset.
+SCOPE_TO_DEPARTMENT = {
+    "infra": "Infrastructure",
+    "dev": "Dev/DevOps",
+    "soc": "Security",
+    "marketing": "Marketing",
+    "sales": "Sales",
+}
+
+
+def workspace_leader_names(db: Session, user):
+    """Distinct `Member.leader_name` values the caller may see on the Dashboard.
+
+    A Leader identity is attributed to one of the caller's Workspaces when at
+    least one member carrying that leader_name is linked to an account whose
+    `data_scope` is in the caller's scopes (or is the global `all` scope), or
+    whose department matches one of the caller's Workspace departments.
+
+    Project-only matches are intentionally excluded here: a cross-Workspace
+    member assigned to one of the caller's projects must not widen the visible
+    Leader cards. `Member.leader_name` remains the single Leader → Member
+    relationship, so the existing Dashboard selection logic is untouched.
+
+    super_admin / scope=all keep the previous unrestricted behavior.
+    """
+    scopes = user_allowed_scopes(db, user)
+    role = getattr(user, "role", ROLE_MEMBER)
+
+    if role == ROLE_SUPER_ADMIN or scopes == ALL_SCOPE:
+        rows = db.query(Member.leader_name).filter(Member.leader_name.isnot(None)).all()
+        return sorted({(ln or "").strip() for (ln,) in rows if ln and ln.strip()})
+
+    if role not in WORKSPACE_SCOPED_ROLES:
+        return []
+
+    scoped_user_member_ids = (
+        db.query(User.member_id)
+        .filter(
+            User.member_id.isnot(None),
+            or_(User.data_scope.in_(scopes), User.data_scope == ALL_SCOPE),
+        )
+        .subquery()
+    )
+    target_depts = []
+    for s in scopes:
+        s_lower = str(s).strip().lower()
+        dept = SCOPE_TO_DEPARTMENT.get(s_lower)
+        if dept:
+            target_depts.append(dept)
+        else:
+            ws = resolve_workspace(db, s_lower)
+            if ws:
+                target_depts.append(ws.name)
+                target_depts.append(ws.code)
+
+    conditions = [Member.id.in_(scoped_user_member_ids)]
+    if target_depts:
+        conditions.append(sql_func.lower(Member.department).in_([d.lower() for d in target_depts]))
+
+    rows = (
+        db.query(Member.leader_name)
+        .filter(Member.leader_name.isnot(None), or_(*conditions))
+        .all()
+    )
+    return sorted({(ln or "").strip() for (ln,) in rows if ln and ln.strip()})
 
 
 def can_access_project(db: Session, user, project: Project) -> bool:

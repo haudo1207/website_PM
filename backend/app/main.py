@@ -9,6 +9,7 @@ from .routers import projects as projects_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
+from .routers import telegram as telegram_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -20,6 +21,7 @@ from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
 from .models import notification as notification_model
 from .models import workspace_access as workspace_access_model
+from .models import telegram_connection as telegram_connection_model
 from sqlalchemy import text
 
 def apply_schema_updates():
@@ -237,8 +239,40 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(50);"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent VARCHAR(255);"))
         conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS request_url VARCHAR(255);"))
+        # Keep legacy production databases aligned with the full AuditLog ORM.
+        # CREATE TABLE IF NOT EXISTS does not add columns to an existing table,
+        # so every audited write would otherwise fail after the model evolves.
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS severity VARCHAR(20) NOT NULL DEFAULT 'INFO';"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS login_method VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS resource_name VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS source VARCHAR(50) NOT NULL DEFAULT 'WEB';"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS category VARCHAR(50) NOT NULL DEFAULT 'Administration';"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(100);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_risk VARCHAR(30) NOT NULL DEFAULT 'Internal';"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(100);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_user_id INTEGER;"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_customer_id INTEGER;"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_department VARCHAR(100);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS snapshot_json TEXT;"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS outcome VARCHAR(20) NOT NULL DEFAULT 'SUCCESS';"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS duration_ms INTEGER;"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS browser VARCHAR(100);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS os VARCHAR(100);"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS device_type VARCHAR(50) NOT NULL DEFAULT 'Desktop';"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS is_new_ip BOOLEAN NOT NULL DEFAULT FALSE;"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS is_new_device BOOLEAN NOT NULL DEFAULT FALSE;"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_business_unit ON audit_logs (business_unit);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_customer_id ON audit_logs (customer_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_severity ON audit_logs (severity);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_resource_name ON audit_logs (resource_name);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_source ON audit_logs (source);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_category ON audit_logs (category);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_session_id ON audit_logs (session_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_ip_risk ON audit_logs (ip_risk);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_correlation_id ON audit_logs (correlation_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_target_user_id ON audit_logs (target_user_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_target_customer_id ON audit_logs (target_customer_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_target_department ON audit_logs (target_department);"))
 
         # Add remark_type and description to performance_settings
         conn.execute(text("ALTER TABLE performance_settings ADD COLUMN IF NOT EXISTS remark_type VARCHAR(20) NOT NULL DEFAULT 'Bonus'"))
@@ -323,7 +357,6 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ"))
         conn.execute(text("UPDATE projects SET last_activity_at = COALESCE(updated_at, created_at, now()) WHERE last_activity_at IS NULL"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_last_activity_at ON projects (last_activity_at)"))
-
         # ── Portal refresh sessions (Phase 1 persistent login) ──
         # Opaque refresh tokens are stored hashed; the raw token lives only in
         # the HttpOnly cookie. No rotation in Phase 1.
@@ -339,6 +372,77 @@ def apply_schema_updates():
             )
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens (user_id)"))
+        # ── Telegram integration (Leave Request notifications) ──
+        # Store the Telegram chat_id of the admin/super_admin account so the
+        # backend can send them Leave Request notifications. Nullable because
+        # not every admin/super_admin will have connected Telegram.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_telegram_chat_id_unique "
+            "ON users (telegram_chat_id) WHERE telegram_chat_id IS NOT NULL"
+        ))
+        # Short-lived, single-use connection tokens used to link an account to
+        # a Telegram chat (see models/telegram_connection.py).
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS telegram_connections (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+                token VARCHAR(64) UNIQUE NOT NULL,
+                expires_at TIMESTAMPTZ,
+                used BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_telegram_connections_user_id ON telegram_connections (user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_telegram_connections_token ON telegram_connections (token)"))
+
+        # ── Project Template: Task Cha MandayEST, Task Con Skill Solution/Vendor ──
+        conn.execute(text(
+            "ALTER TABLE project_template_task_groups ADD COLUMN IF NOT EXISTS manday_est NUMERIC(5,2)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_template_tasks ALTER COLUMN manday_est TYPE NUMERIC(5,2)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_template_tasks ADD COLUMN IF NOT EXISTS skill_solution_id INTEGER"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_template_tasks ADD COLUMN IF NOT EXISTS skill_vendor_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'project_template_tasks_skill_solution_id_fkey'
+                      AND conrelid = 'project_template_tasks'::regclass
+                ) THEN
+                    ALTER TABLE project_template_tasks
+                    ADD CONSTRAINT project_template_tasks_skill_solution_id_fkey
+                    FOREIGN KEY (skill_solution_id) REFERENCES groups(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'project_template_tasks_skill_vendor_id_fkey'
+                      AND conrelid = 'project_template_tasks'::regclass
+                ) THEN
+                    ALTER TABLE project_template_tasks
+                    ADD CONSTRAINT project_template_tasks_skill_vendor_id_fkey
+                    FOREIGN KEY (skill_vendor_id) REFERENCES skills(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -974,6 +1078,7 @@ app.include_router(chat_ai.router,              prefix="/api")
 app.include_router(project_templates_router.router, prefix="/api")
 app.include_router(system_audit.router,         prefix="/api")
 app.include_router(notifications_router.router, prefix="/api/notifications")
+app.include_router(telegram_router.router,      prefix="/api/telegram")
 
 @app.get("/health")
 @app.get("/api/health")

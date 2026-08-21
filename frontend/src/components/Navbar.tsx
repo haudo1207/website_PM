@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin } from '@/lib/auth';
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getWorkspaces } from '@/lib/api';
+import { getWorkspaces, getMe } from '@/lib/api';
 import { brand } from '@/lib/brand';
 
 // Rendered once for the desktop sidebar and once for the mobile drawer —
@@ -15,10 +15,13 @@ import { brand } from '@/lib/brand';
 // it ends up pointing at whichever instance mounted last, so a click inside
 // the *other* instance's dropdown reads as "outside" and closes the menu
 // before the Link's navigation can fire.
-function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void }) {
+function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const currentWs = workspaces.find((w: any) => w.code === currentWsCode);
+  // Leader/Member/Viewer: the assigned Workspace is authoritative and fixed —
+  // the switcher becomes a static label (no dropdown, no way to switch).
+  const fixedWs = fixedWsCode ? (workspaces.find((w: any) => w.code === fixedWsCode) || { name: fixedWsCode }) : null;
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -29,6 +32,23 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate }: { workspac
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  if (fixedWs) {
+    return (
+      <div className="relative mb-2" ref={ref}>
+        <div
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60"
+          title={`Workspace cố định: ${fixedWs.name}`}
+        >
+          <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🗂️</span>
+          <span className="flex-1 min-w-0 text-left">
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspace</span>
+            <span className="block text-[12.5px] font-bold text-white truncate">{fixedWs.name}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative mb-2" ref={ref}>
@@ -84,6 +104,20 @@ function NavbarContent() {
     staleTime: 5 * 60_000,
   });
   const workspaces = workspacesData || [];
+
+  // The authoritative Workspace assignment comes from the backend
+  // (GET /users/me → data_scope). Leader/Member/Viewer have their Workspace
+  // fixed to that assignment; only Super Admin keeps the selectable dropdown.
+  const { data: meData } = useQuery({
+    queryKey: ['me-profile'],
+    queryFn: () => getMe(),
+    staleTime: 5 * 60_000,
+  });
+  const effectiveRole = meData?.role || getRole() || '';
+  const isFullAccessUser = effectiveRole === 'super_admin' || effectiveRole === 'admin';
+  const fixedWsCode = !isFullAccessUser && meData?.data_scope && meData.data_scope !== 'all'
+    ? meData.data_scope
+    : null;
 
   useEffect(() => {
     setName(getName() ?? '');
@@ -183,7 +217,7 @@ function NavbarContent() {
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
 
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} />
 
           {/* Dashboard single link */}
           {(() => {
@@ -293,7 +327,7 @@ function NavbarContent() {
 
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} onNavigate={() => setMobileMenuOpen(false)} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onNavigate={() => setMobileMenuOpen(false)} />
           {renderProjectsLink(() => setMobileMenuOpen(false))}
 
           {nav.map(n => {

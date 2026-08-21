@@ -601,6 +601,18 @@ export const getSessionTimeline = (sessionId: string) =>
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);
 
+// Telegram connection (Leave Request notifications)
+export interface TelegramStatus {
+  connected: boolean;
+  enabled: boolean;
+}
+export const getTelegramStatus = () =>
+  api.get<TelegramStatus>('/telegram/status').then(r => r.data);
+export const generateTelegramConnectUrl = () =>
+  api.post<{ url: string }>('/telegram/connect').then(r => r.data);
+export const disconnectTelegram = () =>
+  api.post<{ connected: boolean }>('/telegram/disconnect').then(r => r.data);
+
 // Notifications
 export const remindLeader = (taskId: number, message?: string) =>
   api.post('/notifications/remind', { task_id: taskId, message }).then(r => r.data);

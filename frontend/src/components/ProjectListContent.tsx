@@ -217,7 +217,11 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   }, [customers, projects]);
 
   const uniquePms = useMemo(() => {
-    return Array.from(new Set(projects.map(p => p.pm_name).filter(Boolean)));
+    const names: string[] = [];
+    projects.forEach(p => {
+      (p.pm_name || '').split(',').map((s: string) => s.trim()).filter((s: string) => s).forEach((n: string) => names.push(n));
+    });
+    return Array.from(new Set(names)).sort();
   }, [projects]);
 
   const uniqueSales = useMemo(() => {
@@ -237,8 +241,12 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       if (Array.isArray(p.members)) {
         p.members.forEach((m: any) => { if (m?.name) names.push(m.name); });
       }
-      if (p.pm_name) names.push(p.pm_name);
-      if (p.technical_leader_name) names.push(p.technical_leader_name);
+      if (p.pm_name) {
+        p.pm_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
+      if (p.technical_leader_name) {
+        p.technical_leader_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
+      }
       if (p.sales_name) {
         p.sales_name.split(',').map((s: string) => s.trim()).filter(Boolean).forEach((n: string) => names.push(n));
       }
@@ -268,7 +276,8 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
         (paramCustId && String(p.customer_id) === String(paramCustId));
-      const matchPm = pmFilter === 'All' || p.pm_name === pmFilter;
+      const matchPm = pmFilter === 'All' ||
+        (p.pm_name || '').split(',').map((s: string) => s.trim()).includes(pmFilter);
       const matchSales = salesFilter === 'All' ||
         (p.sales_name || '').split(',').map((s: string) => s.trim()).includes(salesFilter);
       const matchMember = memberFilter === 'All' || (() => {
@@ -276,8 +285,8 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         const projMemberNames: string[] = [];
         if (p.member_names) projMemberNames.push(...p.member_names.split(',').map((s: string) => s.trim()));
         if (Array.isArray(p.members)) p.members.forEach((m: any) => { if (m?.name) projMemberNames.push(m.name); });
-        if (p.pm_name) projMemberNames.push(p.pm_name);
-        if (p.technical_leader_name) projMemberNames.push(p.technical_leader_name);
+        if (p.pm_name) projMemberNames.push(...p.pm_name.split(',').map((s: string) => s.trim()));
+        if (p.technical_leader_name) projMemberNames.push(...p.technical_leader_name.split(',').map((s: string) => s.trim()));
         if (p.sales_name) projMemberNames.push(...p.sales_name.split(',').map((s: string) => s.trim()));
         return projMemberNames.some(name => name.toLowerCase() === mLower);
       })();

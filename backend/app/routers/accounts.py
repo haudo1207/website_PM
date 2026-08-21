@@ -7,8 +7,11 @@ from ..config import settings
 from ..models.member import Member
 from ..models.user import User
 from ..utils.access import (
+    ALL_SCOPE,
     default_scope,
     is_valid_scope,
+    member_query_for_user,
+    user_allowed_scopes,
     valid_data_scopes,
     VALID_ROLES,
     ROLE_SUPER_ADMIN,
@@ -66,6 +69,20 @@ def _leader_guard(caller: User, target: User, action: str = "thao tác") -> None
         raise HTTPException(403, f"Leader không có quyền {action} tài khoản này.")
 
 
+def _leader_scope_guard(db: Session, caller: User, target: User) -> None:
+    """A Leader may only operate on accounts assigned to their own
+    Workspace(s). Super Admin accounts are already blocked by _leader_guard;
+    this closes the remaining hole where a Leader could reach a Member/Viewer
+    account of another Workspace by guessing its ID."""
+    if caller.role != ROLE_LEADER:
+        return
+    scopes = user_allowed_scopes(db, caller)
+    if scopes == ALL_SCOPE:
+        return
+    if (target.data_scope or "").strip().lower() not in scopes:
+        raise HTTPException(403, "Leader chỉ được thao tác tài khoản trong Workspace của mình.")
+
+
 def _ensure_leader_allowed_role(caller: User, role: str) -> None:
     if caller.role == ROLE_LEADER and role not in LEADER_MANAGED_ROLES:
         raise HTTPException(403, "Leader chỉ có quyền gán role Member hoặc Viewer.")
@@ -109,16 +126,28 @@ def account_to_dict(u: User) -> dict:
 @router.get("")
 def list_accounts(db: Session = Depends(get_db), caller=Depends(require_manager)):
     query = db.query(User)
+    if getattr(caller, "role", None) == ROLE_LEADER:
+        # Leader scope: only Leader/Member/Viewer accounts assigned to the
+        # Leader's own Workspace(s). Super Admin accounts are NEVER visible
+        # to a Leader, regardless of Workspace — enforced server-side, so it
+        # cannot be bypassed through query parameters or filters.
+        query = query.filter(~User.role.in_(SUPER_ADMIN_ROLES))
+        scopes = user_allowed_scopes(db, caller)
+        if scopes != ALL_SCOPE:
+            query = query.filter(User.data_scope.in_(scopes))
     users = query.order_by(User.id.asc()).all()
     return [account_to_dict(u) for u in users]
 
 
 @router.get("/available-members")
-def available_members(db: Session = Depends(get_db), _=Depends(require_manager)):
+def available_members(db: Session = Depends(get_db), caller=Depends(require_manager)):
+    query = db.query(Member)
+    if getattr(caller, "role", None) == ROLE_LEADER:
+        # Leader may only link Members belonging to their own Workspace(s).
+        query = query.filter(Member.id.in_(member_query_for_user(db, caller).with_entities(Member.id)))
     linked_ids = [
         uid for (uid,) in db.query(User.member_id).filter(User.member_id.isnot(None)).all()
     ]
-    query = db.query(Member)
     if linked_ids:
         query = query.filter(~Member.id.in_(linked_ids))
     members = query.order_by(Member.display_name.asc()).all()
@@ -159,6 +188,13 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
         raise HTTPException(400, "Microsoft Mail đã tồn tại.")
 
     _ensure_leader_allowed_role(caller, role)
+    if caller.role == ROLE_LEADER:
+        # A Leader may only create accounts inside their own Workspace(s);
+        # the assigned Workspace is authoritative and cannot be overridden
+        # through the request body.
+        scopes = user_allowed_scopes(db, caller)
+        if scopes != ALL_SCOPE and data_scope not in scopes:
+            raise HTTPException(403, "Leader chỉ được tạo tài khoản trong Workspace của mình.")
 
     if member_id is not None:
         member = db.query(Member).filter(Member.id == member_id).first()
@@ -207,6 +243,7 @@ def update_account(
 ):
     account = require_account(db, account_id)
     _leader_guard(caller, account, "chỉnh sửa")
+    _leader_scope_guard(db, caller, account)
 
     old_dict = {
         "email": account.email,
@@ -279,6 +316,11 @@ def update_account(
         data_scope = str(body["data_scope"]).strip().lower()
         if not is_valid_scope(db, data_scope):
             raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(valid_data_scopes(db))}")
+        if caller.role == ROLE_LEADER:
+            # A Leader may only assign a Workspace they are allowed to access.
+            scopes = user_allowed_scopes(db, caller)
+            if scopes != ALL_SCOPE and data_scope not in scopes:
+                raise HTTPException(403, "Leader chỉ được gán Workspace trong phạm vi của mình.")
         if is_bootstrap_superadmin(account) and data_scope != "all":
             raise HTTPException(400, "The bootstrap super-admin must retain access to all data.")
         account.data_scope = data_scope
@@ -313,6 +355,7 @@ def reset_password(account_id: int, body: dict, db: Session = Depends(get_db), c
         raise HTTPException(403, "Password login is disabled.")
     account = require_account(db, account_id)
     _leader_guard(caller, account, "đặt lại mật khẩu")
+    _leader_scope_guard(db, caller, account)
     new_password = str(body.get("password") or "")
     validate_password(new_password)
     account.hashed_pw = hash_password(new_password)
@@ -335,6 +378,7 @@ def lock_account(
 ):
     account = require_account(db, account_id)
     _leader_guard(caller, account, "khóa")
+    _leader_scope_guard(db, caller, account)
     if is_bootstrap_superadmin(account):
         raise HTTPException(400, "The bootstrap super-admin cannot be locked.")
     if caller.id == account.id:
@@ -356,6 +400,7 @@ def lock_account(
 def unlock_account(account_id: int, db: Session = Depends(get_db), caller=Depends(require_manager)):
     account = require_account(db, account_id)
     _leader_guard(caller, account, "mở khóa")
+    _leader_scope_guard(db, caller, account)
     account.is_active = True
     db.commit()
     AuditService.record(
@@ -376,6 +421,7 @@ def delete_account(
 ):
     account = require_account(db, account_id)
     _leader_guard(caller, account, "xóa")
+    _leader_scope_guard(db, caller, account)
     if is_bootstrap_superadmin(account):
         raise HTTPException(400, "The bootstrap super-admin cannot be deleted.")
     if caller.id == account.id:

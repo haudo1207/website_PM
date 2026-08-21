@@ -4,7 +4,7 @@ System Audit Router — Global System Audit Dashboard APIs for Admins.
 import csv
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -30,17 +30,17 @@ def get_system_audit_stats(
     db: Session = Depends(get_db)
 ):
     """Returns summary stats counts (Create, Update, Delete, AI Check, Login, Failed Login)."""
-    now = datetime.datetime.now()
+    now = datetime.now()
     q = db.query(AuditLog)
 
     if period == "today":
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         q = q.filter(AuditLog.created_at >= today_start)
     elif period == "7days":
-        seven_days_ago = now - datetime.timedelta(days=7)
+        seven_days_ago = now - timedelta(days=7)
         q = q.filter(AuditLog.created_at >= seven_days_ago)
     elif period == "30days":
-        thirty_days_ago = now - datetime.timedelta(days=30)
+        thirty_days_ago = now - timedelta(days=30)
         q = q.filter(AuditLog.created_at >= thirty_days_ago)
     elif period == "custom" and (start_date or end_date):
         if start_date:

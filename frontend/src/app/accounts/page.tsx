@@ -572,7 +572,7 @@ export default function AccountsPage() {
                   {workspaces.map(ws => (
                     <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
                   ))}
-                  <option value="all">All — Tất cả dự án</option>
+                  {!isLeaderUser && <option value="all">All — Tất cả dự án</option>}
                 </select>
               </div>
 
@@ -674,7 +674,7 @@ export default function AccountsPage() {
                   {workspaces.map(ws => (
                     <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
                   ))}
-                  <option value="all">All — Tất cả dự án</option>
+                  {!isLeaderUser && <option value="all">All — Tất cả dự án</option>}
                 </select>
               </div>
             </form>

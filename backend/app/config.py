@@ -1,8 +1,29 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _env_file() -> str:
+    """Locate the real `.env` file.
+
+    The backend can be launched from different working directories (e.g.
+    `cd backend && uvicorn ...` locally vs `WORKDIR /app` in Docker), but the
+    canonical environment file lives at the repository root. We prefer that
+    file so the actual `.env` (never `.env.example`) is always used no matter
+    where the process is started.
+    """
+    root_env = Path(__file__).resolve().parent.parent.parent / ".env"
+    if root_env.is_file():
+        return str(root_env)
+    return ".env"
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_env_file(),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     DATABASE_URL: str = "sqlite:///./app.db"
     SECRET_KEY: str = "default-development-secret-key-change-in-env"
@@ -62,8 +83,24 @@ class Settings(BaseSettings):
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
 
-    # n8n Integration Webhook Secret
-    N8N_WEBHOOK_SECRET: str = ""
+    # Telegram Bot integration (Leave Request notifications)
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_WEBHOOK_SECRET: str = ""
+    # Optional: a Telegram group/supergroup chat id (e.g. -1001234567890).
+    # Leave Request notifications are sent to this group (exactly once) instead
+    # of being sent individually to each admin/super_admin's personal chat.
+    TELEGRAM_GROUP_CHAT_ID: str | None = None
+    # Public base URL used to build the "View Leave Request" deep link in
+    # Telegram notifications. Falls back to FRONTEND_URL when not set.
+    APP_BASE_URL: str = ""
+
+    @property
+    def telegram_base_url(self) -> str:
+        return (self.APP_BASE_URL or self.FRONTEND_URL or "").rstrip("/")
+
+    @property
+    def is_telegram_enabled(self) -> bool:
+        return bool(self.TELEGRAM_BOT_TOKEN)
 
     @property
     def superadmin_emails(self) -> set[str]:
