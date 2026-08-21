@@ -85,6 +85,37 @@ export const CYCLE_TEMPLATE: Record<number, { startMd: string; endMd: string; st
   12: { startMd: '11-23', endMd: '12-20', startYo: 0, endYo: 0 },
 };
 
+export function parseDateString(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  const str = String(val).trim();
+  if (!str) return null;
+
+  // Case 1: YYYY-MM-DD or YYYY/MM/DD
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(str)) {
+    const parts = str.split(/[-/]/);
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const date = new Date(y, m, d);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  // Case 2: DD/MM/YYYY or DD-MM-YYYY or DD/MM/YY or DD-MM-YY
+  const slashOrHyphen = str.split(/[-/]/);
+  if (slashOrHyphen.length === 3) {
+    const d = parseInt(slashOrHyphen[0], 10);
+    const m = parseInt(slashOrHyphen[1], 10) - 1;
+    let y = parseInt(slashOrHyphen[2], 10);
+    if (y < 100) y += 2000;
+    const date = new Date(y, m, d);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(str);
+  return isNaN(date.getTime()) ? null : date;
+}
+
 export function calculateDaysLate(task: any): number {
   if (!task) return 0;
   const status = (task.status || '').toLowerCase();
@@ -92,7 +123,7 @@ export function calculateDaysLate(task: any): number {
     return 0;
   }
 
-  const endEstStr = task.end_date_est;
+  const endEstStr = task.end_date_est || task.end_date || task.deadline;
   if (!endEstStr) {
     return typeof task.days_late === 'number' && task.days_late > 0 ? task.days_late : 0;
   }
@@ -100,8 +131,8 @@ export function calculateDaysLate(task: any): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const endEst = new Date(endEstStr);
-  if (isNaN(endEst.getTime())) {
+  const endEst = parseDateString(endEstStr);
+  if (!endEst) {
     return typeof task.days_late === 'number' && task.days_late > 0 ? task.days_late : 0;
   }
   endEst.setHours(0, 0, 0, 0);

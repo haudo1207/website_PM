@@ -183,8 +183,8 @@ def list_members(
     q_assigned = db.query(
         Task.assigned_id.label('member_id'),
         Task.kpi_assigned.label('kpi_final'),
-        (Task.manday_actual * Task.kpi_ratio_assign / 100.0).label('manday_actual'),
-        (Task.manday_est * Task.kpi_ratio_assign / 100.0).label('manday_est'),
+        func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
+        func.coalesce(Task.manday_est, 0.0).label('manday_est'),
         (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
         Task.id.label('task_id')
     ).filter(
@@ -196,8 +196,8 @@ def list_members(
     q_support = db.query(
         Task.support_id.label('member_id'),
         Task.kpi_support.label('kpi_final'),
-        (Task.manday_actual * Task.kpi_ratio_support / 100.0).label('manday_actual'),
-        (Task.manday_est * Task.kpi_ratio_support / 100.0).label('manday_est'),
+        func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
+        func.coalesce(Task.manday_est, 0.0).label('manday_est'),
         (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
         Task.id.label('task_id')
     ).filter(

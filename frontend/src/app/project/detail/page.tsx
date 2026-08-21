@@ -4379,26 +4379,28 @@ function ProjectDetailContent() {
                       {overdueTasksList.length === 0 ? (
                         <p className="text-xs text-slate-500 italic text-center py-6">Không có task trễ hạn.</p>
                       ) : (
-                        <div className="overflow-x-auto custom-scrollbar">
+                        <div className="max-h-[320px] overflow-y-auto overflow-x-auto custom-scrollbar rounded-lg border border-slate-100">
                           <table className="w-full text-xs text-left border-collapse">
-                            <thead>
+                            <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_#e2e8f0]">
                               <tr className="border-b border-slate-100 text-slate-400 uppercase text-[9px] font-extrabold tracking-wider bg-slate-50">
-                                <th className="px-4 py-2">Tên Task</th>
-                                <th className="px-4 py-2">Người phụ trách</th>
-                                <th className="px-4 py-2 text-center">Độ ưu tiên</th>
-                                <th className="px-4 py-2 text-center">Hạn chót</th>
-                                <th className="px-4 py-2 text-center">Số ngày trễ</th>
+                                <th className="px-4 py-2 bg-slate-50">Tên Task</th>
+                                <th className="px-4 py-2 bg-slate-50">Người phụ trách</th>
+                                <th className="px-4 py-2 text-center bg-slate-50">Độ ưu tiên</th>
+                                <th className="px-4 py-2 text-center bg-slate-50">Hạn chót</th>
+                                <th className="px-4 py-2 text-center bg-slate-50">Số ngày trễ</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                               {overdueTasksList.map((t: any) => {
                                 const prio = (t.priority || 'Normal').toUpperCase();
-                                const dlStr = t.end_date_est ? t.end_date_est.split('-').reverse().slice(0, 2).join('/') : '—';
+                                const rawDl = t.end_date_est || t.end_date || t.deadline || '';
+                                const dlStr = rawDl ? formatDateToShow(rawDl) : '—';
+                                const taskTitle = t.detail_task || t.detail || t.name || 'Nhiệm vụ không tên';
                                 const initials = (t.assigned_name || '??').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
                                 return (
                                   <tr key={t.id} className="hover:bg-red-50/30 transition-colors">
-                                    <td className="px-4 py-3 font-bold text-[#0b1c30] max-w-[300px] break-words">
-                                      {t.detail_task}
+                                    <td className="px-4 py-3 font-bold text-[#0b1c30] max-w-[320px] break-words leading-relaxed" title={taskTitle}>
+                                      {taskTitle}
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap">
                                       {t.assigned_name ? (

@@ -74,9 +74,17 @@ export default function ReportTab() {
     const token = getToken();
     const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
 
+    let memberApiUrl = `/api/members?_t=${ts}`;
+    if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+      memberApiUrl += `&month=${selectedMonth}`;
+    }
+    if (selectedYear !== 'all' && typeof selectedYear === 'number') {
+      memberApiUrl += `&year=${selectedYear}`;
+    }
+
     const [userRes, membersRes, tasksRes] = await Promise.all([
       axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: {} })),
-      axios.get(`/api/members?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(memberApiUrl, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
     ]);
 
@@ -118,10 +126,10 @@ export default function ReportTab() {
       realMemberData: matched,
       rawMyTasks: myTasks,
     };
-  }, []);
+  }, [selectedMonth, selectedYear]);
 
   const { data: reportData, isFetching: loadingReal, refetch: refetchReport } = useQuery({
-    queryKey: ['dashboard-report'],
+    queryKey: ['dashboard-report', selectedMonth, selectedYear],
     queryFn: fetchReportData,
     staleTime: 2 * 60_000,
   });
@@ -129,6 +137,12 @@ export default function ReportTab() {
   const currentUserProfile = reportData?.currentUserProfile ?? null;
   const realMemberData = reportData?.realMemberData ?? null;
   const rawMyTasks: any[] = reportData?.rawMyTasks || [];
+
+  const getMyTaskManday = useCallback((t: any) => {
+    const isDone = t.status === 'Done' || t.status === 'done';
+    if (!isDone) return 0;
+    return (t.manday_actual || t.manday_est || 0);
+  }, []);
 
   const getMyTaskKpi = useCallback((t: any) => {
     const isDone = t.status === 'Done' || t.status === 'done';
@@ -285,7 +299,7 @@ export default function ReportTab() {
     });
 
     filteredTasks.forEach((t: any) => {
-      mandayTotal += (t.manday_actual || t.manday_est || 0);
+      mandayTotal += getMyTaskManday(t);
       
       const isDone = t.status === 'Done' || t.status === 'done';
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
@@ -346,13 +360,16 @@ export default function ReportTab() {
         progress: p.tasks > 0 ? Math.round((p.done / p.tasks) * 100) : 0
       }));
 
+    const finalManday = typeof realMemberData?.manday_total === 'number' ? Math.round(realMemberData.manday_total * 10) / 10 : Math.round(mandayTotal * 10) / 10;
+    const finalKpi = typeof realMemberData?.kpi_total === 'number' ? Math.round(realMemberData.kpi_total * 10) / 10 : Math.round(dynamicKpi * 10) / 10;
+
     const stats = {
       total: filteredTasks.length,
       done: doneCount,
       inProgress: inProgressCount,
       overdue: overdueCount,
-      manday: Math.round(mandayTotal * 10) / 10,
-      kpi: Math.round(dynamicKpi * 10) / 10
+      manday: finalManday,
+      kpi: finalKpi
     };
 
     const kpiPoints = dynamicKpi;
