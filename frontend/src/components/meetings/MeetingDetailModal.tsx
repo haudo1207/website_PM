@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib/api';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import { useQueryClient } from '@tanstack/react-query';
 
 interface MeetingDetailModalProps {
@@ -848,27 +849,25 @@ export default function MeetingDetailModal({
 
                 {tasksList.length > 0 && (
                   <div className="flex flex-wrap items-center gap-3">
-                    {/* Global Apply Project Selector */}
+                    {/* Global Apply Project SearchableSelect */}
                     {projectsList.length > 0 && (
-                      <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold text-[#475569]">
-                        <FolderPlus size={14} className="text-[#6366f1]" />
-                        <span className="hidden sm:inline">Gán tất cả vào:</span>
-                        <select
-                          onChange={(e) => {
-                            const pid = Number(e.target.value);
+                      <div className="flex items-center gap-1.5 min-w-[200px]">
+                        <span className="hidden sm:inline text-xs font-semibold text-[#475569] shrink-0">Gán tất cả:</span>
+                        <SearchableSelect
+                          label="dự án"
+                          options={projectsList.map((p) => ({ id: p.id, name: p.name }))}
+                          value=""
+                          onChange={(val: any) => {
+                            const pid = Number(val);
                             if (!pid) return;
                             const updated: Record<number, number> = {};
                             tasksList.forEach((_, i) => { updated[i] = pid; });
                             setTaskProjectsMap(updated);
                           }}
-                          className="bg-white border border-[#cbd5e1] rounded-lg px-2 py-1 text-xs font-bold text-[#0b1c30] focus:outline-none focus:border-[#6366f1]"
-                          defaultValue=""
-                        >
-                          <option value="" disabled>-- Chọn dự án chung --</option>
-                          {projectsList.map((p) => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))}
-                        </select>
+                          placeholder="Gõ tìm & gán tất cả..."
+                          searchThreshold={0}
+                          className="w-48 sm:w-56"
+                        />
                       </div>
                     )}
 
@@ -911,24 +910,21 @@ export default function MeetingDetailModal({
                             <span>👤 Người thực hiện: <b className="text-[#0b1c30]">{t.owner || t.assigned_name || creatorName}</b></span>
                             {t.deadline && <span>📅 Hạn chót: <b className="text-[#0b1c30]">{t.deadline}</b></span>}
 
-                            {/* Per-task Project Selector */}
-                            <div className="flex items-center gap-1.5 bg-[#f1f5f9] px-2.5 py-1 rounded-lg border border-[#e2e8f0] flex-shrink-0">
-                              <span className="text-[11px] font-bold text-[#475569]">📁 Dự án:</span>
-                              <select
+                            {/* Per-task Searchable Project Selector */}
+                            <div className="flex items-center gap-1.5 min-w-[200px]">
+                              <span className="text-[11px] font-bold text-[#475569] shrink-0">📁 Dự án:</span>
+                              <SearchableSelect
+                                label="dự án"
+                                options={projectsList.map((p) => ({ id: p.id, name: p.name }))}
                                 value={currentTaskProjectId}
-                                onChange={(e) => {
-                                  const pid = Number(e.target.value);
+                                onChange={(val: any) => {
+                                  const pid = Number(val);
                                   setTaskProjectsMap(prev => ({ ...prev, [idx]: pid }));
                                 }}
-                                className="bg-white border border-[#cbd5e1] rounded-md px-2 py-0.5 text-xs font-bold text-[#0b1c30] focus:outline-none focus:border-[#6366f1]"
-                              >
-                                <option value="">-- Chọn dự án --</option>
-                                {projectsList.map((p) => (
-                                  <option key={p.id} value={p.id}>
-                                    {p.name}
-                                  </option>
-                                ))}
-                              </select>
+                                placeholder="Gõ tìm dự án..."
+                                searchThreshold={0}
+                                className="w-48 sm:w-56"
+                              />
                             </div>
                           </div>
                         </div>
