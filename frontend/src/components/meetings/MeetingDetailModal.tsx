@@ -46,12 +46,26 @@ export default function MeetingDetailModal({
 
   const [toastText, setToastText] = useState<string | null>(null);
 
+  // Per-task project selection and check state
+  const [taskProjectsMap, setTaskProjectsMap] = useState<Record<number, number>>({});
+  const [taskCheckedMap, setTaskCheckedMap] = useState<Record<number, boolean>>({});
+
   // Local State for Instant UI Feedback
   const [localProjectName, setLocalProjectName] = useState('');
   const [localProjectId, setLocalProjectId] = useState<number | null>(null);
   const [localMembers, setLocalMembers] = useState<any[]>([]);
 
   const creatorName = meeting?.creator_name || meeting?.creator?.display_name || meeting?.created_by_name || 'Host mkt.szone';
+
+  // Auto fetch projects list when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      getProjects().then((res: any) => {
+        const items = res?.data || res || [];
+        if (Array.isArray(items)) setProjectsList(items);
+      }).catch(console.error);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (meeting) {
@@ -220,10 +234,30 @@ export default function MeetingDetailModal({
       alert("Cuộc họp này chưa có Task AI đề xuất để push!");
       return;
     }
+
+    const tasksToPush = tasksList
+      .map((t: any, idx: number) => {
+        const selectedPid = taskProjectsMap[idx] || localProjectId || meeting.project_id || (projectsList[0]?.id);
+        const selectedProj = projectsList.find((p: any) => p.id === selectedPid);
+        return {
+          ...t,
+          project_id: selectedPid,
+          project_name: selectedProj?.name || t.project_name || localProjectName,
+          checked: taskCheckedMap[idx] !== false
+        };
+      })
+      .filter((t: any) => t.checked);
+
+    if (tasksToPush.length === 0) {
+      alert("Vui lòng chọn ít nhất 1 task để đẩy vào dự án.");
+      return;
+    }
+
     setIsPushing(true);
     try {
-      await pushMeetingTasks(meeting.id, tasksList);
+      await pushMeetingTasks(meeting.id, tasksToPush);
       setPushedSuccess(true);
+      triggerToast(`✓ Đã đẩy ${tasksToPush.length} task vào dự án thành công!`);
       setTimeout(() => setPushedSuccess(false), 3000);
     } catch (err: any) {
       alert(err.response?.data?.detail || "Có lỗi khi push task vào dự án");
@@ -803,24 +837,50 @@ export default function MeetingDetailModal({
             </div>
           )}
 
-          {/* TAB 3: TASK ĐỀ XUẤT (DEDICATED FULL VIEW WITH PUSH TASK BUTTON) */}
+          {/* TAB 3: TASK ĐỀ XUẤT (DEDICATED FULL VIEW WITH PER-TASK PROJECT SELECTOR & PUSH BUTTON) */}
           {activeTab === 'tasks' && (
             <div className="bg-white rounded-2xl p-6 border border-[#e2e8f0] shadow-2xs space-y-6">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
                 <div className="flex items-center gap-2 text-[#6366f1]">
                   <ListTodo size={20} />
                   <h3 className="text-base font-extrabold text-[#0b1c30]">Task Đề Xuất Từ AI ({tasksList.length})</h3>
                 </div>
 
                 {tasksList.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handlePushTasks}
-                    disabled={isPushing}
-                    className="px-5 py-2.5 bg-[#6366f1] hover:bg-[#4f46e5] disabled:bg-slate-300 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
-                  >
-                    {isPushing ? 'Đang push task...' : pushedSuccess ? '✓ Đã push task thành công!' : '📥 Đẩy toàn bộ Task vào Dự án'}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Global Apply Project Selector */}
+                    {projectsList.length > 0 && (
+                      <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold text-[#475569]">
+                        <FolderPlus size={14} className="text-[#6366f1]" />
+                        <span className="hidden sm:inline">Gán tất cả vào:</span>
+                        <select
+                          onChange={(e) => {
+                            const pid = Number(e.target.value);
+                            if (!pid) return;
+                            const updated: Record<number, number> = {};
+                            tasksList.forEach((_, i) => { updated[i] = pid; });
+                            setTaskProjectsMap(updated);
+                          }}
+                          className="bg-white border border-[#cbd5e1] rounded-lg px-2 py-1 text-xs font-bold text-[#0b1c30] focus:outline-none focus:border-[#6366f1]"
+                          defaultValue=""
+                        >
+                          <option value="" disabled>-- Chọn dự án chung --</option>
+                          {projectsList.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handlePushTasks}
+                      disabled={isPushing}
+                      className="px-5 py-2.5 bg-[#6366f1] hover:bg-[#4f46e5] disabled:bg-slate-300 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
+                    >
+                      {isPushing ? 'Đang push task...' : pushedSuccess ? '✓ Đã push task thành công!' : '📥 Đẩy task đã chọn vào Dự án'}
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -834,21 +894,55 @@ export default function MeetingDetailModal({
                       ? 'bg-blue-100 text-blue-800 border-blue-200'
                       : 'bg-emerald-100 text-emerald-800 border-emerald-200';
 
+                    const isChecked = taskCheckedMap[idx] !== false;
+                    const currentTaskProjectId = taskProjectsMap[idx] || localProjectId || meeting.project_id || '';
+
                     return (
-                      <div key={idx} className="p-4 bg-[#f8fafc] border border-[#e2e8f0] rounded-2xl flex items-center justify-between gap-4 hover:border-[#cbd5e1] transition-all">
-                        <div className="space-y-1.5 flex-1 min-w-0">
+                      <div key={idx} className={`p-4 border rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-60 bg-slate-50'}`}>
+                        <div className="space-y-2 flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${pBadge}`}>
                               {priority}
                             </span>
                             <h4 className="font-bold text-[#0b1c30] text-xs sm:text-sm">{t.detail_task || t.title || t.name}</h4>
                           </div>
-                          <div className="flex items-center gap-4 text-xs text-[#64748b] font-medium pt-0.5">
+
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-[#64748b] font-medium pt-0.5">
                             <span>👤 Người thực hiện: <b className="text-[#0b1c30]">{t.owner || t.assigned_name || creatorName}</b></span>
                             {t.deadline && <span>📅 Hạn chót: <b className="text-[#0b1c30]">{t.deadline}</b></span>}
+
+                            {/* Per-task Project Selector */}
+                            <div className="flex items-center gap-1.5 bg-[#f1f5f9] px-2.5 py-1 rounded-lg border border-[#e2e8f0] flex-shrink-0">
+                              <span className="text-[11px] font-bold text-[#475569]">📁 Dự án:</span>
+                              <select
+                                value={currentTaskProjectId}
+                                onChange={(e) => {
+                                  const pid = Number(e.target.value);
+                                  setTaskProjectsMap(prev => ({ ...prev, [idx]: pid }));
+                                }}
+                                className="bg-white border border-[#cbd5e1] rounded-md px-2 py-0.5 text-xs font-bold text-[#0b1c30] focus:outline-none focus:border-[#6366f1]"
+                              >
+                                <option value="">-- Chọn dự án --</option>
+                                {projectsList.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           </div>
                         </div>
-                        <input type="checkbox" defaultChecked className="w-5 h-5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1]" />
+
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setTaskCheckedMap(prev => ({ ...prev, [idx]: checked }));
+                          }}
+                          className="w-5 h-5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer self-end sm:self-center shrink-0"
+                          title="Chọn task để đẩy vào dự án"
+                        />
                       </div>
                     );
                   })}
