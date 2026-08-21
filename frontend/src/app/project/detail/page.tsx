@@ -9,6 +9,7 @@ import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
+import ProjectResourcesTab from '@/components/ProjectResourcesTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProjectFormModal from '@/components/ProjectFormModal';
 import {
@@ -58,7 +59,7 @@ const getRowPhase = (tabName: string): string => {
   return 'A';
 };
 
-type TabKey = 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs';
+type TabKey = 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs' | 'resources';
 const SLUG_TO_TAB: Record<string, TabKey> = {
   overview: 'overview',
   tasks: 'tasks',
@@ -66,6 +67,7 @@ const SLUG_TO_TAB: Record<string, TabKey> = {
   chats: 'chats',
   members: 'members',
   'audit-logs': 'audit_logs',
+  resources: 'resources',
 };
 const TAB_TO_SLUG: Record<TabKey, string> = {
   overview: 'overview',
@@ -74,6 +76,7 @@ const TAB_TO_SLUG: Record<TabKey, string> = {
   chats: 'chats',
   members: 'members',
   audit_logs: 'audit-logs',
+  resources: 'resources',
 };
 
 function ProjectDetailContent() {
@@ -4142,6 +4145,14 @@ function ProjectDetailContent() {
                 Audit Logs
               </button>
             )}
+            <button
+              onClick={() => router.push(`/project/detail/resources?id=${id}`)}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'resources' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">folder_open</span>
+              Resources
+            </button>
           </div>
 
           {/* MAIN TABS CONTENT AREA */}
@@ -6942,6 +6953,20 @@ function ProjectDetailContent() {
                     } else {
                       router.push(`/project/detail/tasks?id=${id}`);
                     }
+                  }}
+                />
+              )}
+
+              {activeMainTab === 'resources' && (
+                <ProjectResourcesTab
+                  tasks={items || []}
+                  projectName={project?.name || ''}
+                  onNavigateToTask={(taskCodeOrId) => {
+                    const found = items.find(t => t.task_code === taskCodeOrId || String(t.id) === String(taskCodeOrId));
+                    if (found) {
+                      setSelectedTask(found);
+                    }
+                    router.push(`/project/detail/tasks?id=${id}`);
                   }}
                 />
               )}
