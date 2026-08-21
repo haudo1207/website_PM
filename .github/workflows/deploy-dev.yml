@@ -37,6 +37,11 @@ jobs:
               "OUTLOOK_LOGIN_ENABLED": "true",
               "OUTLOOK_CLIENT_ID": "accb9e53-bce9-4828-9bf9-7f655ed19090",
               "OUTLOOK_TENANT_ID": "common",
+              "GOOGLE_CLIENT_ID": "780122821631-42d0p2cons73hn7eonrd605dcmnmemt1.apps.googleusercontent.com",
+              "GOOGLE_CLIENT_SECRET": "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",
+              "GOOGLE_REFRESH_TOKEN": "1//0gc4RYP77PoncCgYIARAAGBASNwF-L9IryEHtLi-sw-gXGHoLGTEQf9PhJDimncDu9wCck2BIGAD7LjIBiPo-3EtE38VOa81lNXA",
+              "GEMINI_API_KEY": "sk-bFe2qMrsoVQMGX2DaxcsZRzcaArE5jUxWHlkNHqGfOodMgDL",
+              "AI_API_KEY": "sk-bFe2qMrsoVQMGX2DaxcsZRzcaArE5jUxWHlkNHqGfOodMgDL",
           }
 
           for path in (Path("/home/webpm/kpi-dev/.env"), Path("/home/webpm/kpi-dev/app.env")):
