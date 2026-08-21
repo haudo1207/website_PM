@@ -300,10 +300,28 @@ def get_shared_google_access_token(db=None) -> str:
     refresh_token = settings.GOOGLE_REFRESH_TOKEN
 
     # If GOOGLE_REFRESH_TOKEN is not set in settings, fallback to database tokens
-    if not refresh_token and db:
-        tok = db.query(GoogleToken).filter(GoogleToken.refresh_token != None, GoogleToken.refresh_token != "").order_by(GoogleToken.id.desc()).first()
-        if tok:
-            refresh_token = tok.refresh_token
+    if not refresh_token:
+        session = db
+        close_session_at_end = False
+        if not session:
+            try:
+                from ..database import SessionLocal
+                session = SessionLocal()
+                close_session_at_end = True
+            except Exception:
+                session = None
+
+        if session:
+            try:
+                tok = session.query(GoogleToken).filter(GoogleToken.refresh_token != None, GoogleToken.refresh_token != "").order_by(GoogleToken.id.desc()).first()
+                if tok:
+                    refresh_token = tok.refresh_token
+                    settings.GOOGLE_REFRESH_TOKEN = refresh_token
+            except Exception as e:
+                logger.warning(f"Error querying GoogleToken from DB: {e}")
+            finally:
+                if close_session_at_end:
+                    session.close()
 
     missing = []
     if not client_id:
@@ -314,7 +332,7 @@ def get_shared_google_access_token(db=None) -> str:
         missing.append("GOOGLE_REFRESH_TOKEN")
 
     if missing:
-        msg = f"Thiếu cấu hình {', '.join(missing)} trong .env"
+        msg = f"Thiếu cấu hình {', '.join(missing)} trong .env hoặc Database. Vui lòng bấm 'Kết nối tài khoản Google Công ty' để cấp lại quyền."
         logger.warning(msg)
         raise ValueError(msg)
 
@@ -413,7 +431,7 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
 
 
 def is_google_connected(db, user_id: int) -> bool:
-    """Check if Google Calendar & Drive API connection is active."""
+    """Check if Google Calendar & Drive API connection is active with valid refresh token."""
     try:
         get_shared_google_access_token(db)
         return True
@@ -421,7 +439,7 @@ def is_google_connected(db, user_id: int) -> bool:
         pass
 
     tokens = _load_google_tokens(db, user_id)
-    if tokens and (tokens.get("refresh_token") or tokens.get("access_token")):
+    if tokens and tokens.get("refresh_token"):
         return True
 
     return False
