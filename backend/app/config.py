@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     # Leave Request notifications are sent to this group (exactly once) instead
     # of being sent individually to each admin/super_admin's personal chat.
     TELEGRAM_GROUP_CHAT_ID: str | None = None
+    TELEGRAM_MESSAGE_THREAD_ID: int | None = 2
     # Public base URL used to build the "View Leave Request" deep link in
     # Telegram notifications. Falls back to FRONTEND_URL when not set.
     APP_BASE_URL: str = ""

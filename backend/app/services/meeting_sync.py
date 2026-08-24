@@ -772,7 +772,7 @@ CẤU TRÚC JSON YÊU CẦU:
 
     raw_text = ""
 
-    if os.environ.get("GEMINI_API_KEY") or (gemini_key and gemini_key.startswith("AIza")):
+    if gemini_key and gemini_key.startswith("AIza"):
         gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
         for g_model in gemini_models:
             try:
@@ -791,16 +791,18 @@ CẤU TRÚC JSON YÊU CẦU:
             except Exception as e:
                 logger.warning(f"Gemini API call ({g_model}) failed: {e}")
 
-    if not raw_text and openai_key:
+    effective_key = openai_key or gemini_key
+    if not raw_text and effective_key:
         try:
+            req_model = model if (model and not model.startswith("gemini-2.5")) else "gpt-4o-mini"
             resp = requests.post(
                 f"{base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {openai_key}",
+                    "Authorization": f"Bearer {effective_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": model,
+                    "model": req_model,
                     "max_tokens": 4096,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -809,6 +811,8 @@ CẤU TRÚC JSON YÊU CẦU:
             if resp.status_code == 200:
                 data = resp.json()
                 raw_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            else:
+                logger.warning(f"ShopAIKey API call status={resp.status_code}, resp={resp.text[:200]}")
         except Exception as e:
             logger.warning(f"OpenAI API call failed: {e}")
 
@@ -899,7 +903,7 @@ TRANSCRIPT:
 
     content = ""
 
-    if os.environ.get("GEMINI_API_KEY") or (gemini_key and gemini_key.startswith("AIza")):
+    if gemini_key and gemini_key.startswith("AIza"):
         gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
         for g_model in gemini_models:
             try:
@@ -918,16 +922,18 @@ TRANSCRIPT:
             except Exception as e:
                 logger.warning(f"Gemini API call ({g_model}) failed: {e}")
 
-    if not content and openai_key:
+    effective_key = openai_key or gemini_key
+    if not content and effective_key:
         try:
+            req_model = model if (model and not model.startswith("gemini-2.5")) else "gpt-4o-mini"
             resp = requests.post(
                 f"{base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {openai_key}",
+                    "Authorization": f"Bearer {effective_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": model,
+                    "model": req_model,
                     "max_tokens": 4096,
                     "messages": [{"role": "user", "content": prompt}],
                 },
