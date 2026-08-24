@@ -1,0 +1,720 @@
+{
+  "name": "Meeting_AI Summary → Telegram (PM)_Production",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "182oWyQZPs3esSArRyU7loGTkwb-x6uml",
+          "mode": "id"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "58bda7bb-5b79-48ce-ad81-6e016399f460",
+      "name": "1. GDrive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -10640,
+        -1760
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "4chZNCWMHWttSfSu",
+          "name": "Google Drive account - Summary"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "options": {}
+      },
+      "id": "6d0ca31e-ee8d-40c6-81f4-be30c678ce99",
+      "name": "2. GDrive Download",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -10400,
+        -1760
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "4chZNCWMHWttSfSu",
+          "name": "Google Drive account - Summary"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Copy file binary mới nhất ra /tmp ===\nconst fs = require('fs');\nconst { execSync } = require('child_process');\n\nconst execId = $execution.id;\nconst inputPath = `/tmp/input_${execId}.mp4`;\nconst outputPath = `/tmp/output_${execId}.mp3`;\n\n// 1. Tìm file binary mới nhất (không filter size, chỉ bỏ .metadata)\nconst binaryFile = execSync(`find /root/.n8n/binaryData -type f ! -name \"*.metadata\" 2>/dev/null | head -1`).toString().trim();\n\nif (!binaryFile) throw new Error('No binary file found in binaryData');\n\n// 2. Copy ra /tmp\nexecSync(`cp \"${binaryFile}\" \"${inputPath}\"`);\n\n// 3. Xóa đúng file vừa copy\ntry {\n  fs.unlinkSync(binaryFile);\n  fs.unlinkSync(binaryFile + '.metadata');\n  // Xóa folder rỗng\n  execSync(`find /root/.n8n/binaryData/workflows -type d -empty -delete 2>/dev/null`);\n} catch(e) {}\n\nconst size = fs.statSync(inputPath).size;\nreturn [{ json: { saved: true, sizeMB: Math.round(size / 1048576), execId, inputPath, outputPath } }];"
+      },
+      "id": "26db07a2-5296-4695-b944-2fa7de385886",
+      "name": "2b. Save to /tmp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10160,
+        -1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === FFmpeg convert MP4 → MP3 (async spawn, unique path) ===\nconst { spawn } = require('child_process');\nconst meta = $input.first().json;\n\nreturn new Promise((resolve, reject) => {\n  const proc = spawn('ffmpeg', [\n    '-y', '-i', meta.inputPath,\n    '-vn', '-acodec', 'libmp3lame',\n    '-ab', '64k', '-ar', '16000', '-ac', '1',\n    '-threads', '4',\n    meta.outputPath\n  ]);\n\n  let stderr = '';\n  proc.stderr.on('data', (d) => { stderr += d.toString(); });\n\n  proc.on('close', (code) => {\n    if (code === 0) {\n      resolve([{ json: { success: true, inputPath: meta.inputPath, outputPath: meta.outputPath } }]);\n    } else {\n      reject(new Error(`FFmpeg failed (code ${code}): ${stderr.slice(-500)}`));\n    }\n  });\n\n  proc.on('error', (err) => {\n    reject(new Error(`FFmpeg spawn error: ${err.message}`));\n  });\n});"
+      },
+      "id": "7a98e818-3c72-4a7b-b9ff-7b886afe51e3",
+      "name": "2c. FFmpeg Convert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -9904,
+        -1744
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Đọc MP3 từ /tmp vào binary (unique path) ===\nconst fs = require('fs');\nconst meta = $input.first().json;\n\nconst mp3Buffer = fs.readFileSync(meta.outputPath);\n\n// Cleanup\ntry { fs.unlinkSync(meta.inputPath); } catch(e) {}\ntry { fs.unlinkSync(meta.outputPath); } catch(e) {}\n\nconst binaryOutput = await this.helpers.prepareBinaryData(\n  mp3Buffer,\n  'audio.mp3',\n  'audio/mpeg'\n);\n\nreturn [{\n  json: { converted: true },\n  binary: { data: binaryOutput }\n}];"
+      },
+      "id": "e4aca306-1860-465a-a166-0ff660bbd7be",
+      "name": "2d. Read MP3 Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -9664,
+        -1744
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "9fcea11b84c54a7882455d271d5722e0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "bcc2654e-b56a-42af-a545-b919e0c0f1d9",
+      "name": "3. AssemblyAI Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9440,
+        -1760
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 60000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "9fcea11b84c54a7882455d271d5722e0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"audio_url\": \"{{ $json.upload_url }}\",\n  \"speech_models\": [\"universal-3-pro\", \"universal-2\"],\n  \"speaker_labels\": true,\n  \"language_code\": \"vi\",\n  \"punctuate\": true,\n  \"format_text\": true\n}",
+        "options": {}
+      },
+      "id": "afcee8bc-ea55-4b42-86df-591ff4d7f04d",
+      "name": "4. AssemblyAI Transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9200,
+        -1760
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 30000
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "id": "68d839d6-060c-43e2-8397-053ddf1b43b2",
+      "name": "5. Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -8960,
+        -1760
+      ],
+      "webhookId": "e020bb3b-4de1-4b2c-ba56-6ba2276d5abe"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $('4. AssemblyAI Transcribe').item.json.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "9fcea11b84c54a7882455d271d5722e0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8984fd70-6eab-4316-9cf8-a314ff2d0c5a",
+      "name": "6. Poll Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8720,
+        -1760
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 30000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "condition-status",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f49e9959-8d8f-4f89-8e4a-840f5e24fc5f",
+      "name": "7. Status = completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -8480,
+        -1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Format transcript với speaker labels ===\nconst transcript = $input.first().json;\n\nlet fileName = 'Unknown';\ntry {\n  fileName = $('1. GDrive Trigger').first().json.name || 'Unknown';\n} catch(e) {\n  fileName = 'Video Recording';\n}\n\nlet formattedTranscript = '';\nlet speakers = [];\n\nif (transcript.utterances && transcript.utterances.length > 0) {\n  speakers = [...new Set(transcript.utterances.map(u => u.speaker))];\n  for (const u of transcript.utterances) {\n    const min = Math.floor(u.start / 60000);\n    const sec = Math.floor((u.start % 60000) / 1000);\n    const ts = `${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;\n    formattedTranscript += `[${ts}] Speaker ${u.speaker}: ${u.text}\\n\\n`;\n  }\n} else {\n  formattedTranscript = transcript.text || 'Không có nội dung.';\n  speakers = [];\n}\n\nconst durationMin = Math.round((transcript.audio_duration || 0) / 60);\nconst wordCount = (transcript.text || '').split(/\\s+/).length;\n\nconst MAX_CHARS = 80000;\nlet trimmed = formattedTranscript;\nif (formattedTranscript.length > MAX_CHARS) {\n  trimmed = formattedTranscript.substring(0, MAX_CHARS) + '\\n\\n[... bị cắt do quá dài ...]';\n}\n\nlet meetingDate = '';\nconst dateMatch = fileName.match(/(\\d{4}-\\d{2}-\\d{2})/);\nif (dateMatch) meetingDate = dateMatch[1];\n\nreturn [{\n  json: {\n    fileName,\n    meetingDate,\n    transcript: trimmed,\n    fullText: transcript.text || '',\n    duration: durationMin,\n    speakerCount: speakers.length,\n    speakers: speakers.join(', '),\n    wordCount,\n    transcriptId: transcript.id\n  }\n}];"
+      },
+      "id": "a50ef03a-deee-4f2a-bafa-de576bda7816",
+      "name": "8. Format Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8240,
+        -1856
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Build Claude API request body ===\nconst meta = $input.first().json;\n\nconst speakerList = meta.speakers \n  ? meta.speakers.split(', ').map(s => `Speaker ${s}`).join(', ') \n  : 'Không xác định';\n\nconst prompt = `Bạn là chuyên gia tóm tắt biên bản cuộc họp chuyên nghiệp. Nhiệm vụ: phân tích transcript cuộc họp và tạo biên bản tóm tắt chính xác, đầy đủ.\n\nQUY TẮC BẮT BUỘC:\n- CHỈ ghi nhận thông tin THỰC SỰ có trong transcript. KHÔNG bịa đặt, suy diễn hay thêm thông tin không có.\n- Nếu một mục không có thông tin, ghi \"Không có\" hoặc \"Không đề cập\".\n- Giữ nguyên tên riêng, thuật ngữ chuyên môn, tên dự án, tên công cụ như trong transcript.\n- Gán đúng phát biểu cho đúng Speaker. Không gán nhầm.\n- Viết bằng tiếng Việt, ngắn gọn, chuyên nghiệp.\n- QUAN TRỌNG: Tất cả danh sách phải dùng SỐ THỨ TỰ (1. 2. 3. ...), KHÔNG dùng dấu • hoặc - đầu dòng.\n\nTHÔNG TIN CUỘC HỌP:\n- File: ${meta.fileName}\n- Ngày: ${meta.meetingDate || 'Không xác định'}\n- Thời lượng: ${meta.duration} phút\n- Số người tham gia: ${meta.speakerCount} (${speakerList})\n- Số từ transcript: ${meta.wordCount}\n\nFORMAT BIÊN BẢN (tuân thủ chính xác):\n\n📋 TỔNG QUAN\nMô tả ngắn 2-3 câu: cuộc họp về chủ đề gì, mục đích chính là gì.\n\n\n✅ ACTION ITEMS (Công việc cần thực hiện)\nLiệt kê từng item đánh số 1. 2. 3. ..., KHÔNG ghi tên người đảm nhiệm, chỉ ghi:\n[Số]. Công việc cụ thể | Deadline: xxx (nếu có đề cập)\nNếu không có action items, ghi \"Không có action items cụ thể\".\n\n📌 QUYẾT ĐỊNH ĐÃ THỐNG NHẤT\nLiệt kê các quyết định đã được đồng ý/thống nhất, đánh số 1. 2. 3. ...\nNếu không có, ghi \"Không có quyết định chính thức\".\n\n⚠️ VẤN ĐỀ & RỦI RO\nLiệt kê blockers, rủi ro, vấn đề tồn đọng, đánh số 1. 2. 3. ...\nNếu không có, ghi \"Không có vấn đề đặc biệt\".\n\n📅 BƯỚC TIẾP THEO\nTóm tắt các bước tiếp theo, cuộc họp kế tiếp (nếu có đề cập), đánh số 1. 2. 3. ...\n\n---\nTRANSCRIPT:\n${meta.transcript}`;\n\nconst requestBody = {\n  model: \"gpt-4o\",\n  max_tokens: 4096,\n  messages: [\n    { role: \"user\", content: prompt }\n  ]\n};\n\nreturn [{\n  json: {\n    requestBody: JSON.stringify(requestBody)\n  }\n}];"
+      },
+      "id": "8c96c63a-91a5-4859-b0f6-1982e9378300",
+      "name": "8b. Build Claude Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8064,
+        -1728
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.shopaikey.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "sk-w9W6LeRIVhSXu7YFaM12hU7ZLjg38tJ34IBy59CB9NxrEkOr"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.requestBody }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "22a0378c-d53b-49c7-816a-e992c6b7686b",
+      "name": "9. Claude Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -7904,
+        -1856
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Chuẩn bị tin nhắn Telegram ===\nconst meta = $('8. Format Transcript').first().json;\nconst claudeResponse = $input.first().json;\n\nlet summary = '';\ntry {\n  summary = claudeResponse.content[0].text;\n} catch(e) {\n  summary = 'Lỗi: Không thể lấy summary từ Claude.';\n}\n\nconst speakerInfo = meta.speakerCount > 0 \n  ? `${meta.speakerCount} người (${meta.speakers})` \n  : 'Không xác định';\n\nconst dateInfo = meta.meetingDate ? `\\n📅 Ngày: ${meta.meetingDate}` : '';\n\nconst header = `📁 ${meta.fileName}${dateInfo}\\n⏱ ${meta.duration} phút | 👥 ${speakerInfo}\\n\\n`;\nconst footer = `\\n\\n---\\n_🤖 AI Summary Bot | ${meta.wordCount} từ transcript_`;\n\nconst fullMsg = header + summary + footer;\n\nconst MAX = 4096;\nconst messages = [];\n\nif (fullMsg.length <= MAX) {\n  messages.push(fullMsg);\n} else {\n  messages.push(header + '⬇️ Biên bản nhiều phần:');\n  \n  const chunkSize = MAX - 150;\n  let remaining = summary;\n  let part = 1;\n  while (remaining.length > 0) {\n    let cutPoint = chunkSize;\n    \n    if (remaining.length > chunkSize) {\n      const lastNewline = remaining.lastIndexOf('\\n', chunkSize);\n      if (lastNewline > chunkSize * 0.5) cutPoint = lastNewline;\n    } else {\n      cutPoint = remaining.length;\n    }\n    \n    const chunk = remaining.substring(0, cutPoint);\n    remaining = remaining.substring(cutPoint).trimStart();\n    \n    const label = remaining.length > 0 ? `_(Phần ${part})_` : `_(Phần cuối)_`;\n    messages.push(`${label}\\n\\n${chunk}`);\n    part++;\n  }\n  messages[messages.length - 1] += footer;\n}\n\nreturn messages.map((text, i) => ({\n  json: { text, partIndex: i, totalParts: messages.length }\n}));"
+      },
+      "id": "27659fe2-5176-46c0-8bb8-568a6dff2c42",
+      "name": "10. Split Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7520,
+        -1728
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003890947468",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "message_thread_id": 2
+        }
+      },
+      "id": "6403542d-4d6e-4990-8fb3-facaac410000",
+      "name": "11. Telegram Send",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -7312,
+        -1856
+      ],
+      "webhookId": "3c222c64-1949-4d91-af17-4c0312848b27",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "telegramApi": {
+          "id": "1P3iWDp1eLy43F2Y",
+          "name": "Telegram account - Summary"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $('8. Format Transcript').item.json.transcriptId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "9fcea11b84c54a7882455d271d5722e0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "21038271-0d3e-4a3a-b82a-d75aea30ddd5",
+      "name": "12. Cleanup AssemblyAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -7056,
+        -1728
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('1. GDrive Trigger').item.json.id }}"
+        },
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "MyDrive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1Eyc-dybYgqdzfAX6tKqUerS9ELTOoFU-"
+        }
+      },
+      "id": "9a4cfece-f71a-4755-994f-305ed5dc0f56",
+      "name": "13. Move to Done",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -6832,
+        -1856
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 30000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "4chZNCWMHWttSfSu",
+          "name": "Google Drive account - Summary"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-error",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3babcbca-d53e-426b-81cb-5034f6e5fa47",
+      "name": "7b. Status = error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -8480,
+        -1472
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003890947468",
+        "text": "=⚠️ *Lỗi Transcription*\\n\\n📁 File: {{ $('1. GDrive Trigger').item.json.name }}\\n❌ Lỗi: {{ $json.error }}\\n\\nVui lòng kiểm tra file video hoặc thử lại.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "message_thread_id": 2
+        }
+      },
+      "id": "4c2425e8-dffd-4503-9b06-62a01af118ca",
+      "name": "Error → Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -8240,
+        -1488
+      ],
+      "webhookId": "f5ebc906-ee60-4d03-98d6-16ced8eb5f60",
+      "credentials": {
+        "telegramApi": {
+          "id": "1P3iWDp1eLy43F2Y",
+          "name": "Telegram account - Summary"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://kpi.markeeai.com/api/meetings/webhook/n8n-summary",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={\n  \"title\": \"={{ $json.meeting_title || $json.file_name }}\",\n  \"meeting_date\": \"={{ $json.meeting_date || $now.format('yyyy-MM-dd') }}\",\n  \"start_time\": \"={{ $json.start_time || '09:00' }}\",\n  \"meeting_url\": \"={{ $json.meeting_url || '' }}\",\n  \"executive_summary\": \"={{ $json.executive_summary }}\",\n  \"decisions\": \"={{ $json.decisions }}\",\n  \"recommended_tasks\": \"={{ $json.recommended_tasks }}\",\n  \"project_name\": \"={{ $json.project_name || '' }}\",\n  \"creator_email\": \"={{ $json.creator_email || '' }}\",\n  \"transcript\": \"={{ $json.transcript || '' }}\"\n}\n",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -7696,
+        -1856
+      ],
+      "id": "b06ebc7a-df19-4d34-8801-bea2fa45282b",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "1. GDrive Trigger": {
+      "main": [
+        [
+          {
+            "node": "2. GDrive Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. GDrive Download": {
+      "main": [
+        [
+          {
+            "node": "2b. Save to /tmp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2b. Save to /tmp": {
+      "main": [
+        [
+          {
+            "node": "2c. FFmpeg Convert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2c. FFmpeg Convert": {
+      "main": [
+        [
+          {
+            "node": "2d. Read MP3 Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2d. Read MP3 Binary": {
+      "main": [
+        [
+          {
+            "node": "3. AssemblyAI Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. AssemblyAI Upload": {
+      "main": [
+        [
+          {
+            "node": "4. AssemblyAI Transcribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. AssemblyAI Transcribe": {
+      "main": [
+        [
+          {
+            "node": "5. Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Wait 30s": {
+      "main": [
+        [
+          {
+            "node": "6. Poll Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Poll Transcript": {
+      "main": [
+        [
+          {
+            "node": "7. Status = completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Status = completed?": {
+      "main": [
+        [
+          {
+            "node": "8. Format Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "7b. Status = error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7b. Status = error?": {
+      "main": [
+        [
+          {
+            "node": "Error → Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "5. Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Format Transcript": {
+      "main": [
+        [
+          {
+            "node": "8b. Build Claude Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8b. Build Claude Request": {
+      "main": [
+        [
+          {
+            "node": "9. Claude Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Claude Summary": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Split Message": {
+      "main": [
+        [
+          {
+            "node": "11. Telegram Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11. Telegram Send": {
+      "main": [
+        [
+          {
+            "node": "12. Cleanup AssemblyAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12. Cleanup AssemblyAI": {
+      "main": [
+        [
+          {
+            "node": "13. Move to Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "10. Split Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "d06051a1-1dd6-4f32-8a6e-7558e5a11a06",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ebc90ee66c6de53a0ae0f8217924b30157f07817b2bb087f4549e22385afdf55"
+  },
+  "id": "JYTU10mXxvFqoJWy",
+  "tags": []
+}
