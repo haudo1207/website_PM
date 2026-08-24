@@ -43,6 +43,12 @@ jobs:
               "AI_BASE_URL": "https://api.shopaikey.com/v1",
               "GEMINI_API_KEY": "sk-w9W6LeRIVhSXu7YFaM12hU7ZLjg38tJ34IBy59CB9NxrEkOr",
               "AI_API_KEY": "sk-w9W6LeRIVhSXu7YFaM12hU7ZLjg38tJ34IBy59CB9NxrEkOr",
+              "AI_MODEL": "gpt-4o",
+              "ASSEMBLYAI_API_KEY": "9fcea11b84c54a7882455d271d5722e0",
+              "TELEGRAM_BOT_TOKEN": "8923394127:AAHPjZsLIRmDm9nk4Rzc1Oce68PwvhL3vbQ",
+              "TELEGRAM_BOT_USERNAME": "cloudgate_pm_bot",
+              "TELEGRAM_GROUP_CHAT_ID": "-1003890947468",
+              "TELEGRAM_MESSAGE_THREAD_ID": "2",
           }
 
           for path in (Path("/home/webpm/kpi-dev/.env"), Path("/home/webpm/kpi-dev/app.env")):

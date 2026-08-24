@@ -116,36 +116,41 @@ CẤU TRÚC JSON YÊU CẦU:
 }`;
 
     let generatedText = '';
-    const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
-    for (const modelName of geminiModels) {
-      try {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`;
-        const res = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: jsonPrompt }] }] })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text) {
-            generatedText = text;
-            break;
+    if (geminiKey && geminiKey.startsWith('AIza')) {
+      const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+      for (const modelName of geminiModels) {
+        try {
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`;
+          const res = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: jsonPrompt }] }] })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) {
+              generatedText = text;
+              break;
+            }
           }
+        } catch (err) {
+          console.warn(`Gemini API (${modelName}) failed:`, err);
         }
-      } catch (err) {
-        console.warn(`Gemini API (${modelName}) failed:`, err);
       }
     }
 
-    if (!generatedText && process.env.AI_API_KEY) {
+    const effectiveKey = process.env.AI_API_KEY || geminiKey;
+    if (!generatedText && effectiveKey) {
       try {
-        const baseUrl = (process.env.AI_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
-        const model = process.env.AI_MODEL || 'google/gemini-2.0-flash-001';
+        const baseUrl = (process.env.AI_BASE_URL || 'https://api.shopaikey.com/v1').replace(/\/$/, '');
+        let model = process.env.AI_MODEL || 'gpt-4o-mini';
+        if (model.startsWith('gemini-2.5')) model = 'gpt-4o-mini';
+
         const res = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${process.env.AI_API_KEY}`,
+            'Authorization': `Bearer ${effectiveKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -157,9 +162,11 @@ CẤU TRÚC JSON YÊU CẦU:
         if (res.ok) {
           const data = await res.json();
           generatedText = data.choices?.[0]?.message?.content || '';
+        } else {
+          console.warn('ShopAIKey response not OK:', res.status, await res.text());
         }
       } catch (err) {
-        console.error('OpenAI / OpenRouter API fallback failed:', err);
+        console.error('OpenAI / ShopAIKey API fallback failed:', err);
       }
     }
 

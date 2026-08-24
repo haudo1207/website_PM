@@ -41,6 +41,9 @@ services:
       BACKEND_INTERNAL_URL: http://backend:8000
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gpt-4o}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.shopaikey.com/v1}
+      ASSEMBLYAI_API_KEY: ${ASSEMBLYAI_API_KEY:-9fcea11b84c54a7882455d271d5722e0}
     ports:
       - "0.0.0.0:${FRONTEND_PORT:-3000}:3000"
     depends_on:
@@ -61,6 +64,9 @@ services:
       BACKEND_INTERNAL_URL: http://backend:8000
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gpt-4o}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.shopaikey.com/v1}
+      ASSEMBLYAI_API_KEY: ${ASSEMBLYAI_API_KEY:-9fcea11b84c54a7882455d271d5722e0}
     ports:
       - "0.0.0.0:${MARKEE_FRONTEND_PORT:-3300}:3000"
     depends_on:

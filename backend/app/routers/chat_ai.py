@@ -937,18 +937,46 @@ def zalo_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     - Standard Zalo OA event: {"event_name": "user_send_text", "message": {"text": "..."}, "sender": {"id": "..."}}
     - Group Webhook: {"text": "...", "group_name": "HR Group", "sender_name": "..."}
     """
-    event_name = payload.get("event_name", "")
-    msg_obj = payload.get("message", {})
-    text = (msg_obj.get("text") or payload.get("text") or "").strip()
-    sender_name = payload.get("sender_name") or payload.get("sender", {}).get("name", "Thành viên Zalo")
-    group_name = payload.get("group_name") or payload.get("recipient", {}).get("name", "HR Group (Zalo)")
+    # Parse Zalo payload (supports Zalo OA, Group Webhook, and Chatwoot / ZaloPersonal format from zalo-automation-tho.json)
+    msg_obj = payload.get("message") or {}
+    conv_obj = payload.get("conversation") or {}
+    meta_obj = conv_obj.get("meta") or {}
+    add_attrs = conv_obj.get("additional_attributes") or {}
+
+    text = (
+        payload.get("content")
+        or payload.get("text")
+        or msg_obj.get("text")
+        or payload.get("processed_message_content")
+        or ""
+    ).strip()
+
+    if not text and conv_obj.get("messages"):
+        msgs = conv_obj.get("messages")
+        if isinstance(msgs, list) and len(msgs) > 0:
+            text = (msgs[0].get("content") or msgs[0].get("text") or "").strip()
+
+    sender_name = (
+        payload.get("sender_name")
+        or payload.get("sender", {}).get("name")
+        or meta_obj.get("sender", {}).get("name")
+        or "Thành viên Zalo"
+    )
+
+    group_name = (
+        add_attrs.get("zalo_thread_name")
+        or add_attrs.get("thread_name")
+        or payload.get("group_name")
+        or payload.get("inbox", {}).get("name")
+        or "Zalo Group"
+    )
 
     if not text:
         return {"ok": True, "ignored": "No message text"}
 
     # Find matching project link by group name or URL for project isolation
     link = db.query(ProjectLink).filter(
-        (ProjectLink.name.ilike(f"%{group_name}%")) | (ProjectLink.url.ilike(f"%{group_name}%"))
+        (ProjectLink.name.ilike(f"%{group_name}%")) | (ProjectLink.url.ilike(f"%{group_name}%")) | (ProjectLink.url.ilike("%zalo%"))
     ).first()
     pid = link.project_id if link else None
 

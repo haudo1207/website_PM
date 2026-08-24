@@ -51,6 +51,53 @@ def parse_date(date_str: str):
     except Exception:
         raise HTTPException(400, f"Định dạng ngày không hợp lệ (yêu cầu YYYY-MM-DD): {date_str}")
 
+def parse_n8n_markdown_summary(text: str) -> dict:
+    if not text or not isinstance(text, str):
+        return {}
+
+    exec_summary = ""
+    decisions = []
+    recommended_tasks = []
+
+    match_overview = re.search(r'📋\s*TỔNG QUAN\s*\n(.*?)(?=\n\s*[✅📌⚠️📅]|\Z)', text, re.DOTALL)
+    if match_overview:
+        exec_summary = match_overview.group(1).strip()
+
+    match_actions = re.search(r'✅\s*ACTION ITEMS.*?\n(.*?)(?=\n\s*[📋📌⚠️📅]|\Z)', text, re.DOTALL)
+    if match_actions:
+        action_text = match_actions.group(1).strip()
+        for line in action_text.split('\n'):
+            line = line.strip()
+            if not line or 'Không có' in line:
+                continue
+            cleaned_line = re.sub(r'^\d+[\.\)]\s*', '', line).strip()
+            if cleaned_line:
+                parts = cleaned_line.split('| Deadline:')
+                task_name = parts[0].strip()
+                dl = parts[1].strip() if len(parts) > 1 else ''
+                recommended_tasks.append({
+                    'detail_task': task_name,
+                    'priority': 'High',
+                    'deadline': dl or datetime.date.today().isoformat()
+                })
+
+    match_decisions = re.search(r'📌\s*QUYẾT ĐỊNH.*?\n(.*?)(?=\n\s*[📋✅⚠️📅]|\Z)', text, re.DOTALL)
+    if match_decisions:
+        dec_text = match_decisions.group(1).strip()
+        for line in dec_text.split('\n'):
+            line = line.strip()
+            if not line or 'Không có' in line:
+                continue
+            cleaned_line = re.sub(r'^\d+[\.\)]\s*', '', line).strip()
+            if cleaned_line:
+                decisions.append(cleaned_line)
+
+    return {
+        'executive_summary': exec_summary or text[:500],
+        'decisions': decisions,
+        'recommended_tasks': recommended_tasks
+    }
+
 def meeting_to_dict(m: Meeting) -> dict:
     # Calculate duration
     duration = None
@@ -73,10 +120,27 @@ def meeting_to_dict(m: Meeting) -> dict:
             executive_summary = m.ai_summary.get("executive_summary") or m.ai_summary.get("summary") or ""
             decisions = m.ai_summary.get("decisions") or []
             recommended_tasks = m.ai_summary.get("recommended_tasks") or m.ai_summary.get("action_items") or []
+            
+            if executive_summary and ("📋" in executive_summary or "ACTION ITEMS" in executive_summary or "QUYẾT ĐỊNH" in executive_summary):
+                parsed = parse_n8n_markdown_summary(executive_summary)
+                if parsed.get("executive_summary"):
+                    executive_summary = parsed["executive_summary"]
+                if not decisions and parsed.get("decisions"):
+                    decisions = parsed["decisions"]
+                if not recommended_tasks and parsed.get("recommended_tasks"):
+                    recommended_tasks = parsed["recommended_tasks"]
         elif isinstance(m.ai_summary, list):
             summary_list = [str(item) for item in m.ai_summary]
             if summary_list:
                 executive_summary = summary_list[0]
+                if "📋" in executive_summary or "ACTION ITEMS" in executive_summary or "QUYẾT ĐỊNH" in executive_summary:
+                    parsed = parse_n8n_markdown_summary(executive_summary)
+                    if parsed.get("executive_summary"):
+                        executive_summary = parsed["executive_summary"]
+                    if parsed.get("decisions"):
+                        decisions = parsed["decisions"]
+                    if parsed.get("recommended_tasks"):
+                        recommended_tasks = parsed["recommended_tasks"]
     elif m.transcript and m.transcript.strip():
         try:
             from ..services.meeting_sync import summarize_meeting_with_ai_structured
@@ -370,23 +434,27 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         project_id=project_id,
         created_by=created_by
     )
-    # Auto-summarize with AI if transcript is provided
-    if m.transcript and m.transcript.strip() and (not m.ai_summary or body.get("auto_summarize")):
-        try:
-            from ..services.meeting_sync import summarize_with_ai
-            meeting_info = {
-                "title": m.title,
-                "date": m.meeting_date.isoformat() if m.meeting_date else "",
-                "meeting_date": m.meeting_date,
-                "start_time": m.start_time,
-                "transcript": m.transcript,
-            }
-            summary_result = summarize_with_ai(m.transcript, meeting_info)
+    # Auto-summarize with AI on create (using structured output)
+    try:
+        from ..services.meeting_sync import summarize_meeting_with_ai_structured
+        proj_name = proj.name if 'proj' in locals() and proj else "Dự án chung"
+        meeting_info = {
+            "title": m.title,
+            "project_name": proj_name,
+            "project": proj_name,
+            "date": m.meeting_date.isoformat() if m.meeting_date else "",
+            "meeting_date": m.meeting_date,
+            "start_time": m.start_time,
+            "transcript": m.transcript or m.description or "",
+        }
+        if not m.ai_summary or body.get("auto_summarize"):
+            summary_result = summarize_meeting_with_ai_structured(m.transcript or m.description or "", meeting_info)
             if summary_result:
                 m.ai_summary = summary_result
-                m.status = "DONE"
-        except Exception as e:
-            logger.warning(f"Auto-summarize meeting {m.id} on create failed: {e}")
+                if m.transcript and m.transcript.strip():
+                    m.status = "DONE"
+    except Exception as e:
+        logger.warning(f"Auto-summarize meeting {m.id} on create failed: {e}")
 
     db.add(m)
     db.commit()
@@ -410,6 +478,13 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         joinedload(Meeting.creator),
         joinedload(Meeting.members).joinedload(MeetingMember.member)
     ).filter(Meeting.id == m.id).first()
+
+    # Trigger Telegram Notification
+    try:
+        from ..services.telegram import send_meeting_notification
+        send_meeting_notification(db, m)
+    except Exception as e:
+        logger.warning(f"Failed to send Telegram notification for meeting {m.id}: {e}")
 
     return {"success": True, "data": meeting_to_dict(m)}
 
@@ -513,12 +588,13 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     )
     db.commit()
 
-    # Re-fetch with relationships
-    m = db.query(Meeting).options(
-        joinedload(Meeting.project),
-        joinedload(Meeting.creator),
-        joinedload(Meeting.members).joinedload(MeetingMember.member)
-    ).filter(Meeting.id == id).first()
+    # Trigger Telegram Notification if summary updated
+    if body.get("ai_summary") or body.get("summary") or body.get("transcript"):
+        try:
+            from ..services.telegram import send_meeting_notification
+            send_meeting_notification(db, m)
+        except Exception as e:
+            logger.warning(f"Failed to send Telegram notification for meeting update {m.id}: {e}")
 
     return {"success": True, "data": meeting_to_dict(m)}
 
@@ -704,12 +780,12 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
 
     db.commit()
 
-    # Re-fetch with relationships
-    m = db.query(Meeting).options(
-        joinedload(Meeting.project),
-        joinedload(Meeting.creator),
-        joinedload(Meeting.members).joinedload(MeetingMember.member)
-    ).filter(Meeting.id == id).first()
+    # Trigger Telegram Notification after sync
+    try:
+        from ..services.telegram import send_meeting_notification
+        send_meeting_notification(db, m)
+    except Exception as e:
+        logger.warning(f"Failed to send Telegram notification for synced meeting {m.id}: {e}")
 
     return {"success": True, "data": meeting_to_dict(m)}
 
