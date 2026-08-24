@@ -707,7 +707,7 @@ export default function OverviewTab() {
   const recentActivity: any[] = overviewData?.recentActivity || [];
   const currentUser: any = overviewData?.currentUser || null;
   const currentUserRole = currentUser?.role || getRole() || '';
-  const showsMemberCards = currentUserRole === 'leader';
+  const showsMemberCards = String(currentUserRole).toLowerCase() === 'leader';
   const showsLeaderCards = !showsMemberCards;
 
   const applyQuickFilter = (type: string) => {
@@ -782,34 +782,86 @@ export default function OverviewTab() {
     const memberTaskFilter = (memberIds: any[]) => (t: any) =>
       isIdInList(memberIds, t.assigned_id) || isIdInList(memberIds, t.support_id);
 
-    // 1. Get Leaders directly from rawMembers
-    const leaderMap = new Map();
-    rawMembers.forEach(m => {
-      const lName = (m.leader_name || '').trim() || 'Không có Leader';
-      if (!leaderMap.has(lName)) {
-        leaderMap.set(lName, { name: lName, count: 0, team: m.team || m.department || 'Khác', memberIds: [] });
+    // 1. Get Leaders — canonical for Super Admin (Uses User.member_id → Member.id + Member.leader_member_id)
+    // Legacy grouping kept as fallback when canonical list is unavailable.
+    let lList: any[] = [];
+    let visibleLeaders: any[] = [];
+    if (showsLeaderCards) {
+      const hasCanonical = Array.isArray(rawLeaders) && rawLeaders.length > 0 && rawLeaders[0] && typeof rawLeaders[0] === 'object' && 'member_id' in rawLeaders[0];
+      if (hasCanonical) {
+        const memberById = new Map(rawMembers.map((m: any) => [String(m.id), m]));
+        const canonicalMap = new Map<string, any>();
+        rawLeaders.forEach((lg: any) => {
+          const name = (lg.name || '').trim();
+          if (!name) return;
+          const mid = lg.member_id != null ? String(lg.member_id) : null;
+          const mRec = mid ? memberById.get(mid) : null;
+          const team = (mRec?.team || mRec?.department || lg.team || 'Khác');
+          const teamMemberIds: any[] = [];
+          rawMembers.forEach((m: any) => {
+            const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
+            if (mid && lmId && lmId === mid) {
+              teamMemberIds.push(m.id);
+            } else if (mid && String(m.id) === mid) {
+              teamMemberIds.push(m.id);
+            } else if (!mid || lmId == null) {
+              const lNameLower = (m.leader_name || '').trim().toLowerCase();
+              const lEmailLower = (m.leader_email || '').trim().toLowerCase();
+              const lgNameLower = name.toLowerCase();
+              const lgEmailLower = (lg.email || '').trim().toLowerCase();
+              if (lNameLower && lNameLower === lgNameLower) teamMemberIds.push(m.id);
+              else if (lEmailLower && lgEmailLower && lEmailLower === lgEmailLower) teamMemberIds.push(m.id);
+            }
+          });
+          if (mid && !teamMemberIds.some((id: any) => String(id) === mid) && memberById.has(mid)) {
+            teamMemberIds.push(Number(mid));
+          }
+          const uniqIds = Array.from(new Set(teamMemberIds.map((id: any) => String(id)))).map((s: string) => (isNaN(Number(s)) ? s : Number(s)));
+          canonicalMap.set(name, { name, member_id: mid ? Number(mid) : null, user_id: lg.user_id, email: lg.email || '', team, memberIds: uniqIds, count: uniqIds.length });
+        });
+        const unassigned = rawMembers.filter((m: any) => {
+          const hasLeaderId = m.leader_member_id != null;
+          const hasLeaderName = (m.leader_name || '').trim();
+          if (hasLeaderId) return false;
+          const low = hasLeaderName.toLowerCase();
+          const matched = rawLeaders.some((lg: any) => (lg.name || '').trim().toLowerCase() === low || (lg.email || '').trim().toLowerCase() === (m.leader_email || '').trim().toLowerCase());
+          return !matched;
+        });
+        if (unassigned.length > 0) {
+          canonicalMap.set('Không có Leader', { name: 'Không có Leader', member_id: null, team: 'Khác', memberIds: unassigned.map((m: any) => m.id), count: unassigned.length });
+        }
+        lList = Array.from(canonicalMap.values()).map(ld => {
+          const lTasks = rawTasks.filter(t => isIdInList(ld.memberIds, t.assigned_id) || isIdInList(ld.memberIds, t.support_id));
+          const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
+          return { ...ld, totalTasks: lTasks.length, doneTasks: done };
+        }).sort((a, b) => b.count - a.count);
+      } else {
+        const leaderMap = new Map();
+        rawMembers.forEach(m => {
+          const lName = (m.leader_name || '').trim() || 'Không có Leader';
+          if (!leaderMap.has(lName)) {
+            leaderMap.set(lName, { name: lName, count: 0, team: m.team || m.department || 'Khác', memberIds: [] });
+          }
+          const ld = leaderMap.get(lName);
+          ld.count++;
+          ld.memberIds.push(m.id);
+        });
+        lList = Array.from(leaderMap.values()).map(ld => {
+          const lTasks = rawTasks.filter(t => isIdInList(ld.memberIds, t.assigned_id) || isIdInList(ld.memberIds, t.support_id));
+          const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
+          return { ...ld, totalTasks: lTasks.length, doneTasks: done };
+        }).sort((a, b) => b.count - a.count);
       }
-      const ld = leaderMap.get(lName);
-      ld.count++;
-      ld.memberIds.push(m.id);
-    });
-
-    // Calculate tasks for leaders
-    const lList = Array.from(leaderMap.values()).map(ld => {
-      const lTasks = rawTasks.filter(t => isIdInList(ld.memberIds, t.assigned_id) || isIdInList(ld.memberIds, t.support_id));
-      const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
-      return { ...ld, totalTasks: lTasks.length, doneTasks: done };
-    }).sort((a, b) => b.count - a.count);
-
-    // Workspace-scope the Leader cards: only Leader identities attributed to
-    // the caller's Workspace(s) are visible (backend `/members/workspace-leaders`).
-    // 'Không có Leader' is a UI catch-all label, not a Leader identity, so it stays.
-    let visibleLeaders = lList;
-    if (Array.isArray(allowedLeaders)) {
-      const allowed = new Set(allowedLeaders.map((n: string) => String(n).trim().toLowerCase()));
-      visibleLeaders = lList.filter(ld =>
-        ld.name === 'Không có Leader' || allowed.has(String(ld.name).trim().toLowerCase())
-      );
+      visibleLeaders = lList;
+      if (Array.isArray(allowedLeaders)) {
+        const allowed = new Set(allowedLeaders.map((n: string) => String(n).trim().toLowerCase()));
+        visibleLeaders = lList.filter(ld =>
+          ld.name === 'Không có Leader' || allowed.has(String(ld.name).trim().toLowerCase())
+        );
+      }
+    } else {
+      lList = [];
+      visibleLeaders = [];
     }
 
     const totTasks = rawTasks.length;
@@ -836,14 +888,33 @@ export default function OverviewTab() {
     };
 
     // 2. Filter Members by selected Leader, except Leader accounts use member cards.
+    // Canonical: prefer leader_member_id, fallback to leader_name/email for legacy records.
     let activeTeamList = rawMembers;
     if (showsLeaderCards && selectedLeader && selectedLeader !== 'all') {
       const selTrim = selectedLeader.trim().toLowerCase();
-      activeTeamList = rawMembers.filter(m => {
-        const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
-        const mName = (m.display_name || m.full_name || m.name || '').trim().toLowerCase();
-        return leaderName === selTrim || mName === selTrim;
-      });
+      const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
+      const selMid = selLeader?.member_id != null ? String(selLeader.member_id) : null;
+      if (selMid) {
+        activeTeamList = rawMembers.filter(m => {
+          const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
+          if (lmId) return lmId === selMid;
+          const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
+          const lEmail = (m.leader_email || '').trim().toLowerCase();
+          const selEmail = (selLeader?.email || '').trim().toLowerCase();
+          if (leaderName === selTrim) return true;
+          if (selEmail && lEmail === selEmail) return true;
+          if (String(m.id) === selMid) return true;
+          return false;
+        });
+        const leaderSelf = rawMembers.find((m: any) => String(m.id) === selMid);
+        if (leaderSelf && !activeTeamList.some((m: any) => String(m.id) === selMid)) activeTeamList = [...activeTeamList, leaderSelf];
+      } else {
+        activeTeamList = rawMembers.filter(m => {
+          const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
+          const mName = (m.display_name || m.full_name || m.name || '').trim().toLowerCase();
+          return leaderName === selTrim || mName === selTrim;
+        });
+      }
     } else if (showsMemberCards) {
       activeTeamList = memberCardSource;
       if (selectedMemberId !== 'all') {

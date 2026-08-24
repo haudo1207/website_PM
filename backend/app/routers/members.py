@@ -153,6 +153,7 @@ def member_to_dict(m: Member) -> dict:
         "created_at": m.created_at,
         "leader_name": m.leader_name,
         "leader_email": m.leader_email,
+        "leader_member_id": getattr(m, "leader_member_id", None),
         "skill_ids": [s.id for s in m.skills],
         "skills": [
             {"id": s.id, "name": s.name}
@@ -310,6 +311,23 @@ def list_members(
     # never bypass the caller's assigned Workspace (super_admin / scope=all
     # keep seeing every member, exactly as before).
     q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
+
+    # Dashboard Leader Card authorization: when the caller is a Leader, exclude
+    # member records whose linked User account has role='leader'. A Leader must
+    # only see Member/Viewer member-cards on the Dashboard, never other Leader
+    # cards. super_admin callers are unaffected (they take the early-return
+    # path in member_query_for_user and see every member).
+    if getattr(current_user, "role", None) == "leader":
+        other_leader_member_ids = (
+            db.query(User.member_id)
+            .filter(
+                User.member_id.isnot(None),
+                User.role == "leader",
+                User.id != getattr(current_user, "id", -1),
+            )
+            .subquery()
+        )
+        q = q.filter(~Member.id.in_(other_leader_member_ids))
 
     results = q.order_by(Member.display_name.asc()).all()
     
@@ -622,45 +640,41 @@ def list_teams(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return sorted([r[0] for r in rows if r[0]])
 
 
-# ─── GET LEADERS (from Supabase/DB distinct list) ─────────
+# ─── GET LEADERS (canonical: active portal leaders) ─────────
 @router.get("/meta/leaders")
-def list_leaders(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    # 1. Try to fetch recruitment leaders from Supabase (only active leaders)
-    SUPABASE_URL = "https://supabase.stratumconsultants.tech"
-    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UtbG9jYWwiLCJpYXQiOjE3NzgwNDM5NDUsImV4cCI6MjA5MzQwMzk0NX0.MLey0ChjN3lr8__Jc1lmiBw6xSbeW-mrXEXsxgkDywI"
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}"
-    }
-    leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders?is_active=eq.true&order=name.asc"
-    try:
-        import requests
-        response = requests.get(leaders_url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            leaders_list = response.json()
-            out = []
-            seen = set()
-            for l in leaders_list:
-                raw_name = l.get("name", "")
-                email = l.get("email", "")
-                if raw_name:
-                    display_name = format_display_name(raw_name)
-                    if display_name and display_name not in seen:
-                        seen.add(display_name)
-                        out.append({"name": display_name, "email": email or ""})
-            return sorted(out, key=lambda x: x["name"])
-    except Exception:
-        pass
+def list_leaders(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Canonical Leader source: active portal users with role='leader'.
 
-    # Fallback to unique leaders in local database
-    rows = db.query(Member.leader_name, Member.leader_email).filter(Member.leader_name.isnot(None)).distinct().all()
+    Super Admin sees every valid active system Leader (authorization/account model),
+    not every free-text Member.leader_name. Recruitment/supabase leaders are NOT
+    used as the primary source; Member.leader_name remains legacy/display only.
+    """
+    # Canonical: users with role=leader and is_active
+    leaders = (
+        db.query(User)
+        .filter(User.role == "leader", User.is_active == True)  # noqa: E712
+        .all()
+    )
     out = []
     seen = set()
-    for r in rows:
-        name = (r[0] or "").strip()
-        if name and name not in seen:
-            seen.add(name)
-            out.append({"name": name, "email": r[1] or ""})
+    for u in leaders:
+        # Prefer linked Member identity when available
+        member = getattr(u, "member", None)
+        if member and getattr(member, "display_name", None):
+            name = member.display_name
+        elif member and getattr(member, "full_name", None):
+            name = member.full_name
+        else:
+            name = u.full_name or (u.email.split("@")[0] if u.email else "")
+        name = (name or "").strip()
+        # Fallback formatting for consistency
+        if name:
+            name = format_display_name(name) or name
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        email = u.email or (member.email if member and getattr(member, "email", None) else "")
+        out.append({"name": name, "email": email or "", "member_id": u.member_id, "user_id": u.id})
     return sorted(out, key=lambda x: x["name"])
 
 

@@ -29,7 +29,10 @@ class Member(Base):
     cv_link         = Column(String(255), nullable=True)
     leader_name     = Column(String(100), nullable=True)
     leader_email    = Column(String(255), nullable=True)
+    leader_member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
     created_at      = Column(String, default=lambda: datetime.datetime.utcnow().isoformat())
+
+    leader = relationship("Member", foreign_keys=[leader_member_id], remote_side=[id], lazy="joined")
 
     skills = relationship(
         "Skill",
