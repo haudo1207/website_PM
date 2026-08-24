@@ -716,8 +716,18 @@ export default function OverviewTab() {
     queryFn: () => getWorkspaces(),
     staleTime: 5 * 60_000,
   });
-  const selectedWorkspace = workspaceCode
-    ? (workspacesData || []).find((w: any) => w.code === workspaceCode) || null
+  // For Leader accounts the Navbar displays a fixed workspace label but never
+  // calls setWorkspaceCode, leaving the shared context null.  Fall back to
+  // the authoritative data_scope from the user profile so the downstream
+  // member / project / task client-side filters apply the correct scope.
+  const earlyUserRole = overviewData?.currentUser?.role || getRole() || '';
+  const earlyUserScope = overviewData?.currentUser?.data_scope;
+  const effectiveWsCode = workspaceCode
+    || (earlyUserRole === 'leader' && earlyUserScope && earlyUserScope !== 'all'
+      ? earlyUserScope
+      : null);
+  const selectedWorkspace = effectiveWsCode
+    ? (workspacesData || []).find((w: any) => w.code === effectiveWsCode) || null
     : null;
 
   // A project/member with an "all"-scope account belongs to every Workspace —
@@ -910,7 +920,19 @@ export default function OverviewTab() {
     const totTasks = rawTasks.length;
     const totDone = rawTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
 
-    const memberCardSource = showsMemberCards ? rawMembers : [];
+    // Leader Card: show only members whose leader_name matches the
+    // logged-in Leader's display_name (from Member Management).  Workspace
+    // filtering is already enforced by the backend (member_query_for_user).
+    const leaderDisplayName = showsMemberCards
+      ? (currentUser?.member?.display_name || currentUser?.full_name || '')
+      : '';
+    const memberCardSource = showsMemberCards
+      ? rawMembers.filter((m: any) =>
+          leaderDisplayName && m.leader_name
+            ? String(m.leader_name).trim().toLowerCase() === leaderDisplayName.trim().toLowerCase()
+            : false
+        )
+      : [];
     const memberCardsList = memberCardSource.map(m => {
       const mTasks = rawTasks.filter(memberTaskFilter([m.id]));
       const done = mTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
