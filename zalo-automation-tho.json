@@ -1,0 +1,199 @@
+{
+  "name": "zalo-automation-tho",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "f73f1303-0a39-4a8f-a96a-42e64b0a9e11",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -192,
+        -112
+      ],
+      "id": "01a3d37f-d9af-46b6-9500-a1bb1b2091fd",
+      "name": "Webhook",
+      "webhookId": "f73f1303-0a39-4a8f-a96a-42e64b0a9e11"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "x-real-ip": "160.25.81.115",
+            "host": "autowf.securityzone.vn",
+            "x-forwarded-for": "160.25.81.115",
+            "x-forwarded-proto": "https",
+            "ssl_protocol": "TLSv1.3",
+            "connection": "close",
+            "content-length": "3072",
+            "accept": "application/json",
+            "user-agent": "rest-client/2.1.0 (linux x86_64) ruby/3.3.3p89",
+            "content-type": "application/json",
+            "accept-encoding": "gzip;q=1.0,deflate;q=0.6,identity;q=0.3"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "account": {
+              "id": 176,
+              "name": "IDontKnow"
+            },
+            "additional_attributes": {},
+            "content_attributes": {},
+            "content_type": "text",
+            "content": "sgdgdsgsg",
+            "conversation": {
+              "additional_attributes": {
+                "thread_name": "Cloud của tôi",
+                "thread_type": "USER",
+                "zalo_thread_id": "910065935494201748",
+                "zalo_thread_name": "Cloud của tôi"
+              },
+              "can_reply": true,
+              "channel": "Channel::ZaloPersonal",
+              "contact_inbox": {
+                "id": 218001,
+                "contact_id": 187924,
+                "inbox_id": 212,
+                "source_id": "910065935494201748",
+                "created_at": "2026-05-25T15:49:57.496+07:00",
+                "updated_at": "2026-05-25T15:49:57.496+07:00",
+                "hmac_verified": false,
+                "pubsub_token": "n4oXvrB9YYCsA8RmF5Yk89pK",
+                "session_fingerprint": null,
+                "browser_info": {}
+              },
+              "id": 3,
+              "inbox_id": 212,
+              "messages": [
+                {
+                  "id": 1664190,
+                  "content": "sgdgdsgsg",
+                  "account_id": 176,
+                  "inbox_id": 212,
+                  "conversation_id": 3,
+                  "message_type": 1,
+                  "created_at": 1779699578,
+                  "updated_at": "2026-05-25T15:59:38.944+07:00",
+                  "private": false,
+                  "status": "sent",
+                  "source_id": null,
+                  "content_type": "text",
+                  "content_attributes": {},
+                  "sender_type": "User",
+                  "sender_id": 221,
+                  "external_source_ids": {},
+                  "additional_attributes": {},
+                  "processed_message_content": "sgdgdsgsg",
+                  "sentiment": {},
+                  "pinned": false,
+                  "conversation": {
+                    "assignee_id": 221,
+                    "unread_count": 0,
+                    "last_activity_at": 1779699578,
+                    "contact_inbox": {
+                      "source_id": "910065935494201748"
+                    }
+                  },
+                  "reactions_summary": {},
+                  "sender": {
+                    "id": 221,
+                    "name": "Tho Tran",
+                    "available_name": "Tho Tran",
+                    "avatar_url": "",
+                    "type": "user",
+                    "availability_status": null,
+                    "thumbnail": ""
+                  }
+                }
+              ],
+              "labels": [],
+              "meta": {
+                "sender": {
+                  "additional_attributes": {
+                    "avatar": "https://res-zalo.zadn.vn/upload/media/2021/6/4/2_1622800570007_369788.jpg",
+                    "zalo_name": "Cloud của tôi",
+                    "thread_type": "USER",
+                    "zalo_thread_id": "910065935494201748"
+                  },
+                  "custom_attributes": {},
+                  "email": null,
+                  "id": 187924,
+                  "identifier": "910065935494201748",
+                  "name": "Cloud của tôi",
+                  "phone_number": "",
+                  "thumbnail": "https://hichat.asia/rails/active_storage/representations/proxy/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBeEtPQ3c9PSIsImV4cCI6bnVsbCwicHVyIjoiYmxvYl9pZCJ9fQ==--ebb0daf43b853495308b25824248ac603faa4e27/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaDdCem9MWm05eWJXRjBTU0lJYW5CbkJqb0dSVlE2RTNKbGMybDZaVjkwYjE5bWFXeHNXd2RwQWZvdyIsImV4cCI6bnVsbCwicHVyIjoidmFyaWF0aW9uIn19--53f734fa29eb243c0fb1b4cbdf4532665451a263/2_1622800570007_369788.jpg",
+                  "type": "contact"
+                },
+                "assignee": {
+                  "id": 221,
+                  "name": "Tho Tran",
+                  "available_name": "Tho Tran",
+                  "avatar_url": "",
+                  "type": "user",
+                  "availability_status": null,
+                  "thumbnail": ""
+                },
+                "team": null,
+                "hmac_verified": false
+              },
+              "status": "open",
+              "custom_attributes": {},
+              "snoozed_until": null,
+              "unread_count": 0,
+              "first_reply_created_at": "2026-05-25T15:57:45.261+07:00",
+              "priority": null,
+              "waiting_since": 0,
+              "latest_reaction_line": null,
+              "latestReactionLine": null,
+              "latest_reaction": null,
+              "latestReaction": null,
+              "agent_last_seen_at": 1779699578,
+              "contact_last_seen_at": 0,
+              "last_activity_at": 1779699578,
+              "timestamp": 1779699578,
+              "created_at": 1779698997
+            },
+            "created_at": "2026-05-25T15:59:38.944+07:00",
+            "id": 1664190,
+            "inbox": {
+              "id": 212,
+              "name": "Trần Đình Thọ"
+            },
+            "message_type": "outgoing",
+            "private": false,
+            "sender": {
+              "id": 221,
+              "name": "Tho Tran",
+              "email": "trandinhttho@gmail.com",
+              "type": "user"
+            },
+            "source_id": null,
+            "event": "message_created"
+          },
+          "webhookUrl": "https://autowf.securityzone.vn/webhook-test/f73f1303-0a39-4a8f-a96a-42e64b0a9e11",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {},
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "cc81397d-c85f-42d0-9778-f9d050d3367a",
+  "meta": {
+    "instanceId": "ebc90ee66c6de53a0ae0f8217924b30157f07817b2bb087f4549e22385afdf55"
+  },
+  "id": "NxHZhTXYUhS0AsF6",
+  "tags": []
+}
