@@ -344,15 +344,15 @@ export default function AccountsPage() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tổng tài khoản</div>
-              <div className="text-2xl font-bold text-[#0f172a] mt-1">{accounts.length}</div>
+              <div className="text-2xl font-bold text-[#0f172a] mt-1">{filteredAccounts.length}</div>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Đang hoạt động</div>
-              <div className="text-2xl font-bold text-emerald-600 mt-1">{accounts.filter(a => a.is_active).length}</div>
+              <div className="text-2xl font-bold text-emerald-600 mt-1">{filteredAccounts.filter(a => a.is_active).length}</div>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Đã khóa</div>
-              <div className="text-2xl font-bold text-red-500 mt-1">{accounts.filter(a => !a.is_active).length}</div>
+              <div className="text-2xl font-bold text-red-500 mt-1">{filteredAccounts.filter(a => !a.is_active).length}</div>
             </div>
           </div>
               <div className="sticky top-[104px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">

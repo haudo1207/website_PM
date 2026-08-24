@@ -895,6 +895,13 @@ export default function OverviewTab() {
           ld.name === 'Không có Leader' || allowed.has(String(ld.name).trim().toLowerCase())
         );
       }
+      // When narrowed to one Workspace, drop leader cards left with 0 members —
+      // that only happens because their team fell outside the Workspace filter
+      // (rawMembers/rawTasks above are already scoped to it), not because the
+      // leader genuinely has an empty team.
+      if (workspaceCode) {
+        visibleLeaders = visibleLeaders.filter(ld => ld.count > 0);
+      }
     } else {
       lList = [];
       visibleLeaders = [];
@@ -1148,7 +1155,7 @@ export default function OverviewTab() {
       averageMatrix: avgM,
       bonusMatrix: bonM
     };
-  }, [rawMembers, rawTasks, rawProjects, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards]);
+  }, [rawMembers, rawTasks, rawProjects, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always
@@ -1168,6 +1175,10 @@ export default function OverviewTab() {
   const filteredActivity = recentActivity.filter(log => {
     if (auditModuleFilter !== 'all' && log.module?.toLowerCase() !== auditModuleFilter.toLowerCase()) return false;
     if (teamProjectIds && !teamProjectIds.has(String(log.project_id))) return false;
+    // recentActivity comes from a separate, unscoped endpoint — narrow it to
+    // the selected Workspace's projects too (teamProjectIds alone doesn't
+    // cover the default "Toàn bộ Leader" view, where it's null).
+    if (scopedProjectIds && !scopedProjectIds.has(log.project_id)) return false;
     return true;
   });
 
