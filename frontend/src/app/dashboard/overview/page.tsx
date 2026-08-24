@@ -409,6 +409,211 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
   );
 };
 
+const PriorityDetailModal = ({
+  initialFilter = 'overdue',
+  tasks,
+  onClose,
+  onNavigate,
+}: {
+  initialFilter?: 'overdue' | 'critical' | 'high' | 'normal' | 'interrupt';
+  tasks: any[];
+  onClose: () => void;
+  onNavigate?: (projectId: string | number) => void;
+}) => {
+  const filterList = useMemo(() => {
+    if (initialFilter === 'overdue') {
+      return tasks.filter(t => {
+        const isDone = t.status === 'Done' || t.status === 'done';
+        const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+        return !isDone && !isCancel && calculateDaysLate(t) > 0;
+      });
+    }
+    return tasks.filter(t => (t.priority || '').toLowerCase() === initialFilter);
+  }, [tasks, initialFilter]);
+
+  const configMap: Record<string, {
+    label: string;
+    description: string;
+    tone: string;
+    softBg: string;
+    borderColor: string;
+    badgeBg: string;
+  }> = {
+    overdue: {
+      label: 'Task trễ hạn',
+      description: 'Danh sách công việc đã quá thời hạn',
+      tone: '#df2b30',
+      softBg: '#fff3f3',
+      borderColor: '#ffb8ba',
+      badgeBg: '#df2b30',
+    },
+    critical: {
+      label: 'Critical task',
+      description: 'Danh sách công việc có mức ưu tiên Critical',
+      tone: '#df2b30',
+      softBg: '#fff3f3',
+      borderColor: '#ffb8ba',
+      badgeBg: '#df2b30',
+    },
+    high: {
+      label: 'High task',
+      description: 'Danh sách công việc có mức ưu tiên High',
+      tone: '#e9540c',
+      softBg: '#fff7ed',
+      borderColor: '#fdc98f',
+      badgeBg: '#e9540c',
+    },
+    normal: {
+      label: 'Normal task',
+      description: 'Danh sách công việc có mức ưu tiên Normal',
+      tone: '#2864e8',
+      softBg: '#eff6ff',
+      borderColor: '#acd0ff',
+      badgeBg: '#2864e8',
+    },
+    interrupt: {
+      label: 'Interrupt task',
+      description: 'Công việc phát sinh cần xử lý ngay',
+      tone: '#8a2be2',
+      softBg: '#faf5ff',
+      borderColor: '#dfc2ff',
+      badgeBg: '#8a2be2',
+    },
+  };
+
+  const currentConfig = configMap[initialFilter] || configMap.overdue;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden">
+      {/* BACKDROP */}
+      <div
+        onClick={onClose}
+        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity"
+      />
+
+      {/* DRAWER PANEL SLIDE OUT FROM RIGHT */}
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col border-l border-slate-200">
+        {/* MODAL HEADER */}
+        <div className="sticky top-0 z-30 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
+          <div>
+            <h2 className="text-lg font-black text-[#0b1c30] uppercase tracking-wider">{currentConfig.label}</h2>
+            <p className="text-xs font-semibold text-slate-400 mt-0.5">{currentConfig.description}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors flex items-center justify-center font-bold text-sm cursor-pointer shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* COLORED HEADER BANNER (PINNED STICKY AT TOP) */}
+        <div
+          className="sticky top-[65px] z-20 p-5 border-b flex items-center justify-between transition-colors shadow-sm shrink-0"
+          style={{
+            backgroundColor: currentConfig.softBg,
+            borderColor: currentConfig.borderColor,
+            color: currentConfig.tone,
+          }}
+        >
+          <div>
+            <h3 className="text-base font-black tracking-tight uppercase" style={{ color: currentConfig.tone }}>
+              {currentConfig.label}
+            </h3>
+            <p className="text-xs font-semibold text-slate-600 mt-0.5">
+              Tổng số công việc: <strong className="font-extrabold">{filterList.length} task</strong>
+            </p>
+          </div>
+          <div
+            className="w-11 h-11 rounded-xl flex items-center justify-center font-black text-lg text-white shadow-sm shrink-0"
+            style={{ backgroundColor: currentConfig.badgeBg }}
+          >
+            {filterList.length}
+          </div>
+        </div>
+
+        {/* TASK LIST CONTAINER */}
+        <div className="flex-1 p-5 overflow-y-auto space-y-3.5 custom-scrollbar bg-[#f4f6f9]">
+          {filterList.length === 0 ? (
+            <div className="py-16 text-center text-slate-400 font-semibold text-sm">
+              Không có task nào trong danh mục này.
+            </div>
+          ) : (
+            filterList.map((t: any, idx: number) => {
+              const daysLate = calculateDaysLate(t);
+              const isDone = t.status === 'Done' || t.status === 'done';
+              const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+              const pName = t.projectName || t.project_name || 'Chưa rõ';
+              const cName = t.customerName || t.customer_name || 'Chưa rõ';
+              const assignee = t.assigned_name || t.assignee || 'Chưa giao';
+              const taskTitle = t.name || t.detail_task || t.detail || 'Nhiệm vụ không tên';
+
+              let statusText = isDone ? 'Đã xong' : isCancel ? 'Đã hủy' : daysLate > 0 ? `Trễ ${daysLate} ngày` : 'Đang làm';
+              let statusCls = isDone
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : isCancel
+                ? 'bg-slate-100 text-slate-500 border-slate-200'
+                : daysLate > 0
+                ? 'bg-red-50 text-red-600 border-red-200 font-bold'
+                : 'bg-blue-50 text-blue-700 border-blue-200';
+
+              return (
+                <div
+                  key={t.id || idx}
+                  onClick={() => {
+                    if (t.project_id && onNavigate) {
+                      onClose();
+                      onNavigate(t.project_id);
+                    }
+                  }}
+                  className={`bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:shadow-md transition-all space-y-2.5 ${
+                    t.project_id && onNavigate ? 'cursor-pointer hover:border-[#0058be]' : ''
+                  }`}
+                >
+                  {/* TAGS */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="px-2.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 text-blue-700 border border-blue-100 truncate max-w-[180px]" title={pName}>
+                      Dự án: {pName}
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-200 truncate max-w-[180px]" title={cName}>
+                      KH: {cName}
+                    </span>
+                    <span
+                      className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase border"
+                      style={{
+                        backgroundColor: currentConfig.softBg,
+                        color: currentConfig.tone,
+                        borderColor: currentConfig.borderColor,
+                      }}
+                    >
+                      {t.priority || initialFilter.toUpperCase()}
+                    </span>
+                  </div>
+
+                  {/* TITLE */}
+                  <h4 className="text-sm font-bold text-[#0b1c30] leading-relaxed break-words" title={taskTitle}>
+                    {taskTitle}
+                  </h4>
+
+                  {/* FOOTER */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                    <span className="text-slate-500 font-medium">
+                      Phụ trách: <strong className="text-slate-800 font-bold">{assignee}</strong>
+                    </span>
+                    <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-extrabold border ${statusCls}`}>
+                      {statusText}
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function OverviewTab() {
   // Recent Activity (cross-project) filter
   const [auditModuleFilter, setAuditModuleFilter] = useState('all');
@@ -441,6 +646,7 @@ export default function OverviewTab() {
 
   // Filter & Modal States
   const [selectedMemberModal, setSelectedMemberModal] = useState<any>(null);
+  const [selectedPriorityModal, setSelectedPriorityModal] = useState<'overdue' | 'critical' | 'high' | 'normal' | 'interrupt' | null>(null);
   const [aiCheckStatus, setAiCheckStatus] = useState<string | null>(null);
 
   const fetchOverview = useCallback(async () => {
@@ -1115,17 +1321,22 @@ export default function OverviewTab() {
 
         {/* PRIORITY TABLE */}
         <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex flex-col">
-          <div className="px-5 py-4 border-b border-slate-100 bg-slate-50">
+          <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
             <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Mức Độ Ưu Tiên (Priority)</h3>
+            <span className="text-[10px] font-semibold text-slate-400">💡 Bấm vào để xem chi tiết</span>
           </div>
           <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] custom-scrollbar">
             {[
-              { label: 'Critical', val: priorityStats.critical, cls: 'bg-red-50 text-red-600 border-red-200' },
-              { label: 'High', val: priorityStats.high, cls: 'bg-orange-50 text-orange-600 border-orange-200' },
-              { label: 'Normal', val: priorityStats.normal, cls: 'bg-blue-50 text-blue-600 border-blue-200' },
-              { label: 'Interrupt', val: priorityStats.interrupt, cls: 'bg-purple-50 text-purple-600 border-purple-200' }
+              { label: 'Critical', key: 'critical' as const, val: priorityStats.critical, cls: 'bg-red-50 text-red-600 border-red-200 hover:border-red-400' },
+              { label: 'High', key: 'high' as const, val: priorityStats.high, cls: 'bg-orange-50 text-orange-600 border-orange-200 hover:border-orange-400' },
+              { label: 'Normal', key: 'normal' as const, val: priorityStats.normal, cls: 'bg-blue-50 text-blue-600 border-blue-200 hover:border-blue-400' },
+              { label: 'Interrupt', key: 'interrupt' as const, val: priorityStats.interrupt, cls: 'bg-purple-50 text-purple-600 border-purple-200 hover:border-purple-400' }
             ].map(item => (
-              <div key={item.label} className={`flex items-center justify-between p-3 rounded-xl border ${item.cls}`}>
+              <div
+                key={item.label}
+                onClick={() => setSelectedPriorityModal(item.key)}
+                className={`flex items-center justify-between p-3 rounded-xl border ${item.cls} cursor-pointer transition-all hover:shadow-xs active:scale-[0.99]`}
+              >
                 <span className="text-xs font-bold">{item.label}</span>
                 <span className="text-sm font-extrabold">{item.val} tasks</span>
               </div>
@@ -1135,15 +1346,23 @@ export default function OverviewTab() {
 
         {/* OVERDUE LIST WITH CUSTOMER & PROJECT NAME */}
         <div className="bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="px-5 py-4 border-b border-red-100 bg-red-50/50 flex justify-between items-center">
+          <div
+            onClick={() => setSelectedPriorityModal('overdue')}
+            className="px-5 py-4 border-b border-red-100 bg-red-50/50 flex justify-between items-center cursor-pointer hover:bg-red-100/50 transition-colors"
+          >
             <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">Task Trễ Hạn ({overdueTasksList.length})</h3>
+            <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full hover:bg-red-200">Xem tất cả →</span>
           </div>
           <div className="p-4 overflow-y-auto max-h-[300px] space-y-2.5 custom-scrollbar">
             {overdueTasksList.length === 0 ? (
               <p className="text-xs text-slate-400 font-semibold text-center py-6">Không có task trễ hạn.</p>
             ) : (
               overdueTasksList.map((t, idx) => (
-                <div key={idx} className="p-3 bg-white rounded-xl border border-red-100 hover:border-red-300 transition-all">
+                <div
+                  key={idx}
+                  onClick={() => setSelectedPriorityModal('overdue')}
+                  className="p-3 bg-white rounded-xl border border-red-100 hover:border-red-300 transition-all cursor-pointer hover:shadow-xs"
+                >
                   <div className="flex flex-wrap gap-1 mb-1.5">
                     <span className="text-[9px] font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 truncate max-w-[140px]" title={t.projectName}>Dự án: {t.projectName}</span>
                     <span className="text-[9px] font-extrabold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 truncate max-w-[140px]" title={t.customerName}>KH: {t.customerName}</span>
@@ -1537,6 +1756,16 @@ export default function OverviewTab() {
         </div>
 
       </div>
+
+      {/* PRIORITY DETAIL MODAL */}
+      {selectedPriorityModal && (
+        <PriorityDetailModal
+          initialFilter={selectedPriorityModal}
+          tasks={filteredTasks}
+          onClose={() => setSelectedPriorityModal(null)}
+          onNavigate={(projectId) => router.push(`/project/detail?id=${projectId}`)}
+        />
+      )}
 
       {/* MEMBER DETAIL MODAL */}
       {selectedMemberModal && (
