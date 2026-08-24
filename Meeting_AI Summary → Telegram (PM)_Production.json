@@ -13,7 +13,7 @@
         "triggerOn": "specificFolder",
         "folderToWatch": {
           "__rl": true,
-          "value": "182oWyQZPs3esSArRyU7loGTkwb-x6uml",
+          "value": "1UegIgRf8cLZP1mPRUjW3Rz_gALOrqjh9",
           "mode": "id"
         },
         "event": "fileCreated",
