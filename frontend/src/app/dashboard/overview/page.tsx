@@ -420,24 +420,16 @@ const PriorityDetailModal = ({
   onClose: () => void;
   onNavigate?: (projectId: string | number) => void;
 }) => {
-  const [activeFilter, setActiveFilter] = useState<'overdue' | 'critical' | 'high' | 'normal' | 'interrupt'>(initialFilter);
-
-  useEffect(() => {
-    if (initialFilter) {
-      setActiveFilter(initialFilter);
+  const filterList = useMemo(() => {
+    if (initialFilter === 'overdue') {
+      return tasks.filter(t => {
+        const isDone = t.status === 'Done' || t.status === 'done';
+        const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+        return !isDone && !isCancel && calculateDaysLate(t) > 0;
+      });
     }
-  }, [initialFilter]);
-
-  const overdueList = useMemo(() => tasks.filter(t => {
-    const isDone = t.status === 'Done' || t.status === 'done';
-    const isCancel = t.status === 'Cancel' || t.status === 'cancel';
-    return !isDone && !isCancel && calculateDaysLate(t) > 0;
-  }), [tasks]);
-
-  const criticalList = useMemo(() => tasks.filter(t => (t.priority || '').toLowerCase() === 'critical'), [tasks]);
-  const highList = useMemo(() => tasks.filter(t => (t.priority || '').toLowerCase() === 'high'), [tasks]);
-  const normalList = useMemo(() => tasks.filter(t => (t.priority || '').toLowerCase() === 'normal'), [tasks]);
-  const interruptList = useMemo(() => tasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt'), [tasks]);
+    return tasks.filter(t => (t.priority || '').toLowerCase() === initialFilter);
+  }, [tasks, initialFilter]);
 
   const configMap: Record<string, {
     label: string;
@@ -446,7 +438,6 @@ const PriorityDetailModal = ({
     softBg: string;
     borderColor: string;
     badgeBg: string;
-    list: any[];
   }> = {
     overdue: {
       label: 'Task trễ hạn',
@@ -455,7 +446,6 @@ const PriorityDetailModal = ({
       softBg: '#fff3f3',
       borderColor: '#ffb8ba',
       badgeBg: '#df2b30',
-      list: overdueList,
     },
     critical: {
       label: 'Critical task',
@@ -464,7 +454,6 @@ const PriorityDetailModal = ({
       softBg: '#fff3f3',
       borderColor: '#ffb8ba',
       badgeBg: '#df2b30',
-      list: criticalList,
     },
     high: {
       label: 'High task',
@@ -473,7 +462,6 @@ const PriorityDetailModal = ({
       softBg: '#fff7ed',
       borderColor: '#fdc98f',
       badgeBg: '#e9540c',
-      list: highList,
     },
     normal: {
       label: 'Normal task',
@@ -482,7 +470,6 @@ const PriorityDetailModal = ({
       softBg: '#eff6ff',
       borderColor: '#acd0ff',
       badgeBg: '#2864e8',
-      list: normalList,
     },
     interrupt: {
       label: 'Interrupt task',
@@ -491,11 +478,10 @@ const PriorityDetailModal = ({
       softBg: '#faf5ff',
       borderColor: '#dfc2ff',
       badgeBg: '#8a2be2',
-      list: interruptList,
     },
   };
 
-  const activeGroup = configMap[activeFilter] || configMap.overdue;
+  const currentConfig = configMap[initialFilter] || configMap.overdue;
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -506,12 +492,12 @@ const PriorityDetailModal = ({
       />
 
       {/* DRAWER PANEL SLIDE OUT FROM RIGHT */}
-      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-4xl bg-white h-full shadow-2xl flex flex-col border-l border-slate-200">
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col border-l border-slate-200">
         {/* MODAL HEADER */}
         <div className="sticky top-0 z-30 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
           <div>
-            <h2 className="text-lg font-black text-[#0b1c30] uppercase tracking-wider">Tổng quan công việc theo Priority</h2>
-            <p className="text-xs font-semibold text-slate-400 mt-0.5">Bấm vào bộ lọc bên trái để chuyển đổi danh mục công việc</p>
+            <h2 className="text-lg font-black text-[#0b1c30] uppercase tracking-wider">{currentConfig.label}</h2>
+            <p className="text-xs font-semibold text-slate-400 mt-0.5">{currentConfig.description}</p>
           </div>
           <button
             onClick={onClose}
@@ -521,154 +507,107 @@ const PriorityDetailModal = ({
           </button>
         </div>
 
-        {/* MODAL BODY: 2-COLUMN GRID (LEFT NAV + RIGHT LIST) */}
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-12 min-h-0 bg-[#f4f6f9]">
-          {/* LEFT ASIDE NAV */}
-          <aside className="md:col-span-4 p-5 bg-white border-r border-slate-200 flex flex-col gap-3 overflow-y-auto custom-scrollbar">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Bộ Lọc Priority</h3>
+        {/* COLORED HEADER BANNER (PINNED STICKY AT TOP) */}
+        <div
+          className="sticky top-[65px] z-20 p-5 border-b flex items-center justify-between transition-colors shadow-sm shrink-0"
+          style={{
+            backgroundColor: currentConfig.softBg,
+            borderColor: currentConfig.borderColor,
+            color: currentConfig.tone,
+          }}
+        >
+          <div>
+            <h3 className="text-base font-black tracking-tight uppercase" style={{ color: currentConfig.tone }}>
+              {currentConfig.label}
+            </h3>
+            <p className="text-xs font-semibold text-slate-600 mt-0.5">
+              Tổng số công việc: <strong className="font-extrabold">{filterList.length} task</strong>
+            </p>
+          </div>
+          <div
+            className="w-11 h-11 rounded-xl flex items-center justify-center font-black text-lg text-white shadow-sm shrink-0"
+            style={{ backgroundColor: currentConfig.badgeBg }}
+          >
+            {filterList.length}
+          </div>
+        </div>
 
-            {[
-              { id: 'overdue', label: 'Task trễ hạn', count: overdueList.length, tone: '#df2b30', soft: '#fff3f3', border: '#ffb8ba', isClock: true },
-              { id: 'critical', label: 'Critical', count: criticalList.length, tone: '#df2b30', soft: '#fff3f3', border: '#ffb8ba' },
-              { id: 'high', label: 'High', count: highList.length, tone: '#e9540c', soft: '#fff7ed', border: '#fdc98f' },
-              { id: 'normal', label: 'Normal', count: normalList.length, tone: '#2864e8', soft: '#eff6ff', border: '#acd0ff' },
-              { id: 'interrupt', label: 'Interrupt', count: interruptList.length, tone: '#8a2be2', soft: '#faf5ff', border: '#dfc2ff' },
-            ].map(item => {
-              const isActive = activeFilter === item.id;
+        {/* TASK LIST CONTAINER */}
+        <div className="flex-1 p-5 overflow-y-auto space-y-3.5 custom-scrollbar bg-[#f4f6f9]">
+          {filterList.length === 0 ? (
+            <div className="py-16 text-center text-slate-400 font-semibold text-sm">
+              Không có task nào trong danh mục này.
+            </div>
+          ) : (
+            filterList.map((t: any, idx: number) => {
+              const daysLate = calculateDaysLate(t);
+              const isDone = t.status === 'Done' || t.status === 'done';
+              const isCancel = t.status === 'Cancel' || t.status === 'cancel';
+              const pName = t.projectName || t.project_name || 'Chưa rõ';
+              const cName = t.customerName || t.customer_name || 'Chưa rõ';
+              const assignee = t.assigned_name || t.assignee || 'Chưa giao';
+              const taskTitle = t.name || t.detail_task || t.detail || 'Nhiệm vụ không tên';
+
+              let statusText = isDone ? 'Đã xong' : isCancel ? 'Đã hủy' : daysLate > 0 ? `Trễ ${daysLate} ngày` : 'Đang làm';
+              let statusCls = isDone
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : isCancel
+                ? 'bg-slate-100 text-slate-500 border-slate-200'
+                : daysLate > 0
+                ? 'bg-red-50 text-red-600 border-red-200 font-bold'
+                : 'bg-blue-50 text-blue-700 border-blue-200';
+
               return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveFilter(item.id as any)}
-                  style={{
-                    backgroundColor: item.soft,
-                    borderColor: isActive ? item.tone : item.border,
-                    color: item.tone,
+                <div
+                  key={t.id || idx}
+                  onClick={() => {
+                    if (t.project_id && onNavigate) {
+                      onClose();
+                      onNavigate(t.project_id);
+                    }
                   }}
-                  className={`relative flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left cursor-pointer hover:-translate-y-0.5 hover:shadow-sm ${
-                    isActive ? 'ring-2 shadow-md font-bold' : 'opacity-85 hover:opacity-100'
+                  className={`bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:shadow-md transition-all space-y-2.5 ${
+                    t.project_id && onNavigate ? 'cursor-pointer hover:border-[#0058be]' : ''
                   }`}
                 >
-                  {isActive && (
+                  {/* TAGS */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="px-2.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 text-blue-700 border border-blue-100 truncate max-w-[180px]" title={pName}>
+                      Dự án: {pName}
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-200 truncate max-w-[180px]" title={cName}>
+                      KH: {cName}
+                    </span>
                     <span
-                      className="absolute left-0 top-3 bottom-3 w-1.5 rounded-r-md"
-                      style={{ backgroundColor: item.tone }}
-                    />
-                  )}
-                  <span className="font-extrabold text-sm flex items-center gap-2">
-                    {item.isClock && <span className="material-symbols-outlined text-base">schedule</span>}
-                    {item.label}
-                  </span>
-                  <span className="font-black text-base whitespace-nowrap">
-                    {item.count} <small className="text-xs font-bold opacity-75">task</small>
-                  </span>
-                </button>
-              );
-            })}
-          </aside>
-
-          {/* RIGHT RESULTS MAIN */}
-          <main className="md:col-span-8 flex flex-col min-h-0 bg-[#f4f6f9] relative">
-            {/* PANEL HEADER (PINNED STICKY AT TOP) */}
-            <div
-              className="sticky top-0 z-20 p-5 border-b flex items-center justify-between transition-colors shadow-sm"
-              style={{
-                backgroundColor: activeGroup.softBg,
-                borderColor: activeGroup.borderColor,
-                color: activeGroup.tone,
-              }}
-            >
-              <div>
-                <h3 className="text-lg font-black tracking-tight uppercase" style={{ color: activeGroup.tone }}>
-                  {activeGroup.label}
-                </h3>
-                <p className="text-xs font-semibold text-slate-500 mt-0.5">{activeGroup.description}</p>
-              </div>
-              <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg text-white shadow-sm shrink-0"
-                style={{ backgroundColor: activeGroup.badgeBg }}
-              >
-                {activeGroup.list.length}
-              </div>
-            </div>
-
-            {/* TASK LIST CONTAINER */}
-            <div className="flex-1 p-5 overflow-y-auto space-y-3.5 custom-scrollbar">
-              {activeGroup.list.length === 0 ? (
-                <div className="py-16 text-center text-slate-400 font-semibold text-sm">
-                  Không có task nào trong danh mục này.
-                </div>
-              ) : (
-                activeGroup.list.map((t: any, idx: number) => {
-                  const daysLate = calculateDaysLate(t);
-                  const isDone = t.status === 'Done' || t.status === 'done';
-                  const isCancel = t.status === 'Cancel' || t.status === 'cancel';
-                  const pName = t.projectName || t.project_name || 'Chưa rõ';
-                  const cName = t.customerName || t.customer_name || 'Chưa rõ';
-                  const assignee = t.assigned_name || t.assignee || 'Chưa giao';
-                  const taskTitle = t.name || t.detail_task || t.detail || 'Nhiệm vụ không tên';
-
-                  let statusText = isDone ? 'Đã xong' : isCancel ? 'Đã hủy' : daysLate > 0 ? `Trễ ${daysLate} ngày` : 'Đang làm';
-                  let statusCls = isDone
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : isCancel
-                    ? 'bg-slate-100 text-slate-500 border-slate-200'
-                    : daysLate > 0
-                    ? 'bg-red-50 text-red-600 border-red-200 font-bold'
-                    : 'bg-blue-50 text-blue-700 border-blue-200';
-
-                  return (
-                    <div
-                      key={t.id || idx}
-                      onClick={() => {
-                        if (t.project_id && onNavigate) {
-                          onClose();
-                          onNavigate(t.project_id);
-                        }
+                      className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase border"
+                      style={{
+                        backgroundColor: currentConfig.softBg,
+                        color: currentConfig.tone,
+                        borderColor: currentConfig.borderColor,
                       }}
-                      className={`bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:shadow-md transition-all space-y-2.5 ${
-                        t.project_id && onNavigate ? 'cursor-pointer hover:border-[#0058be]' : ''
-                      }`}
                     >
-                      {/* TAGS */}
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="px-2.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 text-blue-700 border border-blue-100 truncate max-w-[180px]" title={pName}>
-                          Dự án: {pName}
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-200 truncate max-w-[180px]" title={cName}>
-                          KH: {cName}
-                        </span>
-                        <span
-                          className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase border"
-                          style={{
-                            backgroundColor: activeGroup.softBg,
-                            color: activeGroup.tone,
-                            borderColor: activeGroup.borderColor,
-                          }}
-                        >
-                          {t.priority || activeFilter.toUpperCase()}
-                        </span>
-                      </div>
+                      {t.priority || initialFilter.toUpperCase()}
+                    </span>
+                  </div>
 
-                      {/* TITLE */}
-                      <h4 className="text-sm font-bold text-[#0b1c30] leading-relaxed break-words" title={taskTitle}>
-                        {taskTitle}
-                      </h4>
+                  {/* TITLE */}
+                  <h4 className="text-sm font-bold text-[#0b1c30] leading-relaxed break-words" title={taskTitle}>
+                    {taskTitle}
+                  </h4>
 
-                      {/* FOOTER */}
-                      <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
-                        <span className="text-slate-500 font-medium">
-                          Phụ trách: <strong className="text-slate-800 font-bold">{assignee}</strong>
-                        </span>
-                        <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-extrabold border ${statusCls}`}>
-                          {statusText}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </main>
+                  {/* FOOTER */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                    <span className="text-slate-500 font-medium">
+                      Phụ trách: <strong className="text-slate-800 font-bold">{assignee}</strong>
+                    </span>
+                    <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-extrabold border ${statusCls}`}>
+                      {statusText}
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </div>
