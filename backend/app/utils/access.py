@@ -285,60 +285,68 @@ SCOPE_TO_DEPARTMENT = {
 
 
 def workspace_leader_names(db: Session, user):
-    """Distinct `Member.leader_name` values the caller may see on the Dashboard.
+    """Canonical Leader names the caller may see on the Dashboard.
 
-    A Leader identity is attributed to one of the caller's Workspaces when at
-    least one member carrying that leader_name is linked to an account whose
-    `data_scope` is in the caller's scopes (or is the global `all` scope), or
-    whose department matches one of the caller's Workspace departments.
+    Uses the authoritative portal account model (User.role='leader' + is_active)
+    rather than arbitrary Member.leader_name strings. A Leader identity is
+    attributed to a Workspace when the Leader's linked Member is within the
+    caller's authorized member set (via member_query_for_user) or the caller
+    has ALL_SCOPE.
 
-    Project-only matches are intentionally excluded here: a cross-Workspace
-    member assigned to one of the caller's projects must not widen the visible
-    Leader cards. `Member.leader_name` remains the single Leader → Member
-    relationship, so the existing Dashboard selection logic is untouched.
-
-    super_admin / scope=all keep the previous unrestricted behavior.
+    super_admin / scope=all keep the previous unrestricted behavior (all
+    canonical leaders).
     """
     scopes = user_allowed_scopes(db, user)
     role = getattr(user, "role", ROLE_MEMBER)
 
+    # Base canonical set: active portal leaders
+    base_q = db.query(User).filter(User.role == ROLE_LEADER, User.is_active == True)  # noqa: E712
+    all_leaders = base_q.all()
+    # Helper to get display name for a leader user
+    def _leader_display(u):
+        m = getattr(u, "member", None)
+        if m and getattr(m, "display_name", None):
+            n = m.display_name
+        elif m and getattr(m, "full_name", None):
+            n = m.full_name
+        else:
+            n = u.full_name or (u.email.split("@")[0] if u.email else "")
+        n = (n or "").strip()
+        # keep consistent formatting
+        if n:
+            # local import to avoid cycle
+            import re as _re
+            clean = _re.sub(r"\s*\([^)]*\)\s*$", "", str(n)).strip()
+            words = [w for w in clean.split() if w]
+            if len(words) > 2:
+                abbr = ".".join([w[0].upper() for w in words[:-2]])
+                last_two = " ".join(words[-2:])
+                n = f"{abbr} {last_two}"[:50]
+            else:
+                n = " ".join(words)[:50]
+        return n
+
     if role == ROLE_SUPER_ADMIN or scopes == ALL_SCOPE:
-        rows = db.query(Member.leader_name).filter(Member.leader_name.isnot(None)).all()
-        return sorted({(ln or "").strip() for (ln,) in rows if ln and ln.strip()})
+        names = { _leader_display(u) for u in all_leaders if _leader_display(u) }
+        return sorted(names)
 
     if role not in WORKSPACE_SCOPED_ROLES:
         return []
 
-    scoped_user_member_ids = (
-        db.query(User.member_id)
-        .filter(
-            User.member_id.isnot(None),
-            or_(User.data_scope.in_(scopes), User.data_scope == ALL_SCOPE),
-        )
-        .subquery()
-    )
-    target_depts = []
-    for s in scopes:
-        s_lower = str(s).strip().lower()
-        dept = SCOPE_TO_DEPARTMENT.get(s_lower)
-        if dept:
-            target_depts.append(dept)
-        else:
-            ws = resolve_workspace(db, s_lower)
-            if ws:
-                target_depts.append(ws.name)
-                target_depts.append(ws.code)
-
-    conditions = [Member.id.in_(scoped_user_member_ids)]
-    if target_depts:
-        conditions.append(sql_func.lower(Member.department).in_([d.lower() for d in target_depts]))
-
-    rows = (
-        db.query(Member.leader_name)
-        .filter(Member.leader_name.isnot(None), or_(*conditions))
-        .all()
-    )
-    return sorted({(ln or "").strip() for (ln,) in rows if ln and ln.strip()})
+    # Scoped: only leaders whose member is within the caller's authorized set
+    allowed_ids = {m.id for m in member_query_for_user(db, user).all()}
+    names = set()
+    for u in all_leaders:
+        mid = getattr(u, "member_id", None)
+        if mid is not None and mid in allowed_ids:
+            disp = _leader_display(u)
+            if disp:
+                names.add(disp)
+        elif mid is None:
+            # Leader without member link - treat as not attributable to a specific workspace;
+            # only include if caller has no workspace restriction (already handled above).
+            continue
+    return sorted(names)
 
 
 def can_access_project(db: Session, user, project: Project) -> bool:
