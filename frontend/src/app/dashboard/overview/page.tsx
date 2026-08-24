@@ -620,6 +620,7 @@ export default function OverviewTab() {
 
   // Workspace/Leader Filter
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
+  const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
 
   // Unified Date Filter
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
@@ -665,13 +666,14 @@ export default function OverviewTab() {
       memberApiUrl += `&year=${selectedYear}`;
     }
 
-    const [membersRes, projRes, tasksRes, activityRes, leadersRes, leadersScopeRes] = await Promise.all([
+    const [membersRes, projRes, tasksRes, activityRes, leadersRes, leadersScopeRes, meRes] = await Promise.all([
       axios.get(memberApiUrl, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects/recent-activity?limit=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
       axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(`/api/members/workspace-leaders?_t=${ts}`, config).catch(() => ({ data: { leaders: null } })),
+      axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: null })),
     ]);
 
     return {
@@ -683,6 +685,7 @@ export default function OverviewTab() {
       // Backend-authoritative Leader identities the current user may see.
       // null (fetch failure) → keep existing behavior (no visibility filter).
       allowedLeaders: Array.isArray(leadersScopeRes.data?.leaders) ? leadersScopeRes.data.leaders : null,
+      currentUser: meRes.data || null,
     };
   }, [selectedMonth, selectedYear]);
 
@@ -702,6 +705,10 @@ export default function OverviewTab() {
   const rawLeaders: any[] = overviewData?.rawLeaders || [];
   const allowedLeaders: string[] | null = overviewData?.allowedLeaders ?? null;
   const recentActivity: any[] = overviewData?.recentActivity || [];
+  const currentUser: any = overviewData?.currentUser || null;
+  const currentUserRole = currentUser?.role || getRole() || '';
+  const showsMemberCards = currentUserRole === 'leader';
+  const showsLeaderCards = !showsMemberCards;
 
   const applyQuickFilter = (type: string) => {
     setActiveQuickFilter(type);
@@ -761,6 +768,8 @@ export default function OverviewTab() {
     priorityStats,
     overdueTasksList,
     memberRanking,
+    memberCards,
+    teamCardStats,
     activeProjects,
     topPerformer,
     lowestPerformer,
@@ -770,6 +779,8 @@ export default function OverviewTab() {
   } = useMemo(() => {
     const isSameId = (a: any, b: any) => a != null && b != null && String(a) === String(b);
     const isIdInList = (idList: any[], targetId: any) => targetId != null && idList.some(id => String(id) === String(targetId));
+    const memberTaskFilter = (memberIds: any[]) => (t: any) =>
+      isIdInList(memberIds, t.assigned_id) || isIdInList(memberIds, t.support_id);
 
     // 1. Get Leaders directly from rawMembers
     const leaderMap = new Map();
@@ -804,15 +815,40 @@ export default function OverviewTab() {
     const totTasks = rawTasks.length;
     const totDone = rawTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
 
-    // 2. Filter Members by Leader (Include subordinates + Leader person themselves!)
+    const memberCardSource = showsMemberCards ? rawMembers : [];
+    const memberCardsList = memberCardSource.map(m => {
+      const mTasks = rawTasks.filter(memberTaskFilter([m.id]));
+      const done = mTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
+      return {
+        id: m.id,
+        name: m.display_name || m.full_name || 'Member',
+        team: m.team || m.department || 'General',
+        totalTasks: mTasks.length,
+        doneTasks: done,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    const memberCardIds = memberCardSource.map(m => m.id);
+    const teamCardTasks = rawTasks.filter(memberTaskFilter(memberCardIds));
+    const teamStats = {
+      memberCount: memberCardSource.length,
+      totalTasks: teamCardTasks.length,
+      doneTasks: teamCardTasks.filter(t => t.status === 'Done' || t.status === 'done').length,
+    };
+
+    // 2. Filter Members by selected Leader, except Leader accounts use member cards.
     let activeTeamList = rawMembers;
-    if (selectedLeader && selectedLeader !== 'all') {
+    if (showsLeaderCards && selectedLeader && selectedLeader !== 'all') {
       const selTrim = selectedLeader.trim().toLowerCase();
       activeTeamList = rawMembers.filter(m => {
         const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
         const mName = (m.display_name || m.full_name || m.name || '').trim().toLowerCase();
         return leaderName === selTrim || mName === selTrim;
       });
+    } else if (showsMemberCards) {
+      activeTeamList = memberCardSource;
+      if (selectedMemberId !== 'all') {
+        activeTeamList = activeTeamList.filter(m => isSameId(m.id, selectedMemberId));
+      }
     }
     const teamMemberIds = activeTeamList.map(m => m.id);
 
@@ -996,6 +1032,8 @@ export default function OverviewTab() {
       priorityStats: pStats,
       overdueTasksList: overdueList.sort((a, b) => b.daysLate - a.daysLate),
       memberRanking: finalRanking,
+      memberCards: memberCardsList,
+      teamCardStats: teamStats,
       activeProjects: aProjects,
       topPerformer: topPerf,
       lowestPerformer: lowestPerf,
@@ -1003,13 +1041,13 @@ export default function OverviewTab() {
       averageMatrix: avgM,
       bonusMatrix: bonM
     };
-  }, [rawMembers, rawTasks, rawProjects, rawLeaders, allowedLeaders, selectedLeader, selectedYear, selectedMonth, selectedWeek, matrixYear]);
+  }, [rawMembers, rawTasks, rawProjects, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always
   // shows the latest events, not just the ones in the currently selected period).
   const teamProjectIds = useMemo(() => {
-    if (selectedLeader === 'all') return null;
+    if (showsLeaderCards && selectedLeader === 'all') return null;
     const memberIds = new Set(activeTeamMembers.map((m: any) => String(m.id)));
     const ids = new Set<string>();
     rawTasks.forEach((t: any) => {
@@ -1018,7 +1056,7 @@ export default function OverviewTab() {
       }
     });
     return ids;
-  }, [selectedLeader, activeTeamMembers, rawTasks]);
+  }, [showsLeaderCards, selectedLeader, activeTeamMembers, rawTasks]);
 
   const filteredActivity = recentActivity.filter(log => {
     if (auditModuleFilter !== 'all' && log.module?.toLowerCase() !== auditModuleFilter.toLowerCase()) return false;
@@ -1115,32 +1153,60 @@ export default function OverviewTab() {
           </div>
         </div>
 
-        {/* 2. LEADER SELECTOR BAR WITH PERCENTAGE CIRCLE */}
-        <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
-          <button
-            onClick={() => setSelectedLeader('all')}
-            className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-          >
-            <div>
-              <div className="text-xs font-bold">Toàn bộ Leader</div>
-              <div className="text-[10px] font-normal opacity-80">{leaders.length} team · {rawMembers.length} member</div>
-            </div>
-            <CircularProgress value={totalAllDoneTasks} total={totalAllTasks} />
-          </button>
-          {leaders.map(ld => (
+        {/* 2. LEADER / MEMBER SELECTOR BAR WITH PERCENTAGE CIRCLE */}
+        {showsLeaderCards ? (
+          <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
             <button
-              key={ld.name}
-              onClick={() => setSelectedLeader(ld.name)}
-              className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              onClick={() => setSelectedLeader('all')}
+              className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
-              <div className="truncate">
-                <div className="text-xs font-bold truncate">{ld.name}</div>
-                <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
+              <div>
+                <div className="text-xs font-bold">Toàn bộ Leader</div>
+                <div className="text-[10px] font-normal opacity-80">{leaders.length} team · {rawMembers.length} member</div>
               </div>
-              <CircularProgress value={ld.doneTasks} total={ld.totalTasks} />
+              <CircularProgress value={totalAllDoneTasks} total={totalAllTasks} />
             </button>
-          ))}
-        </div>
+            {leaders.map(ld => (
+              <button
+                key={ld.name}
+                onClick={() => setSelectedLeader(ld.name)}
+                className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              >
+                <div className="truncate">
+                  <div className="text-xs font-bold truncate">{ld.name}</div>
+                  <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
+                </div>
+                <CircularProgress value={ld.doneTasks} total={ld.totalTasks} />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <button
+              onClick={() => setSelectedMemberId('all')}
+              className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedMemberId === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            >
+              <div>
+                <div className="text-xs font-bold">Toàn bộ Team</div>
+                <div className="text-[10px] font-normal opacity-80">{teamCardStats.memberCount} member</div>
+              </div>
+              <CircularProgress value={teamCardStats.doneTasks} total={teamCardStats.totalTasks} />
+            </button>
+            {memberCards.map(m => (
+              <button
+                key={m.id}
+                onClick={() => setSelectedMemberId(String(m.id))}
+                className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedMemberId === String(m.id) ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              >
+                <div className="truncate">
+                  <div className="text-xs font-bold truncate">{m.name}</div>
+                  <div className="text-[10px] font-normal opacity-80 truncate">{m.team} · {m.totalTasks} task</div>
+                </div>
+                <CircularProgress value={m.doneTasks} total={m.totalTasks} />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
 
