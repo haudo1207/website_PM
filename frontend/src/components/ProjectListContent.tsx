@@ -5,6 +5,7 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SearchableSelect from './common/SearchableSelect';
 import ProjectFormModal from './ProjectFormModal';
 
@@ -160,6 +161,17 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     const ws = workspaces.find(w => w.code === lockedWorkspace);
     setBusinessFilter(ws?.name || lockedWorkspace);
   }, [lockedWorkspace, workspaces]);
+
+  // When not locked to a specific Project Hub tab, default to whatever
+  // Workspace is selected app-wide (Navbar switcher) — keeps this list
+  // consistent with Dashboard/KPI. The dropdown below still lets the user
+  // override it locally without touching the shared selection.
+  const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
+  useEffect(() => {
+    if (lockedWorkspace || !ctxWorkspaceCode) return;
+    const ws = workspaces.find(w => w.code === ctxWorkspaceCode);
+    setBusinessFilter(ws?.name || ctxWorkspaceCode);
+  }, [lockedWorkspace, ctxWorkspaceCode, workspaces]);
 
   // Sync URL query params to filter states
   useEffect(() => {

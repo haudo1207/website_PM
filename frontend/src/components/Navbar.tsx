@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getWorkspaces, getMe } from '@/lib/api';
 import { brand } from '@/lib/brand';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 // Rendered once for the desktop sidebar and once for the mobile drawer —
 // both exist in the DOM simultaneously (CSS just hides one via
@@ -16,6 +17,7 @@ import { brand } from '@/lib/brand';
 // the *other* instance's dropdown reads as "outside" and closes the menu
 // before the Link's navigation can fire.
 function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null }) {
+  const { setWorkspaceCode } = useWorkspaceFilter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const currentWs = workspaces.find((w: any) => w.code === currentWsCode);
@@ -67,14 +69,14 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode 
       </button>
       {open && (
         <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-20 py-1">
-          <Link href="/project-hub" onClick={() => { setOpen(false); onNavigate?.(); }}
+          <Link href="/project-hub" onClick={() => { setWorkspaceCode(null); setOpen(false); onNavigate?.(); }}
             className={`block px-3 py-2 text-xs font-semibold transition-colors ${
               !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
             }`}>
             Tất cả Workspace
           </Link>
           {workspaces.map((ws: any) => (
-            <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => { setOpen(false); onNavigate?.(); }}
+            <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => { setWorkspaceCode(ws.code); setOpen(false); onNavigate?.(); }}
               className={`block px-3 py-2 text-xs font-semibold truncate transition-colors ${
                 ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
               }`}>
@@ -114,7 +116,7 @@ function NavbarContent() {
     staleTime: 5 * 60_000,
   });
   const effectiveRole = meData?.role || getRole() || '';
-  const isFullAccessUser = effectiveRole === 'super_admin' || effectiveRole === 'admin';
+  const isFullAccessUser = effectiveRole === 'super_admin';
   const fixedWsCode = !isFullAccessUser && meData?.data_scope && meData.data_scope !== 'all'
     ? meData.data_scope
     : null;
@@ -131,9 +133,19 @@ function NavbarContent() {
     </svg>
   );
 
-  // Workspace the user is currently looking at, derived from the URL
-  // (/project-hub/{code}) — null means the merged "all workspaces" view.
-  const currentWsCode = path.startsWith('/project-hub/') ? path.split('/')[2] : null;
+  // Company selection is shared across the whole app (Dashboard, KPI, ...) via
+  // WorkspaceFilterProvider — the URL-derived code below (from /project-hub/{code})
+  // is authoritative while browsing Project Hub itself, and syncs INTO the shared
+  // context so other pages pick it up; elsewhere the shared context drives the
+  // Switcher's highlighted item. Only applies to non-fixed (super_admin) users —
+  // Leader/Member/Viewer keep their fixedWsCode regardless.
+  const { workspaceCode: ctxWorkspaceCode, setWorkspaceCode } = useWorkspaceFilter();
+  const urlWsCode = path.startsWith('/project-hub/') ? path.split('/')[2] : null;
+  const currentWsCode = fixedWsCode || urlWsCode || ctxWorkspaceCode;
+
+  useEffect(() => {
+    if (!fixedWsCode && urlWsCode && urlWsCode !== ctxWorkspaceCode) setWorkspaceCode(urlWsCode);
+  }, [fixedWsCode, urlWsCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderProjectsLink = (onNavigate?: () => void) => (
     <Link href="/project-hub" onClick={onNavigate}

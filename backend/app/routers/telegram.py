@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 def _is_admin(user) -> bool:
-    return user.role in {"admin", "super_admin"}
+    return user.role == "super_admin"
 
 
 # ── Public webhook (no auth required) ─────────────────────────
@@ -87,7 +87,7 @@ def telegram_status(
     the chat_id or any sensitive information.
     """
     connected = bool(
-        current_user.role in {"admin", "super_admin"}
+        current_user.role == "super_admin"
         and current_user.telegram_chat_id
     )
     return {

@@ -5,6 +5,7 @@ import {
   getTeams, getPositions, getDepartments, getCategories,
   syncFromRecruitment, getLeaders
 } from '@/lib/api';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SearchableSelect from './common/SearchableSelect';
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -80,6 +81,11 @@ export default function MembersView({ onFlash }: Props) {
     }
   };
 
+  // Company selection is shared app-wide via WorkspaceFilterProvider (see
+  // Navbar's Workspace switcher) — narrows this list to the same Workspace
+  // Dashboard/KPI/Project Hub are currently showing.
+  const { workspaceCode } = useWorkspaceFilter();
+
   // ─── Data loading ─────────────────────────────────────────────────
   const loadMembers = useCallback(() => {
     const params: any = {};
@@ -88,8 +94,9 @@ export default function MembersView({ onFlash }: Props) {
     if (filterPosition) params.position = filterPosition;
     if (filterDepartment) params.department = filterDepartment;
     if (filterLeader) params.leader_name = filterLeader;
+    if (workspaceCode) params.workspace = workspaceCode;
     getMembers(params).then(setMembers).catch(() => { });
-  }, [search, filterTeam, filterPosition, filterDepartment, filterLeader]);
+  }, [search, filterTeam, filterPosition, filterDepartment, filterLeader, workspaceCode]);
 
   useEffect(() => {
     loadMembers();

@@ -24,7 +24,7 @@ from ..utils.audit_service import AuditService
 
 router = APIRouter()
 MIN_PASSWORD_LENGTH = 8
-SUPER_ADMIN_ROLES = {ROLE_SUPER_ADMIN, "admin"}
+SUPER_ADMIN_ROLES = {ROLE_SUPER_ADMIN}
 LEADER_MANAGED_ROLES = {ROLE_MEMBER, ROLE_VIEWER}
 
 
@@ -48,9 +48,9 @@ def ensure_superadmin_remains(db: Session, account: User, *, role=None, active=N
     next_role = account.role if role is None else role
     next_active = account.is_active if active is None else active
     removes_active_superadmin = (
-        account.role in {ROLE_SUPER_ADMIN, "admin"}
+        account.role in SUPER_ADMIN_ROLES
         and account.is_active
-        and (deleting or next_role not in {ROLE_SUPER_ADMIN, "admin"} or not next_active)
+        and (deleting or next_role not in SUPER_ADMIN_ROLES or not next_active)
     )
     if removes_active_superadmin:
         active_superadmins = db.query(User).filter(User.role.in_(SUPER_ADMIN_ROLES), User.is_active.is_(True)).count()

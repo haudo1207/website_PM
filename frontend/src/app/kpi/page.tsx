@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
 import { getMembers, getTeams, getDepartments, getWorkspaces, getMe } from '@/lib/api';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 export default function KPIPage() {
     const router = useRouter();
@@ -73,6 +74,25 @@ export default function KPIPage() {
             setWorkspace(lockedWorkspaceName);
         }
     }, [isScopedUser, lockedWorkspaceName, workspace]);
+
+    // Company selection is shared app-wide via WorkspaceFilterProvider (see
+    // Navbar's Workspace switcher) — picking a Workspace there filters this
+    // page too, converting the shared code into the name this page's filter
+    // (and its `?workspace=` API param) already expects.
+    const { workspaceCode: ctxWorkspaceCode, setWorkspaceCode } = useWorkspaceFilter();
+    useEffect(() => {
+        if (isScopedUser) return;
+        const name = ctxWorkspaceCode
+            ? (workspaceOptions.find(o => (o.code || '').toLowerCase() === ctxWorkspaceCode.toLowerCase())?.name || '')
+            : '';
+        setWorkspace(name);
+    }, [ctxWorkspaceCode, workspaceOptions, isScopedUser]);
+
+    const handleWorkspaceChange = (name: string) => {
+        setWorkspace(name);
+        const code = name ? (workspaceOptions.find(o => o.name === name)?.code || null) : null;
+        setWorkspaceCode(code);
+    };
 
     const memberParams = useMemo(() => {
         const params: any = {};
@@ -207,8 +227,8 @@ export default function KPIPage() {
 
                                     {/* Workspace */}
                                     <select 
-                                        value={isScopedUser ? (lockedWorkspaceName || workspace) : workspace} 
-                                        onChange={e => setWorkspace(e.target.value)}
+                                        value={isScopedUser ? (lockedWorkspaceName || workspace) : workspace}
+                                        onChange={e => handleWorkspaceChange(e.target.value)}
                                         disabled={isScopedUser}
                                         title={isScopedUser ? `Workspace cố định theo tài khoản: ${lockedWorkspaceName || userScope}` : undefined}
                                         className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-70"

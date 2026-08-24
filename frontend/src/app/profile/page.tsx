@@ -79,7 +79,7 @@ export default function ProfilePage() {
     enabled: historyOpen,
   });
 
-  const isAdmin = profile ? (profile.role === 'super_admin' || profile.role === 'admin') : false;
+  const isAdmin = profile ? profile.role === 'super_admin' : false;
 
   const { data: telegram, refetch: refetchTelegram } = useQuery({
     queryKey: ['telegram-status'],

@@ -22,8 +22,8 @@ ROLE_SUPER_ADMIN = "super_admin"
 ROLE_LEADER = "leader"
 ROLE_MEMBER = "member"
 ROLE_VIEWER = "viewer"
-VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER, "admin"}
-WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, "admin"}
+VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}
+WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER}
 # Roles whose effective data scope is their assigned Workspace
 # (same Workspace-based data-scope mechanism shared by Leader, Member and Viewer).
 WORKSPACE_SCOPED_ROLES = {ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}

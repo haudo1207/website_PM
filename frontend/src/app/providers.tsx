@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { restoreSession } from '@/lib/api';
+import { WorkspaceFilterProvider } from '@/lib/workspaceFilter';
 
 function SessionBootstrap({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -50,7 +51,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <SessionBootstrap>{children}</SessionBootstrap>
+      <WorkspaceFilterProvider>
+        <SessionBootstrap>{children}</SessionBootstrap>
+      </WorkspaceFilterProvider>
     </QueryClientProvider>
   );
 }

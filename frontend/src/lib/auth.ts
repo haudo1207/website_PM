@@ -25,17 +25,16 @@ export const getEmail = () => typeof window !== 'undefined' ? localStorage.getIt
 export const getAvatar = () => typeof window !== 'undefined' ? localStorage.getItem('avatar') : null;
 // ── 4-role model helpers ──
 export const isSuperAdmin = () => {
-  const r = getRole();
-  return r === 'super_admin' || r === 'admin';
+  return getRole() === 'super_admin';
 };
 export const isLeader = () => getRole() === 'leader';
 export const isMember = () => getRole() === 'member';
 export const isViewer = () => getRole() === 'viewer';
 
-// Manager: super_admin, admin or leader — may perform most write operations.
+// Manager: super_admin or leader — may perform most write operations.
 export const isAdmin = () => {
   const r = getRole();
-  return r === 'super_admin' || r === 'admin' || r === 'leader';
+  return r === 'super_admin' || r === 'leader';
 };
 
 // Kept for backward compatibility — maps to isAdmin().

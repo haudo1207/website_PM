@@ -469,7 +469,9 @@ def list_customers(business_unit: Optional[str] = None, db: Session = Depends(ge
     if getattr(current_user, "role", None) in WORKSPACE_SCOPED_ROLES and user_scope(current_user) != ALL_SCOPE:
         business_unit = user_scope(current_user)
     if business_unit:
-        q = q.filter(Customer.business_unit == business_unit.lower().strip())
+        # A "all"-scope Customer belongs to every Workspace — same fallback
+        # already applied to Project/Member workspace filters.
+        q = q.filter(sql_or(Customer.business_unit == business_unit.lower().strip(), Customer.business_unit == ALL_SCOPE))
     return q.order_by(Customer.name.asc()).all()
 
 

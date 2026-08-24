@@ -19,7 +19,7 @@ logger = logging.getLogger("telegram")
 
 # Roles that are allowed to connect Telegram and to receive Leave Request
 # notifications. Mirrors the existing role values used in the codebase.
-TELEGRAM_NOTIFY_ROLES = {"admin", "super_admin"}
+TELEGRAM_NOTIFY_ROLES = {"super_admin"}
 
 # How long a connection link stays valid.
 CONNECTION_TOKEN_TTL_MINUTES = 15

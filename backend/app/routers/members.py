@@ -11,9 +11,9 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
-from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names
+from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE
 from ..utils.audit_service import AuditService
-from sqlalchemy import func, extract, false
+from sqlalchemy import func, extract, false, or_
 
 TEAM_POSITIONS = {
   "Infrastructure": [
@@ -298,7 +298,9 @@ def list_members(
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:
-            q = q.filter(User.data_scope == ws.code)
+            # A "all"-scope account belongs to every Workspace — same fallback
+            # projects.py already applies for Project.business == "All".
+            q = q.filter(or_(User.data_scope == ws.code, User.data_scope == ALL_SCOPE))
         else:
             q = q.filter(false())
     if skill_id:

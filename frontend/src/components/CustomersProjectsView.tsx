@@ -19,6 +19,7 @@ import {
   getWorkspaces,
   Workspace
 } from '@/lib/api';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 interface CustomersProjectsViewProps {
   onFlash: (msg: string, isError?: boolean) => void;
@@ -107,13 +108,20 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
   });
   const workspaces: Workspace[] = workspacesQuery.data || [];
 
+  // Company selection is shared app-wide via WorkspaceFilterProvider (see
+  // Navbar's Workspace switcher) — follow it here too so switching Workspace
+  // there also switches this tab, instead of staying on whatever was first.
+  const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
+
   useEffect(() => {
     if (lockedWorkspace) {
       setActiveBU(lockedWorkspace);
+    } else if (ctxWorkspaceCode && workspaces.some(w => w.code === ctxWorkspaceCode)) {
+      setActiveBU(ctxWorkspaceCode);
     } else if (workspaces.length > 0) {
       setActiveBU(prev => prev || workspaces[0].code);
     }
-  }, [lockedWorkspace, workspaces]);
+  }, [lockedWorkspace, workspaces, ctxWorkspaceCode]);
 
   // Base data (Customers/Members) — cached per Workspace, does not refetch
   // on PM/Sales/Member/sort filter changes.

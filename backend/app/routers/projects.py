@@ -619,7 +619,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
                 raise HTTPException(400, f"Workspace '{b_in}' không tồn tại.")
             if ws:
                 p.business = ws.name
-        if "data_scope" not in body and (user_scope(current_user) == ALL_SCOPE or getattr(current_user, "role", None) in {"admin", "super_admin"}):
+        if "data_scope" not in body and (user_scope(current_user) == ALL_SCOPE or getattr(current_user, "role", None) == ROLE_SUPER_ADMIN):
             p.data_scope = "all" if b_in == "all" else (ws.code if ws else p.data_scope)
     if p.customer_id:
         from ..models.system_category import Customer as DB_Customer
@@ -652,7 +652,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         requested_scope = str(body["data_scope"]).strip().lower()
         if not is_valid_scope(db, requested_scope):
             raise HTTPException(400, f"Invalid data scope. Must be one of: {sorted(valid_data_scopes(db))}")
-        if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) not in {"super_admin", "admin", "leader"}:
+        if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
             raise HTTPException(403, "Only full-scope users can change project scope.")
         p.data_scope = requested_scope
 
@@ -781,7 +781,7 @@ def _delete_project_cascade(pid: int, db: Session, current_user) -> None:
 
     role = getattr(current_user, "role", ROLE_MEMBER)
     scope = user_scope(current_user)
-    is_super = (role in [ROLE_SUPER_ADMIN, "admin"] or scope == ALL_SCOPE)
+    is_super = (role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE)
     is_proj_leader = (role == ROLE_LEADER and can_access_project(db, current_user, p))
 
     if not (is_super or is_proj_leader):

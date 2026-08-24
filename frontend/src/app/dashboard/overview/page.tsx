@@ -6,7 +6,8 @@ import axios from 'axios';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getEmail, getName, getToken, getRole } from '@/lib/auth';
-import { getMyAlerts, remindLeaderBulk, getInboxNotifications, markNotificationRead } from '@/lib/api';
+import { getMyAlerts, remindLeaderBulk, getInboxNotifications, markNotificationRead, getWorkspaces } from '@/lib/api';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
@@ -699,9 +700,44 @@ export default function OverviewTab() {
     staleTime: 2 * 60_000,
   });
 
-  const rawMembers: any[] = overviewData?.rawMembers || [];
-  const rawProjects: any[] = overviewData?.rawProjects || [];
-  const rawTasks: any[] = overviewData?.rawTasks || [];
+  const rawMembersAll: any[] = overviewData?.rawMembers || [];
+  const rawProjectsAll: any[] = overviewData?.rawProjects || [];
+  const rawTasksAll: any[] = overviewData?.rawTasks || [];
+
+  // Company selection is shared app-wide via WorkspaceFilterProvider (see
+  // Navbar's Workspace switcher). Filtering here — right where the raw
+  // arrays enter the page — means every downstream computation (the large
+  // stats memo below, charts, cards...) narrows to the selected Workspace
+  // automatically, since they keep consuming `rawMembers`/`rawProjects`/
+  // `rawTasks` by these same names without any further changes.
+  const { workspaceCode } = useWorkspaceFilter();
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const selectedWorkspace = workspaceCode
+    ? (workspacesData || []).find((w: any) => w.code === workspaceCode) || null
+    : null;
+
+  // A project/member with an "all"-scope account belongs to every Workspace —
+  // same fallback already applied to the Members/Customers/Projects backend
+  // filters, so it can't silently disappear when narrowing to one Workspace.
+  const rawProjects: any[] = selectedWorkspace
+    ? rawProjectsAll.filter((p: any) =>
+        p.data_scope === selectedWorkspace.code ||
+        p.business === selectedWorkspace.name ||
+        p.data_scope === 'all' ||
+        p.business === 'All'
+      )
+    : rawProjectsAll;
+  const scopedProjectIds = selectedWorkspace ? new Set(rawProjects.map((p: any) => p.id)) : null;
+  const rawTasks: any[] = scopedProjectIds
+    ? rawTasksAll.filter((t: any) => scopedProjectIds.has(t.project_id))
+    : rawTasksAll;
+  const rawMembers: any[] = selectedWorkspace
+    ? rawMembersAll.filter((m: any) => m.workspace === selectedWorkspace.name || m.workspace === 'All')
+    : rawMembersAll;
   const rawLeaders: any[] = overviewData?.rawLeaders || [];
   const allowedLeaders: string[] | null = overviewData?.allowedLeaders ?? null;
   const recentActivity: any[] = overviewData?.recentActivity || [];

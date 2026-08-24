@@ -470,7 +470,7 @@ export default function LeaveRequestPage() {
 
   useEffect(() => {
     const role = localStorage.getItem('role');
-    setIsAdmin(role === 'super_admin' || role === 'admin');
+    setIsAdmin(role === 'super_admin');
   }, []);
 
   const QUERY_KEY = ['leave-requests'] as const;
