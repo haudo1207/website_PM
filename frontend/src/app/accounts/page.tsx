@@ -17,6 +17,7 @@ import {
   getWorkspaces,
   Workspace
 } from '@/lib/api';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 interface MemberInfo {
   id: number;
@@ -138,6 +139,14 @@ export default function AccountsPage() {
     return labels;
   }, [workspaces]);
 
+  // Company selection is shared app-wide via WorkspaceFilterProvider (see
+  // Navbar's Workspace switcher) — defaults this list's Data Scope filter to
+  // match, so switching Workspace at the top also filters the Accounts tab.
+  const { workspaceCode } = useWorkspaceFilter();
+  useEffect(() => {
+    setFilterScope(workspaceCode || '');
+  }, [workspaceCode]);
+
   const filteredAccounts = useMemo(() => {
     const nameQuery = searchName.trim().toLowerCase();
 
@@ -151,7 +160,9 @@ export default function AccountsPage() {
       ].some(value => (value || '').toLowerCase().includes(nameQuery));
 
       const roleMatch = !filterRole || acc.role === filterRole;
-      const scopeMatch = !filterScope || acc.data_scope === filterScope;
+      // An "all"-scope account belongs to every Workspace — same fallback
+      // already applied to the Members/Customers/Projects workspace filters.
+      const scopeMatch = !filterScope || acc.data_scope === filterScope || acc.data_scope === 'all';
       const statusMatch = !filterStatus || (filterStatus === 'active' ? acc.is_active : !acc.is_active);
 
       return nameMatch && roleMatch && scopeMatch && statusMatch;
