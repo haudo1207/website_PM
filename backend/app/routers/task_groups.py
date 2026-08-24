@@ -215,6 +215,60 @@ def get_next_task_code(group_index: int, gid: int, db) -> str:
     return f"{group_index}.{max_seq + 1}"
 
 
+def get_own_seq(task_code: str):
+    """Extract the trailing sequence number of a task_code, e.g. '1.3' -> 3, '1.2.1' -> 1."""
+    if not task_code:
+        return None
+    try:
+        return int(task_code.rsplit(".", 1)[-1])
+    except ValueError:
+        return None
+
+
+def close_gap_after_removal(removed_code: str, gid: int, db: Session):
+    """After a task with `removed_code` is gone from group `gid` (deleted or moved
+    away), shift the sequence numbers of its remaining siblings down by 1 so the
+    numbering stays contiguous, and cascade the renumbering to every descendant of
+    each shifted sibling (they must keep following their parent's new code)."""
+    parent_prefix = get_parent_code(removed_code)
+    removed_seq = get_own_seq(removed_code)
+    if not parent_prefix or removed_seq is None:
+        return
+
+    level_prefix = f"{parent_prefix}."
+    candidates = db.query(Task).filter(
+        Task.task_group_id == gid,
+        Task.task_code.like(f"{level_prefix}%")
+    ).all()
+
+    # Only direct siblings at this exact level (no further "." after the prefix)
+    siblings = []
+    for t in candidates:
+        rest = (t.task_code or "")[len(level_prefix):]
+        if "." in rest:
+            continue
+        seq = get_own_seq(t.task_code)
+        if seq is not None and seq > removed_seq:
+            siblings.append((seq, t))
+
+    # Ascending order: each new code frees up before the next sibling claims it
+    siblings.sort(key=lambda pair: pair[0])
+
+    for seq, sibling in siblings:
+        old_code = sibling.task_code
+        new_code = f"{level_prefix}{seq - 1}"
+        sibling.task_code = new_code
+        if old_code == new_code:
+            continue
+        old_desc_prefix = f"{old_code}."
+        descendants = db.query(Task).filter(
+            Task.task_group_id == gid,
+            Task.task_code.like(f"{old_desc_prefix}%")
+        ).all()
+        for d in descendants:
+            d.task_code = f"{new_code}." + d.task_code[len(old_desc_prefix):]
+
+
 def serialize_task_group(tg, db, group_index=None):
     task_count = 0
     done_count = 0
@@ -1229,8 +1283,28 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=
     phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
     project_id = phase.project_id if phase else None
 
-    task_desc = f"Xóa nhiệm vụ [{task.task_code}] '{task.detail}'"
+    removed_code = task.task_code
+
+    # Cascade-delete every descendant (child, grandchild, ...) of this task
+    descendant_count = 0
+    if removed_code:
+        descendants = db.query(Task).filter(
+            Task.task_group_id == gid,
+            Task.task_code.like(f"{removed_code}.%")
+        ).all()
+        descendant_count = len(descendants)
+        for d in descendants:
+            db.delete(d)
+
+    task_desc = f"Xóa nhiệm vụ [{removed_code}] '{task.detail}'"
+    if descendant_count:
+        task_desc += f" (kèm {descendant_count} task con)"
     db.delete(task)
+    db.flush()
+
+    # Close the numbering gap so remaining siblings (and their descendants) stay contiguous
+    if removed_code:
+        close_gap_after_removal(removed_code, gid, db)
 
     # Update group progress and sync start_date
     if tg:
@@ -1311,15 +1385,40 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
     require_project(db, current_user, target_phase.project_id)
 
     old_group_id = task.task_group_id
-    max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == new_group_id).scalar() or 0
-    task.task_group_id = new_group_id
-    task.sort_order = max_order + 1
+    old_code = task.task_code
 
-    # Auto-generate new task_code for target group
+    # Snapshot the sub-tree before mutating this task's own group/code
+    descendants = []
+    if old_code:
+        descendants = db.query(Task).filter(
+            Task.task_group_id == old_group_id,
+            Task.task_code.like(f"{old_code}.%")
+        ).all()
+
+    # Auto-generate new task_code for target group (computed while task is still
+    # attached to old_group_id, so it can't accidentally see its own old code)
     new_group_index = get_group_index(new_group, db)
     new_task_code = get_next_task_code(new_group_index, new_group_id, db)
     validate_manday_budget(new_group_id, new_task_code, task.manday_est, db, exclude_task_id=task.id)
+
+    max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == new_group_id).scalar() or 0
+    task.task_group_id = new_group_id
+    task.sort_order = max_order + 1
     task.task_code = new_task_code
+
+    # Bring the whole sub-tree along, rewritten under the new parent code
+    if old_code and descendants:
+        old_prefix = f"{old_code}."
+        new_prefix = f"{new_task_code}."
+        for d in descendants:
+            d.task_group_id = new_group_id
+            d.task_code = new_prefix + d.task_code[len(old_prefix):]
+
+    db.flush()
+
+    # Close the numbering gap left behind in the source group
+    if old_code:
+        close_gap_after_removal(old_code, old_group_id, db)
 
     # Update progress for both groups
     old_tg = db.query(TaskGroup).filter(TaskGroup.id == old_group_id).first()

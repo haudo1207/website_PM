@@ -139,6 +139,8 @@ function ProjectDetailContent() {
   const [skillSolutionDropdownOpen, setSkillSolutionDropdownOpen] = useState(false);
   const [skillVendorFilter, setSkillVendorFilter] = useState('All');
   const [skillVendorDropdownOpen, setSkillVendorDropdownOpen] = useState(false);
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
@@ -189,6 +191,7 @@ function ProjectDetailContent() {
   const [editingGroupRemark, setEditingGroupRemark] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
+  const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
 
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
   const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
@@ -414,9 +417,28 @@ function ProjectDetailContent() {
     }
   };
 
+  // Các cột bắt buộc khi tạo task mới (xem handleSaveTask) - không cho ẩn vì
+  // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
+  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
+
   const getDynamicColumns = () => {
-    return TASK_COLUMNS;
+    return TASK_COLUMNS.filter(col => !hiddenColumns.includes(col));
   };
+
+  const toggleColumnVisibility = (col: string) => {
+    if (LOCKED_COLUMNS.includes(col)) return;
+    setHiddenColumns(prev => {
+      const isHidden = prev.includes(col);
+      if (!isHidden) {
+        if (col === 'PRIORITY') setPriorityFilter('All');
+        if (col === 'STATUS') setStatusFilter('All');
+        return [...prev, col];
+      }
+      return prev.filter(c => c !== col);
+    });
+  };
+
+  const resetColumnVisibility = () => setHiddenColumns([]);
 
   // Phases/task groups/tasks now live in the React Query cache instead of
   // 3 separate useState — enabled:false because every fetch here has always
@@ -562,6 +584,7 @@ function ProjectDetailContent() {
   const supportFilterRef = useRef<HTMLDivElement>(null);
   const skillSolutionFilterRef = useRef<HTMLDivElement>(null);
   const skillVendorFilterRef = useRef<HTMLDivElement>(null);
+  const columnMenuRef = useRef<HTMLDivElement>(null);
   const [addMemberDropdownOpen, setAddMemberDropdownOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState('');
   const addMemberRef = useRef<HTMLDivElement>(null);
@@ -734,6 +757,21 @@ function ProjectDetailContent() {
     return () => clearInterval(timer);
   }, [id, loadChatData, activeMainTab]);
 
+  // Cột hiển thị của bảng Task - lưu theo máy/trình duyệt, áp dụng cho tất cả dự án
+  const TASK_HIDDEN_COLUMNS_KEY = 'pm_task_hidden_columns';
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TASK_HIDDEN_COLUMNS_KEY);
+      if (saved) setHiddenColumns(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASK_HIDDEN_COLUMNS_KEY, JSON.stringify(hiddenColumns));
+    } catch {}
+  }, [hiddenColumns]);
+
   // Load chats from localStorage
   useEffect(() => {
     if (!id) return;
@@ -842,10 +880,13 @@ function ProjectDetailContent() {
       if (skillVendorDropdownOpen && skillVendorFilterRef.current && !skillVendorFilterRef.current.contains(target)) {
         setSkillVendorDropdownOpen(false);
       }
+      if (columnMenuOpen && columnMenuRef.current && !columnMenuRef.current.contains(target)) {
+        setColumnMenuOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [addMemberDropdownOpen, priorityDropdownOpen, statusDropdownOpen, assignedDropdownOpen, supportDropdownOpen, skillSolutionDropdownOpen, skillVendorDropdownOpen]);
+  }, [addMemberDropdownOpen, priorityDropdownOpen, statusDropdownOpen, assignedDropdownOpen, supportDropdownOpen, skillSolutionDropdownOpen, skillVendorDropdownOpen, columnMenuOpen]);
 
   const handleSaveChannelLink = async (channelKey: string, value: string) => {
     setIsSavingLink(true);
@@ -1415,7 +1456,7 @@ function ProjectDetailContent() {
     try {
       await deleteTask(task.task_group_id, taskToDelete);
       flash('Đã xóa nhiệm vụ thành công!');
-      reloadAll();
+      reloadAll(true);
     } catch (err: any) {
       alert('Lỗi xóa task: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -2085,7 +2126,7 @@ function ProjectDetailContent() {
       setAddingTaskParentCode(null);
       setAddingTaskAfterCode(null);
       setNewForm({});
-      reloadAll();
+      reloadAll(true);
       flash('Đã thêm nhiệm vụ thành công!');
     } catch (err: any) {
       alert('Lỗi thêm task: ' + (err.response?.data?.detail || err.message));
@@ -2096,9 +2137,15 @@ function ProjectDetailContent() {
 
   const handleDuplicateTask = async (groupId: number, taskId: number) => {
     try {
-      await duplicateTask(groupId, taskId);
+      const newTask = await duplicateTask(groupId, taskId);
       flash('Đã nhân bản task thành công!');
-      reloadAll();
+      await reloadAll(true);
+      if (newTask?.id) {
+        setHighlightTaskId(newTask.id);
+        setTimeout(() => {
+          setHighlightTaskId(prev => (prev === newTask.id ? null : prev));
+        }, 2000);
+      }
     } catch (err: any) {
       alert('Lỗi nhân bản task: ' + (err.response?.data?.detail || err.message));
     }
@@ -2449,9 +2496,12 @@ function ProjectDetailContent() {
       }
     };
 
-    const rowBgClass = isSubTask
-      ? "bg-white hover:bg-[#f0f5ff]/60"
-      : "bg-[#f8fafc] hover:bg-[#eef3fb] border-l-[3px] border-l-[#0058be]";
+    const isHighlighted = task.id === highlightTaskId;
+    const rowBgClass = isHighlighted
+      ? "bg-amber-100 ring-2 ring-inset ring-amber-400 animate-pulse"
+      : isSubTask
+        ? "bg-white hover:bg-[#f0f5ff]/60"
+        : "bg-[#f8fafc] hover:bg-[#eef3fb] border-l-[3px] border-l-[#0058be]";
 
     const cellStyle = "px-4 py-3 border-r border-slate-100 last:border-r-0 text-left align-middle text-[12.5px]";
 
@@ -4598,6 +4648,58 @@ function ProjectDetailContent() {
                         <span className="material-symbols-outlined text-[16px]">add</span>
                         Thêm task
                       </button>
+
+                      {/* Cột hiển thị */}
+                      <div className="relative" ref={columnMenuRef}>
+                        <button
+                          onClick={() => setColumnMenuOpen(!columnMenuOpen)}
+                          className={`px-3 py-2.5 rounded-lg text-[13px] font-bold border transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap ${
+                            hiddenColumns.length > 0
+                              ? 'bg-blue-50 border-blue-200 text-[#0058be]'
+                              : 'bg-white border-[#c2c6d6] text-[#565e74] hover:bg-slate-50'
+                          }`}
+                          title="Chọn cột hiển thị"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">view_column</span>
+                          Cột hiển thị
+                          {hiddenColumns.length > 0 && (
+                            <span className="bg-[#0058be] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{hiddenColumns.length}</span>
+                          )}
+                        </button>
+                        {columnMenuOpen && (
+                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-30 w-64 max-h-96 overflow-auto">
+                            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 sticky top-0 bg-white">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cột hiển thị</span>
+                              <button
+                                onClick={resetColumnVisibility}
+                                className="text-[11px] font-semibold text-[#0058be] hover:underline"
+                              >
+                                Khôi phục mặc định
+                              </button>
+                            </div>
+                            {TASK_COLUMNS.map(col => {
+                              const locked = LOCKED_COLUMNS.includes(col);
+                              const checked = !hiddenColumns.includes(col);
+                              return (
+                                <label
+                                  key={col}
+                                  className={`flex items-center gap-2 px-3 py-1.5 text-[12px] ${locked ? 'text-slate-400 cursor-not-allowed' : 'text-[#0b1c30] hover:bg-slate-50 cursor-pointer'}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={locked}
+                                    onChange={() => toggleColumnVisibility(col)}
+                                    className="accent-[#0058be]"
+                                  />
+                                  {col}
+                                  {locked && <span className="text-[9px] text-slate-300 ml-auto">bắt buộc</span>}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -7465,7 +7567,12 @@ function ProjectDetailContent() {
         </div>
       )}
       {/* Modal xác nhận xóa task */}
-      {taskToDelete !== null && (
+      {taskToDelete !== null && (() => {
+        const taskBeingDeleted = items.find(item => item.id === taskToDelete);
+        const childCount = taskBeingDeleted?.task_code
+          ? items.filter(t => t.task_code && t.task_code.startsWith(`${taskBeingDeleted.task_code}.`)).length
+          : 0;
+        return (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
@@ -7476,6 +7583,11 @@ function ProjectDetailContent() {
               <p className="text-xs text-slate-600 leading-relaxed">
                 Bạn có chắc chắn muốn xóa nhiệm vụ này không? Hành động này sẽ xóa vĩnh viễn nhiệm vụ khỏi cơ sở dữ liệu và không thể hoàn tác.
               </p>
+              {childCount > 0 && (
+                <p className="text-xs text-red-600 font-semibold leading-relaxed mt-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  Nhiệm vụ này có {childCount} task con bên dưới — tất cả sẽ bị xóa theo.
+                </p>
+              )}
             </div>
             <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
               <button
@@ -7493,7 +7605,8 @@ function ProjectDetailContent() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Modal Tạo Phase */}
       {showPhaseModal && (
