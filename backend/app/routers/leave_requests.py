@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 from datetime import datetime
@@ -8,12 +9,29 @@ from ..database import get_db
 from ..models.leave_request import LeaveRequest
 from ..models.user import User
 from ..utils.auth import get_current_user, require_admin
-from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER
+from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER, ALL_SCOPE, user_allowed_scopes
 from ..utils.audit_service import AuditService
 
 logger = logging.getLogger("leave_requests")
 
 router = APIRouter()
+
+
+def _leader_scope_ok(db: Session, current_user: User, target_user_id: int) -> bool:
+    """A Leader may only view/manage leave requests from users within their
+    own Workspace(s) (Company); super_admin is unrestricted."""
+    if current_user.role != ROLE_LEADER:
+        return True
+    allowed = user_allowed_scopes(db, current_user)
+    if allowed == ALL_SCOPE:
+        return True
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    target_scope = (target_user.data_scope or "").strip().lower() if target_user else ""
+    # A globally-scoped user's leave requests are visible/manageable by any
+    # Leader — same "belongs to every Workspace" rule as member_query_for_user
+    # and can_access_project (see access.py) — otherwise they'd have no
+    # Leader able to approve/reject them at all.
+    return target_scope in allowed or target_scope == ALL_SCOPE
 
 def leave_to_dict(lr: LeaveRequest) -> dict:
     return {
@@ -60,13 +78,23 @@ def list_leave_requests(
 ):
     q = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member))
 
-    # Admin can see all, regular users can only see their own
-    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
-        q = q.filter(LeaveRequest.user_id == current_user.id)
-    else:
-        # Admin can filter by specific user if provided
+    # Super admin can see all; Leader is scoped to their own Company
+    # (Workspace); regular users can only see their own.
+    if current_user.role == ROLE_SUPER_ADMIN:
         if user_id:
             q = q.filter(LeaveRequest.user_id == user_id)
+    elif current_user.role == ROLE_LEADER:
+        allowed = user_allowed_scopes(db, current_user)
+        if allowed != ALL_SCOPE:
+            # A globally-scoped user's leave requests must still surface in
+            # every Leader's queue — same fallback as member_query_for_user.
+            q = q.join(User, LeaveRequest.user_id == User.id).filter(
+                or_(func.lower(User.data_scope).in_(allowed), func.lower(User.data_scope) == ALL_SCOPE)
+            )
+        if user_id:
+            q = q.filter(LeaveRequest.user_id == user_id)
+    else:
+        q = q.filter(LeaveRequest.user_id == current_user.id)
 
     if status:
         q = q.filter(LeaveRequest.status == status)
@@ -88,7 +116,9 @@ def get_leave_request(id: int, db: Session = Depends(get_db), current_user: User
     # Check permission: admin can see all, user can only see their own
     if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền xem")
-    
+    if not _leader_scope_ok(db, current_user, lr.user_id):
+        raise HTTPException(403, "Không có quyền xem (khác Công ty)")
+
     return leave_to_dict(lr)
 
 # CREATE LEAVE REQUEST
@@ -140,7 +170,9 @@ def update_leave_request(id: int, body: dict, db: Session = Depends(get_db), cur
     # Check permission: only admin or owner can update
     if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền sửa")
-    
+    if not _leader_scope_ok(db, current_user, lr.user_id):
+        raise HTTPException(403, "Không có quyền sửa (khác Công ty)")
+
     # Only admin can change status
     if 'status' in body and current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
         raise HTTPException(403, "Chỉ admin mới có quyền thay đổi trạng thái")
@@ -174,7 +206,9 @@ def delete_leave_request(id: int, db: Session = Depends(get_db), current_user: U
     # Check permission: only admin or owner can delete
     if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền xóa")
-    
+    if not _leader_scope_ok(db, current_user, lr.user_id):
+        raise HTTPException(403, "Không có quyền xóa (khác Công ty)")
+
     db.delete(lr)
     db.commit()
     return {"message": "Đã xóa leave request thành công"}
