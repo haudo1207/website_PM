@@ -183,7 +183,7 @@ function NavbarContent() {
   return (
     <>
       {/* Mobile Header */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#0F172A] border-b border-slate-800 flex items-center justify-between px-4 z-50">
+      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#0F172A] border-b border-slate-800 flex items-center justify-between px-4 z-[200]">
         <div className="flex items-center gap-2">
           <img src={brand.logo} alt={`${brand.name} logo`} className="w-6 h-6 rounded-lg flex-shrink-0 object-cover" />
           <span className="text-sm font-bold text-white">{brand.productName}</span>
@@ -206,7 +206,7 @@ function NavbarContent() {
 
       {/* Mobile Menu Overlay */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setMobileMenuOpen(false)} />
+        <div className="md:hidden fixed inset-0 z-[190] bg-black/50" onClick={() => setMobileMenuOpen(false)} />
       )}
 
       {/* Sidebar - Hidden on mobile, visible on md+ */}
@@ -323,7 +323,7 @@ function NavbarContent() {
 
       {/* Mobile Menu Drawer */}
       <aside className={`
-        md:hidden fixed top-0 left-0 bottom-0 w-[260px] bg-[#0F172A] z-50 transform transition-transform duration-300 ease-in-out
+        md:hidden fixed top-0 left-0 bottom-0 w-[260px] bg-[#0F172A] z-[200] transform transition-transform duration-300 ease-in-out
         ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         {/* Mobile Logo */}
@@ -340,6 +340,23 @@ function NavbarContent() {
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
           <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onNavigate={() => setMobileMenuOpen(false)} />
+
+          {/* Dashboard single link */}
+          {(() => {
+            const active = path.startsWith('/dashboard');
+            return (
+              <Link href="/dashboard/overview" onClick={() => setMobileMenuOpen(false)}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+                  active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                Dashboard
+              </Link>
+            );
+          })()}
+
           {renderProjectsLink(() => setMobileMenuOpen(false))}
 
           {nav.map(n => {

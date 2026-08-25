@@ -199,19 +199,19 @@ export default function MembersView({ onFlash }: Props) {
   // ─── Render ───────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      <div className="sticky top-[112px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-8 py-6 space-y-6">
+      <div className="sticky top-[168px] md:top-[112px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 space-y-6">
           {/* Header */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h1 className="text-2xl font-bold text-[#0f172a] tracking-tight">Quản Lý Thành Viên</h1>
               <p className="text-sm text-slate-500 mt-0.5">Quản lý danh sách thành viên, kỹ năng và thông tin tổ chức</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={handleSyncRecruitment}
                 disabled={syncing}
-                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm whitespace-nowrap"
               >
                 <svg className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89H18.24" />
@@ -220,7 +220,7 @@ export default function MembersView({ onFlash }: Props) {
               </button>
               <button
                 onClick={openAdd}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm whitespace-nowrap"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
