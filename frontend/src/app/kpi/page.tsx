@@ -27,7 +27,14 @@ export default function KPIPage() {
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
     const [levelOptions, setLevelOptions] = useState<any[]>([]);
-    const [workspaceOptions, setWorkspaceOptions] = useState<any[]>([]);
+    // Shared ['workspaces'] react-query cache — same key/staleTime as Navbar/
+    // Dashboard/ProjectListContent, so this doesn't fire a duplicate request.
+    const { data: workspaceOptionsData } = useQuery({
+        queryKey: ['workspaces'],
+        queryFn: () => getWorkspaces(),
+        staleTime: 5 * 60_000,
+    });
+    const workspaceOptions: any[] = workspaceOptionsData || [];
     const [teamOptions, setTeamOptions] = useState<any[]>([]);
     // Workspace data scope: for Leader/Member/Viewer the assigned Workspace is
     // the effective KPI data scope (fixed filter); other roles keep existing behavior.
@@ -62,7 +69,6 @@ export default function KPIPage() {
 
     useEffect(() => {
         getTeams().then(setLevelOptions).catch(() => {});
-        getWorkspaces().then(setWorkspaceOptions).catch(() => {});
         getDepartments().then(setTeamOptions).catch(() => {});
         getMe().then(me => { setUserRole(me.role); setUserScope(me.data_scope || ''); }).catch(() => {});
     }, []);
