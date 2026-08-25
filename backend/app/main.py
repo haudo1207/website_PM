@@ -170,6 +170,28 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_email VARCHAR(255)"
         ))
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_member_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'members_leader_member_id_fkey'
+                      AND conrelid = 'members'::regclass
+                ) THEN
+                    ALTER TABLE members
+                    ADD CONSTRAINT members_leader_member_id_fkey
+                    FOREIGN KEY (leader_member_id) REFERENCES members(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_members_leader_member_id ON members (leader_member_id)"
+        ))
 
         # Add business_unit column to customers and drop obsolete unique name constraint
         conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS business_unit VARCHAR(50) NOT NULL DEFAULT 'infrastructure'"))
