@@ -4052,16 +4052,16 @@ function ProjectDetailContent() {
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden font-body-md" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       {!isFullscreen && <Navbar />}
 
-      <div className={`flex-1 ${isFullscreen ? 'pl-0' : 'pl-[230px]'} flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
+      <div className={`flex-1 min-w-0 ${isFullscreen ? 'pl-0 pt-0' : 'pl-0 md:pl-[230px] pt-14 md:pt-0'} flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
 
         {/* TOP BAR / NAVIGATION HEADER */}
-        <div className="h-[52px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
+        <div className="min-h-[52px] bg-white border-b border-[#c2c6d6]/60 flex flex-wrap items-center justify-between gap-2 px-4 md:px-8 py-2 md:py-0 shrink-0 z-30">
           <div className="flex items-center gap-3">
             <span className="text-[#565e74] hover:text-[#0058be] cursor-pointer text-xs font-semibold" onClick={() => router.push('/project-hub')}>Dự án</span>
             <span className="text-[#c2c6d6] text-xs">/</span>
             <span className="text-xs font-bold text-[#0b1c30]">{project.name}</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             {project && (
               <div className="flex items-center gap-2">
                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${project.ai_status === 'NEED_RECHECK'
@@ -4102,7 +4102,7 @@ function ProjectDetailContent() {
         </div>
 
         {/* MAIN CONTAINER */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-6">
           {msg && (
             <div className={`fixed top-4 right-4 z-50 p-3 rounded-lg text-xs font-semibold shadow-xl border ${msg.e ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
@@ -4144,10 +4144,10 @@ function ProjectDetailContent() {
           </div>
 
           {/* TAB NAVIGATION */}
-          <div className="border-b border-[#c2c6d6]/60 flex space-x-8">
+          <div className="border-b border-[#c2c6d6]/60 flex space-x-4 sm:space-x-8 overflow-x-auto">
             <button
               onClick={() => router.push(`/project/detail/overview?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">dashboard</span>
@@ -4155,7 +4155,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">task</span>
@@ -4163,7 +4163,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/meetings?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">meeting_room</span>
@@ -4171,7 +4171,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/chats?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
@@ -4179,7 +4179,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/members?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
@@ -4188,7 +4188,7 @@ function ProjectDetailContent() {
             {isAdmin() && (
               <button
                 onClick={() => router.push(`/project/detail/audit-logs?id=${id}`)}
-                className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                   }`}
               >
                 <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
@@ -4197,7 +4197,7 @@ function ProjectDetailContent() {
             )}
             <button
               onClick={() => router.push(`/project/detail/resources?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all ${activeMainTab === 'resources' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'resources' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">folder_open</span>

@@ -36,13 +36,13 @@ function CustomersTabPage({ code, wsName }: { code: string; wsName: string }) {
   return (
     <div className="h-screen bg-[#f8fafc] text-[#0f172a] flex overflow-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col h-screen overflow-hidden">
         {msg && (
           <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border backdrop-blur-sm transition-all duration-300 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>
             {msg.t}
           </div>
         )}
-        <main className="flex-1 overflow-y-auto p-6 max-w-[1400px] w-full mx-auto space-y-6">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 max-w-[1400px] w-full mx-auto space-y-6">
           <TabBar code={code} wsName={wsName} active="customers" />
           <CustomersProjectsView onFlash={flash} lockedWorkspace={code} />
         </main>
@@ -77,7 +77,7 @@ function ProjectHubWorkspaceInner() {
     return (
       <div className="min-h-screen flex bg-[#f8fafc]">
         <Navbar />
-        <div className="flex-1 pl-[230px] flex items-center justify-center min-h-screen">
+        <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex items-center justify-center min-h-screen">
           <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
         </div>
       </div>

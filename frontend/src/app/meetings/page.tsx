@@ -263,26 +263,26 @@ function MeetingsPageContent() {
         </div>
       )}
 
-      <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
-        
+      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col h-screen overflow-hidden">
+
         {/* Top Header Bar */}
-        <div className="h-[56px] bg-white border-b border-[#e2e8f0] flex items-center justify-between px-8 shrink-0 z-40">
+        <div className="min-h-[56px] bg-white border-b border-[#e2e8f0] flex flex-wrap items-center justify-between gap-2 px-4 md:px-8 py-2 md:py-0 shrink-0 z-30">
           <div className="flex items-center gap-3">
             <CalendarIcon className="text-[#6366f1]" size={20} />
             <h1 className="text-base font-extrabold text-[#0b1c30]">Quản lý Meetings</h1>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setIsSettingsOpen(true)} 
-              className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-[#cbd5e1] text-[#475569] text-xs font-bold px-3.5 py-2 rounded-xl transition-colors shadow-2xs"
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-[#cbd5e1] text-[#475569] text-xs font-bold px-3.5 py-2 rounded-xl transition-colors shadow-2xs whitespace-nowrap"
             >
               <Sparkles size={15} className="text-[#6366f1]" />
               <span>Cấu hình AI & Google Admin</span>
             </button>
-            <button 
-              onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }} 
-              className="flex items-center gap-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-sm"
+            <button
+              onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }}
+              className="flex items-center gap-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-sm whitespace-nowrap"
             >
               <span className="text-base font-normal leading-none">+</span>
               <span>Tạo meeting</span>
@@ -291,7 +291,7 @@ function MeetingsPageContent() {
         </div>
 
         {/* Main Content Scroll Container */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-6">
           
           {/* Navigation Tabs Bar (Danh sách cuộc họp | Calendar Team) */}
           <div className="flex items-center gap-8 border-b border-[#e2e8f0] pb-2 text-xs font-bold">

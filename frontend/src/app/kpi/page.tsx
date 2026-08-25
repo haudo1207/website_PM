@@ -157,17 +157,17 @@ export default function KPIPage() {
     return (
         <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex" style={{ fontFamily: "'Inter', sans-serif" }}>
             <Navbar />
-            <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
+            <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col min-h-screen">
                 {/* Header */}
-                <div className="h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-40 shadow-sm">
+                <div className="h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 sticky top-14 md:top-0 z-30 shadow-sm">
                     <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Thống Kê KPI Toàn Dự Án</h2>
                 </div>
 
                 {/* Tabbar Navigation */}
-                <div className="bg-white border-b border-slate-200 px-8 flex gap-6 z-30">
+                <div className="bg-white border-b border-slate-200 px-4 md:px-8 flex gap-4 md:gap-6 z-20 overflow-x-auto">
                     <button
                         onClick={() => setActiveTab('KPItotal')}
-                        className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'KPItotal'
+                        className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'KPItotal'
                             ? 'border-blue-600 text-blue-600'
                             : 'border-transparent text-slate-500 hover:text-slate-700'
                             }`}
@@ -175,7 +175,7 @@ export default function KPIPage() {
                     </button>
                     <button
                         onClick={() => setActiveTab('KPIweek')}
-                        className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'KPIweek'
+                        className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'KPIweek'
                             ? 'border-blue-600 text-blue-600'
                             : 'border-transparent text-slate-500 hover:text-slate-700'
                             }`}
@@ -184,7 +184,7 @@ export default function KPIPage() {
                 </div>
 
                 {/* Content */}
-                <div className="p-8 max-w-7xl w-full mx-auto space-y-6">
+                <div className="p-4 md:p-8 max-w-7xl w-full mx-auto space-y-6 min-w-0">
 
                     {/* Header Bảng */}
                     <div className="flex items-center justify-between">

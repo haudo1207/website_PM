@@ -262,10 +262,10 @@ export default function SystemCategoriesView({
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-fit">
+      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-fit max-w-full overflow-x-auto">
         <button
           onClick={() => setActiveTab('teams')}
-          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 shrink-0 whitespace-nowrap ${
             activeTab === 'teams'
               ? 'bg-blue-600 text-white shadow-sm'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -275,7 +275,7 @@ export default function SystemCategoriesView({
         </button>
         <button
           onClick={() => setActiveTab('levels')}
-          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 shrink-0 whitespace-nowrap ${
             activeTab === 'levels'
               ? 'bg-blue-600 text-white shadow-sm'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -285,7 +285,7 @@ export default function SystemCategoriesView({
         </button>
         <button
           onClick={() => setActiveTab('phases')}
-          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 shrink-0 whitespace-nowrap ${
             activeTab === 'phases'
               ? 'bg-blue-600 text-white shadow-sm'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -295,7 +295,7 @@ export default function SystemCategoriesView({
         </button>
         <button
           onClick={() => setActiveTab('workspaces')}
-          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+          className={`px-5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 shrink-0 whitespace-nowrap ${
             activeTab === 'workspaces'
               ? 'bg-blue-600 text-white shadow-sm'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'

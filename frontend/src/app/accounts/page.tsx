@@ -288,9 +288,9 @@ export default function AccountsPage() {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 pl-[230px] flex flex-col min-h-screen pt-[112px]">
+      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] flex flex-col min-h-screen pt-[168px] md:pt-[112px]">
         {/* Header */}
-        <div className="fixed left-[230px] right-0 top-0 z-40 h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm">
+        <div className="fixed left-0 md:left-[230px] right-0 top-14 md:top-0 z-30 h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 shadow-sm">
           <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Quản lý tài khoản</h2>
           {activeTab === 'accounts' && (
             <button
@@ -306,10 +306,10 @@ export default function AccountsPage() {
         </div>
 
         {/* Tabbar Navigation */}
-        <div className="fixed left-[230px] right-0 top-[56px] z-30 h-[56px] bg-white border-b border-slate-200 px-8 flex gap-6 shadow-sm">
+        <div className="fixed left-0 md:left-[230px] right-0 top-[112px] md:top-[56px] z-20 h-[56px] bg-white border-b border-slate-200 px-4 md:px-8 flex gap-4 md:gap-6 overflow-x-auto shadow-sm">
           <button
             onClick={() => setActiveTab('accounts')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'accounts'
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'accounts'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
@@ -318,7 +318,7 @@ export default function AccountsPage() {
           </button>
           <button
             onClick={() => setActiveTab('members')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'members'
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'members'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
@@ -328,7 +328,7 @@ export default function AccountsPage() {
         </div>
 
         {/* Content */}
-        <div className="p-8 max-w-7xl w-full mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-7xl w-full mx-auto space-y-6 min-w-0">
           {saved && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-3 text-xs flex items-center gap-2 font-semibold shadow-sm">
               <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -355,7 +355,7 @@ export default function AccountsPage() {
               <div className="text-2xl font-bold text-red-500 mt-1">{filteredAccounts.filter(a => !a.is_active).length}</div>
             </div>
           </div>
-              <div className="sticky top-[104px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
+              <div className="sticky top-[160px] md:top-[104px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
               {/* Search & Filters */}
               <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3 relative z-[100]">
                 <div className="relative flex-1 min-w-[200px]">

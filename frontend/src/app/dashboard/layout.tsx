@@ -59,31 +59,31 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 pl-[230px] flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col h-screen overflow-hidden">
         {/* Top Bar */}
-        <div className="h-14 bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-8 shrink-0 z-40">
-          <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-[#0058be] animate-pulse" />
-            <div>
+        <div className="h-14 bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-4 md:px-8 shrink-0 z-30 gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-2 h-2 rounded-full bg-[#0058be] animate-pulse shrink-0" />
+            <div className="min-w-0">
               <h2 className="text-sm font-bold text-[#0b1c30] leading-none">Dashboard</h2>
-              <p className="text-[10px] text-slate-400 mt-0.5">{tabSubtitle[activeTab]}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5 truncate">{tabSubtitle[activeTab]}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 shrink-0">
             <span>📅</span>
             <span className="font-semibold">Tháng {currentDateStr}</span>
           </div>
         </div>
 
         {/* Tab Bar — Strictly filtered by user role permissions */}
-        <div className="bg-white border-b border-slate-200 px-8 flex gap-6 shrink-0 z-30">
+        <div className="bg-white border-b border-slate-200 px-4 md:px-8 flex gap-4 md:gap-6 shrink-0 z-20 overflow-x-auto">
           {allowedTabs.map(tab => (
             <Link
               key={tab.id}
               href={tab.path}
               scroll={false}
               prefetch={true}
-              className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+              className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'border-[#0058be] text-[#0058be]'
                   : 'border-transparent text-slate-500 hover:text-slate-700'
@@ -95,7 +95,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 min-w-0 overflow-y-auto">
           {children}
         </div>
       </div>

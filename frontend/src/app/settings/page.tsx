@@ -323,17 +323,17 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 pl-[230px] flex flex-col min-h-screen">
+      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col min-h-screen">
         {/* Header */}
-        <div className="h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-40 shadow-sm">
+        <div className="h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 sticky top-14 md:top-0 z-30 shadow-sm">
           <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Cấu hình hệ thống</h2>
         </div>
 
         {/* Tabbar Navigation */}
-        <div className="bg-white border-b border-slate-200 px-8 flex gap-6 z-30">
+        <div className="bg-white border-b border-slate-200 px-4 md:px-8 flex gap-4 md:gap-6 z-20 overflow-x-auto">
           <button
             onClick={() => setActiveTab('skills')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'skills'
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'skills'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
@@ -342,7 +342,7 @@ export default function SettingsPage() {
           </button>
           <button
             onClick={() => setActiveTab('system_categories')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'system_categories'
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'system_categories'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
@@ -351,7 +351,7 @@ export default function SettingsPage() {
           </button>
           <button
             onClick={() => setActiveTab('kpis')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'kpis'
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'kpis'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
@@ -360,7 +360,7 @@ export default function SettingsPage() {
           </button>
           <button
             onClick={() => setActiveTab('ai_prompts')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'ai_prompts'
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'ai_prompts'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
@@ -369,7 +369,7 @@ export default function SettingsPage() {
           </button>
           <button
             onClick={() => setActiveTab('project_templates')}
-            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'project_templates'
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'project_templates'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
@@ -379,7 +379,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Content */}
-        <div className="p-8 max-w-7xl w-full mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-7xl w-full mx-auto space-y-6 min-w-0">
           {saved && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-3 text-xs flex items-center gap-2 font-semibold shadow-sm animate-fade-in">
               <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
