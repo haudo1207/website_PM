@@ -110,7 +110,7 @@ CẤU TRÚC JSON YÊU CẦU:
       "detail_task": "Tên công việc cụ thể được giao",
       "priority": "Critical | High | Normal",
       "assigned_name": "Tên người chịu trách nhiệm (nếu có, để rỗng nếu không có)",
-      "deadline": "2026-08-08"
+      "deadline": "Định dạng YYYY-MM-DD nếu transcript có nêu, để rỗng nếu không có"
     }
   ]
 }`;
@@ -190,7 +190,7 @@ CẤU TRÚC JSON YÊU CẦU:
         executive_summary: generatedText,
         decisions: ["Chốt mục tiêu chính của cuộc họp"],
         recommended_tasks: [
-          { detail_task: `Thực hiện kết luận cuộc họp`, priority: "High", assigned_name: "", deadline: "2026-08-08" }
+          { detail_task: `Thực hiện kết luận cuộc họp`, priority: "High", assigned_name: "", deadline: "" }
         ]
       };
     }

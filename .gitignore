@@ -3,6 +3,7 @@
 env
 secrets/
 google-service-account.json
+Meeting_AI_Summary_Sheets_Webhook.json
 
 # Python
 __pycache__/
