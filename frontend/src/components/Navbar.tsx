@@ -30,6 +30,10 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode,
   // itself (where the URL segment is authoritative) does it navigate.
   const handlePick = (code: string | null) => {
     setWorkspaceCode(code);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('active_workspace_code', code || '');
+      window.dispatchEvent(new CustomEvent('workspace-changed', { detail: code || '' }));
+    }
     setOpen(false);
     onNavigate?.();
   };
