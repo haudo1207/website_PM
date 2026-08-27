@@ -12,8 +12,21 @@ interface MeetingCardProps {
   onOpenDetail?: (meeting: any) => void;
 }
 
-export default function MeetingCard({ meeting, onDelete, onSummarize, onOpenDetail }: MeetingCardProps) {
+export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, onOpenDetail }: MeetingCardProps) {
   const [showMenu, setShowMenu] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncClick = async () => {
+    if (!onSync || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await onSync(meeting);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Lỗi khi đồng bộ cuộc họp');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const statusUpper = String(meeting.status || 'SẮP TỚI').toUpperCase();
   const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
@@ -176,6 +189,15 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onOpenDeta
               >
                 Chạy AI Tóm tắt
               </button>
+              {onSync && (
+                <button
+                  onClick={() => { setShowMenu(false); handleSyncClick(); }}
+                  disabled={isSyncing}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be] disabled:opacity-50"
+                >
+                  {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ (Sync)'}
+                </button>
+              )}
               {onDelete && (
                 <button
                   onClick={() => { setShowMenu(false); onDelete(meeting.id); }}

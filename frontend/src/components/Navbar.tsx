@@ -16,7 +16,7 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 // it ends up pointing at whichever instance mounted last, so a click inside
 // the *other* instance's dropdown reads as "outside" and closes the menu
 // before the Link's navigation can fire.
-function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null }) {
+function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode, onProjectHub }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null; onProjectHub: boolean }) {
   const { setWorkspaceCode } = useWorkspaceFilter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -24,6 +24,19 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode 
   // Leader/Member/Viewer: the assigned Workspace is authoritative and fixed —
   // the switcher becomes a static label (no dropdown, no way to switch).
   const fixedWs = fixedWsCode ? (workspaces.find((w: any) => w.code === fixedWsCode) || { name: fixedWsCode }) : null;
+
+  // Picking a Workspace from any OTHER page (Dashboard/KPI/Accounts/...)
+  // must just update the shared filter and stay put — only on Project Hub
+  // itself (where the URL segment is authoritative) does it navigate.
+  const handlePick = (code: string | null) => {
+    setWorkspaceCode(code);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('active_workspace_code', code || '');
+      window.dispatchEvent(new CustomEvent('workspace-changed', { detail: code || '' }));
+    }
+    setOpen(false);
+    onNavigate?.();
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -69,19 +82,37 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode 
       </button>
       {open && (
         <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-20 py-1">
-          <Link href="/project-hub" onClick={() => { setWorkspaceCode(null); setOpen(false); onNavigate?.(); }}
-            className={`block px-3 py-2 text-xs font-semibold transition-colors ${
-              !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
-            }`}>
-            Tất cả Workspace
-          </Link>
-          {workspaces.map((ws: any) => (
-            <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => { setWorkspaceCode(ws.code); setOpen(false); onNavigate?.(); }}
-              className={`block px-3 py-2 text-xs font-semibold truncate transition-colors ${
-                ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+          {onProjectHub ? (
+            <Link href="/project-hub" onClick={() => handlePick(null)}
+              className={`block px-3 py-2 text-xs font-semibold transition-colors ${
+                !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
               }`}>
-              {ws.name}
+              Tất cả Workspace
             </Link>
+          ) : (
+            <div role="button" tabIndex={0} onClick={() => handlePick(null)}
+              className={`block px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+              }`}>
+              Tất cả Workspace
+            </div>
+          )}
+          {workspaces.map((ws: any) => (
+            onProjectHub ? (
+              <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => handlePick(ws.code)}
+                className={`block px-3 py-2 text-xs font-semibold truncate transition-colors ${
+                  ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                }`}>
+                {ws.name}
+              </Link>
+            ) : (
+              <div key={ws.code} role="button" tabIndex={0} onClick={() => handlePick(ws.code)}
+                className={`block px-3 py-2 text-xs font-semibold truncate transition-colors cursor-pointer ${
+                  ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                }`}>
+                {ws.name}
+              </div>
+            )
           ))}
         </div>
       )}
@@ -142,6 +173,10 @@ function NavbarContent() {
   const { workspaceCode: ctxWorkspaceCode, setWorkspaceCode } = useWorkspaceFilter();
   const urlWsCode = path.startsWith('/project-hub/') ? path.split('/')[2] : null;
   const currentWsCode = fixedWsCode || urlWsCode || ctxWorkspaceCode;
+  // Only Project Hub encodes the Workspace in its URL — the switcher should
+  // navigate there; everywhere else it must just update the shared filter
+  // and stay on the current page (was wrongly bouncing to Project Hub).
+  const isOnProjectHub = path.startsWith('/project-hub');
 
   useEffect(() => {
     if (!fixedWsCode && urlWsCode && urlWsCode !== ctxWorkspaceCode) setWorkspaceCode(urlWsCode);
@@ -154,6 +189,18 @@ function NavbarContent() {
       }`}>
       {projectHubIcon}
       Projects
+    </Link>
+  );
+
+  const renderDashboardLink = (onNavigate?: () => void) => (
+    <Link href="/dashboard/overview" onClick={onNavigate}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+        path.startsWith('/dashboard') ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+      }`}>
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+      </svg>
+      Dashboard
     </Link>
   );
 
@@ -229,23 +276,9 @@ function NavbarContent() {
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
 
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onProjectHub={isOnProjectHub} />
 
-          {/* Dashboard single link */}
-          {(() => {
-            const active = path.startsWith('/dashboard');
-            return (
-              <Link href="/dashboard/overview"
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
-                  active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-                Dashboard
-              </Link>
-            );
-          })()}
+          {renderDashboardLink()}
 
           {renderProjectsLink()}
 
@@ -339,23 +372,9 @@ function NavbarContent() {
 
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onNavigate={() => setMobileMenuOpen(false)} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onProjectHub={isOnProjectHub} onNavigate={() => setMobileMenuOpen(false)} />
 
-          {/* Dashboard single link */}
-          {(() => {
-            const active = path.startsWith('/dashboard');
-            return (
-              <Link href="/dashboard/overview" onClick={() => setMobileMenuOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
-                  active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-                Dashboard
-              </Link>
-            );
-          })()}
+          {renderDashboardLink(() => setMobileMenuOpen(false))}
 
           {renderProjectsLink(() => setMobileMenuOpen(false))}
 

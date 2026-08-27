@@ -12,6 +12,7 @@ interface MeetingDetailModalProps {
   meeting: any;
   onEdit?: (meeting: any) => void;
   onSummarize?: (meeting: any) => void;
+  onSync?: (meeting: any) => Promise<any>;
 }
 
 export default function MeetingDetailModal({
@@ -19,7 +20,8 @@ export default function MeetingDetailModal({
   onClose,
   meeting,
   onEdit,
-  onSummarize
+  onSummarize,
+  onSync
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
 
@@ -29,6 +31,7 @@ export default function MeetingDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Assign Project Modal State
   const [isAssignProjectOpen, setIsAssignProjectOpen] = useState(false);
@@ -106,6 +109,8 @@ export default function MeetingDetailModal({
   const execSummary = meeting.executive_summary || (meeting.ai_summary?.executive_summary) || (Array.isArray(meeting.summary) && meeting.summary.length ? meeting.summary[0] : '');
 
   const decisionsList: string[] = meeting.decisions || (meeting.ai_summary?.decisions) || [];
+  const issuesList: string[] = meeting.issues || (meeting.ai_summary?.issues) || [];
+  const nextStepsList: string[] = meeting.next_steps || (meeting.ai_summary?.next_steps) || [];
   const tasksList: any[] = meeting.recommended_tasks || (meeting.ai_summary?.recommended_tasks) || [];
   const membersList: any[] = localMembers;
   const rawTranscript = meeting.transcript || meeting.ai_summary?.transcript || '';
@@ -228,6 +233,19 @@ export default function MeetingDetailModal({
     navigator.clipboard.writeText(hostJoinLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const handleSyncClick = async () => {
+    if (!onSync || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await onSync(meeting);
+      triggerToast('✓ Đã đồng bộ transcript & AI Summary thành công!');
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Lỗi khi đồng bộ cuộc họp');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const handlePushTasks = async () => {
@@ -437,6 +455,15 @@ export default function MeetingDetailModal({
                         className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-purple-700 flex items-center gap-2 border-t border-slate-100"
                       >
                         <span>✨ Dán biên bản / Chạy AI</span>
+                      </button>
+                    )}
+                    {onSync && (
+                      <button
+                        onClick={() => { setShowMenu(false); handleSyncClick(); }}
+                        disabled={isSyncing}
+                        className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be] flex items-center gap-2 disabled:opacity-50"
+                      >
+                        <span>{isSyncing ? '⏳ Đang đồng bộ...' : '🔄 Đồng bộ (Sync)'}</span>
                       </button>
                     )}
                   </div>
@@ -720,6 +747,40 @@ export default function MeetingDetailModal({
                     </div>
                   )}
 
+                  {/* Section 2b: VẤN ĐỀ & RỦI RO */}
+                  {issuesList.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
+                        VẤN ĐỀ & RỦI RO
+                      </h4>
+                      <ul className="space-y-2 text-xs text-[#334155]">
+                        {issuesList.map((it: string, idx: number) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-amber-600 mt-0.5 shrink-0">⚠</span>
+                            <span>{it}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Section 2c: BƯỚC TIẾP THEO */}
+                  {nextStepsList.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
+                        BƯỚC TIẾP THEO
+                      </h4>
+                      <ul className="space-y-2 text-xs text-[#334155]">
+                        {nextStepsList.map((it: string, idx: number) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-[#6366f1] mt-0.5 shrink-0">→</span>
+                            <span>{it}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   {/* Section 3: TASK ĐỀ XUẤT */}
                   {tasksList.length > 0 && (
                     <div className="space-y-2.5 pt-1">
@@ -825,6 +886,36 @@ export default function MeetingDetailModal({
                       <p className="text-xs text-[#94a3b8] italic">Chưa ghi nhận quyết định nào từ AI.</p>
                     )}
                   </div>
+
+                  {/* Issues & Risks */}
+                  {issuesList.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">VẤN ĐỀ & RỦI RO ({issuesList.length})</h4>
+                      <div className="space-y-2">
+                        {issuesList.map((it, i) => (
+                          <div key={i} className="p-3.5 bg-amber-50/60 border border-amber-200/80 rounded-xl flex items-start gap-3 text-xs text-amber-900">
+                            <span className="shrink-0 mt-0.5">⚠</span>
+                            <span className="font-medium">{it}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Next Steps */}
+                  {nextStepsList.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">BƯỚC TIẾP THEO ({nextStepsList.length})</h4>
+                      <div className="space-y-2">
+                        {nextStepsList.map((it, i) => (
+                          <div key={i} className="p-3.5 bg-[#f5f3ff] border border-[#eee9fe] rounded-xl flex items-start gap-3 text-xs text-[#4338ca]">
+                            <span className="shrink-0 mt-0.5">→</span>
+                            <span className="font-medium">{it}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-12 space-y-3">

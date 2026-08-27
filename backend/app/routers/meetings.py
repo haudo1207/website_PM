@@ -112,6 +112,8 @@ def meeting_to_dict(m: Meeting) -> dict:
     executive_summary = ""
     decisions = []
     recommended_tasks = []
+    issues = []
+    next_steps = []
     summary_list = []
 
     # Only process AI summary if meeting actually has ai_summary JSON or has a transcript uploaded
@@ -120,6 +122,8 @@ def meeting_to_dict(m: Meeting) -> dict:
             executive_summary = m.ai_summary.get("executive_summary") or m.ai_summary.get("summary") or ""
             decisions = m.ai_summary.get("decisions") or []
             recommended_tasks = m.ai_summary.get("recommended_tasks") or m.ai_summary.get("action_items") or []
+            issues = m.ai_summary.get("issues") or []
+            next_steps = m.ai_summary.get("next_steps") or []
             
             if executive_summary and ("📋" in executive_summary or "ACTION ITEMS" in executive_summary or "QUYẾT ĐỊNH" in executive_summary):
                 parsed = parse_n8n_markdown_summary(executive_summary)
@@ -218,6 +222,8 @@ def meeting_to_dict(m: Meeting) -> dict:
         "summary": summary_list,
         "executive_summary": executive_summary,
         "decisions": decisions,
+        "issues": issues,
+        "next_steps": next_steps,
         "recommended_tasks": recommended_tasks,
         "project_id": m.project_id,
         "project": proj_name,
@@ -820,6 +826,7 @@ def google_auth_url(db: Session = Depends(get_db), current_user = Depends(get_cu
         scopes=[
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/meetings.space.readonly",
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
@@ -950,6 +957,8 @@ class N8nMeetingSummaryPayload(BaseModel):
     transcript: Optional[str] = None
     executive_summary: Optional[str] = None
     decisions: Optional[List[str]] = Field(default_factory=list)
+    issues: Optional[List[str]] = Field(default_factory=list)
+    next_steps: Optional[List[str]] = Field(default_factory=list)
     recommended_tasks: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     sheet_row_id: Optional[str] = None
 
@@ -1002,6 +1011,8 @@ def ingest_n8n_meeting_summary(
     norm_summary = {
         "executive_summary": payload.executive_summary or "",
         "decisions": payload.decisions or [],
+        "issues": payload.issues or [],
+        "next_steps": payload.next_steps or [],
         "recommended_tasks": payload.recommended_tasks or [],
         "source": "n8n_google_sheet",
         "n8n_metadata": {
