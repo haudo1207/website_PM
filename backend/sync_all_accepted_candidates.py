@@ -13,8 +13,8 @@ from app.database import SessionLocal
 from app.models.member import Member
 
 # Supabase Recruitment System API Credentials
-SUPABASE_URL = "https://supabase.stratumconsultants.tech"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UtbG9jYWwiLCJpYXQiOjE3NzgwNDM5NDUsImV4cCI6MjA5MzQwMzk0NX0.MLey0ChjN3lr8__Jc1lmiBw6xSbeW-mrXEXsxgkDywI"
+SUPABASE_URL = "https://cv.db.markeeai.com"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODc3Njc3ODIsImV4cCI6MjEwMzEyNzc4Mn0.sTHQs9H3tzdnk3y9oLhWZx_4CBWwYXd3RAPiZiG44wg"
 
 TEAM_POSITIONS = {
   "Tech/Product": [
