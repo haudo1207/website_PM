@@ -23,9 +23,10 @@ from ..models.task import Task
 from ..models.member import Member
 from ..models.project import Project, project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
-from ..utils.access import require_project, require_route_project_access, project_query_for_user, user_scope, ALL_SCOPE, ROLE_LEADER
+from ..utils.access import require_project, require_route_project_access, project_query_for_user, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
+from ..services.document_storage import sync_task_link_documents, delete_task_link_documents
 # Đảm bảo có import date/datetime để tính ngày
 from datetime import date, datetime
 from decimal import Decimal
@@ -975,6 +976,13 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     # Recalculate KPI
     task = recalculate_task(task, db)
 
+    # Mirror the LINK column into the Resources hub as an auto-managed link document
+    if project_id is not None:
+        sync_task_link_documents(
+            db, task, project_id, phase.id if phase else None, getattr(current_user, "id", None),
+            uploader_is_leader=is_project_leader(db, current_user, project_id),
+        )
+
     # Sync group start_date (min) and end_date_est (max) from child tasks
     tg = sync_group_dates(tg, db, extra_start=task.start_date, extra_end=task.end_date_est)
     tg = sync_group_actual_dates(tg, db)
@@ -1184,6 +1192,13 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         if field in body:
             setattr(task, field, body[field])
 
+    # Mirror the LINK column into the Resources hub as an auto-managed link document
+    if project_id is not None and ("ticket_id" in body or "detail" in body):
+        sync_task_link_documents(
+            db, task, project_id, phase.id if phase else None, getattr(current_user, "id", None),
+            uploader_is_leader=is_project_leader(db, current_user, project_id),
+        )
+
     # Sort order
     if "sort_order" in body:
         task.sort_order = body["sort_order"]
@@ -1287,6 +1302,7 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=
 
     # Cascade-delete every descendant (child, grandchild, ...) of this task
     descendant_count = 0
+    descendants = []
     if removed_code:
         descendants = db.query(Task).filter(
             Task.task_group_id == gid,
@@ -1299,6 +1315,8 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=
     task_desc = f"Xóa nhiệm vụ [{removed_code}] '{task.detail}'"
     if descendant_count:
         task_desc += f" (kèm {descendant_count} task con)"
+
+    delete_task_link_documents(db, [tid] + [d.id for d in descendants])
     db.delete(task)
     db.flush()
 

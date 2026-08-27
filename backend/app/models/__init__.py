@@ -8,5 +8,6 @@ from .member import Member
 from .user import User
 from .ai_task_inbox import AITaskInbox, ChatSyncLog
 from .project_template import ProjectTemplate, ProjectTemplatePhase, ProjectTemplateTaskGroup, ProjectTemplateTask
+from .document import ProjectDocument
 
 

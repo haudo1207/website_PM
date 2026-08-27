@@ -10,6 +10,7 @@ from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
 from .routers import telegram as telegram_router
+from .routers import project_documents as project_documents_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -465,6 +466,13 @@ def apply_schema_updates():
                 END IF;
             END $$
         """))
+
+        # Marks a ProjectDocument as auto-managed from a Task's LINK column
+        # (Task.ticket_id) rather than added by hand via the Resources tab.
+        conn.execute(text(
+            "ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS "
+            "synced_from_task_link BOOLEAN NOT NULL DEFAULT false"
+        ))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -1076,6 +1084,7 @@ app.add_middleware(
 app.include_router(auth.router,                prefix="/api/auth")
 app.include_router(users.router,               prefix="/api/users")
 app.include_router(projects_router.router,     prefix="/api")
+app.include_router(project_documents_router.router, prefix="/api")
 app.include_router(task_groups_router.router,   prefix="/api")
 app.include_router(settings_router.router,     prefix="/api/settings")
 app.include_router(skills.router,              prefix="/api/skills")
