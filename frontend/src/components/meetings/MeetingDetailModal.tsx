@@ -6,6 +6,16 @@ import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib
 import SearchableSelect from '@/components/common/SearchableSelect';
 import { useQueryClient } from '@tanstack/react-query';
 
+function getIsoWeekNumber(dateStr?: string): number | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
 interface MeetingDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -112,6 +122,10 @@ export default function MeetingDetailModal({
   const issuesList: string[] = meeting.issues || (meeting.ai_summary?.issues) || [];
   const nextStepsList: string[] = meeting.next_steps || (meeting.ai_summary?.next_steps) || [];
   const tasksList: any[] = meeting.recommended_tasks || (meeting.ai_summary?.recommended_tasks) || [];
+  const summaryTeamName: string = meeting.team_name || meeting.ai_summary?.team_name || '';
+  const summaryOrganizerName: string = meeting.organizer_name || meeting.ai_summary?.organizer_name || '';
+  const summaryParticipantCount = meeting.participant_count ?? meeting.ai_summary?.participant_count ?? null;
+  const summaryWeekLabel = getIsoWeekNumber(meeting.date || meeting.meeting_date);
   const membersList: any[] = localMembers;
   const rawTranscript = meeting.transcript || meeting.ai_summary?.transcript || '';
 
@@ -699,7 +713,7 @@ export default function MeetingDetailModal({
 
               {/* Right Column: AI TÓM TẮT Widget (5 Cols ~ 40%) */}
               <div className="lg:col-span-5">
-                <div className="bg-white rounded-2xl p-5 border border-[#e0e7ff] shadow-sm space-y-5 sticky top-4">
+                <div className="bg-white rounded-2xl p-5 border border-[#e0e7ff] shadow-sm space-y-4 sticky top-4">
                   
                   {/* Widget Header */}
                   <div className="flex items-center justify-between">
@@ -716,8 +730,9 @@ export default function MeetingDetailModal({
 
                   {/* Section 1: TÓM TẮT ĐIỀU HÀNH */}
                   <div className="space-y-1.5">
-                    <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                      TÓM TẮT ĐIỀU HÀNH
+                    <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#6366f1]"></span>
+                      Tóm tắt điều hành
                     </h4>
                     {execSummary ? (
                       <p className="text-xs text-[#334155] leading-relaxed font-normal bg-[#f8f6ff] p-3 rounded-xl border border-[#eee9fe]">
@@ -732,61 +747,65 @@ export default function MeetingDetailModal({
 
                   {/* Section 2: QUYẾT ĐỊNH CHÍNH */}
                   {decisionsList.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                        QUYẾT ĐỊNH CHÍNH
+                    <div className="space-y-1.5">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        Quyết định chính
                       </h4>
-                      <ul className="space-y-2 text-xs text-[#334155]">
+                      <div className="space-y-1.5">
                         {decisionsList.map((dec: string, idx: number) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <Check size={14} className="text-emerald-600 mt-0.5 shrink-0" />
+                          <div key={idx} className="flex items-start gap-2 text-xs text-[#334155] bg-emerald-50/60 border border-emerald-100 rounded-lg px-2.5 py-2">
+                            <Check size={13} className="text-emerald-600 mt-0.5 shrink-0" />
                             <span>{dec}</span>
-                          </li>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     </div>
                   )}
 
                   {/* Section 2b: VẤN ĐỀ & RỦI RO */}
                   {issuesList.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                        VẤN ĐỀ & RỦI RO
+                    <div className="space-y-1.5">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                        Vấn đề & rủi ro
                       </h4>
-                      <ul className="space-y-2 text-xs text-[#334155]">
+                      <div className="space-y-1.5">
                         {issuesList.map((it: string, idx: number) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <span className="text-amber-600 mt-0.5 shrink-0">⚠</span>
+                          <div key={idx} className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-2">
+                            <span className="text-amber-600 shrink-0 leading-4">⚠</span>
                             <span>{it}</span>
-                          </li>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     </div>
                   )}
 
                   {/* Section 2c: BƯỚC TIẾP THEO */}
                   {nextStepsList.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                        BƯỚC TIẾP THEO
+                    <div className="space-y-1.5">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#6366f1]"></span>
+                        Bước tiếp theo
                       </h4>
-                      <ul className="space-y-2 text-xs text-[#334155]">
+                      <div className="space-y-1.5">
                         {nextStepsList.map((it: string, idx: number) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <span className="text-[#6366f1] mt-0.5 shrink-0">→</span>
+                          <div key={idx} className="flex items-start gap-2 text-xs text-[#4338ca] bg-[#f5f3ff] border border-[#eee9fe] rounded-lg px-2.5 py-2">
+                            <span className="shrink-0 leading-4">→</span>
                             <span>{it}</span>
-                          </li>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     </div>
                   )}
 
                   {/* Section 3: TASK ĐỀ XUẤT */}
                   {tasksList.length > 0 && (
-                    <div className="space-y-2.5 pt-1">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                          TASK ĐỀ XUẤT
+                    <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                      <div className="flex items-center justify-between pt-3">
+                        <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                          Task đề xuất
                         </h4>
                         <span className="px-2 py-0.5 bg-[#f1f5f9] text-[#475569] text-[10px] font-bold rounded-full">
                           {tasksList.length} tasks
@@ -862,13 +881,82 @@ export default function MeetingDetailModal({
 
               {execSummary ? (
                 <div className="space-y-6">
+                  {/* Header info — mirrors the Google Sheet's meeting info table */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs">
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Ngày họp</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{meeting.date || meeting.meeting_date || 'Chưa xác định'} · {meeting.time || meeting.start_time || ''}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Tuần</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryWeekLabel ? `Tuần ${summaryWeekLabel}` : 'Không đề cập'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Thời lượng</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{durationStr}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-[#94a3b8] font-semibold">Link record</p>
+                      {meeting.meeting_url || meeting.link ? (
+                        <a href={meeting.meeting_url || meeting.link} target="_blank" rel="noreferrer" className="text-[#6366f1] font-bold mt-0.5 hover:underline break-all block">
+                          {meeting.meeting_url || meeting.link}
+                        </a>
+                      ) : (
+                        <p className="text-[#0b1c30] font-bold mt-0.5">Không đề cập</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Team</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryTeamName || 'Không đề cập'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Người summary</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryOrganizerName || 'Không đề cập'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Số người tham gia</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryParticipantCount ?? 'Không đề cập'}</p>
+                    </div>
+                  </div>
+
                   {/* Executive Summary Box */}
                   <div className="space-y-2">
-                    <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">TÓM TẮT ĐIỀU HÀNH</h4>
+                    <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">TỔNG QUAN</h4>
                     <div className="p-4 bg-[#f8f6ff] border border-[#eee9fe] rounded-2xl text-sm text-[#334155] leading-relaxed">
                       {execSummary}
                     </div>
                   </div>
+
+                  {/* Task cha đã chốt — mirrors the Sheet's per-project field rows */}
+                  {tasksList.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">TASK CHA ĐÃ CHỐT ({tasksList.length})</h4>
+                      <div className="space-y-3">
+                        {tasksList.map((t, i) => (
+                          <div key={i} className="border border-[#e2e8f0] rounded-2xl overflow-hidden">
+                            <div className="px-4 py-2 bg-rose-50 border-b border-rose-100 text-xs font-bold text-rose-700">
+                              {i + 1}. Project: {t.project_name || ''}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 text-xs divide-y divide-slate-100 sm:divide-y-0">
+                              {[
+                                ['Task cha', t.detail_task || 'Không đề cập'],
+                                ['Priority', t.priority || 'Normal'],
+                                ['Manday Budget', t.manday_est ?? 'Không đề cập'],
+                                ['Owner', t.assigned_name || t.owner || 'Không đề cập'],
+                                ['Deadline', t.deadline || 'Không đề cập'],
+                                ['KPI / Output', t.kpi_output || 'Không đề cập'],
+                              ].map(([label, value], fi) => (
+                                <div key={fi} className="px-4 py-2">
+                                  <span className="text-[#94a3b8] font-semibold">{label}: </span>
+                                  <span className="text-[#334155] font-medium">{String(value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Decisions List */}
                   <div className="space-y-3">
@@ -894,7 +982,7 @@ export default function MeetingDetailModal({
                       <div className="space-y-2">
                         {issuesList.map((it, i) => (
                           <div key={i} className="p-3.5 bg-amber-50/60 border border-amber-200/80 rounded-xl flex items-start gap-3 text-xs text-amber-900">
-                            <span className="shrink-0 mt-0.5">⚠</span>
+                            <span className="shrink-0 mt-0.5 font-bold">{i + 1}.</span>
                             <span className="font-medium">{it}</span>
                           </div>
                         ))}
@@ -909,7 +997,7 @@ export default function MeetingDetailModal({
                       <div className="space-y-2">
                         {nextStepsList.map((it, i) => (
                           <div key={i} className="p-3.5 bg-[#f5f3ff] border border-[#eee9fe] rounded-xl flex items-start gap-3 text-xs text-[#4338ca]">
-                            <span className="shrink-0 mt-0.5">→</span>
+                            <span className="shrink-0 mt-0.5 font-bold">{i + 1}.</span>
                             <span className="font-medium">{it}</span>
                           </div>
                         ))}
