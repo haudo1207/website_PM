@@ -114,6 +114,9 @@ def meeting_to_dict(m: Meeting) -> dict:
     recommended_tasks = []
     issues = []
     next_steps = []
+    team_name = ""
+    organizer_name = ""
+    participant_count = None
     summary_list = []
 
     # Only process AI summary if meeting actually has ai_summary JSON or has a transcript uploaded
@@ -124,6 +127,9 @@ def meeting_to_dict(m: Meeting) -> dict:
             recommended_tasks = m.ai_summary.get("recommended_tasks") or m.ai_summary.get("action_items") or []
             issues = m.ai_summary.get("issues") or []
             next_steps = m.ai_summary.get("next_steps") or []
+            team_name = m.ai_summary.get("team_name") or ""
+            organizer_name = m.ai_summary.get("organizer_name") or ""
+            participant_count = m.ai_summary.get("participant_count")
             
             if executive_summary and ("📋" in executive_summary or "ACTION ITEMS" in executive_summary or "QUYẾT ĐỊNH" in executive_summary):
                 parsed = parse_n8n_markdown_summary(executive_summary)
@@ -224,6 +230,9 @@ def meeting_to_dict(m: Meeting) -> dict:
         "decisions": decisions,
         "issues": issues,
         "next_steps": next_steps,
+        "team_name": team_name,
+        "organizer_name": organizer_name,
+        "participant_count": participant_count,
         "recommended_tasks": recommended_tasks,
         "project_id": m.project_id,
         "project": proj_name,
@@ -1234,6 +1243,9 @@ class N8nMeetingSummaryPayload(BaseModel):
     issues: Optional[List[str]] = Field(default_factory=list)
     next_steps: Optional[List[str]] = Field(default_factory=list)
     recommended_tasks: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    team_name: Optional[str] = None
+    organizer_name: Optional[str] = None
+    participant_count: Optional[int] = None
     sheet_row_id: Optional[str] = None
 
 
@@ -1288,6 +1300,9 @@ def ingest_n8n_meeting_summary(
         "issues": payload.issues or [],
         "next_steps": payload.next_steps or [],
         "recommended_tasks": payload.recommended_tasks or [],
+        "team_name": payload.team_name or "",
+        "organizer_name": payload.organizer_name or "",
+        "participant_count": payload.participant_count,
         "source": "n8n_google_sheet",
         "n8n_metadata": {
             "sheet_row_id": payload.sheet_row_id,
