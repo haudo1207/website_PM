@@ -7380,6 +7380,7 @@ function ProjectDetailContent() {
                   projectId={Number(id)}
                   phases={phases}
                   tasks={items || []}
+                  projectName={project?.name || ''}
                   isProjectLeader={isAdmin() || projectMembers.some(
                     (m: any) => m.role === 'Leader' && m.email && m.email.toLowerCase() === (getEmail() || '').toLowerCase()
                   )}

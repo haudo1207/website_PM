@@ -15,6 +15,50 @@ interface ProjectDocumentsTabProps {
   tasks: any[];
   isProjectLeader: boolean;
   onNavigateToTask?: (taskId: string | number) => void;
+  projectName?: string;
+}
+
+export interface AutoLinkItem {
+  id: string;
+  url: string;
+  displayUrl: string;
+  title: string;
+  type: 'drive' | 'figma' | 'github' | 'notion' | 'meeting' | 'ticket' | 'link';
+  typeLabel: string;
+  badgeStyle: string;
+  taskId: string;
+  taskDetail: string;
+  phaseName: string;
+  assignedName: string;
+  dateStr: string;
+}
+
+// Regex to extract all HTTP/HTTPS links or domain links from raw text
+const AUTO_LINK_URL_REGEX = /(https?:\/\/[^\s<>"'\(\)]+|www\.[^\s<>"'\(\)]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}\/[^\s<>"'\(\)]*)/gi;
+
+function detectAutoLinkType(urlStr: string): { type: AutoLinkItem['type']; typeLabel: string; badgeStyle: string } {
+  const lower = (urlStr || '').toLowerCase();
+
+  if (lower.includes('drive.google.com') || lower.includes('docs.google.com') || lower.includes('sheets.google.com') || lower.includes('slides.google.com')) {
+    return { type: 'drive', typeLabel: 'Google Drive / Docs', badgeStyle: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+  }
+  if (lower.includes('figma.com')) {
+    return { type: 'figma', typeLabel: 'Figma Design', badgeStyle: 'bg-purple-100 text-purple-800 border-purple-200' };
+  }
+  if (lower.includes('github.com') || lower.includes('gitlab.com') || lower.includes('bitbucket.org')) {
+    return { type: 'github', typeLabel: 'GitHub / Source', badgeStyle: 'bg-slate-800 text-white border-slate-700' };
+  }
+  if (lower.includes('notion.so') || lower.includes('notion.site')) {
+    return { type: 'notion', typeLabel: 'Notion Doc', badgeStyle: 'bg-stone-100 text-stone-800 border-stone-300' };
+  }
+  if (lower.includes('zoom.us') || lower.includes('meet.google.com') || lower.includes('teams.microsoft.com')) {
+    return { type: 'meeting', typeLabel: 'Meeting Link', badgeStyle: 'bg-blue-100 text-blue-800 border-blue-200' };
+  }
+  if (/^[a-z0-9_\-]+$/i.test(urlStr.trim()) || lower.includes('jira') || lower.includes('ticket')) {
+    return { type: 'ticket', typeLabel: 'Ticket / Reference', badgeStyle: 'bg-amber-100 text-amber-800 border-amber-200' };
+  }
+
+  return { type: 'link', typeLabel: 'Website / Resource', badgeStyle: 'bg-indigo-100 text-indigo-800 border-indigo-200' };
 }
 
 const DOC_TYPES = ['Tài liệu', 'Biên bản', 'Bảng tính', 'Hình ảnh', 'Liên kết', 'Quy trình', 'Cấu hình', 'Biểu mẫu', 'Nhật ký', 'Báo cáo'];
@@ -52,9 +96,9 @@ function initials(name: string): string {
   return (name || '?').split(' ').filter(Boolean).map(w => w[0]).slice(-2).join('').toUpperCase();
 }
 
-type Section = 'all' | 'starred' | 'recent' | 'review' | 'settings' | { phaseId: number; phaseName: string };
+type Section = 'all' | 'starred' | 'recent' | 'review' | 'settings' | 'auto_links' | { phaseId: number; phaseName: string };
 
-export default function ProjectDocumentsTab({ projectId, phases, tasks, isProjectLeader, onNavigateToTask }: ProjectDocumentsTabProps) {
+export default function ProjectDocumentsTab({ projectId, phases, tasks, isProjectLeader, onNavigateToTask, projectName = '' }: ProjectDocumentsTabProps) {
   const [section, setSection] = useState<Section>('all');
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [search, setSearch] = useState('');
@@ -89,6 +133,7 @@ export default function ProjectDocumentsTab({ projectId, phases, tasks, isProjec
   const sectionKey = typeof section === 'string' ? section : `phase:${section.phaseId}`;
 
   const fetchDocuments = useCallback(async () => {
+    if (section === 'auto_links') return;
     try {
       setLoading(true);
       const params: any = {};
@@ -249,7 +294,7 @@ export default function ProjectDocumentsTab({ projectId, phases, tasks, isProjec
 
   const sectionTitle = useMemo(() => {
     if (typeof section === 'string') {
-      return { all: 'Tất cả dữ liệu', starred: 'Quan trọng', recent: 'Gần đây', review: 'Chờ duyệt', settings: 'Danh mục & quy tắc' }[section] || 'Tất cả dữ liệu';
+      return { all: 'Tất cả dữ liệu', starred: 'Quan trọng', recent: 'Gần đây', review: 'Chờ duyệt', settings: 'Danh mục & quy tắc', auto_links: 'Liên kết tự động từ Task' }[section] || 'Tất cả dữ liệu';
     }
     return section.phaseName;
   }, [section]);
@@ -300,6 +345,9 @@ export default function ProjectDocumentsTab({ projectId, phases, tasks, isProjec
           <NavButton active={section === 'starred'} onClick={() => setSection('starred')} label="Quan trọng" icon="star" count={metrics.starred} />
           <NavButton active={section === 'recent'} onClick={() => setSection('recent')} label="Gần đây" icon="schedule" />
 
+          <NavLabel text="TỪ TASK" />
+          <NavButton active={section === 'auto_links'} onClick={() => setSection('auto_links')} label="Liên kết tự động" icon="link" />
+
           {phases.length > 0 && (
             <>
               <NavLabel text="THEO PHASE" />
@@ -323,6 +371,8 @@ export default function ProjectDocumentsTab({ projectId, phases, tasks, isProjec
         {/* RIGHT PANEL */}
         {section === 'settings' ? (
           <SettingsPanel categories={categories} />
+        ) : section === 'auto_links' ? (
+          <AutoLinksPanel tasks={tasks} phases={phases} projectName={projectName} onNavigateToTask={onNavigateToTask} />
         ) : (
           <div className="min-w-0 flex flex-col">
             <div className="flex items-center justify-between px-4 pt-3.5 pb-2.5 border-b border-[#e6eaf0]">
@@ -731,6 +781,230 @@ function SettingsPanel({ categories }: { categories: { doc_type: string; count: 
           ))}
         </section>
       </div>
+    </div>
+  );
+}
+
+function AutoLinksPanel({ tasks, phases, projectName, onNavigateToTask }: { tasks: any[]; phases: any[]; projectName: string; onNavigateToTask?: (taskId: string | number) => void }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedType, setSelectedType] = useState<string>('ALL');
+  const [selectedPhase, setSelectedPhase] = useState<string>('ALL');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedAll, setCopiedAll] = useState(false);
+
+  // Extract all valid links/resources embedded in task fields (LINK, ticket_id, detail, notes, remark, send)
+  const linksList = useMemo(() => {
+    const list: AutoLinkItem[] = [];
+    const seenUrls = new Set<string>();
+
+    (tasks || []).forEach((t: any, idx: number) => {
+      const taskIdStr = t.task_code || t.task_id || (t.id ? `#${t.id}` : `Task #${idx + 1}`);
+      const taskDetail = t.detail || t.title || t.name || 'Nhiệm vụ không tên';
+      const phaseName = t.phase_name || t.task_group_name || t.group_name || 'Hạng mục chung';
+      const assignedName = t.assigned_name || t.assigned_member_name || t.owner || 'Chưa phân công';
+      const dateStr = t.start_date || t.created_at || '';
+
+      const directLink = String(t.link || t.ticket_id || t.LINK || '').trim();
+      if (directLink && directLink !== 'Trống' && directLink !== '-') {
+        const fullUrl = directLink.startsWith('http') ? directLink : `https://${directLink}`;
+        const key = `${t.id || idx}-${fullUrl}`;
+        if (!seenUrls.has(key)) {
+          seenUrls.add(key);
+          const meta = detectAutoLinkType(directLink);
+          list.push({ id: key, url: fullUrl, displayUrl: directLink, title: taskDetail, ...meta, taskId: String(taskIdStr), taskDetail, phaseName, assignedName, dateStr });
+        }
+      }
+
+      const extraTexts = [t.detail, t.notes, t.remark, t.send].filter(Boolean).join(' ');
+      const matches = extraTexts.match(AUTO_LINK_URL_REGEX);
+      if (matches) {
+        matches.forEach((rawUrl: string) => {
+          const cleanUrl = rawUrl.trim().replace(/[,\.\)]+$/, '');
+          if (!cleanUrl || cleanUrl === directLink) return;
+          const fullUrl = cleanUrl.startsWith('http') ? cleanUrl : `https://${cleanUrl}`;
+          const key = `${t.id || idx}-${fullUrl}`;
+          if (!seenUrls.has(key)) {
+            seenUrls.add(key);
+            const meta = detectAutoLinkType(cleanUrl);
+            list.push({ id: key, url: fullUrl, displayUrl: cleanUrl, title: taskDetail, ...meta, taskId: String(taskIdStr), taskDetail, phaseName, assignedName, dateStr });
+          }
+        });
+      }
+    });
+
+    return list;
+  }, [tasks]);
+
+  const phasesList = useMemo(() => {
+    const set = new Set<string>();
+    linksList.forEach(r => { if (r.phaseName) set.add(r.phaseName); });
+    return Array.from(set);
+  }, [linksList]);
+
+  const filteredLinks = useMemo(() => {
+    return linksList.filter(r => {
+      const matchesSearch = !searchTerm.trim() ||
+        r.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.displayUrl.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.taskId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.assignedName.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesType = selectedType === 'ALL' || r.type === selectedType;
+      const matchesPhase = selectedPhase === 'ALL' || r.phaseName === selectedPhase;
+      return matchesSearch && matchesType && matchesPhase;
+    });
+  }, [linksList, searchTerm, selectedType, selectedPhase]);
+
+  const handleCopyLink = (item: AutoLinkItem) => {
+    navigator.clipboard.writeText(item.url);
+    setCopiedId(item.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleCopyAllLinks = () => {
+    if (!filteredLinks.length) return;
+    const text = filteredLinks.map(r => `[${r.taskId}] ${r.title}\n${r.url}`).join('\n\n');
+    navigator.clipboard.writeText(text);
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2000);
+  };
+
+  const handleExportCSV = () => {
+    if (!filteredLinks.length) return;
+    const headers = ['Task ID', 'Nhiệm vụ', 'Loại tài nguyên', 'Đường dẫn Link', 'Hạng mục/Phase', 'Người phụ trách'];
+    const rows = filteredLinks.map(r => [
+      `"${r.taskId}"`,
+      `"${r.title.replace(/"/g, '""')}"`,
+      `"${r.typeLabel}"`,
+      `"${r.url}"`,
+      `"${r.phaseName.replace(/"/g, '""')}"`,
+      `"${r.assignedName.replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = '﻿' + [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Danh_sach_Lien_ket_${projectName || 'Du_an'}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="min-w-0 flex flex-col">
+      <div className="flex items-center justify-between px-4 pt-3.5 pb-2.5 border-b border-[#e6eaf0]">
+        <div>
+          <small className="text-[8px] tracking-widest font-extrabold text-slate-400">ĐANG XEM</small>
+          <h3 className="text-[15px] font-bold text-[#152238] mt-0.5">Liên kết tự động từ Task</h3>
+          <p className="text-[11px] text-[#7c889b] mt-0.5">Tổng hợp tự động link Drive, Figma, GitHub, Notion, Meeting... đính kèm trong các nhiệm vụ.</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleCopyAllLinks}
+            disabled={!filteredLinks.length}
+            className="h-9 px-3 border border-[#cdd6e2] bg-white text-[#34425a] text-xs font-bold rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-[15px]">{copiedAll ? 'check' : 'content_copy'}</span>
+            {copiedAll ? 'Đã sao chép!' : 'Sao chép link'}
+          </button>
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            disabled={!filteredLinks.length}
+            className="h-9 px-3 bg-[#0963c8] hover:bg-[#0963c8]/90 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-[15px]">download</span>
+            Xuất CSV
+          </button>
+        </div>
+      </div>
+
+      {/* TOOLBAR */}
+      <div className="p-3 flex flex-wrap gap-2 border-b border-[#e6eaf0]">
+        <div className="flex-1 min-w-[240px] h-9 border border-[#cdd6e2] rounded-lg flex items-center px-2.5 gap-2 text-[#78869a]">
+          <span className="material-symbols-outlined text-[16px]">search</span>
+          <input
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Tìm theo link, tiêu đề task, mã task, người phụ trách..."
+            className="border-0 outline-0 flex-1 text-xs min-w-0"
+          />
+        </div>
+        <select value={selectedType} onChange={e => setSelectedType(e.target.value)} className="h-9 border border-[#cdd6e2] rounded-lg px-2.5 text-xs text-[#46546b] bg-white">
+          <option value="ALL">Tất cả loại ({linksList.length})</option>
+          <option value="drive">Google Drive / Docs</option>
+          <option value="figma">Figma Design</option>
+          <option value="github">GitHub / Code</option>
+          <option value="notion">Notion Doc</option>
+          <option value="meeting">Zoom / Meeting</option>
+          <option value="ticket">Ticket / Reference</option>
+          <option value="link">Website / Link khác</option>
+        </select>
+        {phasesList.length > 0 && (
+          <select value={selectedPhase} onChange={e => setSelectedPhase(e.target.value)} className="h-9 border border-[#cdd6e2] rounded-lg px-2.5 text-xs text-[#46546b] bg-white max-w-[180px]">
+            <option value="ALL">Mọi phase</option>
+            {phasesList.map((p, idx) => <option key={idx} value={p}>{p}</option>)}
+          </select>
+        )}
+      </div>
+
+      <div className="h-8 bg-[#fbfcfe] border-b border-[#e6eaf0] flex items-center px-3.5 text-[10px] text-[#8994a5]">
+        <span>Đang hiển thị <b className="text-[#152238]">{filteredLinks.length}</b> liên kết</span>
+      </div>
+
+      {/* CONTENT */}
+      {filteredLinks.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3.5">
+          {filteredLinks.map(item => {
+            const isCopied = copiedId === item.id;
+            return (
+              <div key={item.id} className="border border-[#e0e6ee] rounded-lg p-3.5 hover:border-[#8db8ee] hover:shadow-md transition-all flex flex-col gap-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold border ${item.badgeStyle}`}>{item.typeLabel}</span>
+                  <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{item.taskId}</span>
+                </div>
+                <h4
+                  onClick={() => onNavigateToTask?.(item.taskId)}
+                  className="font-bold text-xs text-[#152238] line-clamp-2 hover:text-[#0963c8] cursor-pointer transition-colors"
+                  title={item.taskDetail}
+                >
+                  {item.title}
+                </h4>
+                <div className="p-2 bg-slate-50 border border-[#e6eaf0] rounded-md text-[11px] font-mono text-slate-600 truncate break-all flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[14px] text-slate-400 shrink-0">public</span>
+                  <span className="truncate">{item.displayUrl}</span>
+                </div>
+                <div className="pt-2 border-t border-[#edf0f4] flex items-center justify-between text-[10px] text-slate-500">
+                  <div className="truncate pr-2">
+                    <p className="truncate">{item.assignedName}</p>
+                    <p className="truncate text-slate-400">{item.phaseName}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button type="button" onClick={() => handleCopyLink(item)} className="p-1.5 text-slate-500 hover:text-[#0963c8] hover:bg-slate-100 rounded-lg" title="Sao chép link">
+                      <span className="material-symbols-outlined text-[15px]">{isCopied ? 'check' : 'content_copy'}</span>
+                    </button>
+                    <a href={item.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-[#0963c8] hover:bg-blue-50 rounded-lg" title="Mở liên kết trong tab mới">
+                      <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="p-14 text-center text-[#8995a7]">
+          <span className="material-symbols-outlined text-4xl text-slate-300 mb-2 block">link_off</span>
+          <p className="text-sm font-bold text-[#152238]">Chưa tìm thấy liên kết phù hợp</p>
+          <p className="text-xs mt-1">
+            {linksList.length === 0
+              ? 'Dự án này chưa có nhiệm vụ nào gắn đường dẫn trong cột LINK hoặc ghi chú.'
+              : 'Không tìm thấy liên kết nào khớp với bộ lọc tìm kiếm của bạn.'}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
