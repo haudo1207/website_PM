@@ -106,7 +106,15 @@ def recalculate_meeting_score(meeting, db):
             t.end_date_est and t.end_date_est <= datetime.date.today() for t in tasks
         )
         meeting.score_status = "final" if all_past_due else "provisional"
+    elif no_action_ok:
+        # Legitimately no follow-up tasks (documented reason + a decision) —
+        # nothing to execute, so this isn't a 0; it's already "done".
+        followthrough = 20
+        meeting.score_status = "final"
     else:
+        # Either no actions were extracted at all, or actions exist but none
+        # are synced yet — already reflected by the Result gate above; 0 here
+        # correctly signals "nothing executed yet", not "before deadline".
         followthrough = 0
         meeting.score_status = "provisional"
 
