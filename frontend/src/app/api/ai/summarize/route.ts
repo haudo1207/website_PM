@@ -214,10 +214,13 @@ CẤU TRÚC JSON YÊU CẦU:
       const transcriptLower = transcript.normalize('NFC').toLowerCase();
       parsedSummary.recommended_tasks = parsedSummary.recommended_tasks.map((t: any) => {
         const name = (t?.assigned_name || '').trim();
-        if (name && !transcriptLower.includes(name.normalize('NFC').toLowerCase())) {
-          return { ...t, assigned_name: '' };
-        }
-        return t;
+        if (!name) return t;
+        // assigned_name can list multiple people separated by commas — check each
+        // individually since they're often mentioned in different sentences, not
+        // as one contiguous phrase.
+        const names = name.split(',').map((n: string) => n.trim()).filter(Boolean);
+        const validNames = names.filter((n: string) => transcriptLower.includes(n.normalize('NFC').toLowerCase()));
+        return { ...t, assigned_name: validNames.join(', ') };
       });
     }
 

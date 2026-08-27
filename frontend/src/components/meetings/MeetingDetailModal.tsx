@@ -2,10 +2,190 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, recalculateMeetingScore, submitMeetingFeedback } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getPhases, createPhase, getTaskGroups, createTaskGroup, getCategories } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { useQueryClient } from '@tanstack/react-query';
+
+interface PickedRef { id: number; name: string; }
+
+// Per-task Phase + "Task cha" (TaskGroup) pickers used in the AI task table.
+// Split into two standalone cell components (instead of one combined block)
+// so each can sit in its own <td> in the task table. Both include a
+// "+ Tạo mới" option that reveals an inline text input — if the project
+// doesn't have the right Phase/Task cha yet, the user can create it right
+// here instead of leaving the meeting screen.
+const NEW_PHASE = '__new_phase__';
+const NEW_GROUP = '__new_group__';
+
+function PhaseSelectCell({
+  projectId,
+  phase,
+  onPhaseChange,
+  onTaskGroupChange,
+}: {
+  projectId?: number | string;
+  phase?: PickedRef;
+  onPhaseChange: (p: PickedRef | undefined) => void;
+  onTaskGroupChange: (tg: PickedRef | undefined) => void;
+}) {
+  const [phases, setPhases] = useState<any[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setPhases([]);
+    if (!projectId) return;
+    getPhases(Number(projectId)).then((res: any) => setPhases(Array.isArray(res) ? res : (res?.data || []))).catch(() => setPhases([]));
+  }, [projectId]);
+
+  const handleCreate = async () => {
+    const name = newName.trim();
+    if (!name || !projectId) return;
+    setBusy(true);
+    try {
+      const ph = await createPhase(Number(projectId), { name });
+      setPhases(prev => [...prev, ph]);
+      onPhaseChange({ id: ph.id, name: ph.name });
+      onTaskGroupChange(undefined);
+      setNewName('');
+      setCreating(false);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Không tạo được Phase mới');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (creating) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          type="text"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setCreating(false); }}
+          placeholder="Tên phase mới..."
+          disabled={busy}
+          className="w-24 px-2 py-1 text-xs border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
+        />
+        <button type="button" onClick={handleCreate} disabled={busy} className="text-emerald-600 font-bold text-xs px-1">✓</button>
+        <button type="button" onClick={() => setCreating(false)} disabled={busy} className="text-slate-400 font-bold text-xs px-1">✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      disabled={!projectId}
+      value={phase?.id || ''}
+      onChange={e => {
+        const val = e.target.value;
+        if (val === NEW_PHASE) { setCreating(true); return; }
+        const pid = Number(val);
+        const found = phases.find((p: any) => p.id === pid);
+        onPhaseChange(found ? { id: found.id, name: found.name } : undefined);
+        onTaskGroupChange(undefined);
+      }}
+      className={`text-xs border rounded-lg px-2 py-1.5 bg-white disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none focus:border-[#6366f1] w-full ${phase?.id ? 'border-[#cbd5e1]' : 'border-red-400'}`}
+    >
+      <option value="">-- Chọn phase --</option>
+      {phases.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      <option value={NEW_PHASE}>+ Tạo phase mới</option>
+    </select>
+  );
+}
+
+function TaskGroupSelectCell({
+  phase,
+  taskGroup,
+  onTaskGroupChange,
+}: {
+  phase?: PickedRef;
+  taskGroup?: PickedRef;
+  onTaskGroupChange: (tg: PickedRef | undefined) => void;
+}) {
+  const [groups, setGroups] = useState<any[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setGroups([]);
+    if (!phase?.id) return;
+    getTaskGroups(phase.id).then((res: any) => setGroups(Array.isArray(res) ? res : (res?.data || []))).catch(() => setGroups([]));
+  }, [phase?.id]);
+
+  const handleCreate = async () => {
+    const name = newName.trim();
+    if (!name || !phase?.id) return;
+    setBusy(true);
+    try {
+      const tg = await createTaskGroup(phase.id, { name });
+      setGroups(prev => [...prev, tg]);
+      onTaskGroupChange({ id: tg.id, name: tg.name });
+      setNewName('');
+      setCreating(false);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Không tạo được Task cha mới');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (creating) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          type="text"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setCreating(false); }}
+          placeholder="Tên task cha mới..."
+          disabled={busy}
+          className="w-24 px-2 py-1 text-xs border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
+        />
+        <button type="button" onClick={handleCreate} disabled={busy} className="text-emerald-600 font-bold text-xs px-1">✓</button>
+        <button type="button" onClick={() => setCreating(false)} disabled={busy} className="text-slate-400 font-bold text-xs px-1">✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      disabled={!phase?.id}
+      value={taskGroup?.id || ''}
+      onChange={e => {
+        const val = e.target.value;
+        if (val === NEW_GROUP) { setCreating(true); return; }
+        const gid = Number(val);
+        const found = groups.find((g: any) => g.id === gid);
+        onTaskGroupChange(found ? { id: found.id, name: found.name } : undefined);
+      }}
+      className={`text-xs border rounded-lg px-2 py-1.5 bg-white disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none focus:border-[#6366f1] w-full ${taskGroup?.id ? 'border-[#cbd5e1]' : 'border-red-400'}`}
+    >
+      <option value="">-- Chọn task cha --</option>
+      {groups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+      <option value={NEW_GROUP}>+ Tạo task cha mới</option>
+    </select>
+  );
+}
+
+// Mirrors backend's recalculate_task_group_dates() formula so the table can
+// preview the computed End Date before push, without needing a round trip.
+function getEstimatedEndDate(startDateStr?: string, mandayStr?: string | number): string | null {
+  if (!startDateStr) return null;
+  const manday = Number(mandayStr);
+  if (!manday || isNaN(manday) || manday <= 0) return null;
+  const start = new Date(startDateStr + 'T00:00:00');
+  if (isNaN(start.getTime())) return null;
+  const days = Math.ceil(manday) - 1;
+  const end = new Date(start.getTime() + Math.max(days, 0) * 86400000);
+  return end.toISOString().slice(0, 10);
+}
 
 function getIsoWeekNumber(dateStr?: string): number | null {
   if (!dateStr) return null;
@@ -57,6 +237,22 @@ export default function MeetingDetailModal({
   // Add Member Modal State (Multi-Select Supported)
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [accountsList, setAccountsList] = useState<any[]>([]);
+
+  // Best-effort match of an AI-extracted name string against the real member
+  // list — used to pre-select "Assigned" in the task table so the user only
+  // has to fix it when the guess is wrong, not pick from scratch every time.
+  const matchAccountByName = (name?: string): PickedRef | undefined => {
+    if (!name) return undefined;
+    const target = name.trim().toLowerCase();
+    if (!target) return undefined;
+    const found = accountsList.find((acc: any) => {
+      const accName = (acc.full_name || acc.display_name || '').trim().toLowerCase();
+      return accName && (accName === target || accName.includes(target) || target.includes(accName));
+    });
+    if (!found) return undefined;
+    return { id: found.id, name: found.full_name || found.display_name };
+  };
+
   const [selectedMemberNames, setSelectedMemberNames] = useState<string[]>([]);
   const [customMemberInput, setCustomMemberInput] = useState('');
   const [memberSearch, setMemberSearch] = useState('');
@@ -67,7 +263,23 @@ export default function MeetingDetailModal({
 
   // Per-task project selection and check state
   const [taskProjectsMap, setTaskProjectsMap] = useState<Record<number, number>>({});
+  const [taskPhaseMap, setTaskPhaseMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskGroupMap, setTaskGroupMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskAssigneeMap, setTaskAssigneeMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSupportMap, setTaskSupportMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSkillSolutionMap, setTaskSkillSolutionMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSkillVendorMap, setTaskSkillVendorMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [categoriesList, setCategoriesList] = useState<any[]>([]);
+  const [taskEditMap, setTaskEditMap] = useState<Record<number, { detail_task?: string; priority?: string; manday_est?: string; start_date?: string; notes?: string }>>({});
   const [taskCheckedMap, setTaskCheckedMap] = useState<Record<number, boolean>>({});
+
+  // Skill Solution = Group, Skill Vendor = Skill nested under it (categories → groups → skills).
+  const allSkillGroups: any[] = categoriesList.flatMap((c: any) => c.groups || []);
+  const getSkillVendorsForGroup = (groupId?: number) => {
+    if (!groupId) return [];
+    const group = allSkillGroups.find((g: any) => g.id === groupId);
+    return group?.skills || [];
+  };
 
   // Local State for Instant UI Feedback
   const [localProjectName, setLocalProjectName] = useState('');
@@ -82,6 +294,17 @@ export default function MeetingDetailModal({
       getProjects().then((res: any) => {
         const items = res?.data || res || [];
         if (Array.isArray(items)) setProjectsList(items);
+      }).catch(console.error);
+      // Cần sẵn danh sách nhân sự cho cột Assigned/Support ở bảng Task đề xuất —
+      // trước đây chỉ tải khi mở modal "Thêm thành viên", nên bảng task luôn rỗng.
+      getAccounts().then((res: any) => {
+        const items = res?.data || res || [];
+        if (Array.isArray(items)) setAccountsList(items);
+      }).catch(console.error);
+      // Skill Solution / Skill Vendor cho bảng Task đề xuất (categories → groups → skills)
+      getCategories().then((res: any) => {
+        const items = res?.data || res || [];
+        if (Array.isArray(items)) setCategoriesList(items);
       }).catch(console.error);
     }
   }, [isOpen]);
@@ -167,10 +390,18 @@ export default function MeetingDetailModal({
   const issuesList: string[] = meeting.issues || (meeting.ai_summary?.issues) || [];
   const nextStepsList: string[] = meeting.next_steps || (meeting.ai_summary?.next_steps) || [];
   const tasksList: any[] = score.recommended_tasks || (score.ai_summary?.recommended_tasks) || [];
+  const tasksNeedingReviewCount = tasksList.filter((t: any, idx: number) => {
+    const pid = taskProjectsMap[idx] || localProjectId || meeting.project_id || '';
+    const assignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
+    const edit = taskEditMap[idx] || {};
+    return !pid || !assignee || !taskPhaseMap[idx] || !taskGroupMap[idx]
+      || !edit.start_date || !taskSkillSolutionMap[idx] || !taskSkillVendorMap[idx];
+  }).length;
   const summaryTeamName: string = meeting.team_name || meeting.ai_summary?.team_name || '';
   const summaryOrganizerName: string = meeting.organizer_name || meeting.ai_summary?.organizer_name || '';
   const summaryParticipantCount = meeting.participant_count ?? meeting.ai_summary?.participant_count ?? null;
   const summaryWeekLabel = getIsoWeekNumber(meeting.date || meeting.meeting_date);
+  const isAutoCreated: boolean = Boolean(meeting.is_auto_created ?? meeting.ai_summary?.is_auto_created);
   const membersList: any[] = localMembers;
   const rawTranscript = meeting.transcript || meeting.ai_summary?.transcript || '';
 
@@ -317,10 +548,27 @@ export default function MeetingDetailModal({
       .map((t: any, idx: number) => {
         const selectedPid = taskProjectsMap[idx] || localProjectId || meeting.project_id || (projectsList[0]?.id);
         const selectedProj = projectsList.find((p: any) => p.id === selectedPid);
+        const phase = taskPhaseMap[idx];
+        const taskGroup = taskGroupMap[idx];
+        const edit = taskEditMap[idx] || {};
+        const assignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
+        const mandayRaw = edit.manday_est ?? t.manday_est;
+        const manday = mandayRaw === '' || mandayRaw === undefined || mandayRaw === null ? undefined : Number(mandayRaw);
         return {
           ...t,
+          detail_task: edit.detail_task ?? t.detail_task,
+          priority: edit.priority ?? t.priority,
+          manday_est: (manday === undefined || isNaN(manday)) ? undefined : manday,
+          // Assignee đã được xác nhận trực tiếp trên bảng (chọn từ danh sách nhân sự
+          // thật) — gửi kèm assigned_id để backend dùng thẳng, khỏi phải dò tên nữa.
+          assigned_id: assignee?.id,
+          assigned_name: assignee?.name || t.assigned_name || t.owner,
           project_id: selectedPid,
           project_name: selectedProj?.name || t.project_name || localProjectName,
+          phase_id: phase?.id,
+          phase_name: phase?.name,
+          task_group_id: taskGroup?.id,
+          task_group_name: taskGroup?.name,
           checked: taskCheckedMap[idx] !== false
         };
       })
@@ -331,6 +579,16 @@ export default function MeetingDetailModal({
       return;
     }
 
+    if (tasksToPush.some((t: any) => !t.phase_id || !t.task_group_id)) {
+      const proceed = confirm(
+        "Có task chưa chọn đủ Phase / Task cha. Task đó sẽ được đẩy vào Inbox nhưng chưa gắn đúng vị trí trong kế hoạch dự án — bạn vẫn muốn tiếp tục?"
+      );
+      if (!proceed) return;
+    }
+
+    // Bảng Task Đề Xuất giờ đã là bước review (mọi field đều sửa được ngay
+    // tại đây, ô còn thiếu viền đỏ) — push thẳng, không cần màn hình review
+    // trung gian nữa.
     setIsPushing(true);
     try {
       await pushMeetingTasks(meeting.id, tasksToPush);
@@ -400,6 +658,14 @@ export default function MeetingDetailModal({
 
               {/* Sub-Badges */}
               <div className="flex items-center gap-2 flex-wrap">
+                {isAutoCreated && (
+                  <span
+                    className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-700 border border-teal-200 flex items-center gap-1"
+                    title="Meeting này không được tạo qua nút 'Tạo meeting' trên web — n8n tự động tạo từ video ghi hình phát hiện được"
+                  >
+                    🤖 Tự động tạo từ n8n
+                  </span>
+                )}
                 {execSummary ? (
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#f5f3ff] text-[#6366f1]">
                     AI Summary sẵn sàng
@@ -1108,6 +1374,10 @@ export default function MeetingDetailModal({
                             const updated: Record<number, number> = {};
                             tasksList.forEach((_, i) => { updated[i] = pid; });
                             setTaskProjectsMap(updated);
+                            // Phase/Task cha thuộc về 1 project cụ thể — đổi project hàng
+                            // loạt thì phải reset hết, tránh giữ lại lựa chọn của dự án cũ.
+                            setTaskPhaseMap({});
+                            setTaskGroupMap({});
                           }}
                           placeholder="Gõ tìm & gán tất cả..."
                           searchThreshold={0}
@@ -1128,62 +1398,228 @@ export default function MeetingDetailModal({
                 )}
               </div>
 
-              {tasksList.length > 0 ? (
-                <div className="space-y-3">
-                  {tasksList.map((t, idx) => {
-                    const priority = t.priority || 'Normal';
-                    const pBadge = priority === 'High' || priority === 'Critical'
-                      ? 'bg-red-100 text-red-800 border-red-200'
-                      : priority === 'Medium'
-                      ? 'bg-blue-100 text-blue-800 border-blue-200'
-                      : 'bg-emerald-100 text-emerald-800 border-emerald-200';
+              {tasksList.length > 0 && (
+                <p className="text-xs text-[#64748b]">
+                  Đã nhận diện <b className="text-[#0b1c30]">{tasksList.length} task</b> từ AI Summary.
+                  {tasksNeedingReviewCount > 0 ? (
+                    <> Các ô <span className="text-red-500 font-bold">viền đỏ</span> cần chọn/nhập lại trước khi push — <b className="text-red-500">{tasksNeedingReviewCount}/{tasksList.length} task</b>.</>
+                  ) : (
+                    <> Tất cả task đã đủ thông tin, sẵn sàng push.</>
+                  )}
+                </p>
+              )}
 
+              {tasksList.length > 0 ? (
+                <div className="space-y-4">
+                  {tasksList.map((t, idx) => {
                     const isChecked = taskCheckedMap[idx] !== false;
                     const currentTaskProjectId = taskProjectsMap[idx] || localProjectId || meeting.project_id || '';
+                    const edit = taskEditMap[idx] || {};
+                    const detailValue = edit.detail_task ?? (t.detail_task || t.title || t.name || '');
+                    const priorityValue = edit.priority ?? (t.priority || 'Normal');
+                    const mandayValue = edit.manday_est ?? (t.manday_est ?? '');
+                    const currentAssignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
+                    const currentPhase = taskPhaseMap[idx];
+                    const endDate = getEstimatedEndDate(edit.start_date, mandayValue);
+                    const fieldLabelCls = "block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1";
 
                     return (
-                      <div key={idx} className={`p-4 border rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-60 bg-slate-50'}`}>
-                        <div className="space-y-2 flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${pBadge}`}>
-                              {priority}
-                            </span>
-                            <h4 className="font-bold text-[#0b1c30] text-xs sm:text-sm">{t.detail_task || t.title || t.name}</h4>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-3 text-xs text-[#64748b] font-medium pt-0.5">
-                            <span>👤 Người thực hiện: <b className="text-[#0b1c30]">{t.owner || t.assigned_name || creatorName}</b></span>
-                            {t.deadline && <span>📅 Hạn chót: <b className="text-[#0b1c30]">{t.deadline}</b></span>}
-
-                            {/* Per-task Searchable Project Selector */}
-                            <div className="flex items-center gap-1.5 min-w-[200px]">
-                              <span className="text-[11px] font-bold text-[#475569] shrink-0">📁 Dự án:</span>
-                              <SearchableSelect
-                                label="dự án"
-                                options={projectsList.map((p) => ({ id: p.id, name: p.name }))}
-                                value={currentTaskProjectId}
-                                onChange={(val: any) => {
-                                  const pid = Number(val);
-                                  setTaskProjectsMap(prev => ({ ...prev, [idx]: pid }));
-                                }}
-                                placeholder="Gõ tìm dự án..."
-                                searchThreshold={0}
-                                className="w-48 sm:w-56"
-                              />
-                            </div>
+                      <div key={idx} className={`border rounded-2xl p-4 transition-all ${isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-50 bg-slate-50'}`}>
+                        {/* Header: checkbox + Detail Task */}
+                        <div className="flex items-start gap-3 mb-4">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => setTaskCheckedMap(prev => ({ ...prev, [idx]: e.target.checked }))}
+                            className="w-4 h-4 mt-1.5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer shrink-0"
+                            title="Chọn task để đẩy vào dự án"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <label className={fieldLabelCls}>Detail Task</label>
+                            <input
+                              type="text"
+                              value={detailValue}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], detail_task: e.target.value } }))}
+                              className="w-full px-2.5 py-1.5 text-sm font-bold text-[#0b1c30] border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
+                            />
+                            {t.kpi_output && (
+                              <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">
+                                <b className="text-[#64748b]">KPI/Output (AI):</b> {t.kpi_output}
+                              </p>
+                            )}
+                            {t.deadline && (
+                              <p className="text-[11px] text-[#94a3b8]">📅 AI gợi ý hạn: {t.deadline}</p>
+                            )}
                           </div>
                         </div>
 
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setTaskCheckedMap(prev => ({ ...prev, [idx]: checked }));
-                          }}
-                          className="w-5 h-5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer self-end sm:self-center shrink-0"
-                          title="Chọn task để đẩy vào dự án"
-                        />
+                        {/* Field grid — tự xuống dòng theo bề rộng màn hình, không cuộn ngang */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                          <div>
+                            <label className={fieldLabelCls}>Priority</label>
+                            <select
+                              value={priorityValue}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], priority: e.target.value } }))}
+                              className="text-xs border border-[#cbd5e1] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[#6366f1] w-full"
+                            >
+                              <option value="Critical">Critical</option>
+                              <option value="High">High</option>
+                              <option value="Normal">Normal</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Manday Est</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.25}
+                              value={mandayValue}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], manday_est: e.target.value } }))}
+                              placeholder="—"
+                              className="text-xs border border-[#cbd5e1] rounded-lg px-2 py-1.5 w-full focus:outline-none focus:border-[#6366f1]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Start Date</label>
+                            <input
+                              type="date"
+                              value={edit.start_date ?? ''}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], start_date: e.target.value } }))}
+                              className={`text-xs border rounded-lg px-2 py-1.5 w-full focus:outline-none focus:border-[#6366f1] ${edit.start_date ? 'border-[#cbd5e1]' : 'border-red-400'}`}
+                            />
+                            {endDate && <p className="text-[10px] text-[#94a3b8] mt-1">→ Kết thúc dự kiến: {endDate}</p>}
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Assigned</label>
+                            <SearchableSelect
+                              label="người thực hiện"
+                              options={accountsList.map((a: any) => ({ id: a.id, name: a.full_name || a.display_name || a.email || `#${a.id}` }))}
+                              value={currentAssignee?.id || ''}
+                              onChange={(val: any) => {
+                                const aid = Number(val);
+                                const found = accountsList.find((a: any) => a.id === aid);
+                                setTaskAssigneeMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.full_name || found.display_name || found.email } : undefined }));
+                              }}
+                              placeholder="Gõ tìm người..."
+                              searchThreshold={0}
+                              className={`w-full ${currentAssignee ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Support</label>
+                            <SearchableSelect
+                              label="người hỗ trợ"
+                              options={accountsList.map((a: any) => ({ id: a.id, name: a.full_name || a.display_name || a.email || `#${a.id}` }))}
+                              value={taskSupportMap[idx]?.id || ''}
+                              onChange={(val: any) => {
+                                const aid = Number(val);
+                                const found = accountsList.find((a: any) => a.id === aid);
+                                setTaskSupportMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.full_name || found.display_name || found.email } : undefined }));
+                              }}
+                              placeholder="Không bắt buộc..."
+                              searchThreshold={0}
+                              className="w-full"
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Skill Solution</label>
+                            <SearchableSelect
+                              label="skill solution"
+                              options={allSkillGroups.map((g: any) => ({ id: g.id, name: g.name }))}
+                              value={taskSkillSolutionMap[idx]?.id || ''}
+                              onChange={(val: any) => {
+                                const gid = Number(val);
+                                const found = allSkillGroups.find((g: any) => g.id === gid);
+                                setTaskSkillSolutionMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.name } : undefined }));
+                                setTaskSkillVendorMap(prev => ({ ...prev, [idx]: undefined }));
+                              }}
+                              placeholder="Gõ tìm..."
+                              searchThreshold={0}
+                              className={`w-full ${taskSkillSolutionMap[idx] ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Skill Vendor</label>
+                            <SearchableSelect
+                              label="skill vendor"
+                              options={getSkillVendorsForGroup(taskSkillSolutionMap[idx]?.id).map((s: any) => ({ id: s.id, name: s.name }))}
+                              value={taskSkillVendorMap[idx]?.id || ''}
+                              onChange={(val: any) => {
+                                const sid = Number(val);
+                                const found = getSkillVendorsForGroup(taskSkillSolutionMap[idx]?.id).find((s: any) => s.id === sid);
+                                setTaskSkillVendorMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.name } : undefined }));
+                              }}
+                              disabled={!taskSkillSolutionMap[idx]}
+                              placeholder={taskSkillSolutionMap[idx] ? 'Gõ tìm...' : 'Chọn Skill Solution trước'}
+                              searchThreshold={0}
+                              className={`w-full ${!taskSkillSolutionMap[idx] || taskSkillVendorMap[idx] ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Dự án</label>
+                            <SearchableSelect
+                              label="dự án"
+                              options={projectsList.map((p: any) => ({ id: p.id, name: p.name }))}
+                              value={currentTaskProjectId}
+                              onChange={(val: any) => {
+                                const pid = Number(val);
+                                setTaskProjectsMap(prev => ({ ...prev, [idx]: pid }));
+                                // Phase/Task cha thuộc về 1 project cụ thể — đổi project thì reset lại 2 lựa chọn này
+                                setTaskPhaseMap(prev => ({ ...prev, [idx]: undefined }));
+                                setTaskGroupMap(prev => ({ ...prev, [idx]: undefined }));
+                              }}
+                              placeholder="Gõ tìm dự án..."
+                              searchThreshold={0}
+                              className={`w-full ${currentTaskProjectId ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Phase</label>
+                            {currentTaskProjectId ? (
+                              <PhaseSelectCell
+                                projectId={currentTaskProjectId}
+                                phase={currentPhase}
+                                onPhaseChange={(p) => setTaskPhaseMap(prev => ({ ...prev, [idx]: p }))}
+                                onTaskGroupChange={(g) => setTaskGroupMap(prev => ({ ...prev, [idx]: g }))}
+                              />
+                            ) : (
+                              <p className="text-[11px] text-slate-400 py-1.5">Chọn dự án trước</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Task cha</label>
+                            {currentPhase ? (
+                              <TaskGroupSelectCell
+                                phase={currentPhase}
+                                taskGroup={taskGroupMap[idx]}
+                                onTaskGroupChange={(g) => setTaskGroupMap(prev => ({ ...prev, [idx]: g }))}
+                              />
+                            ) : (
+                              <p className="text-[11px] text-slate-400 py-1.5">Chọn phase trước</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Notes — full width */}
+                        <div className="mt-3">
+                          <label className={fieldLabelCls}>Notes</label>
+                          <textarea
+                            value={edit.notes ?? (t.kpi_output || '')}
+                            onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], notes: e.target.value } }))}
+                            rows={2}
+                            placeholder="Ghi chú thêm (không bắt buộc)..."
+                            className="text-xs border border-[#cbd5e1] rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-[#6366f1] resize-y"
+                          />
+                        </div>
                       </div>
                     );
                   })}

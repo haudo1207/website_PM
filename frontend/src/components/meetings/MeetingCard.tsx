@@ -39,6 +39,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
   const creatorName = meeting.creator_name || meeting.creator?.display_name || meeting.created_by_name || 'Host mkt.szone';
   const platformName = meeting.platform || 'Google Meet';
   const isN8nSource = meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata;
+  const isAutoCreated = Boolean(meeting.is_auto_created ?? meeting.ai_summary?.is_auto_created);
 
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
   const baseLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
@@ -92,6 +93,15 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f1f5f9] text-[#64748b]">
                 {platformName}
               </span>
+
+              {isAutoCreated && (
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-700 border border-teal-200"
+                  title="Meeting này không được tạo qua nút 'Tạo meeting' trên web — n8n tự động tạo từ video ghi hình phát hiện được"
+                >
+                  🤖 Tự động tạo
+                </span>
+              )}
             </div>
           </div>
 
