@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib/api';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, recalculateMeetingScore, submitMeetingFeedback } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import ProgressBar from '@/components/dashboard/ProgressBar';
 import { useQueryClient } from '@tanstack/react-query';
 
 interface MeetingDetailModalProps {
@@ -25,7 +26,11 @@ export default function MeetingDetailModal({
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'tasks' | 'transcript' | 'details'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'tasks' | 'transcript' | 'details' | 'score'>('overview');
+  const [isRecalculatingScore, setIsRecalculatingScore] = useState(false);
+  const [localScore, setLocalScore] = useState<any>(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackChoice, setFeedbackChoice] = useState<'helpful' | 'not_helpful' | null>(null);
   const [isPushing, setIsPushing] = useState(false);
   const [pushedSuccess, setPushedSuccess] = useState(false);
   const [copiedTranscript, setCopiedTranscript] = useState(false);
@@ -86,7 +91,47 @@ export default function MeetingDetailModal({
     }
   }, [meeting, creatorName]);
 
+  useEffect(() => {
+    setLocalScore(null);
+    setFeedbackChoice(null);
+  }, [meeting?.id]);
+
   if (!isOpen || !meeting) return null;
+
+  const score = localScore || meeting;
+  const scoreTotal = score.score_total ?? null;
+
+  const handleRecalculateScore = async () => {
+    if (!meeting?.id) return;
+    setIsRecalculatingScore(true);
+    try {
+      const res = await recalculateMeetingScore(meeting.id);
+      if (res?.data) {
+        setLocalScore(res.data);
+        queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? { ...m, ...res.data } : m));
+      }
+    } catch (e) {
+      console.error('Failed to recalculate meeting score', e);
+    } finally {
+      setIsRecalculatingScore(false);
+    }
+  };
+
+  const handleSubmitFeedback = async (helpful: boolean) => {
+    if (!meeting?.id) return;
+    setFeedbackSubmitting(true);
+    try {
+      const res = await submitMeetingFeedback(meeting.id, { helpful });
+      setFeedbackChoice(helpful ? 'helpful' : 'not_helpful');
+      if (res) {
+        setLocalScore((prev: any) => ({ ...(prev || meeting), score_feedback: res.score_feedback, score_total: res.score_total }));
+      }
+    } catch (e) {
+      console.error('Failed to submit meeting feedback', e);
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
 
   // Real Meeting Fields
   const meetingTitle = meeting.title || 'Cuộc họp chưa có tên';
@@ -111,7 +156,7 @@ export default function MeetingDetailModal({
   const decisionsList: string[] = meeting.decisions || (meeting.ai_summary?.decisions) || [];
   const issuesList: string[] = meeting.issues || (meeting.ai_summary?.issues) || [];
   const nextStepsList: string[] = meeting.next_steps || (meeting.ai_summary?.next_steps) || [];
-  const tasksList: any[] = meeting.recommended_tasks || (meeting.ai_summary?.recommended_tasks) || [];
+  const tasksList: any[] = score.recommended_tasks || (score.ai_summary?.recommended_tasks) || [];
   const membersList: any[] = localMembers;
   const rawTranscript = meeting.transcript || meeting.ai_summary?.transcript || '';
 
@@ -376,6 +421,20 @@ export default function MeetingDetailModal({
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f1f5f9] text-[#64748b]">
                   {platformName}
                 </span>
+
+                {scoreTotal !== null && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('score')}
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 ${
+                      scoreTotal >= 75 ? 'bg-emerald-50 text-emerald-700' : scoreTotal >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
+                    }`}
+                    title="Xem chi tiết điểm hiệu quả"
+                  >
+                    <Gauge size={12} />
+                    <span>Hiệu quả {scoreTotal}/100</span>
+                  </button>
+                )}
               </div>
 
               {/* Sub-Info Line */}
@@ -515,6 +574,13 @@ export default function MeetingDetailModal({
               className={`pb-2 border-b-2 transition-colors ${activeTab === 'details' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
             >
               Thông tin chi tiết
+            </button>
+            <button
+              onClick={() => setActiveTab('score')}
+              className={`pb-2 border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'score' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
+            >
+              <Gauge size={13} />
+              <span>Hiệu quả{scoreTotal !== null ? ` (${scoreTotal})` : ''}</span>
             </button>
           </div>
         </div>
@@ -1131,6 +1197,115 @@ export default function MeetingDetailModal({
                   </pre>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* TAB 6: HIỆU QUẢ (điểm hiệu quả — deterministic, tính từ dữ liệu thật) */}
+          {activeTab === 'score' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 space-y-5">
+                <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2 text-[#6366f1]">
+                      <Gauge size={18} />
+                      <h3 className="text-sm font-extrabold text-[#0b1c30]">Chi tiết điểm hiệu quả</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRecalculateScore}
+                      disabled={isRecalculatingScore}
+                      className="px-3 py-1.5 text-[11px] font-bold text-[#6366f1] border border-[#e0e7ff] bg-[#f5f3ff] hover:bg-[#eee9fe] rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {isRecalculatingScore ? '⏳ Đang tính...' : '↻ Tính lại điểm'}
+                    </button>
+                  </div>
+
+                  {scoreTotal === null ? (
+                    <p className="text-xs text-[#64748b]">Chưa có điểm hiệu quả — bấm "Tính lại điểm" để tính từ dữ liệu hiện tại.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <span className={`text-3xl font-extrabold ${scoreTotal >= 75 ? 'text-emerald-600' : scoreTotal >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                          {scoreTotal}
+                        </span>
+                        <span className="text-xs text-[#64748b]">/ 100 điểm · {score.score_status === 'final' ? 'Đã chốt' : 'Tạm tính (chờ task tới hạn)'}</span>
+                      </div>
+
+                      {[
+                        { label: 'Chuẩn bị', value: score.score_prep, max: 25, color: 'bg-[#6366f1]' },
+                        { label: 'Điều hành', value: score.score_execution, max: 15, color: 'bg-[#5aa1ed]' },
+                        { label: 'Kết quả & KPI Tasks', value: score.score_result, max: 35, color: 'bg-[#07966d]' },
+                        { label: 'Thực thi', value: score.score_followthrough, max: 20, color: 'bg-[#f5a542]' },
+                        { label: 'Phản hồi', value: score.score_feedback, max: 5, color: 'bg-[#37b792]' },
+                      ].map(row => (
+                        <div key={row.label} className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-[#475569]">
+                            <span>{row.label}</span>
+                            <span>{row.value ?? 0}/{row.max}</span>
+                          </div>
+                          <ProgressBar value={((row.value ?? 0) / row.max) * 100} color={row.color} showLabel={false} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-3">
+                  <h3 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">Đồng bộ KPI Tasks</h3>
+                  {tasksList.length === 0 ? (
+                    <p className="text-xs text-[#64748b]">Chưa có task sau họp.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {tasksList.map((t: any, idx: number) => {
+                        const synced = Boolean(t.imported_task_id || t.kpi_task_id);
+                        const pushed = Boolean(t.ai_task_inbox_id);
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                            <span className="font-semibold text-[#0b1c30] truncate pr-3">{t.detail_task || t.title || t.name}</span>
+                            {synced ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0">✓ Đã vào KPI Tasks</span>
+                            ) : pushed ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 shrink-0">! Chờ import ở Project</span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 shrink-0">× Chưa push</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="lg:col-span-4">
+                <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-3">
+                  <h3 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">Đánh giá nhanh</h3>
+                  <p className="text-[11px] text-[#64748b]">Cuộc họp này có hữu ích với bạn không?</p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSubmitFeedback(true)}
+                      disabled={feedbackSubmitting}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold border transition-colors disabled:opacity-50 ${
+                        feedbackChoice === 'helpful' ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'border-[#cbd5e1] text-[#475569] hover:bg-slate-50'
+                      }`}
+                    >
+                      <ThumbsUp size={14} /> Hữu ích
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSubmitFeedback(false)}
+                      disabled={feedbackSubmitting}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold border transition-colors disabled:opacity-50 ${
+                        feedbackChoice === 'not_helpful' ? 'bg-red-50 border-red-300 text-red-700' : 'border-[#cbd5e1] text-[#475569] hover:bg-slate-50'
+                      }`}
+                    >
+                      <ThumbsDown size={14} /> Chưa hữu ích
+                    </button>
+                  </div>
+                  {feedbackChoice && <p className="text-[11px] text-emerald-600 font-semibold">✓ Đã ghi nhận phản hồi.</p>}
+                </div>
+              </div>
             </div>
           )}
 

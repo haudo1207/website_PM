@@ -444,6 +444,44 @@ def apply_schema_updates():
             END $$
         """))
 
+        # ── Meeting Intelligence: prep fields + deterministic effectiveness score ──
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS objective TEXT"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS agenda TEXT"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS no_action_reason TEXT"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS score_total INTEGER"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS score_prep INTEGER"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS score_execution INTEGER"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS score_result INTEGER"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS score_followthrough INTEGER"))
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN IF NOT EXISTS score_feedback INTEGER"))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS score_status VARCHAR(20) DEFAULT 'provisional'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS last_score_calculated_at TIMESTAMP"
+        ))
+
+        # ── Meeting Intelligence: trace a pushed action item back to its meeting ──
+        conn.execute(text(
+            "ALTER TABLE chat_ai_tasks ADD COLUMN IF NOT EXISTS meeting_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'chat_ai_tasks_meeting_id_fkey'
+                      AND conrelid = 'chat_ai_tasks'::regclass
+                ) THEN
+                    ALTER TABLE chat_ai_tasks
+                    ADD CONSTRAINT chat_ai_tasks_meeting_id_fkey
+                    FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+
 def init_db_defaults():
     from .database import SessionLocal
     from .models.user import User

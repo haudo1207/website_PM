@@ -416,6 +416,15 @@ export const getGoogleStatus = () => api.get('/meetings/google/status').then(r =
 export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
 export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);
 
+// Meeting Intelligence — effectiveness score, feedback, AI copilot, insights
+export const recalculateMeetingScore = (id: number) => api.post(`/meetings/${id}/recalculate-score`).then(r => r.data);
+export const submitMeetingFeedback = (id: number, data: { helpful: boolean; comment?: string }) =>
+  api.post(`/meetings/${id}/feedback`, data).then(r => r.data);
+export const generateAiMeetingContent = (data: { title: string; project_name?: string }) =>
+  api.post('/meetings/generate-ai-content', data).then(r => r.data);
+export const getMeetingInsights = (params?: { from_date?: string; to_date?: string }) =>
+  api.get('/meetings/insights', { params }).then(r => r.data);
+
 
 
 // Performance Settings CRUD

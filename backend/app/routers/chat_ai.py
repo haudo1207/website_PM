@@ -541,12 +541,24 @@ def import_inbox_task_to_project_plan(
     task_code = f"T{task_group_id}.{existing_count + 1}"
 
     # Safe date parsing
-    from ..utils.kpi_engine import parse_date, calc_end_date_est
+    from ..utils.kpi_engine import parse_date, calc_end_date_est, recalculate_task
     parsed_start_date = parse_date(inbox_task.start_date)
 
     task_status = getattr(inbox_task, "target_status", None) or "Waiting"
     manday_est_val = inbox_task.manday_est if inbox_task.manday_est is not None else 1.0
     end_date_est_val = calc_end_date_est(parsed_start_date, manday_est_val) if parsed_start_date else None
+
+    # skill_solution_id/skill_vendor_id are NOT NULL on Task. Inbox rows (chat
+    # or meeting sourced) don't always carry a real "skill" — fall back to the
+    # first Group/Skill by id, same pattern used in project_templates.py.
+    skill_solution_id = getattr(inbox_task, "skill_solution_id", None)
+    skill_vendor_id = getattr(inbox_task, "skill_vendor_id", None)
+    if not skill_solution_id:
+        fallback_group = db.query(Group).order_by(Group.id.asc()).first()
+        skill_solution_id = fallback_group.id if fallback_group else None
+    if not skill_vendor_id:
+        fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
+        skill_vendor_id = fallback_skill.id if fallback_skill else None
 
     # Create real task in tasks_v2 with ALL fields matched
     new_task = Task(
@@ -560,8 +572,8 @@ def import_inbox_task_to_project_plan(
         support_id=inbox_task.support_id,
         kpi_ratio_assign=inbox_task.kpi_ratio_assign if inbox_task.kpi_ratio_assign is not None else 100,
         kpi_ratio_support=inbox_task.kpi_ratio_support if inbox_task.kpi_ratio_support is not None else 0,
-        skill_solution_id=getattr(inbox_task, "skill_solution_id", None),
-        skill_vendor_id=getattr(inbox_task, "skill_vendor_id", None),
+        skill_solution_id=skill_solution_id,
+        skill_vendor_id=skill_vendor_id,
         ticket_id=getattr(inbox_task, "ticket_id", None),
         remark=getattr(inbox_task, "remark", None) or inbox_task.acceptance_criteria,
         send=getattr(inbox_task, "send", None),
@@ -571,6 +583,9 @@ def import_inbox_task_to_project_plan(
     )
     db.add(new_task)
     db.flush()
+    # Compute kpi_base/kpi_perform/kpi_final etc — previously skipped here, so
+    # inbox-imported tasks silently kept kpi_final=0 (a real, pre-existing bug).
+    recalculate_task(new_task, db)
 
     # Update inbox task status
     inbox_task.status = "IMPORTED"
@@ -583,6 +598,30 @@ def import_inbox_task_to_project_plan(
         status="SUCCESS"
     )
     db.add(log)
+
+    # If this inbox row originated from a meeting, recompute that meeting's
+    # KPI-Tasks sync score now that a real Task is linked, and stamp
+    # imported_task_id back onto the matching recommended_tasks[i] entry so
+    # the meeting detail UI can show a real per-item synced badge.
+    if getattr(inbox_task, "meeting_id", None):
+        from ..models.meeting import Meeting
+        from ..services.meeting_score_engine import recalculate_meeting_score
+        source_meeting = db.query(Meeting).filter(Meeting.id == inbox_task.meeting_id).first()
+        if source_meeting:
+            if isinstance(source_meeting.ai_summary, dict):
+                # Build brand-new dict objects rather than mutating existing ones
+                # in place — SQLAlchemy's JSON column change-detection compares
+                # old vs new by value, and an in-place-mutated nested dict is
+                # still reference-shared with (and thus "equal" to) the tracked
+                # old value, which silently makes the UPDATE a no-op.
+                recommended_tasks = [
+                    {**t, "imported_task_id": new_task.id}
+                    if isinstance(t, dict) and t.get("ai_task_inbox_id") == inbox_task.id
+                    else t
+                    for t in (source_meeting.ai_summary.get("recommended_tasks") or [])
+                ]
+                source_meeting.ai_summary = {**source_meeting.ai_summary, "recommended_tasks": recommended_tasks}
+            recalculate_meeting_score(source_meeting, db)
 
     db.commit()
     return {"ok": True, "imported_task_id": new_task.id, "task_code": task_code}

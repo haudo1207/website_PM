@@ -233,7 +233,18 @@ def meeting_to_dict(m: Meeting) -> dict:
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
         "members": final_members,
-        "member_count": len(final_members)
+        "member_count": len(final_members),
+        "objective": m.objective,
+        "agenda": m.agenda,
+        "no_action_reason": m.no_action_reason,
+        "score_total": m.score_total,
+        "score_prep": m.score_prep,
+        "score_execution": m.score_execution,
+        "score_result": m.score_result,
+        "score_followthrough": m.score_followthrough,
+        "score_feedback": m.score_feedback,
+        "score_status": m.score_status,
+        "last_score_calculated_at": m.last_score_calculated_at.isoformat() if m.last_score_calculated_at else None,
     }
 
 # ─── LIST ───────────────────────────────────────────────
@@ -268,7 +279,9 @@ def list_meetings(
         td = parse_date(to_date)
         q = q.filter(Meeting.meeting_date <= td)
 
-    meetings = q.order_by(Meeting.meeting_date.desc(), Meeting.start_time.desc()).all()
+    # Tie-break by id desc so meetings created on the same date/time (very
+    # common when quickly creating a "today" meeting) show newest-first.
+    meetings = q.order_by(Meeting.meeting_date.desc(), Meeting.start_time.desc(), Meeting.id.desc()).all()
     return {"success": True, "data": [meeting_to_dict(m) for m in meetings]}
 
 # ─── GENERATE LINK (Zoom / Google Meet) ────────────────
@@ -311,6 +324,133 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
             raise HTTPException(status_code=400, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail=f"Nền tảng '{platform}' chưa hỗ trợ tự động tạo link.")
+
+
+# ─── MEETING INTELLIGENCE INSIGHTS (must stay above GET /{id} — no path param) ───
+@router.get("/insights")
+def get_meeting_insights(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Aggregates for the Meeting Intelligence dashboard: weekly hours by
+    project vs internal, top people by hours, per-project load, and alerts."""
+    from ..models.ai_task_inbox import AITaskInbox
+    from collections import defaultdict
+
+    q = db.query(Meeting).options(
+        joinedload(Meeting.project),
+        joinedload(Meeting.members).joinedload(MeetingMember.member)
+    )
+    if user_scope(current_user) != ALL_SCOPE:
+        allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
+        q = q.filter(Meeting.project_id.in_(allowed_projects))
+
+    today = datetime.date.today()
+    fd = parse_date(from_date) if from_date else today - datetime.timedelta(days=7)
+    td = parse_date(to_date) if to_date else today
+    meetings = q.filter(Meeting.meeting_date >= fd, Meeting.meeting_date <= td).all()
+
+    def hours(m: Meeting) -> float:
+        if m.start_time and m.end_time:
+            start_mins = m.start_time.hour * 60 + m.start_time.minute
+            end_mins = m.end_time.hour * 60 + m.end_time.minute
+            if end_mins >= start_mins:
+                return (end_mins - start_mins) / 60.0
+        return 1.0  # unknown duration — treat as 1h, matches modal's default assumption
+
+    daily = defaultdict(lambda: {"project": 0.0, "internal": 0.0})
+    per_project_hours = defaultdict(float)
+    per_person_hours = defaultdict(float)
+    per_person_meetings = defaultdict(int)
+    outside_hours_count = 0
+
+    for m in meetings:
+        h = hours(m)
+        day_key = m.meeting_date.isoformat()
+        if m.project_id:
+            daily[day_key]["project"] += h
+            per_project_hours[m.project.name if m.project else "Khác"] += h
+        else:
+            daily[day_key]["internal"] += h
+
+        if m.start_time and (m.start_time.hour < 8 or m.start_time.hour >= 18):
+            outside_hours_count += 1
+
+        for mm in (m.members or []):
+            if mm.member:
+                per_person_hours[mm.member.display_name] += h
+                per_person_meetings[mm.member.display_name] += 1
+
+    weekly_series = [
+        {"day": day, "project": round(v["project"], 1), "internal": round(v["internal"], 1)}
+        for day, v in sorted(daily.items())
+    ]
+    project_load = [
+        {"name": name, "hours": round(h, 1)}
+        for name, h in sorted(per_project_hours.items(), key=lambda x: -x[1])
+    ]
+    top_people = [
+        {"name": name, "hours": round(h, 1), "meetings": per_person_meetings[name]}
+        for name, h in sorted(per_person_hours.items(), key=lambda x: -x[1])[:10]
+    ]
+
+    alerts = []
+    overloaded = [p for p in top_people if p["hours"] > 8]
+    if overloaded:
+        alerts.append({
+            "type": "overload",
+            "title": f"{len(overloaded)} nhân sự họp trên 8 giờ/tuần",
+            "detail": ", ".join(p["name"] for p in overloaded[:3]),
+            "count": len(overloaded),
+        })
+    if outside_hours_count:
+        alerts.append({
+            "type": "outside",
+            "title": f"{outside_hours_count} cuộc họp ngoài giờ",
+            "detail": "Trước 8h hoặc sau 18h",
+            "count": outside_hours_count,
+        })
+
+    # Recurring-unresolved-topic heuristic: same normalized title ≥3x with no decisions.
+    title_counts = defaultdict(list)
+    for m in meetings:
+        key = re.sub(r"\s+", " ", m.title.strip().lower())
+        title_counts[key].append(m)
+    for key, group in title_counts.items():
+        if len(group) >= 3 and all(not (isinstance(x.ai_summary, dict) and x.ai_summary.get("decisions")) for x in group):
+            alerts.append({
+                "type": "recurring",
+                "title": f'Chủ đề "{group[0].title}" lặp lại nhưng chưa chốt',
+                "detail": f"Xuất hiện {len(group)} lần",
+                "count": len(group),
+            })
+
+    unsynced_count = 0
+    for m in meetings:
+        recommended_tasks = (m.ai_summary or {}).get("recommended_tasks") if isinstance(m.ai_summary, dict) else []
+        if recommended_tasks:
+            inbox_rows = db.query(AITaskInbox).filter(AITaskInbox.meeting_id == m.id).all()
+            if not inbox_rows or any(not r.imported_task_id for r in inbox_rows):
+                unsynced_count += 1
+    if unsynced_count:
+        alerts.append({
+            "type": "unsynced",
+            "title": f"{unsynced_count} cuộc họp có task chưa vào KPI Tasks",
+            "detail": "Kết quả sẽ bị giới hạn điểm cho tới khi đồng bộ",
+            "count": unsynced_count,
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "weekly_series": weekly_series,
+            "project_load": project_load,
+            "top_people": top_people,
+            "alerts": alerts,
+        },
+    }
 
 
 # ─── GET ONE ─────────────────────────────────────────────
@@ -438,7 +578,10 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         transcript=body.get("transcript"),
         ai_summary=ai_summary,
         project_id=project_id,
-        created_by=created_by
+        created_by=created_by,
+        objective=body.get("objective"),
+        agenda=body.get("agenda"),
+        no_action_reason=body.get("no_action_reason"),
     )
     # Auto-summarize with AI on create (using structured output)
     try:
@@ -463,6 +606,9 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         logger.warning(f"Auto-summarize meeting {m.id} on create failed: {e}")
 
     db.add(m)
+    db.flush()
+    from ..services.meeting_score_engine import recalculate_meeting_score
+    recalculate_meeting_score(m, db)
     db.commit()
     db.refresh(m)
 
@@ -548,7 +694,10 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
 
     m.status = new_status
     m.transcript = body.get("transcript", m.transcript)
-    
+    m.objective = body.get("objective", m.objective)
+    m.agenda = body.get("agenda", m.agenda)
+    m.no_action_reason = body.get("no_action_reason", m.no_action_reason)
+
     # Store ai_summary if provided (or keep old if not in payload)
     ai_summary_input = body.get("ai_summary") or body.get("summary")
     if ai_summary_input is not None:
@@ -584,6 +733,8 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
         else:
             m.project_id = None
 
+    from ..services.meeting_score_engine import recalculate_meeting_score
+    recalculate_meeting_score(m, db)
     db.commit()
     AuditService.record_diff(
         db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
@@ -853,10 +1004,27 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
     from ..models.ai_task_inbox import AITaskInbox
     from ..models.project import Project
     from ..models.member import Member
+    from ..services.meeting_score_engine import recalculate_meeting_score
+
+    # Track pushed items back onto ai_summary.recommended_tasks so the score
+    # engine (and the UI) can tell which action items are already staged.
+    recommended_tasks = []
+    if isinstance(m.ai_summary, dict):
+        recommended_tasks = list(m.ai_summary.get("recommended_tasks") or [])
+    pushed_index_by_detail = {
+        str(t.get("detail_task") or t.get("title") or t.get("name") or "").strip(): idx
+        for idx, t in enumerate(recommended_tasks)
+        if isinstance(t, dict)
+    }
 
     for item in tasks_data:
         detail_task = str(item.get("detail_task") or item.get("title") or item.get("name") or "").strip()
         if not detail_task:
+            continue
+
+        existing_idx = pushed_index_by_detail.get(detail_task)
+        if existing_idx is not None and recommended_tasks[existing_idx].get("ai_task_inbox_id"):
+            # Already pushed once — skip to avoid duplicate AITaskInbox rows.
             continue
 
         project_id = item.get("project_id") or m.project_id
@@ -884,6 +1052,7 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
 
         inbox_task = AITaskInbox(
             project_id=project_id,
+            meeting_id=m.id,
             source_platform=m.platform or "Meeting AI",
             source_group_name=m.title or "Cuộc họp",
             source_message=f"[Meeting: {m.title}] {detail_task}",
@@ -896,10 +1065,115 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
             manday_est=float(item.get("manday_est", 1.0)),
         )
         db.add(inbox_task)
+        db.flush()
         pushed_count += 1
 
+        record = {
+            **item,
+            "detail_task": detail_task,
+            "ai_task_inbox_id": inbox_task.id,
+            "pushed_at": datetime.datetime.utcnow().isoformat(),
+        }
+        if existing_idx is not None:
+            recommended_tasks[existing_idx] = record
+        else:
+            recommended_tasks.append(record)
+            pushed_index_by_detail[detail_task] = len(recommended_tasks) - 1
+
+    if isinstance(m.ai_summary, dict):
+        m.ai_summary = {**m.ai_summary, "recommended_tasks": recommended_tasks}
+    recalculate_meeting_score(m, db)
     db.commit()
     return {"success": True, "pushed_count": pushed_count, "message": f"Đã push {pushed_count} task vào Project thành công!"}
+
+
+# ─── MEETING INTELLIGENCE: SCORE / FEEDBACK / AI COPILOT / INSIGHTS ───
+@router.post("/{id}/recalculate-score")
+def recalculate_score(id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    from ..services.meeting_score_engine import recalculate_meeting_score
+    m = db.query(Meeting).options(
+        joinedload(Meeting.project),
+        joinedload(Meeting.creator),
+        joinedload(Meeting.members).joinedload(MeetingMember.member)
+    ).filter(Meeting.id == id).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    recalculate_meeting_score(m, db)
+    db.commit()
+    db.refresh(m)
+    return {"success": True, "data": meeting_to_dict(m)}
+
+
+@router.post("/{id}/feedback")
+def submit_meeting_feedback(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    from ..models.meeting_feedback import MeetingFeedback
+    from ..services.meeting_score_engine import recalculate_meeting_score
+
+    m = db.query(Meeting).filter(Meeting.id == id).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy cuộc họp")
+
+    if "helpful" not in body:
+        raise HTTPException(400, "Thiếu trường 'helpful'")
+
+    member_id = None
+    if current_user and getattr(current_user, "email", None):
+        member = db.query(Member).filter(Member.email.ilike(current_user.email)).first()
+        if member:
+            member_id = member.id
+
+    existing = None
+    if member_id:
+        existing = db.query(MeetingFeedback).filter(
+            MeetingFeedback.meeting_id == id, MeetingFeedback.member_id == member_id
+        ).first()
+
+    if existing:
+        existing.helpful = bool(body.get("helpful"))
+        existing.comment = body.get("comment", existing.comment)
+    else:
+        db.add(MeetingFeedback(
+            meeting_id=id,
+            member_id=member_id,
+            helpful=bool(body.get("helpful")),
+            comment=body.get("comment"),
+        ))
+
+    db.flush()
+    recalculate_meeting_score(m, db)
+    db.commit()
+    return {"success": True, "score_feedback": m.score_feedback, "score_total": m.score_total}
+
+
+@router.post("/generate-ai-content")
+def generate_ai_meeting_content(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """AI Meeting Copilot — drafts objective + agenda from the meeting title/project."""
+    from ..services.ai_client import chat_completion_json, AiClientError
+
+    title = str(body.get("title") or "").strip()
+    project_name = str(body.get("project_name") or body.get("project") or "").strip()
+    if not title:
+        raise HTTPException(400, "Cần tên cuộc họp để AI đề xuất nội dung")
+
+    system_prompt = (
+        "Bạn là trợ lý soạn thảo cuộc họp cho một công ty công nghệ Việt Nam.\n"
+        "Dựa trên tên cuộc họp và dự án liên quan, hãy đề xuất mục tiêu & kết quả mong đợi, "
+        "và agenda/vấn đề cần xử lý.\n"
+        "BẮT BUỘC: Trả về JSON duy nhất, đúng cấu trúc:\n"
+        "{\n"
+        '  "goal": "<mục tiêu & kết quả mong đợi, 1-3 câu tiếng Việt>",\n'
+        '  "agenda": "<agenda dạng danh sách đánh số, mỗi mục 1 dòng, tiếng Việt>"\n'
+        "}\n"
+        "Không bọc trong ```json hay ``` ở kết quả."
+    )
+    user_content = f"Tên cuộc họp: {title}\nDự án liên quan: {project_name or 'Chưa xác định'}"
+
+    try:
+        result = chat_completion_json(system_prompt, user_content)
+    except AiClientError as e:
+        raise HTTPException(400, f"AI đề xuất thất bại: {e}")
+
+    return {"success": True, "goal": result.get("goal", ""), "agenda": result.get("agenda", "")}
 
 
 # ─── INTERNAL GOOGLE HEALTH CHECK ENDPOINT (SPEC CHAPTER 06) ───
