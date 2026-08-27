@@ -12,7 +12,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
-import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
+import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 
 const getShortName = (name: string) => {
   if (!name) return 'Unknown';
@@ -87,6 +87,8 @@ const ProjectDistributionDonut = ({ activeCount, whiteCount }: { activeCount: nu
 const getTaskKpiForMember = (t: any, memberId: any) => {
   const isDone = t.status === 'Done' || t.status === 'done';
   if (!isDone) return 0;
+  // Strictly match Backend /api/members KPI requirement: task MUST have an actual end date
+  if (!t.end_date_actual) return 0;
 
   const isAssigned = t.assigned_id != null && String(t.assigned_id) === String(memberId);
   const isSupport = t.support_id != null && String(t.support_id) === String(memberId);
@@ -621,7 +623,20 @@ export default function OverviewTab() {
 
   // Workspace/Leader Filter
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
+  const [selectedWorkspaceCode, setSelectedWorkspaceCode] = useState<string>('');
   const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const code = localStorage.getItem('active_workspace_code') || '';
+      setSelectedWorkspaceCode(code);
+      const handleWsChanged = (e: any) => {
+        setSelectedWorkspaceCode(e.detail || localStorage.getItem('active_workspace_code') || '');
+      };
+      window.addEventListener('workspace-changed', handleWsChanged);
+      return () => window.removeEventListener('workspace-changed', handleWsChanged);
+    }
+  }, []);
 
   // Unified Date Filter
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
@@ -660,20 +675,26 @@ export default function OverviewTab() {
     getMyAlerts().then(data => setMyAlerts(data)).catch(() => { });
 
     let memberApiUrl = `/api/members?_t=${ts}`;
-    if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
-      memberApiUrl += `&month=${selectedMonth}`;
-    }
-    if (selectedYear !== 'all' && typeof selectedYear === 'number') {
-      memberApiUrl += `&year=${selectedYear}`;
-    }
+    if (selectedWorkspaceCode) memberApiUrl += `&workspace=${encodeURIComponent(selectedWorkspaceCode)}`;
+    if (selectedMonth !== 'all' && typeof selectedMonth === 'number') memberApiUrl += `&month=${selectedMonth}`;
+    if (selectedYear !== 'all' && typeof selectedYear === 'number') memberApiUrl += `&year=${selectedYear}`;
+
+    let projApiUrl = `/api/projects?_t=${ts}`;
+    if (selectedWorkspaceCode) projApiUrl += `&workspace=${encodeURIComponent(selectedWorkspaceCode)}`;
+
+    let tasksApiUrl = `/api/all-tasks-global?_t=${ts}`;
+    if (selectedWorkspaceCode) tasksApiUrl += `&workspace=${encodeURIComponent(selectedWorkspaceCode)}`;
+
+    let wsLeadersUrl = `/api/members/workspace-leaders?_t=${ts}`;
+    if (selectedWorkspaceCode) wsLeadersUrl += `&workspace=${encodeURIComponent(selectedWorkspaceCode)}`;
 
     const [membersRes, projRes, tasksRes, activityRes, leadersRes, leadersScopeRes, meRes] = await Promise.all([
       axios.get(memberApiUrl, config).catch(() => ({ data: [] })),
-      axios.get(`/api/projects?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/all-tasks-global?_t=${ts}`, config).catch(() => ({ data: [] })),
+      axios.get(projApiUrl, config).catch(() => ({ data: [] })),
+      axios.get(tasksApiUrl, config).catch(() => ({ data: [] })),
       axios.get(`/api/projects/recent-activity?limit=20&_t=${ts}`, config).catch(() => ({ data: { items: [] } })),
       axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] })),
-      axios.get(`/api/members/workspace-leaders?_t=${ts}`, config).catch(() => ({ data: { leaders: null } })),
+      axios.get(wsLeadersUrl, config).catch(() => ({ data: { leaders: null } })),
       axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: null })),
     ]);
 
@@ -684,18 +705,17 @@ export default function OverviewTab() {
       recentActivity: activityRes.data?.items || [],
       rawLeaders: leadersRes.data || [],
       // Backend-authoritative Leader identities the current user may see.
-      // null (fetch failure) → keep existing behavior (no visibility filter).
       allowedLeaders: Array.isArray(leadersScopeRes.data?.leaders) ? leadersScopeRes.data.leaders : null,
       currentUser: meRes.data || null,
     };
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, selectedWorkspaceCode]);
 
   // React Query: shows the last-cached bundle instantly on revisit (no
   // loading flash), then silently refetches in the background — replaces
   // the old module-level `cachedOverviewData` variable, which only lived
   // until a full page reload and never refreshed itself automatically.
   const { data: overviewData, isFetching: loading, refetch } = useQuery({
-    queryKey: ['dashboard-overview', selectedMonth, selectedYear],
+    queryKey: ['dashboard-overview', selectedMonth, selectedYear, selectedWorkspaceCode],
     queryFn: fetchOverview,
     staleTime: 2 * 60_000,
   });
@@ -899,17 +919,15 @@ export default function OverviewTab() {
         }).sort((a, b) => b.count - a.count);
       }
       visibleLeaders = lList;
-      if (Array.isArray(allowedLeaders)) {
+      if (Array.isArray(allowedLeaders) && allowedLeaders.length > 0) {
         const allowed = new Set(allowedLeaders.map((n: string) => String(n).trim().toLowerCase()));
         visibleLeaders = lList.filter(ld =>
-          ld.name === 'Không có Leader' || allowed.has(String(ld.name).trim().toLowerCase())
+          ld.name && ld.name !== 'Không có Leader' && allowed.has(String(ld.name).trim().toLowerCase())
         );
+      } else {
+        visibleLeaders = lList.filter(ld => ld.name && ld.name !== 'Không có Leader');
       }
-      // When narrowed to one Workspace, drop leader cards left with 0 members —
-      // that only happens because their team fell outside the Workspace filter
-      // (rawMembers/rawTasks above are already scoped to it), not because the
-      // leader genuinely has an empty team.
-      if (workspaceCode) {
+      if (selectedWorkspaceCode || workspaceCode) {
         visibleLeaders = visibleLeaders.filter(ld => ld.count > 0);
       }
     } else {
@@ -990,30 +1008,7 @@ export default function OverviewTab() {
 
     // 3. Filter Tasks by Team & Date
     let fTasks = rawTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
-    fTasks = fTasks.filter(t => {
-      const isDone = t.status === 'Done' || t.status === 'done';
-      const tDateStr = isDone ? (t.end_date_actual || t.end_date_est || t.created_at) : (t.end_date_est || t.created_at);
-      if (!tDateStr) return true;
-      const tDate = new Date(tDateStr);
-      if (isNaN(tDate.getTime())) return true;
-
-      if (selectedYear !== 'all' && typeof selectedYear === 'number' && tDate.getFullYear() !== selectedYear) return false;
-
-      if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
-        const cycle = CYCLE_TEMPLATE[selectedMonth];
-        if (cycle) {
-          const yr = (selectedYear !== 'all' && typeof selectedYear === 'number') ? selectedYear : tDate.getFullYear();
-          const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
-          const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
-          if (tDate < startDt || tDate > endDt) return false;
-        } else {
-          if ((tDate.getMonth() + 1) !== selectedMonth) return false;
-        }
-      }
-
-      if (selectedWeek !== 'all' && getWeekOfMonth(tDate) !== selectedWeek) return false;
-      return true;
-    });
+    fTasks = fTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
 
     // 4. Calculate Stats (PM)
     let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = fTasks.length, pmManday = 0, pmKpi = 0;
@@ -1058,15 +1053,15 @@ export default function OverviewTab() {
       let d = 0, i = 0, o = 0, md = 0, k = 0;
       myTasks.forEach(t => {
         md += (t.manday_actual || t.manday_est || 0);
-        const done = t.status === 'Done' || t.status === 'done';
+        const done = (t.status === 'Done' || t.status === 'done') && Boolean(t.end_date_actual);
         if (done) { d++; k += getTaskKpiForMember(t, m.id); }
         else {
           i++;
           if (calculateDaysLate(t) > 0) o++;
         }
       });
-      const kpiVal = typeof m.kpi_total === 'number' ? m.kpi_total : k;
-      const mandayVal = typeof m.manday_total === 'number' ? m.manday_total : md;
+      const kpiVal = typeof m.kpi_total === 'number' && m.kpi_total > 0 ? m.kpi_total : k;
+      const mandayVal = typeof m.manday_total === 'number' && m.manday_total > 0 ? m.manday_total : md;
       return {
         id: m.id,
         name: m.display_name || m.full_name,
@@ -1085,35 +1080,34 @@ export default function OverviewTab() {
     const topPerf = finalRanking.length > 0 && finalRanking[0].kpi > 0 ? finalRanking[0] : null;
     const lowestPerf = finalRanking.length > 1 ? finalRanking[finalRanking.length - 1] : null;
 
-    // 6. Active Projects (Only show projects with tasks OR PM assigned)
-    // Apply time filter using end_date_actual (actual completion date) first, then end_date_est
+    // 6. Active Projects (Filtered by BOTH Leader and Time Period)
     const allMappedProjects = rawProjects.map((p: any) => {
-      const pTasks = rawTasks.filter(t => isSameId(t.project_id, p.id));
-      const done = pTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
-      const hasPM = Boolean(p.pm_name || p.pm || p.pm_id || p.manager || p.project_manager || p.leader_name || p.owner || p.user_id || p.leader_id);
-      const hasTasks = pTasks.length > 0;
+      const pAllTasks = rawTasks.filter(t => isSameId(t.project_id, p.id));
+      const pLeaderTasks = pAllTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
+
+      const pmName = (p.pm_name || p.pm || p.leader_name || p.manager || p.project_manager || p.owner || '').toLowerCase();
+      const isLeaderPM = selectedLeader === 'all' || activeTeamList.some(m => {
+        const mName = (m.display_name || m.full_name || m.name || '').trim().toLowerCase();
+        return pmName.includes(mName);
+      });
+
+      const pTasksToUse = (selectedLeader !== 'all' && teamMemberIds.length > 0) ? pLeaderTasks : pAllTasks;
+      const done = pTasksToUse.filter(t => t.status === 'Done' || t.status === 'done').length;
 
       // Check if any task in this project falls within the selected time period
-      // Priority: end_date_actual (actual completion) → end_date_est (estimated) → created_at
-      const hasTaskInPeriod = (selectedYear === 'all' && selectedMonth === 'all' && selectedWeek === 'all')
+      const hasTaskInPeriod = (selectedYear === 'all' && selectedMonth === 'all' && selectedWeek === 'all' && (activeQuickFilter === 'all' || !activeQuickFilter))
         ? true
-        : pTasks.some(t => {
-          const dateStr = t.end_date_actual || t.end_date_est || t.created_at;
-          if (!dateStr) return false;
-          const d = new Date(dateStr);
-          if (isNaN(d.getTime())) return false;
-          if (selectedYear !== 'all' && d.getFullYear() !== selectedYear) return false;
-          if (selectedMonth !== 'all' && (d.getMonth() + 1) !== selectedMonth) return false;
-          if (selectedWeek !== 'all' && getWeekOfMonth(d) !== selectedWeek) return false;
-          return true;
-        });
+        : pTasksToUse.some(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
+
+      // Leader scope filter: project must belong to selected Leader's team or PM
+      const belongsToLeaderScope = selectedLeader === 'all' || pLeaderTasks.length > 0 || isLeaderPM;
 
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
-        progress: pTasks.length ? Math.round((done / pTasks.length) * 100) : 0,
-        totalTasks: pTasks.length, doneTasks: done,
-        hasPM, hasTasks,
-        isDisplayable: (hasTasks || hasPM) && hasTaskInPeriod
+        progress: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
+        totalTasks: pTasksToUse.length, doneTasks: done,
+        hasPM: Boolean(pmName), hasTasks: pTasksToUse.length > 0,
+        isDisplayable: belongsToLeaderScope && hasTaskInPeriod
       };
     });
 
@@ -1131,11 +1125,11 @@ export default function OverviewTab() {
       const rowBon: any = { month: `${monthNames[i - 1]} - ${matrixYear}` };
 
       activeTeamList.forEach(m => {
-        const mTasks = rawTasks.filter(t => (isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id)) && (t.status === 'Done' || t.status === 'done'));
+        const mTasks = rawTasks.filter(t => (isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id)) && (t.status === 'Done' || t.status === 'done') && Boolean(t.end_date_actual));
         let mkpi = 0;
         const cycle = CYCLE_TEMPLATE[i];
         mTasks.forEach(t => {
-          const tdStr = t.end_date_actual || t.end_date_est || t.created_at;
+          const tdStr = t.end_date_actual;
           if (tdStr && cycle) {
             const td = new Date(tdStr);
             if (!isNaN(td.getTime())) {
@@ -1508,7 +1502,7 @@ export default function OverviewTab() {
         </div>
       )}
 
-      {/* 4. CHARTS & LISTS */}
+      {/* 3 Ô HIỂN THỊ (STATUS BAR CHART + PRIORITY BREAKDOWN + OVERDUE LIST) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* BAR CHART STATUS */}
         <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm p-5 flex flex-col justify-between">
@@ -1585,87 +1579,207 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {/* 5. MEMBER KPI RANKING TABLE (CLICK MEMBER TO VIEW DETAIL MODAL) */}
-      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <SvgIcon name="crown" className="w-4 h-4 text-indigo-600" />
-            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên</h3>
+      {/* 1. MEMBER KPI RANKING TABLE & TOP/LOWEST PERFORMERS */}
+      <div className="space-y-5">
+        <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <SvgIcon name="crown" className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên</h3>
+            </div>
+            <span className="text-[10px] font-semibold text-slate-400">💡 Bấm vào tên thành viên để xem chi tiết KPI, Dự án & Task</span>
           </div>
-          <span className="text-[10px] font-semibold text-slate-400">💡 Bấm vào tên thành viên để xem chi tiết KPI, Dự án & Task</span>
-        </div>
-        <div className="max-h-[400px] overflow-y-auto overflow-x-auto custom-scrollbar">
-          <table className="w-full text-xs relative border-collapse">
-            <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm">
-              <tr className="bg-slate-100 text-slate-500 border-b border-slate-200 uppercase text-[10px] tracking-wider font-extrabold">
-                <th className="px-4 py-3 text-center font-bold w-14 bg-slate-100">Hạng</th>
-                <th className="px-4 py-3 text-left font-bold bg-slate-100">Thành Viên</th>
-                <th className="px-4 py-3 text-center font-bold bg-slate-100">Giao</th>
-                <th className="px-4 py-3 text-center font-bold bg-slate-100">Xong</th>
-                <th className="px-4 py-3 text-center font-bold bg-slate-100">Đang Làm</th>
-                <th className="px-4 py-3 text-center font-bold bg-slate-100">Trễ</th>
-                <th className="px-4 py-3 text-center font-bold bg-slate-100">Manday</th>
-                <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">KPI</th>
-                <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">Tiến Độ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {memberRanking.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
-              ) : (
-                memberRanking.map((m, i) => {
-                  const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
-                  const isLeader = leaders.some(ld => ld.name && ld.name !== 'Không có Leader' && (
-                    ld.name.trim().toLowerCase() === m.name.trim().toLowerCase() ||
-                    ld.name.trim().toLowerCase() === (m.rawMember?.full_name || '').trim().toLowerCase() ||
-                    ld.name.trim().toLowerCase() === (m.rawMember?.display_name || '').trim().toLowerCase()
-                  ));
+          <div className="max-h-[400px] overflow-y-auto overflow-x-auto custom-scrollbar">
+            <table className="w-full text-xs relative border-collapse">
+              <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm">
+                <tr className="bg-slate-100 text-slate-500 border-b border-slate-200 uppercase text-[10px] tracking-wider font-extrabold">
+                  <th className="px-4 py-3 text-center font-bold w-14 bg-slate-100">Hạng</th>
+                  <th className="px-4 py-3 text-left font-bold bg-slate-100">Thành Viên</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Giao</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Xong</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Đang Làm</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Trễ</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Manday</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">KPI</th>
+                  <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">Tiến Độ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {memberRanking.length === 0 ? (
+                  <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
+                ) : (
+                  memberRanking.map((m, i) => {
+                    const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
+                    const isLeader = leaders.some(ld => ld.name && ld.name !== 'Không có Leader' && (
+                      ld.name.trim().toLowerCase() === m.name.trim().toLowerCase() ||
+                      ld.name.trim().toLowerCase() === (m.rawMember?.full_name || '').trim().toLowerCase() ||
+                      ld.name.trim().toLowerCase() === (m.rawMember?.display_name || '').trim().toLowerCase()
+                    ));
 
-                  return (
-                    <tr
-                      key={m.id}
-                      onClick={() => setSelectedMemberModal(m)}
-                      className={`border-b border-slate-100 hover:bg-indigo-50/70 transition-colors cursor-pointer ${isLeader
-                          ? 'bg-indigo-50/40 font-bold border-l-4 border-l-indigo-600'
-                          : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'
-                        }`}
-                    >
-                      <td className="px-4 py-3.5 text-center">
-                        <span className={`text-xs font-bold ${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}`}>#{m.rank}</span>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-[#0058be] hover:underline flex items-center gap-1">
-                            {m.name}
-                            <span className="text-[10px] text-slate-400">🔍</span>
-                          </span>
-                          {isLeader && (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-xs flex items-center gap-1">
-                              👑 LEADER
+                    return (
+                      <tr
+                        key={m.id}
+                        onClick={() => setSelectedMemberModal(m)}
+                        className={`border-b border-slate-100 hover:bg-indigo-50/70 transition-colors cursor-pointer ${isLeader
+                            ? 'bg-indigo-50/40 font-bold border-l-4 border-l-indigo-600'
+                            : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'
+                          }`}
+                      >
+                        <td className="px-4 py-3.5 text-center">
+                          <span className={`text-xs font-bold ${m.rank <= 3 ? 'text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200' : 'text-slate-400'}`}>#{m.rank}</span>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-[#0058be] hover:underline flex items-center gap-1">
+                              {m.name}
+                              <span className="text-[10px] text-slate-400">🔍</span>
                             </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3.5 text-center font-semibold text-slate-600">{m.assigned}</td>
-                      <td className="px-4 py-3.5 text-center"><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{m.done}</span></td>
-                      <td className="px-4 py-3.5 text-center font-semibold text-blue-600">{m.inProgress}</td>
-                      <td className="px-4 py-3.5 text-center">{m.overdue > 0 ? <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">{m.overdue}</span> : <span className="text-slate-300 font-bold">—</span>}</td>
-                      <td className="px-4 py-3.5 text-center text-slate-500 tabular-nums">{m.manday.toFixed(1)}</td>
-                      <td className="px-4 py-3.5 text-center font-extrabold text-[#0058be] text-[13px]">{m.kpi.toFixed(1)}</td>
-                      <td className="px-4 py-3.5">
-                        <ProgressBar value={rate} color={rate >= 80 ? 'bg-emerald-500' : rate >= 60 ? 'bg-amber-500' : 'bg-red-500'} height="h-1.5" />
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                            {isLeader && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-xs flex items-center gap-1">
+                                👑 LEADER
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-center font-semibold text-slate-600">{m.assigned}</td>
+                        <td className="px-4 py-3.5 text-center"><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{m.done}</span></td>
+                        <td className="px-4 py-3.5 text-center font-semibold text-blue-600">{m.inProgress}</td>
+                        <td className="px-4 py-3.5 text-center">{m.overdue > 0 ? <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">{m.overdue}</span> : <span className="text-slate-300 font-bold">—</span>}</td>
+                        <td className="px-4 py-3.5 text-center text-slate-500 tabular-nums">{m.manday.toFixed(1)}</td>
+                        <td className="px-4 py-3.5 text-center font-extrabold text-[#0058be] text-[13px]">{m.kpi.toFixed(1)}</td>
+                        <td className="px-4 py-3.5">
+                          <ProgressBar value={rate} color={rate >= 80 ? 'bg-emerald-500' : rate >= 60 ? 'bg-amber-500' : 'bg-red-500'} height="h-1.5" />
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* TOP PERFORMER & LOWEST PERFORMER CARDS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* XUẤT SẮC NHẤT */}
+          {topPerformer ? (
+            <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-orange-400 to-orange-500 shadow-md p-5 flex flex-col justify-between">
+              <div className="absolute -right-6 -bottom-6 opacity-20 transform rotate-12">
+                <SvgIcon name="star" className="w-40 h-40 text-white" />
+              </div>
+              <div className="relative z-10">
+                <h3 className="text-[10px] font-black text-white/90 uppercase tracking-widest mb-1 shadow-sm">Xuất Sắc Nhất</h3>
+                <p className="text-2xl font-extrabold text-white mb-6 drop-shadow-md">{topPerformer.name}</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                    <span className="text-xl font-black">{topPerformer.kpi.toFixed(1)}</span>
+                    <span className="text-[9px] font-bold uppercase mt-1 opacity-90">KPI</span>
+                  </div>
+                  <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                    <span className="text-xl font-black">{topPerformer.done}</span>
+                    <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Hoàn Thành</span>
+                  </div>
+                  <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                    <span className="text-xl font-black">{topPerformer.manday.toFixed(1)}</span>
+                    <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Manday</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center min-h-[160px] text-slate-400 font-bold text-xs">Chưa đủ dữ liệu top</div>
+          )}
+
+          {/* CẦN CẢI THIỆN */}
+          {lowestPerformer ? (
+            <div className="rounded-2xl bg-white border border-red-100 shadow-sm p-5 flex flex-col justify-between">
+              <div>
+                <h3 className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-1 flex items-center gap-1">
+                  <span>⚠️</span> Cần Cải Thiện
+                </h3>
+                <p className="text-2xl font-extrabold text-[#0b1c30] mb-6">{lowestPerformer.name}</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                    <span className="text-xl font-black text-red-600">{lowestPerformer.kpi.toFixed(1)}</span>
+                    <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">KPI</span>
+                  </div>
+                  <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                    <span className="text-xl font-black text-[#0b1c30]">{lowestPerformer.done}</span>
+                    <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">XONG</span>
+                  </div>
+                  <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                    <span className="text-xl font-black text-red-600">{lowestPerformer.overdue}</span>
+                    <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">TRỄ</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center min-h-[160px] text-slate-400 font-bold text-xs">Chưa đủ dữ liệu cải thiện</div>
+          )}
         </div>
       </div>
 
-      {/* 6. RECENT ACTIVITY SECTION (cross-project feed) */}
-      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden mb-5">
+      {/* 2. DỰ ÁN ĐANG TRIỂN KHAI (ONGOING PROJECTS) */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <SvgIcon name="folders" className="w-4 h-4 text-slate-700" />
+            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự án đang triển khai</h3>
+          </div>
+          <button
+            onClick={handleAiCheck}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-sm text-[11px] font-bold transition-all cursor-pointer active:scale-95"
+          >
+            <span className="text-sm">✨</span> AI Check
+          </button>
+        </div>
+        {aiCheckStatus && (
+          <div className="bg-blue-50 px-5 py-2 text-xs font-bold text-blue-700 border-b border-blue-100 flex items-center justify-between animate-fadeIn">
+            <span>{aiCheckStatus}</span>
+            <button onClick={() => setAiCheckStatus(null)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+          </div>
+        )}
+        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[360px] overflow-y-auto custom-scrollbar">
+          {activeProjects.length === 0 ? (
+            <p className="text-xs text-slate-400 font-semibold py-4 text-center col-span-full">Chưa có dự án nào đang hoạt động.</p>
+          ) : (
+            activeProjects.map((p: any) => (
+              <div
+                key={p.id}
+                onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
+                className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-[#0058be] hover:shadow-md transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99]"
+              >
+                <div>
+                  <div className="flex justify-between items-start mb-2 gap-2">
+                    <h4 className="text-xs font-bold text-[#0b1c30] truncate hover:text-[#0058be]" title={p.name}>{p.name}</h4>
+                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
+                      {p.status || 'Developing'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-semibold block mb-3">{p.current_phase || '1. Tư vấn'}</span>
+                </div>
+                <div>
+                  <div className="flex justify-between text-[11px] mb-1.5 font-bold">
+                    <span className="text-slate-500">Tiến độ</span>
+                    <span className="text-[#0058be]">{p.progress}%</span>
+                  </div>
+                  <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-blue-600'} height="h-2" />
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold mt-2">
+                    <span>Task: {p.doneTasks}/{p.totalTasks}</span>
+                    <span className="text-[#0058be] font-extrabold hover:underline">Xem chi tiết ➔</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+
+
+      {/* 4. HOẠT ĐỘNG GẦN ĐÂY (RECENT ACTIVITY SECTION) */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-white">
           <div className="flex items-center gap-2">
             <span className="text-base">📜</span>
@@ -1742,123 +1856,7 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {/* 7. ONGOING PROJECTS */}
-      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden mb-5">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <SvgIcon name="folders" className="w-4 h-4 text-slate-700" />
-            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự án đang triển khai</h3>
-          </div>
-          <button
-            onClick={handleAiCheck}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-sm text-[11px] font-bold transition-all cursor-pointer active:scale-95"
-          >
-            <span className="text-sm">✨</span> AI Check
-          </button>
-        </div>
-        {aiCheckStatus && (
-          <div className="bg-blue-50 px-5 py-2 text-xs font-bold text-blue-700 border-b border-blue-100 flex items-center justify-between animate-fadeIn">
-            <span>{aiCheckStatus}</span>
-            <button onClick={() => setAiCheckStatus(null)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
-          </div>
-        )}
-        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[360px] overflow-y-auto custom-scrollbar">
-          {activeProjects.length === 0 ? (
-            <p className="text-xs text-slate-400 font-semibold py-4 text-center col-span-full">Chưa có dự án nào đang hoạt động.</p>
-          ) : (
-            activeProjects.map((p: any) => (
-              <div
-                key={p.id}
-                onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
-                className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-[#0058be] hover:shadow-md transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99]"
-              >
-                <div>
-                  <div className="flex justify-between items-start mb-2 gap-2">
-                    <h4 className="text-xs font-bold text-[#0b1c30] truncate hover:text-[#0058be]" title={p.name}>{p.name}</h4>
-                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
-                      {p.status || 'Developing'}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-3">{p.current_phase || '1. Tư vấn'}</span>
-                </div>
-                <div>
-                  <div className="flex justify-between text-[11px] mb-1.5 font-bold">
-                    <span className="text-slate-500">Tiến độ</span>
-                    <span className="text-[#0058be]">{p.progress}%</span>
-                  </div>
-                  <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-blue-600'} height="h-2" />
-                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold mt-2">
-                    <span>Task: {p.doneTasks}/{p.totalTasks}</span>
-                    <span className="text-[#0058be] font-extrabold hover:underline">Xem chi tiết ➔</span>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* 8. TOP PERFORMER & LOWEST PERFORMER (PLACED RIGHT BELOW MEMBER RANKING TABLE) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-        {/* XUẤT SẮC NHẤT */}
-        {topPerformer ? (
-          <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-orange-400 to-orange-500 shadow-md p-5 flex flex-col justify-between">
-            <div className="absolute -right-6 -bottom-6 opacity-20 transform rotate-12">
-              <SvgIcon name="star" className="w-40 h-40 text-white" />
-            </div>
-            <div className="relative z-10">
-              <h3 className="text-[10px] font-black text-white/90 uppercase tracking-widest mb-1 shadow-sm">Xuất Sắc Nhất</h3>
-              <p className="text-2xl font-extrabold text-white mb-6 drop-shadow-md">{topPerformer.name}</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
-                  <span className="text-xl font-black">{topPerformer.kpi.toFixed(1)}</span>
-                  <span className="text-[9px] font-bold uppercase mt-1 opacity-90">KPI</span>
-                </div>
-                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
-                  <span className="text-xl font-black">{topPerformer.done}</span>
-                  <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Hoàn Thành</span>
-                </div>
-                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
-                  <span className="text-xl font-black">{topPerformer.manday.toFixed(1)}</span>
-                  <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Manday</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center min-h-[160px] text-slate-400 font-bold text-xs">Chưa đủ dữ liệu top</div>
-        )}
-
-        {/* CẦN CẢI THIỆN */}
-        {lowestPerformer ? (
-          <div className="rounded-2xl bg-white border border-red-100 shadow-sm p-5 flex flex-col justify-between">
-            <div>
-              <h3 className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-1 flex items-center gap-1">
-                <span>⚠️</span> Cần Cải Thiện
-              </h3>
-              <p className="text-2xl font-extrabold text-[#0b1c30] mb-6">{lowestPerformer.name}</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
-                  <span className="text-xl font-black text-red-600">{lowestPerformer.kpi.toFixed(1)}</span>
-                  <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">KPI</span>
-                </div>
-                <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
-                  <span className="text-xl font-black text-[#0b1c30]">{lowestPerformer.done}</span>
-                  <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">XONG</span>
-                </div>
-                <div className="bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100">
-                  <span className="text-xl font-black text-red-600">{lowestPerformer.overdue}</span>
-                  <span className="text-[9px] font-bold uppercase mt-1 text-slate-400">TRỄ</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center min-h-[160px] text-slate-400 font-bold text-xs">Chưa đủ dữ liệu cải thiện</div>
-        )}
-      </div>
-
-      {/* 9. KPI MATRICES */}
+      {/* 5. MA TRẬN KPI THÀNH VIÊN (KPI MATRICES) */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5 space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-center border-b border-slate-100 pb-4 gap-4">
           <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wider">Ma Trận KPI Thành Viên</h3>

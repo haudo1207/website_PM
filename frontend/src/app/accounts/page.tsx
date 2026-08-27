@@ -100,22 +100,29 @@ export default function AccountsPage() {
     }
   }, [router]);
 
+  // Shared ['workspaces'] react-query cache — same key/staleTime as Navbar/
+  // Dashboard/ProjectListContent, so this doesn't fire a duplicate request.
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const workspaces: Workspace[] = workspacesData || [];
+
   const { data: accountsData, isLoading: loading, refetch: reload } = useQuery({
     queryKey: ['accounts-list'],
     queryFn: async () => {
-      const [accs, members, wss] = await Promise.all([
+      const [accs, members] = await Promise.all([
         getAccounts(),
         getAvailableMembers(),
-        getWorkspaces().catch(() => [])
       ]);
-      return { accounts: accs, availableMembers: members, workspaces: wss || [] };
+      return { accounts: accs, availableMembers: members };
     },
     enabled: authorized,
     staleTime: 2 * 60_000,
   });
   const accounts: Account[] = accountsData?.accounts || [];
   const availableMembers: MemberInfo[] = accountsData?.availableMembers || [];
-  const workspaces: Workspace[] = accountsData?.workspaces || [];
 
   // Default data_scope for the create/edit forms once workspaces load —
   // was previously set as a side effect inside reload() itself.

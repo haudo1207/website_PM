@@ -70,6 +70,90 @@ export function getWeekOfMonth(date: Date) {
   return 5;
 }
 
+export function getMondayToSundayRange(refDate = new Date()): { monday: Date; sunday: Date } {
+  const d = new Date(refDate);
+  d.setHours(0, 0, 0, 0);
+  const dayOfWeek = d.getDay(); // 0 is Sunday, 1 is Monday, ..., 6 is Saturday
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
+  return { monday, sunday };
+}
+
+export function getNextWeekRange(refDate = new Date()): { monday: Date; sunday: Date } {
+  const thisWeek = getMondayToSundayRange(refDate);
+  const nextMonday = new Date(thisWeek.monday);
+  nextMonday.setDate(nextMonday.getDate() + 7);
+  nextMonday.setHours(0, 0, 0, 0);
+
+  const nextSunday = new Date(nextMonday);
+  nextSunday.setDate(nextMonday.getDate() + 6);
+  nextSunday.setHours(23, 59, 59, 999);
+
+  return { monday: nextMonday, sunday: nextSunday };
+}
+
+export function getPrevWeekRange(refDate = new Date()): { monday: Date; sunday: Date } {
+  const thisWeek = getMondayToSundayRange(refDate);
+  const prevMonday = new Date(thisWeek.monday);
+  prevMonday.setDate(prevMonday.getDate() - 7);
+  prevMonday.setHours(0, 0, 0, 0);
+
+  const prevSunday = new Date(prevMonday);
+  prevSunday.setDate(prevMonday.getDate() + 6);
+  prevSunday.setHours(23, 59, 59, 999);
+
+  return { monday: prevMonday, sunday: prevSunday };
+}
+
+export function getWeekDateRange(
+  weekNum: number | 'all',
+  monthNum: number | 'all',
+  yearNum: number | 'all',
+  refDate = new Date()
+): { monday: Date; sunday: Date } | null {
+  if (weekNum === 'all' || typeof weekNum !== 'number') return null;
+
+  const y = typeof yearNum === 'number' ? yearNum : refDate.getFullYear();
+  const m = typeof monthNum === 'number' ? monthNum : refDate.getMonth() + 1;
+
+  const firstDayOfMonth = new Date(y, m - 1, 1, 0, 0, 0, 0);
+  const lastDayOfMonth = new Date(y, m, 0, 23, 59, 59, 999);
+
+  let dayOfWeek = firstDayOfMonth.getDay();
+  let diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+
+  let monday = new Date(firstDayOfMonth);
+  monday.setDate(firstDayOfMonth.getDate() + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+
+  const weeks: { monday: Date; sunday: Date }[] = [];
+  while (monday <= lastDayOfMonth && weeks.length < 6) {
+    let sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    weeks.push({ monday, sunday });
+
+    monday = new Date(sunday);
+    monday.setDate(sunday.getDate() + 1);
+    monday.setHours(0, 0, 0, 0);
+  }
+
+  const idx = weekNum - 1;
+  if (idx >= 0 && idx < weeks.length) {
+    return weeks[idx];
+  }
+  return weeks[weeks.length - 1] || null;
+}
+
 export const CYCLE_TEMPLATE: Record<number, { startMd: string; endMd: string; startYo: number; endYo: number }> = {
   1:  { startMd: '12-22', endMd: '01-18', startYo: -1, endYo: 0 },
   2:  { startMd: '01-19', endMd: '02-22', startYo: 0, endYo: 0 },
@@ -144,6 +228,70 @@ export function calculateDaysLate(task: any): number {
   }
 
   return 0;
+}
+
+export function checkTaskInPeriod(
+  task: any,
+  selectedYear: number | 'all',
+  selectedMonth: number | 'all',
+  selectedWeek: number | 'all',
+  activeQuickFilter: string | null = null
+): boolean {
+  if (!task) return false;
+
+  const isDone = task.status === 'Done' || task.status === 'done';
+  const endStr = isDone
+    ? (task.end_date_actual || task.end_date_est || task.end_date || task.deadline)
+    : (task.end_date_est || task.end_date || task.deadline);
+  const startStr = task.start_date || task.created_at;
+
+  const tEnd = parseDateString(endStr || startStr);
+  const tStart = parseDateString(startStr || endStr);
+
+  if (!tEnd && !tStart) return false;
+
+  const taskDate = tEnd || tStart;
+  if (!taskDate) return false;
+
+  // 1. If a WEEK filter is active (selectedWeek !== 'all' or activeQuickFilter starts with 'Tuần'):
+  if (selectedWeek !== 'all' || (activeQuickFilter && activeQuickFilter.startsWith('Tuần'))) {
+    let range: { monday: Date; sunday: Date } | null = null;
+    if (activeQuickFilter === 'Tuần này') {
+      range = getMondayToSundayRange(new Date());
+    } else if (activeQuickFilter === 'Tuần trước') {
+      range = getPrevWeekRange(new Date());
+    } else if (activeQuickFilter === 'Tuần tới') {
+      range = getNextWeekRange(new Date());
+    } else if (typeof selectedWeek === 'number') {
+      range = getWeekDateRange(selectedWeek, selectedMonth, selectedYear);
+    }
+
+    if (range) {
+      const inRange = (taskDate >= range.monday && taskDate <= range.sunday) ||
+        Boolean(tStart && tEnd && tStart <= range.sunday && tEnd >= range.monday);
+      return Boolean(inRange);
+    }
+  }
+
+  // 2. Year Filter
+  if (selectedYear !== 'all' && typeof selectedYear === 'number' && taskDate.getFullYear() !== selectedYear) {
+    return false;
+  }
+
+  // 3. Month Filter (KPI cycle or standard month)
+  if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+    const cycle = CYCLE_TEMPLATE[selectedMonth];
+    if (cycle) {
+      const yr = typeof selectedYear === 'number' ? selectedYear : taskDate.getFullYear();
+      const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+      const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+      if (taskDate < startDt || taskDate > endDt) return false;
+    } else {
+      if ((taskDate.getMonth() + 1) !== selectedMonth) return false;
+    }
+  }
+
+  return true;
 }
 
 

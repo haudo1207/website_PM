@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   getSystemAuditStats,
   getSystemAuditLogs,
@@ -58,7 +59,14 @@ export default function SystemAuditView() {
   // Dropdown option lists
   const [projectsList, setProjectsList] = useState<{ id: number; name: string }[]>([]);
   const [usersList, setUsersList] = useState<{ id: number; name: string }[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  // Shared ['workspaces'] react-query cache — same key/staleTime as Navbar/
+  // Dashboard/ProjectListContent, so this doesn't fire a duplicate request.
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const workspaces: Workspace[] = workspacesData || [];
 
   // Selected Log for Detail Modal
   const [selectedLog, setSelectedLog] = useState<SystemAuditItem | null>(null);
@@ -76,8 +84,6 @@ export default function SystemAuditView() {
         setUsersList(mems.map((m: any) => ({ id: m.id, name: m.display_name || m.email })));
       }
     }).catch(() => {});
-
-    getWorkspaces().then(ws => setWorkspaces(ws || [])).catch(() => {});
 
     getSystemAuditAnalytics().then(setAnalytics).catch(() => {});
   }, []);

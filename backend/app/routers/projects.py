@@ -520,12 +520,13 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
     projects = project_query_for_user(db, current_user).all()
 
     years_map = defaultdict(lambda: {"total": 0, "customers": defaultdict(lambda: {"id": None, "name": "", "count": 0})})
+    by_code, by_name = preload_workspace_maps(db)
     b_input = (business or business_unit or "").strip().lower()
-    ws = resolve_workspace(db, b_input) if b_input else None
+    ws = resolve_workspace(db, b_input, by_code, by_name) if b_input else None
     target_biz = ws.name if ws else None
 
     for p in projects:
-        p_biz = business_label_for_project(db, p)
+        p_biz = business_label_for_project(db, p, by_code, by_name)
         if target_biz and p_biz != target_biz and p_biz != "All":
             continue
 
