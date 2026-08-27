@@ -994,8 +994,13 @@ CẤU TRÚC JSON YÊU CẦU:
                     for t in tasks:
                         if isinstance(t, dict):
                             name = (t.get("assigned_name") or "").strip()
-                            if name and name.lower() not in transcript_lower:
-                                t["assigned_name"] = ""
+                            if name:
+                                # assigned_name can list multiple people separated by
+                                # commas — check each individually since they're often
+                                # mentioned in different sentences, not as one phrase.
+                                names = [n.strip() for n in name.split(",") if n.strip()]
+                                valid_names = [n for n in names if n.lower() in transcript_lower]
+                                t["assigned_name"] = ", ".join(valid_names)
                 return parsed
         except Exception as e:
             logger.warning(f"Failed to parse JSON from AI response: {e}")

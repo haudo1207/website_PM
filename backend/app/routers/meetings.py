@@ -117,6 +117,7 @@ def meeting_to_dict(m: Meeting) -> dict:
     team_name = ""
     organizer_name = ""
     participant_count = None
+    is_auto_created = False
     summary_list = []
 
     # Only process AI summary if meeting actually has ai_summary JSON or has a transcript uploaded
@@ -130,6 +131,7 @@ def meeting_to_dict(m: Meeting) -> dict:
             team_name = m.ai_summary.get("team_name") or ""
             organizer_name = m.ai_summary.get("organizer_name") or ""
             participant_count = m.ai_summary.get("participant_count")
+            is_auto_created = bool(m.ai_summary.get("is_auto_created"))
             
             if executive_summary and ("📋" in executive_summary or "ACTION ITEMS" in executive_summary or "QUYẾT ĐỊNH" in executive_summary):
                 parsed = parse_n8n_markdown_summary(executive_summary)
@@ -233,6 +235,7 @@ def meeting_to_dict(m: Meeting) -> dict:
         "team_name": team_name,
         "organizer_name": organizer_name,
         "participant_count": participant_count,
+        "is_auto_created": is_auto_created,
         "recommended_tasks": recommended_tasks,
         "project_id": m.project_id,
         "project": proj_name,
@@ -1013,6 +1016,8 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
     from ..models.ai_task_inbox import AITaskInbox
     from ..models.project import Project
     from ..models.member import Member
+    from ..models.phase import Phase
+    from ..models.task_group import TaskGroup
     from ..services.meeting_score_engine import recalculate_meeting_score
 
     # Track pushed items back onto ai_summary.recommended_tasks so the score
@@ -1050,14 +1055,43 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
         if not project_id:
             continue
 
+        def _find_member_by_name(name: str):
+            mb = db.query(Member).filter(Member.display_name.ilike(name)).first()
+            if not mb:
+                mb = db.query(Member).filter(Member.full_name.ilike(name)).first()
+            return mb
+
         assigned_id = item.get("assigned_id")
         assigned_name = item.get("assigned_name") or item.get("member_name") or item.get("owner")
+        support_id = item.get("support_id")
         if not assigned_id and assigned_name:
-            mb = db.query(Member).filter(Member.display_name.ilike(str(assigned_name).strip())).first()
-            if not mb:
-                mb = db.query(Member).filter(Member.full_name.ilike(str(assigned_name).strip())).first()
-            if mb:
-                assigned_id = mb.id
+            # assigned_name may list multiple people separated by commas (AI
+            # allows a primary + secondary owner) — first name becomes the
+            # main assignee, second becomes support, matching how the rest of
+            # the app models a task's people (assigned_id + support_id).
+            names = [n.strip() for n in str(assigned_name).split(",") if n.strip()]
+            if names:
+                mb = _find_member_by_name(names[0])
+                if mb:
+                    assigned_id = mb.id
+            if not support_id and len(names) > 1:
+                mb2 = _find_member_by_name(names[1])
+                if mb2:
+                    support_id = mb2.id
+
+        # Phase / "Task cha" (TaskGroup) — where in the project plan this task
+        # belongs. Re-validate against the DB rather than trusting the client
+        # blindly, since a stale/mismatched id would silently misfile the task
+        # under the wrong project's plan.
+        phase_id = item.get("phase_id")
+        if phase_id:
+            ph = db.query(Phase).filter(Phase.id == phase_id, Phase.project_id == project_id).first()
+            phase_id = ph.id if ph else None
+
+        task_group_id = item.get("task_group_id")
+        if task_group_id:
+            tg = db.query(TaskGroup).filter(TaskGroup.id == task_group_id, TaskGroup.phase_id == phase_id).first()
+            task_group_id = tg.id if tg else None
 
         inbox_task = AITaskInbox(
             project_id=project_id,
@@ -1066,9 +1100,16 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
             source_group_name=m.title or "Cuộc họp",
             source_message=f"[Meeting: {m.title}] {detail_task}",
             detail_task=detail_task,
+            # task_description flows into Task.notes when this inbox row gets
+            # imported (see chat_ai.py's import endpoint) — the natural home
+            # for KPI/Output text, which has no dedicated column of its own.
+            task_description=item.get("kpi_output") or None,
+            phase_id=phase_id,
+            task_group_id=task_group_id,
             priority=item.get("priority", "Normal"),
             assigned_id=assigned_id,
             assigned_name=assigned_name,
+            support_id=support_id,
             acceptance_criteria=f"Hạn hoàn thành: {item.get('deadline', 'Chưa xác định')}",
             status="PENDING",
             manday_est=float(item.get("manday_est", 1.0)),
@@ -1077,10 +1118,96 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
         db.flush()
         pushed_count += 1
 
+        # Push chuẩn 1 lần: tạo luôn Task thật trong Phase/Task cha, không bắt
+        # người dùng phải qua tab "AI Task Inbox" bấm Import thêm 1 bước nữa —
+        # logic dưới đây mirror y hệt chat_ai.py::import_inbox_task_to_project_plan,
+        # chỉ khác là chạy trong cùng transaction/commit với push này.
+        imported_task_id = None
+        task_code = None
+        try:
+            # Phase/TaskGroup đã validate ở trên; nếu người dùng chưa chọn thì
+            # fallback về Phase/TaskGroup đầu tiên của project (tạo mới nếu
+            # project chưa có cái nào) — cùng hành vi với import thủ công.
+            import_phase = None
+            if phase_id:
+                import_phase = db.query(Phase).filter(Phase.id == phase_id).first()
+            if not import_phase:
+                import_phase = db.query(Phase).filter(Phase.project_id == project_id).order_by(Phase.sort_order).first()
+                if not import_phase:
+                    import_phase = Phase(project_id=project_id, name="Master", sort_order=1)
+                    db.add(import_phase)
+                    db.flush()
+                inbox_task.phase_id = import_phase.id
+
+            import_tg = None
+            if task_group_id:
+                import_tg = db.query(TaskGroup).filter(TaskGroup.id == task_group_id, TaskGroup.phase_id == import_phase.id).first()
+            if not import_tg:
+                import_tg = db.query(TaskGroup).filter(TaskGroup.phase_id == import_phase.id).order_by(TaskGroup.sort_order).first()
+                if not import_tg:
+                    import_tg = TaskGroup(phase_id=import_phase.id, name="General Tasks", status="Waiting")
+                    db.add(import_tg)
+                    db.flush()
+                inbox_task.task_group_id = import_tg.id
+
+            from ..models.task import Task
+            from ..models.skill_master import Skill, Group
+            from ..utils.kpi_engine import parse_date, calc_end_date_est, recalculate_task
+
+            existing_count = db.query(Task).filter(Task.task_group_id == inbox_task.task_group_id).count()
+            task_code = f"T{inbox_task.task_group_id}.{existing_count + 1}"
+
+            parsed_start_date = parse_date(item.get("start_date"))
+            end_date_est_val = calc_end_date_est(parsed_start_date, inbox_task.manday_est) if parsed_start_date else None
+
+            # skill_solution_id/skill_vendor_id là NOT NULL trên Task — meeting
+            # không phải lúc nào cũng có (fallback về Group/Skill đầu tiên,
+            # giống hệt cách import_inbox_task_to_project_plan xử lý).
+            skill_solution_id = item.get("skill_solution_id")
+            skill_vendor_id = item.get("skill_vendor_id")
+            if not skill_solution_id:
+                fallback_group = db.query(Group).order_by(Group.id.asc()).first()
+                skill_solution_id = fallback_group.id if fallback_group else None
+            if not skill_vendor_id:
+                fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
+                skill_vendor_id = fallback_skill.id if fallback_skill else None
+
+            new_task = Task(
+                task_group_id=inbox_task.task_group_id,
+                task_code=task_code,
+                detail=inbox_task.detail_task or "Task từ cuộc họp",
+                priority=inbox_task.priority or "Normal",
+                manday_est=inbox_task.manday_est,
+                status="Waiting",
+                assigned_id=inbox_task.assigned_id,
+                support_id=inbox_task.support_id,
+                kpi_ratio_assign=100,
+                kpi_ratio_support=0,
+                skill_solution_id=skill_solution_id,
+                skill_vendor_id=skill_vendor_id,
+                remark=inbox_task.acceptance_criteria,
+                notes=inbox_task.task_description,
+                start_date=parsed_start_date,
+                end_date_est=end_date_est_val,
+            )
+            db.add(new_task)
+            db.flush()
+            recalculate_task(new_task, db)
+
+            inbox_task.status = "IMPORTED"
+            inbox_task.imported_task_id = new_task.id
+            imported_task_id = new_task.id
+        except Exception:
+            # Không chặn cả lần push chỉ vì 1 task tạo Task thật thất bại — nó
+            # vẫn còn nguyên trong AI Task Inbox để import lại thủ công sau.
+            logger.exception("Auto-import sau push thất bại cho task '%s'", detail_task)
+
         record = {
             **item,
             "detail_task": detail_task,
             "ai_task_inbox_id": inbox_task.id,
+            "imported_task_id": imported_task_id,
+            "task_code": task_code,
             "pushed_at": datetime.datetime.utcnow().isoformat(),
         }
         if existing_idx is not None:
@@ -1371,6 +1498,12 @@ def ingest_n8n_meeting_summary(
         # UPDATE existing meeting
         if payload.transcript and payload.transcript.strip():
             matched_meeting.transcript = payload.transcript.strip()
+        # Preserve whatever origin the meeting already had — updating via webhook
+        # doesn't change whether a human created it on the web or n8n auto-created it.
+        existing_auto_created = False
+        if isinstance(matched_meeting.ai_summary, dict):
+            existing_auto_created = bool(matched_meeting.ai_summary.get("is_auto_created"))
+        norm_summary["is_auto_created"] = existing_auto_created
         matched_meeting.ai_summary = norm_summary
         matched_meeting.status = "DONE"
 
@@ -1405,6 +1538,9 @@ def ingest_n8n_meeting_summary(
 
     else:
         # CREATE new meeting (strict check minimum required fields)
+        # No existing web-created meeting matched this recording — n8n is creating
+        # this meeting from scratch, so flag it as such for the UI to distinguish.
+        norm_summary["is_auto_created"] = True
         new_m = Meeting(
             title=clean_title,
             description=f"Tự động tạo từ n8n (Row ID: {payload.sheet_row_id or 'N/A'})",
