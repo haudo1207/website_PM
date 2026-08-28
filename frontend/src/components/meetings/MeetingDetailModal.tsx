@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getPhases, createPhase, getTaskGroups, createTaskGroup, getCategories } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
@@ -216,7 +216,7 @@ export default function MeetingDetailModal({
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'tasks' | 'transcript' | 'details' | 'score'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'tasks' | 'transcript' | 'score'>('overview');
   const [isRecalculatingScore, setIsRecalculatingScore] = useState(false);
   const [localScore, setLocalScore] = useState<any>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
@@ -232,6 +232,9 @@ export default function MeetingDetailModal({
   const [isAssignProjectOpen, setIsAssignProjectOpen] = useState(false);
   const [projectsList, setProjectsList] = useState<any[]>([]);
   const [projectSearch, setProjectSearch] = useState('');
+  // Meeting created with projects pre-selected → route recommended tasks to
+  // that shortlist instead of every project in the system.
+  const taskProjectOptions = (meeting?.projects && meeting.projects.length > 0) ? meeting.projects : projectsList;
   const [isAssigningProject, setIsAssigningProject] = useState(false);
 
   // Add Member Modal State (Multi-Select Supported)
@@ -850,12 +853,6 @@ export default function MeetingDetailModal({
               Biên bản
             </button>
             <button
-              onClick={() => setActiveTab('details')}
-              className={`pb-2 border-b-2 transition-colors ${activeTab === 'details' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
-            >
-              Thông tin chi tiết
-            </button>
-            <button
               onClick={() => setActiveTab('score')}
               className={`pb-2 border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'score' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
             >
@@ -1361,12 +1358,12 @@ export default function MeetingDetailModal({
                 {tasksList.length > 0 && (
                   <div className="flex flex-wrap items-center gap-3">
                     {/* Global Apply Project SearchableSelect */}
-                    {projectsList.length > 0 && (
+                    {taskProjectOptions.length > 0 && (
                       <div className="flex items-center gap-1.5 min-w-[200px]">
                         <span className="hidden sm:inline text-xs font-semibold text-[#475569] shrink-0">Gán tất cả:</span>
                         <SearchableSelect
                           label="dự án"
-                          options={projectsList.map((p) => ({ id: p.id, name: p.name }))}
+                          options={taskProjectOptions.map((p: any) => ({ id: p.id, name: p.name }))}
                           value=""
                           onChange={(val: any) => {
                             const pid = Number(val);
@@ -1566,7 +1563,7 @@ export default function MeetingDetailModal({
                             <label className={fieldLabelCls}>Dự án</label>
                             <SearchableSelect
                               label="dự án"
-                              options={projectsList.map((p: any) => ({ id: p.id, name: p.name }))}
+                              options={taskProjectOptions.map((p: any) => ({ id: p.id, name: p.name }))}
                               value={currentTaskProjectId}
                               onChange={(val: any) => {
                                 const pid = Number(val);
@@ -1677,48 +1674,6 @@ export default function MeetingDetailModal({
                   </div>
                   <p className="text-sm font-bold text-[#0b1c30]">Cuộc họp chưa có file biên bản / Transcript</p>
                   <p className="text-xs text-[#64748b]">Bạn có thể nhấn 'Dán biên bản / Chạy AI' để thêm nội dung cuộc họp.</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 5: THÔNG TIN CHI TIẾT */}
-          {activeTab === 'details' && (
-            <div className="bg-white rounded-2xl p-6 border border-[#e2e8f0] shadow-2xs space-y-6">
-              <div className="flex items-center gap-2 text-[#6366f1] border-b border-slate-100 pb-4">
-                <ShieldCheck size={20} />
-                <h3 className="text-base font-extrabold text-[#0b1c30]">Thông Tin Kỹ Thuật & Chi Tiết</h3>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">ID Cuộc họp</span>
-                  <p className="font-bold text-[#0b1c30]">#{meeting.id}</p>
-                </div>
-
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Nền tảng & Host Link</span>
-                  <p className="font-bold text-[#6366f1] truncate">{hostJoinLink}</p>
-                </div>
-
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Dự án liên kết</span>
-                  <p className="font-bold text-[#0b1c30]">{projectName || 'Chưa gán dự án'}</p>
-                </div>
-
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Thời gian tạo bản ghi</span>
-                  <p className="font-bold text-[#0b1c30]">{meeting.created_at ? String(meeting.created_at) : 'N/A'}</p>
-                </div>
-              </div>
-
-              {/* Raw AI Summary Payload if available */}
-              {meeting.ai_summary && (
-                <div className="space-y-2 pt-2">
-                  <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">DỮ LIỆU GỐC AI PAYLOAD (JSON)</h4>
-                  <pre className="p-4 bg-slate-900 text-emerald-400 rounded-2xl text-[11px] font-mono overflow-x-auto max-h-60">
-                    {JSON.stringify(meeting.ai_summary, null, 2)}
-                  </pre>
                 </div>
               )}
             </div>

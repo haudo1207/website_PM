@@ -140,7 +140,7 @@ thao tác Import riêng như trước.
 |---|---|
 | Tổng quan | Thông tin cuộc họp, thành viên, nhật ký hoạt động, AI tóm tắt + quyết định chính |
 | AI Summary | Bản tóm tắt chi tiết dạng Sheet: ngày/tuần/thời lượng/team/organizer, "Task cha đã chốt" với đủ trường |
-| Task đề xuất | Danh sách task AI bóc tách, nút "📥 Đẩy task vào dự án" (→ mục 5) |
+| Task đề xuất | Danh sách task AI bóc tách, nút "Tạo KPI Task" (→ mục 5) |
 | Biên bản | Transcript thô, dán biên bản / chạy lại AI |
 | Thông tin chi tiết | ID, link, dự án, payload AI thô (JSON) |
 | **Hiệu quả** | Điểm 5 phần (mục 4) dạng progress bar, danh sách đồng bộ KPI Tasks theo từng item (Chưa push / Chờ import / Đã vào KPI Tasks), widget đánh giá nhanh |
@@ -168,23 +168,18 @@ phải 1 nguồn duy nhất):
 
 ```
 GET    /api/meetings                       Danh sách (lọc theo project/status/ngày)
-GET    /api/meetings/insights               Số liệu tổng hợp cho dashboard (chart/alerts/2 insight card)
+GET    /api/meetings/insights               Số liệu tổng hợp cho dashboard
 GET    /api/meetings/{id}                    Chi tiết 1 meeting
 POST   /api/meetings                         Tạo meeting (tự chạy AI Summary + tính điểm)
 PUT    /api/meetings/{id}                    Sửa meeting (tính điểm lại)
-DELETE /api/meetings/{id}                    Xóa meeting
 POST   /api/meetings/{id}/transcript         Cập nhật biên bản
-POST   /api/meetings/{id}/sync                Đồng bộ Zoom/Google Meet (không tính lại điểm)
-POST   /api/meetings/{id}/push-tasks          Đẩy task đề xuất → tạo Task thật ngay (tính lại điểm)
+POST   /api/meetings/{id}/sync                Đồng bộ Zoom/Google Meet
+POST   /api/meetings/{id}/push-tasks          Đẩy task đề xuất vào AI Task Inbox
 POST   /api/meetings/{id}/recalculate-score   Tính lại điểm thủ công
-POST   /api/meetings/{id}/feedback            Gửi đánh giá nhanh (tính lại điểm)
+POST   /api/meetings/{id}/feedback            Gửi đánh giá nhanh
 POST   /api/meetings/generate-ai-content      AI Copilot soạn Mục tiêu/Agenda
 POST   /api/meetings/generate-link            Tự sinh link Zoom/Google Meet
-POST   /api/meetings/webhook/n8n-summary      Nhận AI Summary tự động từ n8n (tạo/cập nhật meeting
-                                               theo id/url/title+ngày — luồng tạo meeting song song,
-                                               không qua form thủ công; xem badge "🤖 Tự động tạo từ n8n")
-POST   /api/projects/{pid}/ai-task-inbox/{task_id}/import   Import task nháp → Task thật
-                                               (chat_ai.py, fallback khi push-tasks lỗi — xem mục 5)
+POST   /projects/{pid}/ai-task-inbox/{id}/import   Import task nháp → Task thật (chat_ai.py)
 ```
 
 ## 9. Giới hạn đã biết (chưa xử lý)
@@ -192,12 +187,6 @@ POST   /api/projects/{pid}/ai-task-inbox/{task_id}/import   Import task nháp �
 - "Đúng giờ" / "đủ thành phần bắt buộc" chỉ chính xác khi có dữ liệu
   `joined_at` thật từ Zoom/Google sync — meeting nhập tay mặc định coi là
   đạt vì không có gì để đối chiếu.
-- Endpoint `POST`/`DELETE /api/meetings/{id}/members` là nơi duy nhất tạo
-  `MeetingMember.joined_at` thật (nguồn dữ liệu duy nhất cho điểm Đúng giờ/
-  Đủ thành phần ở mục 4) — nhưng UI hiện tại **không gọi 2 endpoint này**;
-  nút "thêm thành viên" đi qua `PUT /{id}` với `ai_summary.custom_members`,
-  không tạo `MeetingMember` thật. Vì vậy trên thực tế 2 mục điểm này gần
-  như luôn mặc định "đạt", trừ khi có sync Zoom/Google thật.
 - Task hợp lệ hiện chỉ check đủ **Dự án + Owner + Hạn hoàn thành** (chưa có
   field KPI/Đầu ra mong đợi riêng — xem lý do trong lịch sử trao đổi, việc
   thêm 2 field này cần sửa vào màn hình review AI Task Inbox ở Project

@@ -109,6 +109,15 @@ def meeting_to_dict(m: Meeting) -> dict:
 
     proj_name = m.project.name if m.project else "Dự án chung"
 
+    # Primary project (m.project_id) first, then any extra linked projects —
+    # dedup by id so the primary never shows twice if also linked as "extra".
+    project_ids = [m.project_id] if m.project_id else []
+    projects_list = [{"id": m.project_id, "name": proj_name}] if m.project_id else []
+    for link in (m.extra_projects or []):
+        if link.project_id and link.project_id not in project_ids:
+            project_ids.append(link.project_id)
+            projects_list.append({"id": link.project_id, "name": link.project.name if link.project else ""})
+
     executive_summary = ""
     decisions = []
     recommended_tasks = []
@@ -240,6 +249,8 @@ def meeting_to_dict(m: Meeting) -> dict:
         "project_id": m.project_id,
         "project": proj_name,
         "project_name": proj_name,
+        "project_ids": project_ids,
+        "projects": projects_list,
         "created_by": m.created_by,
         "creator_name": m.creator.display_name if m.creator else None,
         "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -259,6 +270,23 @@ def meeting_to_dict(m: Meeting) -> dict:
         "last_score_calculated_at": m.last_score_calculated_at.isoformat() if m.last_score_calculated_at else None,
     }
 
+def _sync_meeting_projects(db: Session, meeting_id: int, project_ids) -> None:
+    """Replace the full set of extra project links for a meeting.
+    `project_ids` may include the primary project too — the caller doesn't
+    need to filter it out, we just dedupe here."""
+    from ..models.meeting_project import MeetingProject
+    db.query(MeetingProject).filter(MeetingProject.meeting_id == meeting_id).delete()
+    seen = set()
+    for pid in (project_ids or []):
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            continue
+        if pid and pid not in seen:
+            seen.add(pid)
+            db.add(MeetingProject(meeting_id=meeting_id, project_id=pid))
+
+
 # ─── LIST ───────────────────────────────────────────────
 @router.get("")
 def list_meetings(
@@ -266,13 +294,16 @@ def list_meetings(
     status: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    mine: bool = False,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
+    from ..models.meeting_project import MeetingProject
     q = db.query(Meeting).options(
         joinedload(Meeting.project),
         joinedload(Meeting.creator),
-        joinedload(Meeting.members).joinedload(MeetingMember.member)
+        joinedload(Meeting.members).joinedload(MeetingMember.member),
+        joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
     )
     if user_scope(current_user) != ALL_SCOPE:
         allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
@@ -291,10 +322,38 @@ def list_meetings(
         td = parse_date(to_date)
         q = q.filter(Meeting.meeting_date <= td)
 
-    # Tie-break by id desc so meetings created on the same date/time (very
-    # common when quickly creating a "today" meeting) show newest-first.
-    meetings = q.order_by(Meeting.meeting_date.desc(), Meeting.start_time.desc(), Meeting.id.desc()).all()
-    return {"success": True, "data": [meeting_to_dict(m) for m in meetings]}
+    # Newest-created always first — meeting_date/start_time sort was confusing
+    # (a just-created meeting could land in the middle or bottom depending on
+    # its scheduled date relative to others). id is monotonic on insert, so
+    # this is also immune to clock skew.
+    meetings = q.order_by(Meeting.id.desc()).all()
+    result = [meeting_to_dict(m) for m in meetings]
+
+    if mine:
+        member = None
+        if current_user and getattr(current_user, "email", None):
+            member = db.query(Member).filter(Member.email.ilike(current_user.email)).first()
+        if not member:
+            return {"success": True, "data": []}
+
+        own_names = {member.display_name.strip().lower()}
+        if member.full_name:
+            own_names.add(member.full_name.strip().lower())
+
+        def is_mine(md: dict) -> bool:
+            if md.get("created_by") == member.id:
+                return True
+            for mb in md.get("members", []):
+                if mb.get("member_id") == member.id:
+                    return True
+                name = str(mb.get("display_name") or "").strip().lower()
+                if name and name in own_names:
+                    return True
+            return False
+
+        result = [md for md in result if is_mine(md)]
+
+    return {"success": True, "data": result}
 
 # ─── GENERATE LINK (Zoom / Google Meet) ────────────────
 @router.post("/generate-link")
@@ -349,11 +408,13 @@ def get_meeting_insights(
     """Aggregates for the Meeting Intelligence dashboard: weekly hours by
     project vs internal, top people by hours, per-project load, and alerts."""
     from ..models.ai_task_inbox import AITaskInbox
+    from ..models.meeting_project import MeetingProject
     from collections import defaultdict
 
     q = db.query(Meeting).options(
         joinedload(Meeting.project),
-        joinedload(Meeting.members).joinedload(MeetingMember.member)
+        joinedload(Meeting.members).joinedload(MeetingMember.member),
+        joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
     )
     if user_scope(current_user) != ALL_SCOPE:
         allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
@@ -381,9 +442,16 @@ def get_meeting_insights(
     for m in meetings:
         h = hours(m)
         day_key = m.meeting_date.isoformat()
-        if m.project_id:
+        # A meeting linked to N projects counts its full hours toward each of
+        # those N projects' load — a meeting genuinely spanning 2 projects
+        # really did cost each of them that time, not a fraction of it.
+        project_names = ([m.project.name] if m.project else []) + [
+            link.project.name for link in (m.extra_projects or []) if link.project
+        ]
+        if project_names:
             daily[day_key]["project"] += h
-            per_project_hours[m.project.name if m.project else "Khác"] += h
+            for name in dict.fromkeys(project_names):  # dedupe, keep order
+                per_project_hours[name] += h
         else:
             daily[day_key]["internal"] += h
 
@@ -468,10 +536,12 @@ def get_meeting_insights(
 # ─── GET ONE ─────────────────────────────────────────────
 @router.get("/{id}")
 def get_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    from ..models.meeting_project import MeetingProject
     m = db.query(Meeting).options(
         joinedload(Meeting.project),
         joinedload(Meeting.creator),
-        joinedload(Meeting.members).joinedload(MeetingMember.member)
+        joinedload(Meeting.members).joinedload(MeetingMember.member),
+        joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
     ).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
@@ -517,20 +587,43 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     if status == "DONE" and meeting_date > datetime.date.today():
         raise HTTPException(400, "Cuộc họp ở trạng thái DONE không được có ngày họp lớn hơn ngày hiện tại")
 
-    project_id = body.get("project_id")
-    # Support mapping project name string to project_id if it's sent as a string name
-    project_input = body.get("project")
-    if project_id:
-        proj = require_project(db, current_user, int(project_id))
-        if not proj:
-            raise HTTPException(404, "Không tìm thấy dự án được liên kết")
-    elif project_input:
-        proj = db.query(Project).filter(Project.name.ilike(str(project_input).strip())).first()
-        if proj:
-            require_project(db, current_user, proj.id)
-            project_id = proj.id
+    # Multiple projects: front-end sends project_ids: [int]. First one becomes
+    # the "primary" project_id (kept for scoring/back-compat); the rest go
+    # into meeting_projects. Falls back to the legacy single project_id/project
+    # fields when project_ids isn't sent, so older callers still work.
+    project_ids_input = body.get("project_ids")
+    extra_project_ids = []
+    if isinstance(project_ids_input, list) and project_ids_input:
+        validated = []
+        for pid in project_ids_input:
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                continue
+            proj_check = require_project(db, current_user, pid)
+            if not proj_check:
+                raise HTTPException(404, f"Không tìm thấy dự án id={pid}")
+            validated.append(pid)
+        if not validated:
+            raise HTTPException(400, "Danh sách dự án không hợp lệ")
+        project_id = validated[0]
+        extra_project_ids = validated[1:]
+        proj = db.query(Project).filter(Project.id == project_id).first()
     else:
-        project_id = None
+        project_id = body.get("project_id")
+        # Support mapping project name string to project_id if it's sent as a string name
+        project_input = body.get("project")
+        if project_id:
+            proj = require_project(db, current_user, int(project_id))
+            if not proj:
+                raise HTTPException(404, "Không tìm thấy dự án được liên kết")
+        elif project_input:
+            proj = db.query(Project).filter(Project.name.ilike(str(project_input).strip())).first()
+            if proj:
+                require_project(db, current_user, proj.id)
+                project_id = proj.id
+        else:
+            project_id = None
 
     # Map current_user email to member if possible
     created_by = None
@@ -608,7 +701,12 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
             "start_time": m.start_time,
             "transcript": m.transcript or m.description or "",
         }
-        if not m.ai_summary or body.get("auto_summarize"):
+        # Chỉ gọi AI khi thật sự có nội dung để tóm tắt (transcript/description
+        # đủ dài) — trước đây luôn gọi kể cả khi rỗng vì frontend mặc định gửi
+        # auto_summarize=true, khiến MỌI lần tạo meeting đều chờ 1 request AI
+        # vô ích (chậm), dù chưa họp thì làm gì đã có gì để tóm tắt.
+        has_real_content = bool((m.transcript and m.transcript.strip()) or (m.description and len(m.description.strip()) > 20))
+        if has_real_content and (not m.ai_summary or body.get("auto_summarize")):
             summary_result = summarize_meeting_with_ai_structured(m.transcript or m.description or "", meeting_info)
             if summary_result:
                 m.ai_summary = summary_result
@@ -619,6 +717,8 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 
     db.add(m)
     db.flush()
+    if extra_project_ids:
+        _sync_meeting_projects(db, m.id, extra_project_ids)
     from ..services.meeting_score_engine import recalculate_meeting_score
     recalculate_meeting_score(m, db)
     db.commit()
@@ -637,10 +737,12 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     db.commit()
 
     # Re-fetch with relationships
+    from ..models.meeting_project import MeetingProject
     m = db.query(Meeting).options(
         joinedload(Meeting.project),
         joinedload(Meeting.creator),
-        joinedload(Meeting.members).joinedload(MeetingMember.member)
+        joinedload(Meeting.members).joinedload(MeetingMember.member),
+        joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
     ).filter(Meeting.id == m.id).first()
 
     # Trigger Telegram Notification
@@ -726,24 +828,56 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
         updated_summary["custom_members"] = members_input
         m.ai_summary = updated_summary
 
-    project_id = body.get("project_id")
-    project_input = body.get("project")
-    if project_id is not None:
-        if project_id:
-            proj = require_project(db, current_user, int(project_id))
-            if not proj:
-                raise HTTPException(404, "Không tìm thấy dự án được liên kết")
-            m.project_id = project_id
-        else:
-            m.project_id = None
-    elif project_input is not None:
-        if project_input:
-            proj = db.query(Project).filter(Project.name.ilike(str(project_input).strip())).first()
-            if proj:
-                require_project(db, current_user, proj.id)
-                m.project_id = proj.id
-        else:
-            m.project_id = None
+    project_ids_input = body.get("project_ids")
+    if isinstance(project_ids_input, list):
+        validated = []
+        for pid in project_ids_input:
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                continue
+            proj_check = require_project(db, current_user, pid)
+            if not proj_check:
+                raise HTTPException(404, f"Không tìm thấy dự án id={pid}")
+            validated.append(pid)
+        m.project_id = validated[0] if validated else None
+        _sync_meeting_projects(db, m.id, validated[1:])
+    else:
+        project_id = body.get("project_id")
+        project_input = body.get("project")
+        if project_id is not None:
+            if project_id:
+                proj = require_project(db, current_user, int(project_id))
+                if not proj:
+                    raise HTTPException(404, "Không tìm thấy dự án được liên kết")
+                m.project_id = project_id
+            else:
+                m.project_id = None
+        elif project_input is not None:
+            if project_input:
+                proj = db.query(Project).filter(Project.name.ilike(str(project_input).strip())).first()
+                if proj:
+                    require_project(db, current_user, proj.id)
+                    m.project_id = proj.id
+            else:
+                m.project_id = None
+
+    # Participants — re-selected from the edit form. Mirrors the DONE-status
+    # guard on the dedicated add/remove-member endpoints below.
+    member_ids_input = body.get("member_ids")
+    if isinstance(member_ids_input, list) and m.status != "DONE":
+        wanted_ids = set()
+        for raw in member_ids_input:
+            try:
+                wanted_ids.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        existing = {mm.member_id: mm for mm in m.members}
+        for mid in wanted_ids - existing.keys():
+            if db.query(Member).filter(Member.id == mid).first():
+                db.add(MeetingMember(meeting_id=m.id, member_id=mid, role="PARTICIPANT"))
+        for mid in existing.keys() - wanted_ids:
+            db.delete(existing[mid])
 
     from ..services.meeting_score_engine import recalculate_meeting_score
     recalculate_meeting_score(m, db)
@@ -1359,6 +1493,7 @@ class N8nMeetingSummaryPayload(BaseModel):
     meeting_date: str
     start_time: Optional[str] = "09:00"
     end_time: Optional[str] = None
+    duration_minutes: Optional[float] = None
     platform: Optional[str] = "Google Meet"
     project_id: Optional[int] = None
     project_name: Optional[str] = None
@@ -1415,6 +1550,12 @@ def ingest_n8n_meeting_summary(
             end_time = parse_time(payload.end_time)
         except Exception:
             pass
+    # Recording pipelines often only know the duration (from the transcribed
+    # audio), not a wall-clock end time — derive one so "Thời lượng" on the
+    # web matches the Sheet's duration column instead of staying unset.
+    if not end_time and payload.duration_minutes and start_time:
+        start_dt = datetime.datetime.combine(datetime.date.today(), start_time)
+        end_time = (start_dt + datetime.timedelta(minutes=payload.duration_minutes)).time()
 
     clean_title = (payload.title or "").strip()
     if not clean_title:
@@ -1512,6 +1653,18 @@ def ingest_n8n_meeting_summary(
             matched_meeting.project_id = mapped_project_id
         if matched_meeting.created_by is None and mapped_creator_id is not None:
             matched_meeting.created_by = mapped_creator_id
+
+        # The webhook carries the actual recording's date/time/link — more
+        # authoritative than whatever placeholder was set when the meeting was
+        # first scheduled in the app. Without this, the "Bản Tóm Tắt AI Chi Tiết"
+        # card keeps showing the stale scheduled time/link instead of the real
+        # recording (e.g. "60 phút" default duration, old Meet join link).
+        matched_meeting.meeting_date = meeting_date
+        matched_meeting.start_time = start_time
+        if end_time:
+            matched_meeting.end_time = end_time
+        if payload.meeting_url:
+            matched_meeting.meeting_url = payload.meeting_url
 
         db.commit()
         db.refresh(matched_meeting)

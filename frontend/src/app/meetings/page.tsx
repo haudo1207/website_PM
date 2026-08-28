@@ -14,7 +14,7 @@ import MeetingPlaybook from '@/components/meetings/MeetingPlaybook';
 import KpiCard from '@/components/dashboard/KpiCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
-import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights } from '@/lib/api';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 function MeetingsPageContent() {
@@ -23,7 +23,7 @@ function MeetingsPageContent() {
   const queryClient = useQueryClient();
 
   const [canManage, setCanManage] = useState(false);
-  const [activeTab, setActiveTab] = useState<'list' | 'calendar'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'calendar' | 'personal'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
   const [monthFilter, setMonthFilter] = useState('All');
@@ -68,7 +68,7 @@ function MeetingsPageContent() {
     router.replace(`/meetings${queryString ? `?${queryString}` : ''}`, { scroll: false });
   };
 
-  const handleTabSwitch = (tab: 'list' | 'calendar') => {
+  const handleTabSwitch = (tab: 'list' | 'calendar' | 'personal') => {
     setActiveTab(tab);
     updateUrl(tab, isDetailOpen && detailMeeting ? detailMeeting.id : null);
   };
@@ -150,6 +150,19 @@ function MeetingsPageContent() {
   });
   const meetings: any[] = meetingsData || [];
 
+  const { data: myMeetingsData, isLoading: isMyMeetingsLoading, refetch: fetchMyMeetings } = useQuery({
+    queryKey: ['meetings', 'mine'],
+    queryFn: async () => {
+      const data = await getMeetings({ mine: true });
+      if (data && data.success && Array.isArray(data.data)) return data.data;
+      if (Array.isArray(data)) return data;
+      return [];
+    },
+    enabled: activeTab === 'personal',
+    staleTime: 2 * 60_000,
+  });
+  const myMeetings: any[] = myMeetingsData || [];
+
   const { data: insightsData } = useQuery({
     queryKey: ['meeting-insights'],
     queryFn: async () => {
@@ -168,7 +181,7 @@ function MeetingsPageContent() {
   // Parse URL search params for tab and meeting ID deep linking
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'calendar' || tabParam === 'list') {
+    if (tabParam === 'calendar' || tabParam === 'list' || tabParam === 'personal') {
       setActiveTab(tabParam);
     }
   }, [searchParams]);
@@ -187,12 +200,20 @@ function MeetingsPageContent() {
     }
   }, [searchParams, meetings, lastHandledId]);
 
+  // 1 meeting giờ có thể gắn nhiều dự án (m.projects: [{id,name}]) — field cũ
+  // m.project/m.project_name (số ít) vẫn được API trả về để tương thích, dùng
+  // làm fallback cho dữ liệu cũ chưa qua bảng meeting_projects.
+  const getMeetingProjectNames = (m: any): string[] => {
+    if (Array.isArray(m.projects) && m.projects.length) {
+      return m.projects.map((p: any) => p.name).filter(Boolean);
+    }
+    const single = typeof m.project === 'string' ? m.project : (m.project?.name || m.project_name || '');
+    return single ? [single] : [];
+  };
+
   const projectOptions = useMemo(() => {
     const names = new Set<string>();
-    meetings.forEach(m => {
-      const p = typeof m.project === 'string' ? m.project : (m.project?.name || m.project_name || '');
-      if (p) names.add(p);
-    });
+    meetings.forEach(m => getMeetingProjectNames(m).forEach(p => names.add(p)));
     return Array.from(names).sort();
   }, [meetings]);
 
@@ -229,10 +250,10 @@ function MeetingsPageContent() {
     return (meetings || []).filter(m => {
       if (!m) return false;
       const title = String(m.title || '');
-      const project = typeof m.project === 'string' ? m.project : (m.project?.name || '');
-      const matchesSearch = title.toLowerCase().includes(searchTerm.toLowerCase()) || project.toLowerCase().includes(searchTerm.toLowerCase());
+      const projectNames = getMeetingProjectNames(m);
+      const matchesSearch = title.toLowerCase().includes(searchTerm.toLowerCase()) || projectNames.some(p => p.toLowerCase().includes(searchTerm.toLowerCase()));
       const matchesPlatform = platformFilter === 'All' || m.platform === platformFilter;
-      const matchesProject = projectFilter === 'All' || project === projectFilter;
+      const matchesProject = projectFilter === 'All' || projectNames.includes(projectFilter);
       const matchesPerson = personFilter === 'All' || (m.members || []).some((mm: any) => mm.display_name === personFilter);
       let matchesMonth = true;
       if (monthFilter !== 'All' && monthFilter !== '') matchesMonth = Boolean(m.date && String(m.date).startsWith(monthFilter));
@@ -266,7 +287,7 @@ function MeetingsPageContent() {
 
   const handleSaveMeeting = async (meetingData: any) => {
     try {
-      let savedObj = null;
+      let savedObj: any = null;
       if (meetingData.id) {
         const data = await updateMeeting(meetingData.id, meetingData);
         if (data.success) {
@@ -277,7 +298,16 @@ function MeetingsPageContent() {
         const data = await createMeeting(meetingData);
         if (data.success) {
           savedObj = data.data;
-          queryClient.setQueryData(['meetings'], (prev: any[] = []) => [data.data, ...prev]);
+          // Thành viên chọn lúc tạo được thêm bằng API riêng (endpoint tạo
+          // meeting không nhận members) — xong thì lấy lại bản mới nhất để
+          // có danh sách members thật thay vì chỉ có Host.
+          const memberIds: number[] = Array.isArray(meetingData.member_ids) ? meetingData.member_ids : [];
+          if (memberIds.length > 0) {
+            await Promise.all(memberIds.map(mid => addMeetingMember(savedObj.id, mid).catch(() => {})));
+            const refreshed = await getMeeting(savedObj.id).catch(() => null);
+            if (refreshed?.success) savedObj = refreshed.data;
+          }
+          queryClient.setQueryData(['meetings'], (prev: any[] = []) => [savedObj, ...prev]);
           // Meeting mới luôn được chèn lên đầu mảng — nếu đang xem trang khác
           // trang 1 thì quay lại trang 1 để thấy ngay, tránh cảm giác "biến mất".
           setCurrentPage(1);
@@ -355,6 +385,49 @@ function MeetingsPageContent() {
     ? Math.round((allRecommendedTasks.filter(t => t.assigned_name && t.deadline).length / allRecommendedTasks.length) * 100)
     : 0;
 
+  const renderWeekGrid = (weekMeetings: any[], emptyText: string) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 pt-2">
+      {currentWeekInfo.days.map((d, i) => {
+        const dayMeetings = weekMeetings.filter(m => {
+          if (!m || !m.date) return false;
+          const dateStr = String(m.date).trim();
+          if (dateStr.startsWith(d.isoDate)) return true;
+          const fullFormattedDate = `${d.formattedDate}/${d.yearNum}`;
+          if (dateStr === fullFormattedDate || dateStr.startsWith(fullFormattedDate)) return true;
+          if (dateStr === d.formattedDate) return true;
+          return false;
+        });
+
+        return (
+          <div key={i} className={`border rounded-2xl p-3.5 min-h-[200px] ${d.isWeekend ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-[#e2e8f0]'}`}>
+            <h4 className="text-[13px] font-extrabold text-[#0b1c30] mb-3">{d.label}</h4>
+            {dayMeetings.length > 0 ? (
+              dayMeetings.map(item => (
+                <div
+                  key={item.id}
+                  onClick={() => handleCalendarMeetingClick(item)}
+                  className="bg-[#f5f3ff] border-l-4 border-l-[#6366f1] rounded-xl p-3 mb-3 cursor-pointer hover:shadow-md transition-all space-y-1"
+                >
+                  <p className="text-xs font-bold text-[#0b1c30] leading-snug">
+                    {item.time || '14:00'} {item.title}
+                  </p>
+                  <p className="text-[11px] text-[#64748b] font-medium flex items-center gap-1">
+                    <Video size={12} className="text-[#6366f1]" />
+                    <span>{item.platform || 'Google Meet'} · <b className="text-[#6366f1]">AI On</b></span>
+                  </p>
+                </div>
+              ))
+            ) : (
+              <div className="border border-dashed border-[#e2e8f0] rounded-xl p-4 text-center text-[12px] text-[#94a3b8] mt-2">
+                {emptyText}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="h-screen bg-[#f8fafc] text-[#0b1c30] flex overflow-hidden relative" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
@@ -410,6 +483,12 @@ function MeetingsPageContent() {
               className={`pb-2 border-b-2 transition-colors ${activeTab === 'calendar' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
             >
               Calendar Team
+            </button>
+            <button
+              onClick={() => handleTabSwitch('personal')}
+              className={`pb-2 border-b-2 transition-colors ${activeTab === 'personal' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
+            >
+              Calendar cá nhân
             </button>
           </div>
 
@@ -579,7 +658,7 @@ function MeetingsPageContent() {
                       </thead>
                       <tbody>
                         {paginatedMeetings.map(m => {
-                          const project = typeof m.project === 'string' ? m.project : (m.project?.name || m.project_name || 'Dự án chung');
+                          const projectNames = getMeetingProjectNames(m);
                           const prep = m.score_prep;
                           const tasks: any[] = m.recommended_tasks || m.ai_summary?.recommended_tasks || [];
                           const syncedCount = tasks.filter(t => t.imported_task_id).length;
@@ -598,7 +677,13 @@ function MeetingsPageContent() {
                                 </div>
                               </td>
                               <td className="p-3">
-                                <span className="inline-flex items-center gap-1 bg-[#eef4ff] text-[#285dc4] border border-[#dbe8ff] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">▣ {project}</span>
+                                <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                  {projectNames.length > 0 ? projectNames.map(name => (
+                                    <span key={name} className="inline-flex items-center gap-1 bg-[#eef4ff] text-[#285dc4] border border-[#dbe8ff] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">▣ {name}</span>
+                                  )) : (
+                                    <span className="inline-flex items-center gap-1 bg-[#f1f5f9] text-[#64748b] border border-[#e2e8f0] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">Dự án chung</span>
+                                  )}
+                                </div>
                               </td>
                               <td className="p-3 text-[11px] text-[#52627a]">{(m.members || []).length} người</td>
                               <td className="p-3 whitespace-nowrap text-[11px]">{m.date} · {m.time}</td>
@@ -818,46 +903,67 @@ function MeetingsPageContent() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 pt-2">
-                {currentWeekInfo.days.map((d, i) => {
-                  const dayMeetings = meetings.filter(m => {
-                    if (!m || !m.date) return false;
-                    const dateStr = String(m.date).trim();
-                    if (dateStr.startsWith(d.isoDate)) return true;
-                    const fullFormattedDate = `${d.formattedDate}/${d.yearNum}`;
-                    if (dateStr === fullFormattedDate || dateStr.startsWith(fullFormattedDate)) return true;
-                    if (dateStr === d.formattedDate) return true;
-                    return false;
-                  });
+              {renderWeekGrid(meetings, 'Chưa có lịch họp')}
+            </div>
+          )}
 
-                  return (
-                    <div key={i} className={`border rounded-2xl p-3.5 min-h-[200px] ${d.isWeekend ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-[#e2e8f0]'}`}>
-                      <h4 className="text-[13px] font-extrabold text-[#0b1c30] mb-3">{d.label}</h4>
-                      {dayMeetings.length > 0 ? (
-                        dayMeetings.map(item => (
-                          <div
-                            key={item.id}
-                            onClick={() => handleCalendarMeetingClick(item)}
-                            className="bg-[#f5f3ff] border-l-4 border-l-[#6366f1] rounded-xl p-3 mb-3 cursor-pointer hover:shadow-md transition-all space-y-1"
-                          >
-                            <p className="text-xs font-bold text-[#0b1c30] leading-snug">
-                              {item.time || '14:00'} {item.title}
-                            </p>
-                            <p className="text-[11px] text-[#64748b] font-medium flex items-center gap-1">
-                              <Video size={12} className="text-[#6366f1]" />
-                              <span>{item.platform || 'Google Meet'} · <b className="text-[#6366f1]">AI On</b></span>
-                            </p>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="border border-dashed border-[#e2e8f0] rounded-xl p-4 text-center text-[12px] text-[#94a3b8] mt-2">
-                          Chưa có lịch họp
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+          {/* TAB 3: CALENDAR CÁ NHÂN */}
+          {activeTab === 'personal' && (
+            <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-2">
+                <div>
+                  <h3 className="text-base font-extrabold text-[#0b1c30] tracking-tight">
+                    {currentWeekInfo.weekTitle}
+                  </h3>
+                  <p className="text-xs text-[#64748b] mt-0.5">
+                    Chỉ hiển thị các cuộc họp bạn được thêm làm người tham gia
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center bg-[#f1f5f9] p-0.5 rounded-xl border border-[#cbd5e1]">
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset(prev => prev - 1)}
+                      className="px-3 py-1.5 text-xs font-bold text-[#475569] hover:bg-white rounded-lg transition-colors"
+                    >
+                      ‹ Tuần trước
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset(0)}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${weekOffset === 0 ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#64748b] hover:bg-white'}`}
+                    >
+                      Hôm nay
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset(prev => prev + 1)}
+                      className="px-3 py-1.5 text-xs font-bold text-[#475569] hover:bg-white rounded-lg transition-colors"
+                    >
+                      Tuần sau ›
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => fetchMyMeetings()}
+                    className="px-3.5 py-1.5 bg-white hover:bg-slate-50 text-[#0b1c30] text-xs font-bold rounded-xl transition-colors border border-[#cbd5e1] shadow-2xs flex items-center gap-1.5"
+                  >
+                    <span>↻</span>
+                    <span>Đồng bộ lịch</span>
+                  </button>
+                </div>
               </div>
+
+              {isMyMeetingsLoading ? (
+                <div className="text-center py-16 text-[#64748b] text-xs">
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
+                    <span>Đang tải lịch cá nhân...</span>
+                  </div>
+                </div>
+              ) : renderWeekGrid(myMeetings, 'Bạn chưa có lịch họp')}
             </div>
           )}
 

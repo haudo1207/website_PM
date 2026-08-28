@@ -42,6 +42,8 @@ class Meeting(Base):
     project      = relationship("Project", foreign_keys=[project_id], lazy="select")
     creator      = relationship("Member", foreign_keys=[created_by], lazy="select")
     members      = relationship("MeetingMember", back_populates="meeting", cascade="all, delete-orphan")
+    # Extra dự án ngoài project_id (dự án "chính") — xem models/meeting_project.py
+    extra_projects = relationship("MeetingProject", back_populates="meeting", cascade="all, delete-orphan", lazy="select")
 
 
 class MeetingMember(Base):

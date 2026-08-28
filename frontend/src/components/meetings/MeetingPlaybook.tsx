@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
 
 const WORKFLOW = [
   { title: 'Tạo meeting', body: 'Nhập mục tiêu, agenda và các vấn đề cần xử lý. Chọn đúng dự án nếu đã biết.', note: 'Mục tiêu + agenda là bắt buộc để đạt điểm Chuẩn bị' },
@@ -37,34 +37,51 @@ feedback = helpful_rate * 5`,
 
 export default function MeetingPlaybook() {
   const [tab, setTab] = useState<'employee' | 'dev'>('employee');
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs overflow-hidden mb-2">
       <div className="p-5 border-b border-[#edf1f6] flex items-center justify-between gap-4 flex-wrap">
-        <div>
+        <button
+          type="button"
+          onClick={() => setExpanded(prev => !prev)}
+          className="flex-1 min-w-[220px] text-left"
+        >
           <h2 className="text-sm font-extrabold text-[#0b1c30] flex items-center gap-2">
             <BookOpen size={16} className="text-[#6366f1]" />
             Hướng dẫn sử dụng & đặc tả triển khai
           </h2>
           <p className="text-[11px] text-[#64748b] mt-1">Nhân sự hiểu quy trình; Dev biết chính xác dữ liệu & endpoint đã xây dựng.</p>
-        </div>
-        <div className="flex bg-[#f0f3f7] rounded-lg p-1">
+        </button>
+        <div className="flex items-center gap-2">
+          {expanded && (
+            <div className="flex bg-[#f0f3f7] rounded-lg p-1">
+              <button
+                onClick={() => setTab('employee')}
+                className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'employee' ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#69788e]'}`}
+              >
+                Dành cho nhân sự
+              </button>
+              <button
+                onClick={() => setTab('dev')}
+                className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'dev' ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#69788e]'}`}
+              >
+                Dành cho Dev
+              </button>
+            </div>
+          )}
           <button
-            onClick={() => setTab('employee')}
-            className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'employee' ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#69788e]'}`}
+            type="button"
+            onClick={() => setExpanded(prev => !prev)}
+            className="flex items-center gap-1 text-[11px] font-bold text-[#6366f1] px-2 py-1.5 rounded-lg hover:bg-[#f5f3ff] transition-colors"
           >
-            Dành cho nhân sự
-          </button>
-          <button
-            onClick={() => setTab('dev')}
-            className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'dev' ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#69788e]'}`}
-          >
-            Dành cho Dev
+            {expanded ? 'Thu gọn' : 'Mở rộng'}
+            {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
         </div>
       </div>
 
-      {tab === 'employee' ? (
+      {!expanded ? null : tab === 'employee' ? (
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {WORKFLOW.map((step, idx) => (

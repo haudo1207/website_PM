@@ -396,7 +396,7 @@ export const approveLeaveRequest = (id: number, status: 'Approved' | 'Rejected')
   api.patch(`/leave-requests/${id}/approve`, { status }).then(r => r.data);
 
 // Meetings
-export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string }) =>
+export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string; mine?: boolean }) =>
   api.get('/meetings', { params }).then(r => r.data);
 
 // Project Templates
