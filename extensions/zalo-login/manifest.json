@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "KPI Portal Zalo Login",
+  "version": "1.0.0",
+  "description": "Capture Zalo Web cookies so the KPI Portal can send/receive Zalo messages for task assignment.",
+  "permissions": [
+    "activeTab",
+    "cookies",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://chat.zalo.me/*",
+    "https://*.zalo.me/*",
+    "https://zalo.me/*",
+    "http://localhost:3000/*",
+    "https://dev.kpi.markeeai.com/*",
+    "https://kpi.markeeai.com/*",
+    "https://kpi.securityzone.vn/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "https://dev.kpi.markeeai.com/*",
+        "https://kpi.markeeai.com/*",
+        "https://kpi.securityzone.vn/*"
+      ],
+      "js": ["page-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://chat.zalo.me/*"],
+      "js": ["zalo-content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "KPI Portal Zalo"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  }
+}

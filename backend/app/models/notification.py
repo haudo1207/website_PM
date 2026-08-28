@@ -12,7 +12,10 @@ class Notification(Base):
     task_id = Column(Integer, ForeignKey("tasks_v2.id"), index=True, nullable=True)
     task_group_id = Column(Integer, ForeignKey("task_groups.id"), index=True, nullable=True)
     project_id = Column(Integer, ForeignKey("projects.id"), index=True, nullable=True)
-    
+    # Set only for notification_type="zalo_demo_ready" — the Zalo conversation
+    # that was linked to the project at the moment the task went Done.
+    zalo_conversation_id = Column(Integer, ForeignKey("zalo_conversations.id"), nullable=True)
+
     # Message content of the notification
     message = Column(String, nullable=False)
     # Type of notification, e.g., 'task_reminder', 'group_approval_request', 'overdue_alert'

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.user import User
@@ -231,8 +232,29 @@ def me(user=Depends(get_current_user)):
             "phone": member.phone,
             "experience_year": member.experience_year,
             "leader_name": member.leader_name,
+            "zalo_name": member.zalo_name,
         } if member else None,
     }
+
+
+class UpdateZaloNameRequest(BaseModel):
+    zalo_name: str
+
+
+@router.patch("/me/zalo-name")
+def update_my_zalo_name(payload: UpdateZaloNameRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Self-service — any user sets their OWN Zalo display name here so the
+    Zalo task-assignment feature (@mention resolution, roster matching) can
+    recognize them; admins can additionally set it for anyone else via the
+    Members admin panel (PUT /members/{id})."""
+    member = user.member
+    if not member:
+        raise HTTPException(400, "Tài khoản chưa liên kết hồ sơ nhân sự, không thể đặt tên Zalo.")
+    zalo_name = payload.zalo_name.strip()
+    member.zalo_name = zalo_name or None
+    db.commit()
+    return {"zalo_name": member.zalo_name}
+
 
 @router.get("/me/login-history")
 def my_login_history(limit: int = 20, db: Session = Depends(get_db), user=Depends(get_current_user)):

@@ -143,6 +143,7 @@ def member_to_dict(m: Member) -> dict:
         "full_name": m.full_name,
         "email": m.email,
         "telegram_username": m.telegram_username,
+        "zalo_name": m.zalo_name,
         "phone": m.phone,
         "birth_date": m.birth_date.isoformat() if m.birth_date else None,
         "gender": m.gender,
@@ -516,6 +517,7 @@ def create_member(body: dict, db: Session = Depends(get_db), current_user=Depend
         full_name=full_name,
         email=body.get("email") or None,
         telegram_username=body.get("telegram_username") or None,
+        zalo_name=body.get("zalo_name") or None,
         phone=body.get("phone") or None,
         birth_date=birth_date,
         gender=body.get("gender") or None,
@@ -588,6 +590,7 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), current_us
     m.full_name = full_name
     m.email = body.get("email") or None
     m.telegram_username = body.get("telegram_username") or None
+    m.zalo_name = body.get("zalo_name") or None
     m.phone = body.get("phone") or None
     m.birth_date = birth_date
     m.gender = body.get("gender") or None

@@ -17,6 +17,7 @@ interface Member {
   full_name: string;
   email?: string;
   telegram_username?: string;
+  zalo_name?: string;
   phone?: string;
   birth_date?: string;
   gender?: string;
@@ -31,7 +32,7 @@ interface Member {
 }
 
 const EMPTY_FORM = {
-  display_name: '', full_name: '', email: '', telegram_username: '',
+  display_name: '', full_name: '', email: '', telegram_username: '', zalo_name: '',
   phone: '', birth_date: '', gender: '', team: '', position: '',
   department: '', experience_year: 0, skill_ids: [] as number[],
   leader_name: '', leader_email: ''
@@ -142,6 +143,7 @@ export default function MembersView({ onFlash }: Props) {
       full_name: m.full_name,
       email: m.email || '',
       telegram_username: m.telegram_username || '',
+      zalo_name: m.zalo_name || '',
       phone: m.phone || '',
       birth_date: m.birth_date || '',
       gender: m.gender || '',
@@ -410,6 +412,12 @@ export default function MembersView({ onFlash }: Props) {
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Telegram</label>
                     <input value={form.telegram_username} onChange={e => setForm({ ...form, telegram_username: e.target.value })}
                       placeholder="@username"
+                      className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Zalo</label>
+                    <input value={form.zalo_name} onChange={e => setForm({ ...form, zalo_name: e.target.value })}
+                      placeholder="Đúng tên hiển thị trên Zalo — dùng để nhận diện @tag khi giao task qua Zalo"
                       className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-all" />
                   </div>
                   <div className="flex flex-col gap-1">
