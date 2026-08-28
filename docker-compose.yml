@@ -48,8 +48,30 @@ services:
     profiles:
       - crawler
 
+  # Persistent Node.js sidecar holding the zca-js session for the "Zalo
+  # account for task assignment" feature (cookie login, send, real-time
+  # listener). Separate from zalo-crawler above (QR-login, one-way AI task
+  # extraction) — the two features are intentionally independent, see
+  # INFRA_ACCESS.local.md / the Zalo phase-1 plan for why.
+  zalo-worker:
+    build:
+      context: ./services/zalo-worker
+    restart: unless-stopped
+    environment:
+      FASTAPI_URL: http://backend:8000
+      ZALO_WORKER_INTERNAL_TOKEN: ${ZALO_WORKER_INTERNAL_TOKEN:-}
+      PORT: "8090"
+    volumes:
+      - zalo-worker-artifacts:/app/artifacts
+    depends_on:
+      backend:
+        condition: service_healthy
+
 networks:
   default:
     driver: bridge
     driver_opts:
       com.docker.network.driver.mtu: "${DOCKER_NETWORK_MTU:-1420}"
+
+volumes:
+  zalo-worker-artifacts:

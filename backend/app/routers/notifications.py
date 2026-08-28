@@ -11,6 +11,7 @@ from ..models.task_group import TaskGroup
 from ..models.phase import Phase
 from ..models.project import Project, project_members
 from ..models.user import User
+from ..models.zalo import ZaloConversation
 
 router = APIRouter()
 
@@ -350,11 +351,19 @@ def get_inbox_notifications(
         .count()
     )
 
+    conv_ids = [n.zalo_conversation_id for n in notifications if n.zalo_conversation_id]
+    convs_by_id = {}
+    if conv_ids:
+        convs_by_id = {
+            c.id: c for c in db.query(ZaloConversation).filter(ZaloConversation.id.in_(conv_ids)).all()
+        }
+
     items = []
     for n in notifications:
         sender_name = n.sender.full_name if n.sender else "Hệ thống"
         project_name = n.project.name if n.project else None
         group_name = n.task_group.name if n.task_group else None
+        conv = convs_by_id.get(n.zalo_conversation_id) if n.zalo_conversation_id else None
         items.append({
             "id": n.id,
             "sender_id": n.sender_id,
@@ -368,6 +377,8 @@ def get_inbox_notifications(
             "notification_type": n.notification_type,
             "is_read": n.is_read,
             "created_at": n.created_at.isoformat() if n.created_at else None,
+            "zalo_conversation_id": n.zalo_conversation_id,
+            "zalo_conversation_name": conv.name if conv else None,
         })
 
     return {

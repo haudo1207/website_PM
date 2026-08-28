@@ -26,6 +26,7 @@ from ..utils.kpi_engine import recalculate_task, parse_date
 from ..utils.access import require_project, require_route_project_access, project_query_for_user, user_scope, ALL_SCOPE, ROLE_LEADER
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
+from ..services.zalo_task_parser import notify_task_done_if_zalo_linked
 # Đảm bảo có import date/datetime để tính ngày
 from datetime import date, datetime
 from decimal import Decimal
@@ -995,6 +996,10 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
         description=f"Tạo nhiệm vụ mới '{task.detail}' (Mã: {task.task_code})"
     )
     db.commit()
+
+    if task.status == "Done":
+        notify_task_done_if_zalo_linked(db, task, project_id)
+
     return serialize_task(task, db)
 
 
@@ -1270,6 +1275,10 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         }
     )
     db.commit()
+
+    if old_dict["status"] != "Done" and task.status == "Done":
+        notify_task_done_if_zalo_linked(db, task, project_id)
+
     return serialize_task(task, db)
 
 

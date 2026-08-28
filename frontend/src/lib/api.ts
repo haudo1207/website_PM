@@ -165,9 +165,12 @@ export interface MeProfile {
     phone?: string | null;
     experience_year?: number | null;
     leader_name?: string | null;
+    zalo_name?: string | null;
   } | null;
 }
 export const getMe = () => api.get<MeProfile>('/users/me').then(r => r.data);
+export const updateMyZaloName = (zalo_name: string) =>
+  api.patch<{ zalo_name: string | null }>('/users/me/zalo-name', { zalo_name }).then(r => r.data);
 
 export interface LoginHistoryItem {
   id: number;
@@ -613,6 +616,111 @@ export const generateTelegramConnectUrl = () =>
 export const disconnectTelegram = () =>
   api.post<{ connected: boolean }>('/telegram/disconnect').then(r => r.data);
 
+// Zalo account (task-assignment chat integration)
+export interface ZaloAccountStatus {
+  connected: boolean;
+  account: { id: number; label: string; status: string; last_login_at: string | null } | null;
+  worker: { logged_in: boolean; listener_connected: boolean; configured: boolean };
+}
+export interface ZaloConversation {
+  id: number;
+  thread_id: string;
+  name: string;
+  is_group: boolean;
+  last_message_at: string | null;
+  last_message_preview: string | null;
+  project_id: number | null;
+  project_name: string | null;
+}
+export interface ZaloMessage {
+  id: number;
+  source_message_id: string;
+  sender_zalo_id: string | null;
+  sender_name: string | null;
+  content: string | null;
+  is_outgoing: boolean;
+  created_at: string;
+}
+export const getZaloStatus = () =>
+  api.get<ZaloAccountStatus>('/zalo/status').then(r => r.data);
+export const importZaloSession = (payload: { cookies: unknown[]; imei: string; user_agent: string }) =>
+  api.post<{ connected: boolean; account_id: number }>('/zalo/auth/import-session', payload).then(r => r.data);
+export const disconnectZalo = () =>
+  api.post<{ connected: boolean }>('/zalo/disconnect').then(r => r.data);
+export const getZaloConversations = () =>
+  api.get<ZaloConversation[]>('/zalo/conversations').then(r => r.data);
+export const getZaloConversationMessages = (conversationId: number, afterId?: number) =>
+  api.get<ZaloMessage[]>(`/zalo/conversations/${conversationId}/messages`, { params: { after_id: afterId } }).then(r => r.data);
+export interface ZaloOutgoingMention { uid: string; pos: number; len: number }
+export const sendZaloMessage = (conversationId: number, text: string, mentions?: ZaloOutgoingMention[]) =>
+  api.post<{ ok: boolean; source_message_id: string }>(`/zalo/conversations/${conversationId}/send`, { text, mentions }).then(r => r.data);
+export const sendZaloMessageToThread = (payload: { thread_id: string; text: string; is_group: boolean; name?: string }) =>
+  api.post<{ ok: boolean; conversation_id: number; source_message_id: string }>('/zalo/conversations/send-to-thread', payload).then(r => r.data);
+export const refreshZaloConversationNames = () =>
+  api.post<{ updated: number; checked: number }>('/zalo/conversations/refresh-names').then(r => r.data);
+export interface ZaloSuggestedMember {
+  zalo_name: string;
+  zalo_uid: string | null;
+  linked: boolean;
+  member_id: number | null;
+  member_full_name: string | null;
+}
+export const getZaloSuggestedMentions = (conversationId: number) =>
+  api.get<{ members: ZaloSuggestedMember[]; total_member: number }>(
+    `/zalo/conversations/${conversationId}/suggested-members`
+  ).then(r => r.data);
+export const remindUnlinkedZaloMember = (conversationId: number, zaloName: string) =>
+  api.post<{ ok: boolean }>(`/zalo/conversations/${conversationId}/remind-unlinked`, { zalo_name: zaloName }).then(r => r.data);
+export interface ZaloProjectMember {
+  id: number;
+  full_name: string;
+  display_name: string;
+  zalo_name: string | null;
+  zalo_uid: string | null;
+}
+export const getZaloProjectMembers = (conversationId: number) =>
+  api.get<ZaloProjectMember[]>(`/zalo/conversations/${conversationId}/project-members`).then(r => r.data);
+export const createZaloTaskFromConversation = (
+  conversationId: number,
+  payload: { title: string; assigned_member_id: number; priority: string; manday: number; deadline?: string }
+) =>
+  api.post<{
+    id: number; task_code: string; detail: string; manday_est: number; assigned_id: number;
+    end_date_est: string | null; zalo_notify_error: string | null;
+  }>(
+    `/zalo/conversations/${conversationId}/create-task`,
+    payload
+  ).then(r => r.data);
+export interface ZaloProjectTask {
+  id: number;
+  task_code: string;
+  detail: string;
+  priority: string;
+  status: string;
+  manday_est: number | null;
+  start_date: string | null;
+  end_date_actual: string | null;
+  assigned_id: number;
+  assigned_name: string;
+  assigned_zalo_uid: string | null;
+  assigned_zalo_name: string;
+  last_demo_requested_at: string | null;
+  zalo_demo_skip: boolean;
+}
+export type ZaloTaskStatusFilter = 'done' | 'assigned' | 'all';
+export type ZaloTaskRangeFilter = 'today' | 'yesterday' | '7d' | 'all';
+export const getZaloProjectTasks = (conversationId: number, status: ZaloTaskStatusFilter, range: ZaloTaskRangeFilter) =>
+  api.get<ZaloProjectTask[]>(`/zalo/conversations/${conversationId}/tasks`, { params: { status, range } }).then(r => r.data);
+export const requestZaloDemo = (conversationId: number, payload: { task_id: number; demo_at: string }) =>
+  api.post<{ ok: boolean }>(`/zalo/conversations/${conversationId}/request-demo`, payload).then(r => r.data);
+export const setZaloDemoSkip = (conversationId: number, taskId: number, skip: boolean) =>
+  api.post<{ ok: boolean; zalo_demo_skip: boolean }>(`/zalo/conversations/${conversationId}/tasks/${taskId}/skip-demo`, { skip }).then(r => r.data);
+export const linkZaloConversationToProject = (conversationId: number, projectId: number | null) =>
+  api.post<{ conversation_id: number; project_id: number | null }>(
+    `/zalo/conversations/${conversationId}/link-project`,
+    { project_id: projectId }
+  ).then(r => r.data);
+
 // Notifications
 export const remindLeader = (taskId: number, message?: string) =>
   api.post('/notifications/remind', { task_id: taskId, message }).then(r => r.data);
@@ -626,8 +734,24 @@ export const getMyAlerts = () =>
 export const remindTaskGroup = (taskGroupId: number, message?: string) =>
   api.post('/notifications/remind-group', { task_group_id: taskGroupId, message }).then(r => r.data);
 
+export interface InboxNotificationItem {
+  id: number;
+  sender_id: number | null;
+  sender_name: string;
+  project_id: number | null;
+  project_name: string | null;
+  task_group_id: number | null;
+  group_name: string | null;
+  task_id: number | null;
+  message: string;
+  notification_type: string;
+  is_read: boolean;
+  created_at: string | null;
+  zalo_conversation_id: number | null;
+  zalo_conversation_name: string | null;
+}
 export const getInboxNotifications = () =>
-  api.get('/notifications/inbox').then(r => r.data);
+  api.get<{ unread_count: number; items: InboxNotificationItem[] }>('/notifications/inbox').then(r => r.data);
 
 export const markNotificationRead = (id: number) =>
   api.patch(`/notifications/${id}/read`).then(r => r.data);

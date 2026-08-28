@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     # Telegram notifications. Falls back to FRONTEND_URL when not set.
     APP_BASE_URL: str = ""
 
+    # Zalo integration — internal Docker-network URL of the zalo-worker Node
+    # sidecar (holds the persistent zca-js session) and a shared secret so
+    # only that sidecar can push received messages into /api/zalo/internal.
+    ZALO_WORKER_URL: str = "http://zalo-worker:8090"
+    ZALO_WORKER_INTERNAL_TOKEN: str = ""
+
     @property
     def telegram_base_url(self) -> str:
         return (self.APP_BASE_URL or self.FRONTEND_URL or "").rstrip("/")
