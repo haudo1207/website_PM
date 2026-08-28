@@ -36,16 +36,31 @@ export default function KPIPage() {
     });
     const workspaceOptions: any[] = workspaceOptionsData || [];
     const [teamOptions, setTeamOptions] = useState<any[]>([]);
-    // Workspace data scope: for Leader/Member/Viewer the assigned Workspace is
-    // the effective KPI data scope (fixed filter); other roles keep existing behavior.
+    // Workspace data scope: for Leader/Member/Viewer the assigned Workspace(s)
+    // are the effective KPI data scope. The full list (multi-Workspace aware)
+    // is sourced from `me.workspace_ids[]` + `me.workspaces[]` — never the
+    // legacy single-column `me.data_scope`, which only carries the first code.
     const [userRole, setUserRole] = useState("");
-    const [userScope, setUserScope] = useState("");
-    const isScopedUser = (userRole === 'member' || userRole === 'viewer' || userRole === 'leader') && userScope !== 'all';
-    const lockedWorkspaceName = useMemo(() => {
-        if (!isScopedUser || !userScope) return "";
-        const w = workspaceOptions.find(o => (o.code || "").toLowerCase() === String(userScope).toLowerCase());
-        return w ? w.name : "";
-    }, [isScopedUser, userScope, workspaceOptions]);
+    const [authorizedWorkspaceCodes, setAuthorizedWorkspaceCodes] = useState<string[]>([]);
+    const isScopedUser = (userRole === 'member' || userRole === 'viewer' || userRole === 'leader');
+    // The list of Workspaces the current user is authorized to view. For a
+    // single-Workspace Leader/Member/Viewer this is a 1-element array (locked);
+    // for a multi-Workspace Leader it lists every granted Workspace, plus an
+    // "All authorized Workspaces" pseudo-option. Super Admin gets an empty
+    // array (treated as "no restriction", same as the existing pre-fix path).
+    const lockedWorkspaceOptions = useMemo(() => {
+        if (!isScopedUser) return [];
+        const codes = authorizedWorkspaceCodes.filter(c => c && c !== 'all');
+        return codes.map(code => {
+            const w = workspaceOptions.find(o => (o.code || "").toLowerCase() === code.toLowerCase());
+            return { code, name: w ? w.name : code };
+        });
+    }, [isScopedUser, authorizedWorkspaceCodes, workspaceOptions]);
+    const lockedWorkspaceName = lockedWorkspaceOptions.length === 1 ? lockedWorkspaceOptions[0].name : "";
+    // UI-shape flags derived from the authorized scope. Lifted to the
+    // component scope so the "Clear filter" button can reuse them.
+    const isMultiWs = isScopedUser && lockedWorkspaceOptions.length > 1;
+    const isLockedSingle = isScopedUser && lockedWorkspaceOptions.length === 1;
     const [sortConfig, setSortConfig] = useState({
         key: "kpi_total",
         direction: "desc",
@@ -70,16 +85,27 @@ export default function KPIPage() {
     useEffect(() => {
         getTeams().then(setLevelOptions).catch(() => {});
         getDepartments().then(setTeamOptions).catch(() => {});
-        getMe().then(me => { setUserRole(me.role); setUserScope(me.data_scope || ''); }).catch(() => {});
+        getMe().then(me => {
+            setUserRole(me.role);
+            // Prefer the new multi-Workspace grant list; fall back to the
+            // legacy single-column `data_scope` if `workspace_ids` is missing
+            // (older backend responses / defensive default).
+            const ids: string[] = Array.isArray(me.workspace_ids) && me.workspace_ids.length > 0
+                ? me.workspace_ids
+                : (me.data_scope ? [me.data_scope] : []);
+            setAuthorizedWorkspaceCodes(ids);
+        }).catch(() => {});
     }, []);
 
-    // Member/Viewer: keep the Workspace filter pinned to the assigned Workspace.
+    // Member/Viewer: keep the Workspace filter pinned to the single assigned Workspace.
+    // Multi-Workspace Leaders are not auto-pinned — they get an "All authorized
+    // Workspaces" option as default so they see the union of their granted data.
     useEffect(() => {
         if (!isScopedUser) return;
-        if (lockedWorkspaceName && workspace !== lockedWorkspaceName) {
-            setWorkspace(lockedWorkspaceName);
+        if (lockedWorkspaceOptions.length === 1 && workspace !== lockedWorkspaceOptions[0].name) {
+            setWorkspace(lockedWorkspaceOptions[0].name);
         }
-    }, [isScopedUser, lockedWorkspaceName, workspace]);
+    }, [isScopedUser, lockedWorkspaceOptions, workspace]);
 
     // Company selection is shared app-wide via WorkspaceFilterProvider (see
     // Navbar's Workspace switcher) — picking a Workspace there filters this
@@ -102,7 +128,15 @@ export default function KPIPage() {
 
     const memberParams = useMemo(() => {
         const params: any = {};
-        const effectiveWorkspace = isScopedUser ? lockedWorkspaceName : workspace;
+        // For scoped users, the Workspace filter is only sent when a SPECIFIC
+        // Workspace is picked. The "All authorized Workspaces" pseudo-option
+        // resolves to `workspace = ""` and is intentionally NOT forwarded —
+        // the backend's `member_query_for_user` already clamps to the union of
+        // the caller's granted Workspaces (multi-Workspace aware), so omitting
+        // the param yields the combined dataset instead of one workspace only.
+        const effectiveWorkspace = isScopedUser
+            ? (lockedWorkspaceOptions.length > 1 ? workspace : lockedWorkspaceName)
+            : workspace;
         if (activeTab === 'KPItotal') {
             if (month) params.month = parseInt(month);
             if (year) params.year = parseInt(year);
@@ -120,7 +154,7 @@ export default function KPIPage() {
             if (debouncedSearch) params.search = debouncedSearch;
         }
         return params;
-    }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName]);
+    }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName, lockedWorkspaceOptions]);
 
     const { data: members = [], isLoading } = useQuery({
         queryKey: ['kpi-members', memberParams],
@@ -232,22 +266,49 @@ export default function KPIPage() {
                                     </select>
 
                                     {/* Workspace */}
-                                    <select 
-                                        value={isScopedUser ? (lockedWorkspaceName || workspace) : workspace}
-                                        onChange={e => handleWorkspaceChange(e.target.value)}
-                                        disabled={isScopedUser}
-                                        title={isScopedUser ? `Workspace cố định theo tài khoản: ${lockedWorkspaceName || userScope}` : undefined}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-70"
-                                    >
-                                        {isScopedUser ? (
-                                            <option value={lockedWorkspaceName || workspace}>{lockedWorkspaceName || 'Tất cả Workspace'}</option>
-                                        ) : (
-                                            <>
-                                                <option value="">Tất cả Workspace</option>
-                                                {workspaceOptions.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
-                                            </>
-                                        )}
-                                    </select>
+                                    {(() => {
+                                        // Three UI shapes depending on the user's
+                                        // authorized scope:
+                                        //  - Super Admin   → full dropdown (existing)
+                                        //  - Single-Ws scoped user (Member/Viewer or
+                                        //    single-Workspace Leader) → locked dropdown
+                                        //    with the single assigned option (existing)
+                                        //  - Multi-Ws Leader → enabled dropdown with
+                                        //    "All authorized Workspaces" + one option per
+                                        //    granted Workspace (NEW)
+                                        const selectValue = isLockedSingle
+                                            ? lockedWorkspaceOptions[0].name
+                                            : workspace;
+                                        return (
+                                            <select
+                                                value={selectValue}
+                                                onChange={e => handleWorkspaceChange(e.target.value)}
+                                                disabled={isLockedSingle}
+                                                title={isLockedSingle
+                                                    ? `Workspace cố định theo tài khoản: ${lockedWorkspaceOptions[0].name}`
+                                                    : isMultiWs
+                                                        ? 'Chọn một Workspace được gán hoặc kết hợp tất cả'
+                                                        : undefined}
+                                                className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[160px] shadow-sm transition-all cursor-pointer hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-70"
+                                            >
+                                                {isLockedSingle ? (
+                                                    <option value={lockedWorkspaceOptions[0].name}>{lockedWorkspaceOptions[0].name}</option>
+                                                ) : isMultiWs ? (
+                                                    <>
+                                                        <option value="">Tất cả Workspace được gán ({lockedWorkspaceOptions.length})</option>
+                                                        {lockedWorkspaceOptions.map(w => (
+                                                            <option key={w.code} value={w.name}>{w.name}</option>
+                                                        ))}
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <option value="">Tất cả Workspace</option>
+                                                        {workspaceOptions.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                                                    </>
+                                                )}
+                                            </select>
+                                        );
+                                    })()}
 
                                     {/* Team */}
                                     <select 
@@ -284,8 +345,8 @@ export default function KPIPage() {
                                     </select>
 
                                     {/* Clear filter */}
-                                    {(month || year || search || level || team || (!isScopedUser && workspace)) && (
-                                        <button onClick={() => { setMonth(''); setYear(''); setSearch(''); setLevel(''); setTeam(''); if (!isScopedUser) setWorkspace(''); }}
+                                    {(month || year || search || level || team || (!isLockedSingle && workspace)) && (
+                                        <button onClick={() => { setMonth(''); setYear(''); setSearch(''); setLevel(''); setTeam(''); if (!isLockedSingle) setWorkspace(''); }}
                                             className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all ml-auto bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
                                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />

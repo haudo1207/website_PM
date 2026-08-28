@@ -16,7 +16,7 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 // it ends up pointing at whichever instance mounted last, so a click inside
 // the *other* instance's dropdown reads as "outside" and closes the menu
 // before the Link's navigation can fire.
-function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode, onProjectHub }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null; onProjectHub: boolean }) {
+function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode, fixedWsNames, onProjectHub }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null; fixedWsNames?: string | null; onProjectHub: boolean }) {
   const { setWorkspaceCode } = useWorkspaceFilter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -59,6 +59,25 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode,
           <span className="flex-1 min-w-0 text-left">
             <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspace</span>
             <span className="block text-[12.5px] font-bold text-white truncate">{fixedWs.name}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Multi-Workspace Leader label (read-only badge; the user cannot switch
+  // because their access is the union of every granted Workspace).
+  if (fixedWsNames) {
+    return (
+      <div className="relative mb-2" ref={ref}>
+        <div
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60"
+          title={`Workspaces được gán: ${fixedWsNames}`}
+        >
+          <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🗂️</span>
+          <span className="flex-1 min-w-0 text-left">
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspaces</span>
+            <span className="block text-[12.5px] font-bold text-white truncate">{fixedWsNames}</span>
           </span>
         </div>
       </div>
@@ -374,8 +393,10 @@ function NavbarContent() {
   const workspaces = workspacesData || [];
 
   // The authoritative Workspace assignment comes from the backend
-  // (GET /users/me → data_scope). Leader/Member/Viewer have their Workspace
-  // fixed to that assignment; only Super Admin keeps the selectable dropdown.
+  // (GET /users/me → data_scope for legacy single-Workspace, workspace_ids[]
+  // for the new multi-Workspace Leader grant). Leader/Member/Viewer have
+  // their Workspace(s) fixed to that assignment; only Super Admin keeps
+  // the selectable dropdown.
   const { data: meData } = useQuery({
     queryKey: ['me-profile'],
     queryFn: () => getMe(),
@@ -383,8 +404,19 @@ function NavbarContent() {
   });
   const effectiveRole = meData?.role || getRole() || '';
   const isFullAccessUser = effectiveRole === 'super_admin';
-  const fixedWsCode = !isFullAccessUser && meData?.data_scope && meData.data_scope !== 'all'
-    ? meData.data_scope
+  // Multi-Workspace aware — for Leaders with several Workspaces we render
+  // a comma-separated list in the switcher label rather than collapsing it
+  // back to the first code (which would mislead the user).
+  const myWorkspaceIds: string[] = (() => {
+    if (!meData) return [];
+    if (isFullAccessUser || (meData.data_scope || '').toLowerCase() === 'all') return [];
+    const ids = (meData.workspace_ids || []).filter(code => code && code !== 'all');
+    if (ids.length) return ids;
+    return meData.data_scope ? [meData.data_scope] : [];
+  })();
+  const fixedWsCode = !isFullAccessUser && myWorkspaceIds.length === 1 ? myWorkspaceIds[0] : null;
+  const fixedWsNames = !isFullAccessUser && myWorkspaceIds.length > 1
+    ? myWorkspaceIds.map(code => (workspaces.find((w: any) => w.code === code)?.name) || code).join(', ')
     : null;
 
   useEffect(() => {
@@ -522,7 +554,7 @@ function NavbarContent() {
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
 
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onProjectHub={isOnProjectHub} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsNames={fixedWsNames} onProjectHub={isOnProjectHub} />
 
           {renderDashboardLink()}
 
@@ -618,7 +650,7 @@ function NavbarContent() {
 
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onProjectHub={isOnProjectHub} onNavigate={() => setMobileMenuOpen(false)} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsNames={fixedWsNames} onProjectHub={isOnProjectHub} onNavigate={() => setMobileMenuOpen(false)} />
 
           {renderDashboardLink(() => setMobileMenuOpen(false))}
 
