@@ -17,12 +17,12 @@ Sửa objective/agenda/transcript ──►  Tính điểm lại
 Đẩy task đề xuất vào Project ("push-tasks")
      │
      ▼
-AITaskInbox (nháp, gắn meeting_id) ──► PM review & Import ở Project Detail
-     │                                       │
-     │                                       ▼
-     │                              Task thật trong tasks_v2 (vào hệ KPI)
-     │                                       │
-     └───────────────◄──────── hook tự động tính lại điểm meeting
+Tạo AITaskInbox (gắn meeting_id) + tạo luôn Task thật trong tasks_v2
+(inline, cùng 1 request) ──► hook tự động tính lại điểm meeting
+     │
+     └─ Lỗi khi tạo Task thật ──► rơi về AITaskInbox nháp ──► PM Import
+        thủ công ở Project Detail (AI Task Inbox) ──► Task thật trong
+        tasks_v2 ──► hook tự động tính lại điểm meeting
                                              │
                                              ▼
                                   Feedback nhanh (Hữu ích / Chưa hữu ích)
@@ -44,13 +44,15 @@ Form gồm: Tên meeting*, Nền tảng, Ngày*, Giờ*, Link (tùy chọn — t
 để trống), **Mục tiêu & kết quả mong đợi**, **Agenda/vấn đề cần xử lý**.
 
 - **AI Meeting Copilot** (nút "✦ AI đề xuất"): gọi
-  `POST /api/meetings/generate-ai-content` với `{title, project_name}` →
-  backend gọi AI qua `services/ai_client.py::chat_completion_json()` → trả
-  về `{goal, agenda}` để điền sẵn vào 2 ô trên. Người dùng sửa tự do trước
-  khi lưu.
-- **Thanh "Mức sẵn sàng trước họp"**: tính ngay trên frontend, mô phỏng đúng
-  công thức điểm Chuẩn bị ở backend (xem mục 4) để người dùng thấy trước khi
-  bấm Tạo.
+  `POST /api/meetings/generate-ai-content` với `{title}` (form Tạo meeting
+  không có ô chọn dự án nên `project_name` không được gửi, dù backend có hỗ
+  trợ optional) → backend gọi AI qua
+  `services/ai_client.py::chat_completion_json()` → trả về `{goal, agenda}`
+  để điền sẵn vào 2 ô trên. Người dùng sửa tự do trước khi lưu.
+- **Thanh "Mức sẵn sàng trước họp"**: tính ngay trên frontend, mô phỏng 4/5
+  thành phần công thức điểm Chuẩn bị ở backend (tên, Mục tiêu, Agenda, ngày
+  giờ — xem mục 4). Thiếu thành phần "đúng dự án"(3đ) vì form không có ô
+  chọn dự án, nên thanh này tối đa chỉ lên tới 22/25, không phải 25/25.
 - Bấm "Tạo meeting" → `POST /api/meetings`. Nút có khóa chống bấm-trùng bằng
   `useRef` (không dùng React state) vì state có thể bị stale-closure khi
   bấm rất nhanh nhiều lần liên tiếp.
@@ -95,31 +97,40 @@ nút "↻ Tính lại điểm" thủ công (`POST /{id}/recalculate-score`).
 
 ## 5. Bước 3 — Đẩy task đề xuất vào KPI Tasks của dự án
 
-Đây là phần hay bị hiểu nhầm nhất, vẽ chi tiết luồng:
+Đây là phần hay bị hiểu nhầm nhất, vẽ chi tiết luồng (đã đổi từ "tạo nháp
+rồi PM Import" sang tạo Task thật ngay lập tức, kể từ commit
+`feat(meetings): direct-import AI task push, redesign task table as cards,
+drop review modal`):
 
-1. Trong tab "Task đề xuất" ở chi tiết meeting, bấm "Tạo KPI Task" cho từng
-   task AI đề xuất → `POST /api/meetings/{id}/push-tasks`.
+1. Trong tab "Task đề xuất" ở chi tiết meeting, bấm **"📥 Đẩy task vào dự
+   án"** cho từng task AI đề xuất (hoặc "📥 Đẩy task đã chọn vào Dự án" cho
+   nhiều task cùng lúc) → `POST /api/meetings/{id}/push-tasks`.
 2. Backend tạo 1 dòng **`AITaskInbox`** (bảng `chat_ai_tasks`) cho mỗi task,
-   gắn `meeting_id` để trace ngược lại meeting nguồn. Đây **chưa phải** Task
-   thật, chỉ là bản nháp chờ duyệt — dùng chung cơ chế với task bóc tách từ
-   chat Telegram/Zalo.
-3. `ai_task_inbox_id` được ghi ngược lại vào
-   `meeting.ai_summary.recommended_tasks[i]` để biết task nào đã push rồi
-   (chống push trùng).
-4. PM vào **Project Detail → AI Task Inbox**, review từng dòng (chọn Phase,
-   TaskGroup, Assigned, Support, Skill...), bấm **Import** →
-   `POST /projects/{pid}/ai-task-inbox/{task_id}/import`
-   (`backend/app/routers/chat_ai.py`) → tạo **Task thật** trong `tasks_v2`
-   (bảng KPI chính thức, `recalculate_task()` chạy tính `kpi_base/kpi_final`
-   ngay).
-5. Đúng lúc import xong: `imported_task_id` được ghi lại vào
-   `AITaskInbox.imported_task_id` **và** stamp ngược vào
-   `meeting.ai_summary.recommended_tasks[i].imported_task_id`, đồng thời
-   **tự động gọi lại `recalculate_meeting_score()`** cho meeting nguồn.
+   gắn `meeting_id` để trace ngược lại meeting nguồn — **và trong cùng
+   request, tạo luôn Task thật trong `tasks_v2`** (mirror logic Import của
+   `chat_ai.py`), stamp `AITaskInbox.status = "IMPORTED"` +
+   `imported_task_id` ngay lập tức. Không còn bước "nháp chờ duyệt" ở giữa
+   như trước.
+3. `ai_task_inbox_id` và `imported_task_id` được ghi ngược lại vào
+   `meeting.ai_summary.recommended_tasks[i]` để biết task nào đã push/đã
+   vào KPI rồi (chống push trùng, so khớp theo chuỗi `detail_task`).
+4. **`recalculate_meeting_score()`** được gọi ngay trong cùng request
+   push-tasks, không cần chờ bước nào khác.
+5. **Đường dự phòng**: nếu tạo Task thật thất bại khi push, dòng
+   `AITaskInbox` vẫn ở trạng thái nháp — PM có thể vào **Project Detail →
+   AI Task Inbox**, review và bấm **Import** thủ công →
+   `POST /api/projects/{pid}/ai-task-inbox/{task_id}/import`
+   (`backend/app/routers/chat_ai.py`) → tạo Task thật, ghi `imported_task_id`
+   ngược lại meeting, và cũng tự động gọi lại `recalculate_meeting_score()`
+   cho meeting nguồn. Đây giờ là **fallback**, không phải luồng chính.
 
-→ Chỉ khi qua đúng bước 4 (Import thành Task thật), task đó mới được tính
-là "đã đồng bộ KPI" trong công thức điểm ở mục 4. Push xong ở bước 2 mà
-chưa Import thì vẫn tính là "chưa đồng bộ", điểm Kết quả bị khóa.
+→ Vì push-tasks giờ tạo Task thật ngay, một task được đẩy thành công là đã
+tính "đã đồng bộ KPI" trong công thức điểm ở mục 4 luôn — không cần thêm
+thao tác Import riêng như trước.
+
+**Lưu ý:** widget "Hướng dẫn sử dụng" ngay trên trang `/meetings`
+(`MeetingPlaybook.tsx`) hiện vẫn mô tả luồng cũ (2 bước, qua AI Task Inbox)
+— UI copy đó cần cập nhật lại cho khớp.
 
 ## 6. Bước 4 — Xem chi tiết 1 meeting (`MeetingDetailModal.tsx`)
 
@@ -129,7 +140,7 @@ chưa Import thì vẫn tính là "chưa đồng bộ", điểm Kết quả bị
 |---|---|
 | Tổng quan | Thông tin cuộc họp, thành viên, nhật ký hoạt động, AI tóm tắt + quyết định chính |
 | AI Summary | Bản tóm tắt chi tiết dạng Sheet: ngày/tuần/thời lượng/team/organizer, "Task cha đã chốt" với đủ trường |
-| Task đề xuất | Danh sách task AI bóc tách, nút "Tạo KPI Task" (→ mục 5) |
+| Task đề xuất | Danh sách task AI bóc tách, nút "📥 Đẩy task vào dự án" (→ mục 5) |
 | Biên bản | Transcript thô, dán biên bản / chạy lại AI |
 | Thông tin chi tiết | ID, link, dự án, payload AI thô (JSON) |
 | **Hiệu quả** | Điểm 5 phần (mục 4) dạng progress bar, danh sách đồng bộ KPI Tasks theo từng item (Chưa push / Chờ import / Đã vào KPI Tasks), widget đánh giá nhanh |
@@ -145,26 +156,35 @@ thức mục 4 cho người dùng) → **Hướng dẫn sử dụng & đặc t�
 (tab Nhân sự / Dev) → biểu đồ xu hướng + cảnh báo → bảng danh sách meeting →
 insight grid 3 thẻ (tải theo dự án, top nhân sự, chất lượng vận hành).
 
-Toàn bộ số liệu ở đây (KPI grid, chart, alerts, insight grid) lấy từ
-`GET /api/meetings/insights` — tổng hợp thật từ bảng `meetings`, không có
-số liệu giả.
+Số liệu ở đây đến từ **2 nguồn thật** (không có số liệu giả, nhưng không
+phải 1 nguồn duy nhất):
+- Chart xu hướng, cảnh báo, và 2/3 card insight ("Tải theo dự án", "Top
+  nhân sự") lấy từ `GET /api/meetings/insights`.
+- KPI grid (5 chỉ số) và card insight thứ 3 ("Chất lượng vận hành họp")
+  tính client-side ngay trên frontend, từ dữ liệu `GET /api/meetings`
+  (danh sách meeting thường) — không gọi `/insights`.
 
 ## 8. Danh sách endpoint liên quan
 
 ```
 GET    /api/meetings                       Danh sách (lọc theo project/status/ngày)
-GET    /api/meetings/insights               Số liệu tổng hợp cho dashboard
+GET    /api/meetings/insights               Số liệu tổng hợp cho dashboard (chart/alerts/2 insight card)
 GET    /api/meetings/{id}                    Chi tiết 1 meeting
 POST   /api/meetings                         Tạo meeting (tự chạy AI Summary + tính điểm)
 PUT    /api/meetings/{id}                    Sửa meeting (tính điểm lại)
+DELETE /api/meetings/{id}                    Xóa meeting
 POST   /api/meetings/{id}/transcript         Cập nhật biên bản
-POST   /api/meetings/{id}/sync                Đồng bộ Zoom/Google Meet
-POST   /api/meetings/{id}/push-tasks          Đẩy task đề xuất vào AI Task Inbox
+POST   /api/meetings/{id}/sync                Đồng bộ Zoom/Google Meet (không tính lại điểm)
+POST   /api/meetings/{id}/push-tasks          Đẩy task đề xuất → tạo Task thật ngay (tính lại điểm)
 POST   /api/meetings/{id}/recalculate-score   Tính lại điểm thủ công
-POST   /api/meetings/{id}/feedback            Gửi đánh giá nhanh
+POST   /api/meetings/{id}/feedback            Gửi đánh giá nhanh (tính lại điểm)
 POST   /api/meetings/generate-ai-content      AI Copilot soạn Mục tiêu/Agenda
 POST   /api/meetings/generate-link            Tự sinh link Zoom/Google Meet
-POST   /projects/{pid}/ai-task-inbox/{id}/import   Import task nháp → Task thật (chat_ai.py)
+POST   /api/meetings/webhook/n8n-summary      Nhận AI Summary tự động từ n8n (tạo/cập nhật meeting
+                                               theo id/url/title+ngày — luồng tạo meeting song song,
+                                               không qua form thủ công; xem badge "🤖 Tự động tạo từ n8n")
+POST   /api/projects/{pid}/ai-task-inbox/{task_id}/import   Import task nháp → Task thật
+                                               (chat_ai.py, fallback khi push-tasks lỗi — xem mục 5)
 ```
 
 ## 9. Giới hạn đã biết (chưa xử lý)
@@ -172,6 +192,12 @@ POST   /projects/{pid}/ai-task-inbox/{id}/import   Import task nháp → Task th
 - "Đúng giờ" / "đủ thành phần bắt buộc" chỉ chính xác khi có dữ liệu
   `joined_at` thật từ Zoom/Google sync — meeting nhập tay mặc định coi là
   đạt vì không có gì để đối chiếu.
+- Endpoint `POST`/`DELETE /api/meetings/{id}/members` là nơi duy nhất tạo
+  `MeetingMember.joined_at` thật (nguồn dữ liệu duy nhất cho điểm Đúng giờ/
+  Đủ thành phần ở mục 4) — nhưng UI hiện tại **không gọi 2 endpoint này**;
+  nút "thêm thành viên" đi qua `PUT /{id}` với `ai_summary.custom_members`,
+  không tạo `MeetingMember` thật. Vì vậy trên thực tế 2 mục điểm này gần
+  như luôn mặc định "đạt", trừ khi có sync Zoom/Google thật.
 - Task hợp lệ hiện chỉ check đủ **Dự án + Owner + Hạn hoàn thành** (chưa có
   field KPI/Đầu ra mong đợi riêng — xem lý do trong lịch sử trao đổi, việc
   thêm 2 field này cần sửa vào màn hình review AI Task Inbox ở Project

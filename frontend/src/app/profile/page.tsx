@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
-import { getMe, getWorkspaces, getMyLoginHistory, getTelegramStatus, generateTelegramConnectUrl, disconnectTelegram, LoginHistoryItem } from '@/lib/api';
+import { getMe, getWorkspaces, getMyLoginHistory, getTelegramStatus, generateTelegramConnectUrl, disconnectTelegram, updateMyZaloName, LoginHistoryItem } from '@/lib/api';
+import { useQueryClient } from '@tanstack/react-query';
 
 const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Super Admin',
@@ -55,8 +56,13 @@ function ProfileSkeleton() {
 }
 
 export default function ProfilePage() {
+  const queryClient = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [telegramLoading, setTelegramLoading] = useState(false);
+  const [zaloNameInput, setZaloNameInput] = useState('');
+  const [zaloNameEditing, setZaloNameEditing] = useState(false);
+  const [savingZaloName, setSavingZaloName] = useState(false);
+  const [zaloNameError, setZaloNameError] = useState('');
 
   const { data: bundle, isLoading: loading } = useQuery({
     queryKey: ['profile'],
@@ -115,6 +121,26 @@ export default function ProfilePage() {
       refetchTelegram();
     } catch (err) {
       alert('Không thể ngắt kết nối Telegram.');
+    }
+  };
+
+  const startEditZaloName = () => {
+    setZaloNameInput(profile?.member?.zalo_name || '');
+    setZaloNameError('');
+    setZaloNameEditing(true);
+  };
+
+  const handleSaveZaloName = async () => {
+    setSavingZaloName(true);
+    setZaloNameError('');
+    try {
+      await updateMyZaloName(zaloNameInput.trim());
+      await queryClient.invalidateQueries({ queryKey: ['profile'] });
+      setZaloNameEditing(false);
+    } catch (err: any) {
+      setZaloNameError(err?.response?.data?.detail || 'Không lưu được tên Zalo.');
+    } finally {
+      setSavingZaloName(false);
     }
   };
 
@@ -275,6 +301,52 @@ export default function ProfilePage() {
                       )}
                     </div>
                   )}
+
+                  {/* Zalo display name — self-service for every user, used to
+                      match/tag them when tasks are assigned via Zalo. */}
+                  <div className="rounded-2xl border border-[#c2c6d6]/50 bg-white shadow-sm p-4 sm:p-6">
+                    <h3 className="text-sm font-bold text-[#0b1c30] uppercase tracking-wide mb-3">Tên Zalo</h3>
+                    {zaloNameEditing ? (
+                      <div className="space-y-2">
+                        <input
+                          value={zaloNameInput}
+                          onChange={e => setZaloNameInput(e.target.value)}
+                          placeholder="Đúng tên hiển thị trên Zalo của bạn"
+                          className="w-full px-3 py-2.5 text-sm border-2 border-[#c2c6d6] rounded-lg outline-none focus:border-[#0058be]"
+                          autoFocus
+                        />
+                        {zaloNameError && <p className="text-xs text-red-600">{zaloNameError}</p>}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleSaveZaloName}
+                            disabled={savingZaloName}
+                            className="rounded-lg bg-[#0058be] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#004da8] disabled:opacity-50"
+                          >
+                            {savingZaloName ? 'Đang lưu...' : 'Lưu'}
+                          </button>
+                          <button
+                            onClick={() => setZaloNameEditing(false)}
+                            disabled={savingZaloName}
+                            className="rounded-lg border-2 border-[#c2c6d6] px-3 py-1.5 text-xs font-bold text-[#3d4658] hover:bg-slate-50"
+                          >
+                            Huỷ
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold text-[#0b1c30]">
+                          {profile.member?.zalo_name || <span className="text-[#565e74] font-normal">Chưa đặt tên Zalo</span>}
+                        </span>
+                        <button onClick={startEditZaloName} className="text-sm font-bold text-[#0058be] hover:underline shrink-0">
+                          {profile.member?.zalo_name ? 'Sửa' : 'Đặt tên'}
+                        </button>
+                      </div>
+                    )}
+                    <p className="mt-2 text-xs text-[#3d4658]">
+                      Đặt đúng tên hiển thị bạn dùng trên Zalo để hệ thống nhận diện khi được @tag hoặc giao task qua Zalo.
+                    </p>
+                  </div>
 
                   {/* Telegram connection card (admin/super_admin only) */}
                   {isAdmin && (

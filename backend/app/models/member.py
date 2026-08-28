@@ -19,6 +19,13 @@ class Member(Base):
     full_name       = Column(String(255), nullable=False)
     email           = Column(String(255), nullable=True)
     telegram_username = Column(String(100), nullable=True)
+    # Display name this member is tagged by on Zalo (e.g. "Nguyễn Minh Hoàng")
+    # — used to resolve @mentions in Zalo /task messages to this member.
+    zalo_name       = Column(String(100), nullable=True)
+    # Real Zalo UID — the durable identity link (display names can be
+    # casual/change). Set the first time a Zalo group member is picked as a
+    # task assignee (auto-provisioned member or matched to an existing one).
+    zalo_uid        = Column(String(50), nullable=True, unique=True, index=True)
     phone           = Column(String(20), nullable=True)
     birth_date      = Column(Date, nullable=True)
     gender          = Column(String(20), nullable=True)   # Nam / Nữ / Khác

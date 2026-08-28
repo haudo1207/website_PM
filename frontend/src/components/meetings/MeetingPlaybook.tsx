@@ -5,7 +5,7 @@ const WORKFLOW = [
   { title: 'Tạo meeting', body: 'Nhập mục tiêu, agenda và các vấn đề cần xử lý. Chọn đúng dự án nếu đã biết.', note: 'Mục tiêu + agenda là bắt buộc để đạt điểm Chuẩn bị' },
   { title: 'Dùng AI tạo mục tiêu & agenda', body: 'AI đọc tên meeting để đề xuất mục tiêu, kết quả mong đợi và agenda. Rà soát, sửa nhanh rồi xác nhận.', note: 'Nút "✦ AI đề xuất" trong form Tạo meeting' },
   { title: 'Chốt kết quả sau họp', body: 'Kiểm tra AI Summary, xác nhận quyết định và rà soát từng task: tên task, owner, deadline.', note: 'Tab "Task đề xuất" trong Chi tiết cuộc họp' },
-  { title: 'Đồng bộ KPI Tasks', body: 'Bấm "Tạo KPI Task" để push vào AI Task Inbox của dự án, sau đó PM import thành Task thật ở Project Detail.', note: 'Điểm Kết quả chỉ tính khi task có kpi_task_id thật' },
+  { title: 'Đồng bộ KPI Tasks', body: 'Bấm "📥 Đẩy task vào dự án" — Task thật được tạo ngay trong dự án, không cần qua bước PM import riêng nữa.', note: 'Điểm Kết quả chỉ tính khi task đã có imported_task_id thật (set ngay lúc đẩy)' },
 ];
 
 const DEV_SPEC = {
@@ -16,11 +16,11 @@ const DEV_SPEC = {
     { object: 'MeetingFeedback', fields: 'meeting_id, member_id, helpful', purpose: 'Nguồn dữ liệu điểm Phản hồi' },
   ],
   endpoints: [
-    'POST /meetings/{id}/push-tasks — tạo AITaskInbox liên kết meeting_id',
-    'POST /projects/{pid}/ai-task-inbox/{task_id}/import — import thành Task thật (đã gắn recalculate_task)',
-    'POST /meetings/{id}/recalculate-score — tính lại điểm thủ công',
-    'POST /meetings/{id}/feedback — gửi đánh giá nhanh',
-    'GET /meetings/insights — dữ liệu chart/alerts cho dashboard',
+    'POST /api/meetings/{id}/push-tasks — tạo AITaskInbox + Task thật ngay (inline), tính lại điểm',
+    'POST /api/projects/{pid}/ai-task-inbox/{task_id}/import — fallback: import nháp thành Task thật khi push-tasks lỗi',
+    'POST /api/meetings/{id}/recalculate-score — tính lại điểm thủ công',
+    'POST /api/meetings/{id}/feedback — gửi đánh giá nhanh',
+    'GET /api/meetings/insights — dữ liệu chart/alerts (không bao gồm KPI grid, tính client-side từ GET /api/meetings)',
   ],
   formula: `prep = name(2) + project(3) + objective(8) + agenda(10) + datetime(2)
 // thiếu objective/agenda -> prep = min(prep, 5)
@@ -31,6 +31,7 @@ result = decisions(10) + actions_extracted(5) + kpi_sync_rate*10 + valid_action_
 // còn action chưa có imported_task_id -> result = min(result, 15), total = min(total, 69)
 
 follow_through = on_time_action_rate*15 + no_reopen(5)
+// meeting "không phát sinh task" hợp lệ (có lý do + có quyết định) -> follow_through = 20, status = final
 feedback = helpful_rate * 5`,
 };
 

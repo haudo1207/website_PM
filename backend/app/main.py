@@ -10,6 +10,7 @@ from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
 from .routers import telegram as telegram_router
+from .routers import zalo as zalo_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -22,6 +23,7 @@ from .models import project_template as project_template_model
 from .models import notification as notification_model
 from .models import workspace_access as workspace_access_model
 from .models import telegram_connection as telegram_connection_model
+from .models import zalo as zalo_model
 from sqlalchemy import text
 
 def apply_schema_updates():
@@ -169,6 +171,28 @@ def apply_schema_updates():
         ))
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_email VARCHAR(255)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_member_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'members_leader_member_id_fkey'
+                      AND conrelid = 'members'::regclass
+                ) THEN
+                    ALTER TABLE members
+                    ADD CONSTRAINT members_leader_member_id_fkey
+                    FOREIGN KEY (leader_member_id) REFERENCES members(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_members_leader_member_id ON members (leader_member_id)"
         ))
 
         # Add business_unit column to customers and drop obsolete unique name constraint
@@ -477,6 +501,73 @@ def apply_schema_updates():
                     ALTER TABLE chat_ai_tasks
                     ADD CONSTRAINT chat_ai_tasks_meeting_id_fkey
                     FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+
+        # ── Zalo: member Zalo display name (for @mention -> Member matching) ──
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS zalo_name VARCHAR(100)"
+        ))
+        # ── Zalo: durable UID link (display names are casual/can change) ──
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS zalo_uid VARCHAR(50)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_members_zalo_uid_unique "
+            "ON members (zalo_uid) WHERE zalo_uid IS NOT NULL"
+        ))
+
+        # ── Zalo: link a conversation to a project (enables the /task command) ──
+        conn.execute(text(
+            "ALTER TABLE zalo_conversations ADD COLUMN IF NOT EXISTS project_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'zalo_conversations_project_id_fkey'
+                      AND conrelid = 'zalo_conversations'::regclass
+                ) THEN
+                    ALTER TABLE zalo_conversations
+                    ADD CONSTRAINT zalo_conversations_project_id_fkey
+                    FOREIGN KEY (project_id) REFERENCES projects(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_zalo_conversations_project_id ON zalo_conversations (project_id)"
+        ))
+
+        # ── Zalo: "Không cần xem demo" — mark a Done task as not needing a
+        # demo request, without touching its demo-request history. ──
+        conn.execute(text(
+            "ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS zalo_demo_skip BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+
+        # ── Notifications: which Zalo conversation was linked at the moment a
+        # task went Done (captured then, not looked up later — the link may
+        # change afterward) — lets the bell's "Yêu cầu xem demo" action send
+        # straight to the right conversation with no extra lookup. ──
+        conn.execute(text(
+            "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS zalo_conversation_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'notifications_zalo_conversation_id_fkey'
+                      AND conrelid = 'notifications'::regclass
+                ) THEN
+                    ALTER TABLE notifications
+                    ADD CONSTRAINT notifications_zalo_conversation_id_fkey
+                    FOREIGN KEY (zalo_conversation_id) REFERENCES zalo_conversations(id)
                     ON DELETE SET NULL;
                 END IF;
             END $$
@@ -1117,6 +1208,7 @@ app.include_router(project_templates_router.router, prefix="/api")
 app.include_router(system_audit.router,         prefix="/api")
 app.include_router(notifications_router.router, prefix="/api/notifications")
 app.include_router(telegram_router.router,      prefix="/api/telegram")
+app.include_router(zalo_router.router,          prefix="/api/zalo")
 
 @app.get("/health")
 @app.get("/api/health")

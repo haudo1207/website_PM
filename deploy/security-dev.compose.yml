@@ -46,3 +46,25 @@ services:
       - ${SOURCE_DIR}/deploy/dev-gateway.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - frontend
+
+  # Persistent Node.js sidecar holding the zca-js session for the "Zalo
+  # account for task assignment" feature (cookie login, send, real-time
+  # listener). Not required for backend/frontend to start — the Zalo
+  # feature just errors until this is up.
+  zalo-worker:
+    image: portal-dev-zalo-worker:${APP_COMMIT}
+    container_name: kpi_dev_zalo_worker
+    restart: unless-stopped
+    build: ${SOURCE_DIR}/services/zalo-worker
+    env_file: ./app.env
+    environment:
+      FASTAPI_URL: http://backend:8000
+      PORT: "8090"
+    volumes:
+      - zalo-worker-artifacts:/app/artifacts
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  zalo-worker-artifacts:

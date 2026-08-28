@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin } from '@/lib/auth';
 import { useState, useEffect, useRef, Suspense } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { getWorkspaces, getMe } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getWorkspaces, getMe, getInboxNotifications, markNotificationRead, requestZaloDemo, InboxNotificationItem } from '@/lib/api';
 import { brand } from '@/lib/brand';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
@@ -120,6 +120,241 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode,
   );
 }
 
+// Bell icon + dropdown for the notification inbox — mounted once in the
+// desktop sidebar header and once in the mobile top bar (same reason
+// WorkspaceSwitcher needs its own ref/state per mount: both live in the DOM
+// at once, CSS just hides one of them, so a shared ref would only ever
+// attach to whichever instance rendered last). Both instances share the
+// same react-query cache key, so react-query dedupes the actual polling to
+// a single request/interval and a read-mark in one instance is reflected in
+// the other immediately via the shared cache.
+function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
+  const [open, setOpen] = useState(false);
+  const [demoNotifId, setDemoNotifId] = useState<number | null>(null);
+  const [demoDate, setDemoDate] = useState('');
+  const [demoTime, setDemoTime] = useState('');
+  const [sendingDemo, setSendingDemo] = useState(false);
+  const [demoError, setDemoError] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  const { data } = useQuery({
+    queryKey: ['inbox-notifications'],
+    queryFn: () => getInboxNotifications(),
+    refetchInterval: 20000,
+  });
+  const items = data?.items || [];
+  const unread = data?.unread_count || 0;
+  const demoNotif = demoNotifId !== null ? items.find(x => x.id === demoNotifId) || null : null;
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const markRead = async (id: number) => {
+    await markNotificationRead(id).catch(() => {});
+    queryClient.setQueryData(['inbox-notifications'], (prev: any) => {
+      if (!prev) return prev;
+      const target = prev.items.find((x: InboxNotificationItem) => x.id === id);
+      if (!target || target.is_read) return prev;
+      return {
+        unread_count: Math.max(0, prev.unread_count - 1),
+        items: prev.items.map((x: InboxNotificationItem) => (x.id === id ? { ...x, is_read: true } : x)),
+      };
+    });
+  };
+
+  const openDemoModal = (n: InboxNotificationItem) => {
+    setDemoNotifId(n.id);
+    setDemoDate('');
+    setDemoTime('');
+    setDemoError('');
+    if (!n.is_read) markRead(n.id);
+  };
+
+  const handleItemClick = (n: InboxNotificationItem) => {
+    if (n.notification_type === 'zalo_demo_ready' && n.zalo_conversation_id && n.task_id) {
+      openDemoModal(n);
+      return;
+    }
+    if (!n.is_read) markRead(n.id);
+    setOpen(false);
+    if (n.project_id) {
+      window.location.href = `/project/detail/tasks?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
+    }
+  };
+
+  const handleSendDemo = async () => {
+    if (!demoNotif || !demoNotif.zalo_conversation_id || !demoNotif.task_id) return;
+    if (!demoDate || !demoTime) { setDemoError('Chọn cả ngày và giờ demo.'); return; }
+    setSendingDemo(true);
+    setDemoError('');
+    try {
+      await requestZaloDemo(demoNotif.zalo_conversation_id, { task_id: demoNotif.task_id, demo_at: `${demoDate}T${demoTime}` });
+      setDemoNotifId(null);
+      setOpen(false);
+    } catch (err: any) {
+      setDemoError(err?.response?.data?.detail || 'Gửi yêu cầu demo thất bại.');
+    } finally {
+      setSendingDemo(false);
+    }
+  };
+
+  const bellIcon = (
+    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+    </svg>
+  );
+
+  return (
+    <div ref={ref} className="relative">
+      {variant === 'sidebar' ? (
+        <button
+          onClick={() => setOpen(o => !o)}
+          title="Thông báo"
+          className="relative flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors shrink-0"
+        >
+          {bellIcon}
+          {unread > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+              {unread > 9 ? '9+' : unread}
+            </span>
+          )}
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen(o => !o)}
+          title="Thông báo"
+          className="relative p-2 text-slate-400 hover:text-white"
+        >
+          {bellIcon}
+          {unread > 0 && (
+            <span className="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+              {unread > 9 ? '9+' : unread}
+            </span>
+          )}
+        </button>
+      )}
+
+      {open && (
+        <div
+          className={`fixed z-[300] w-[92vw] max-w-[380px] max-h-[70vh] overflow-y-auto bg-white border border-slate-300 rounded-2xl shadow-2xl flex flex-col ${
+            variant === 'sidebar' ? 'left-[240px] top-4' : 'right-3 top-14'
+          }`}
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 sticky top-0 bg-white z-10">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🔔</span>
+              <h4 className="text-sm font-extrabold text-[#0b1c30]">Thông báo</h4>
+              {unread > 0 && (
+                <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-[11px] font-bold rounded-full">{unread} chưa đọc</span>
+              )}
+            </div>
+            <button onClick={() => setOpen(false)} className="text-slate-500 hover:text-slate-700 text-base cursor-pointer">✕</button>
+          </div>
+
+          {items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+              <span className="text-4xl mb-2">📭</span>
+              <p className="text-[13px]">Chưa có thông báo nào</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-200">
+              {items.map(n => (
+                <div
+                  key={n.id}
+                  onClick={() => handleItemClick(n)}
+                  className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-70' : 'bg-indigo-50/60'}`}
+                >
+                  <span className="text-xl mt-0.5 shrink-0">
+                    {n.notification_type === 'zalo_demo_ready' ? '🎥' : n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[13px] leading-snug ${n.is_read ? 'text-slate-600' : 'text-[#0b1c30] font-semibold'}`}>
+                      {n.message}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {n.project_name && (
+                        <span className="text-[11px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">{n.project_name}</span>
+                      )}
+                      {n.zalo_conversation_name && (
+                        <span className="text-[11px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">💬 {n.zalo_conversation_name}</span>
+                      )}
+                    </div>
+                    {n.notification_type === 'zalo_demo_ready' && n.zalo_conversation_id && n.task_id && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openDemoModal(n); }}
+                        className="mt-2 px-3 py-1.5 text-[12px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
+                        🎥 Yêu cầu xem demo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {demoNotif && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[400] p-4"
+          onClick={() => !sendingDemo && setDemoNotifId(null)}
+        >
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-900 mb-1">Yêu cầu xem demo</h3>
+            <p className="text-[13px] text-slate-600 mb-4">{demoNotif.message}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-600 block mb-1.5">Ngày</label>
+                <input
+                  type="date"
+                  value={demoDate}
+                  onChange={e => setDemoDate(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm font-semibold text-slate-900 bg-slate-50 border-2 border-slate-400 rounded-lg focus:border-[#0058be] focus:bg-white focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600 block mb-1.5">Giờ</label>
+                <input
+                  type="time"
+                  value={demoTime}
+                  onChange={e => setDemoTime(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm font-semibold text-slate-900 bg-slate-50 border-2 border-slate-400 rounded-lg focus:border-[#0058be] focus:bg-white focus:outline-none"
+                />
+              </div>
+            </div>
+            {demoError && <p className="text-xs text-red-600 mt-2">{demoError}</p>}
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setDemoNotifId(null)}
+                disabled={sendingDemo}
+                className="px-4 py-2 text-sm font-semibold rounded-lg border-2 border-slate-300 text-slate-700 hover:bg-slate-50"
+              >
+                Huỷ
+              </button>
+              <button
+                onClick={handleSendDemo}
+                disabled={sendingDemo}
+                className="px-4 py-2 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {sendingDemo ? 'Đang gửi…' : 'Gửi yêu cầu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NavbarContent() {
   const path = usePathname();
   const [name, setName] = useState('');
@@ -225,6 +460,11 @@ function NavbarContent() {
         <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
       </svg>
     ), show: isAdmin() },
+    { href: '/zalo-account', label: 'Tài khoản Zalo giao task', icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+      </svg>
+    ), show: isAdmin() },
   ].filter(n => n.show !== false);
 
   return (
@@ -235,20 +475,23 @@ function NavbarContent() {
           <img src={brand.logo} alt={`${brand.name} logo`} className="w-6 h-6 rounded-lg flex-shrink-0 object-cover" />
           <span className="text-sm font-bold text-white">{brand.productName}</span>
         </div>
-        <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-2 text-slate-400 hover:text-white"
-        >
-          {mobileMenuOpen ? (
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          )}
-        </button>
+        <div className="flex items-center gap-1">
+          {isAdmin() && <NotificationBell variant="mobile" />}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="p-2 text-slate-400 hover:text-white"
+          >
+            {mobileMenuOpen ? (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Menu Overlay */}
@@ -264,12 +507,15 @@ function NavbarContent() {
 
         {/* Logo */}
         <div className="p-5 border-b border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <img src={brand.logo} alt={`${brand.name} logo`} className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
-            <div>
-              <div className="text-sm font-extrabold text-white tracking-tight leading-none">{brand.productName}</div>
-              <div className="text-[10px] text-slate-400 font-semibold mt-0.5">{brand.subtitle}</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <img src={brand.logo} alt={`${brand.name} logo`} className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
+              <div className="min-w-0">
+                <div className="text-sm font-extrabold text-white tracking-tight leading-none truncate">{brand.productName}</div>
+                <div className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate">{brand.subtitle}</div>
+              </div>
             </div>
+            {isAdmin() && <NotificationBell variant="sidebar" />}
           </div>
         </div>
 

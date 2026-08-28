@@ -90,7 +90,7 @@ jobs:
           FRONTEND_PORT: "3100"
         run: |
           set -euo pipefail
-          docker compose --env-file .env -f compose.yml build backend frontend
+          docker compose --env-file .env -f compose.yml build backend frontend zalo-worker
           docker compose --env-file .env -f compose.yml run --rm --no-deps \
             backend python -c "from app.main import run_startup_once; run_startup_once()"
           docker compose --env-file .env -f compose.yml up -d --no-build --remove-orphans

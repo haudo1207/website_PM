@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "design:build": "node scripts/build-design.js",
-    "predev": "npm run design:build",
-    "prebuild": "npm run design:build",
+    "extension:build": "node scripts/build-extension-zip.js",
+    "predev": "npm run design:build && npm run extension:build",
+    "prebuild": "npm run design:build && npm run extension:build",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
