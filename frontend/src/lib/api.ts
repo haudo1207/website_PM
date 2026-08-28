@@ -153,6 +153,8 @@ export interface MeProfile {
   avatar_url?: string | null;
   role: string;
   data_scope: string;
+  workspace_ids?: string[];
+  workspaces?: Workspace[];
   member_id?: number | null;
   is_active: boolean;
   login_method: string;
@@ -499,8 +501,8 @@ export const deleteMasterPhase = (id: number) => api.delete(`/system-categories/
 // Accounts Management
 export const getAccounts = () => api.get('/accounts').then(r => r.data);
 export const getAvailableMembers = () => api.get('/accounts/available-members').then(r => r.data);
-export const createAccount = (data: { email: string; password?: string; role: string; data_scope: string; full_name?: string; member_id?: number; outlook_mail?: string }) => api.post('/accounts', data).then(r => r.data);
-export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string; member_id?: number | null; outlook_mail?: string | null }) => api.put(`/accounts/${id}`, data).then(r => r.data);
+export const createAccount = (data: { email: string; password?: string; role: string; data_scope?: string; workspace_ids?: string[]; full_name?: string; member_id?: number; outlook_mail?: string }) => api.post('/accounts', data).then(r => r.data);
+export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string; workspace_ids?: string[]; member_id?: number | null; outlook_mail?: string | null }) => api.put(`/accounts/${id}`, data).then(r => r.data);
 export const resetAccountPassword = (id: number, password: string) => api.post(`/accounts/${id}/reset-password`, { password }).then(r => r.data);
 export const lockAccount = (id: number) => api.post(`/accounts/${id}/lock`).then(r => r.data);
 export const unlockAccount = (id: number) => api.post(`/accounts/${id}/unlock`).then(r => r.data);
