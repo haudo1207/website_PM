@@ -219,6 +219,57 @@ export const addProjectMember = (pid: number, memberId: number, role?: string) =
 export const removeProjectMember = (pid: number, memberId: number) =>
   api.delete(`/projects/${pid}/members/${memberId}`).then(r => r.data);
 
+// Project Documents (Resources tab — "Trung tâm dữ liệu dự án")
+export interface ProjectDocumentItem {
+  id: number;
+  project_id: number;
+  name: string;
+  doc_type: string;
+  ext: string;
+  phase_id: number | null;
+  phase_name: string | null;
+  task_id: number | null;
+  task_label: string | null;
+  source: 'file' | 'link';
+  url: string | null;
+  size_bytes: number | null;
+  owner_member_id: number | null;
+  owner_name: string | null;
+  uploader_user_id: number | null;
+  uploader_name: string;
+  status: 'draft' | 'review' | 'approved';
+  is_starred: boolean;
+  version: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+export interface ProjectDocumentsResponse {
+  items: ProjectDocumentItem[];
+  metrics: { total: number; starred: number; review: number; approved: number; approved_pct: number };
+  can_approve: boolean;
+}
+export const getProjectDocuments = (
+  pid: number,
+  params?: { special?: 'starred' | 'recent' | 'review'; phase_id?: number; q?: string; doc_type?: string; uploader_id?: number }
+): Promise<ProjectDocumentsResponse> => api.get(`/projects/${pid}/documents`, { params }).then(r => r.data);
+export const getProjectDocumentCategories = (pid: number) =>
+  api.get(`/projects/${pid}/documents/categories`).then(r => r.data);
+export const getProjectDocumentHistory = (pid: number, docId: number) =>
+  api.get(`/projects/${pid}/documents/${docId}/history`).then(r => r.data);
+export const createProjectDocument = (pid: number, data: FormData): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents`, data).then(r => r.data);
+export const updateProjectDocument = (pid: number, docId: number, data: FormData): Promise<ProjectDocumentItem> =>
+  api.patch(`/projects/${pid}/documents/${docId}`, data).then(r => r.data);
+export const approveProjectDocument = (pid: number, docId: number): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents/${docId}/approve`).then(r => r.data);
+export const rejectProjectDocument = (pid: number, docId: number): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents/${docId}/reject`).then(r => r.data);
+export const toggleStarProjectDocument = (pid: number, docId: number): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents/${docId}/star`).then(r => r.data);
+export const deleteProjectDocument = (pid: number, docId: number) =>
+  api.delete(`/projects/${pid}/documents/${docId}`).then(r => r.data);
+export const projectDocumentFileUrl = (pid: number, docId: number) => `${BASE}/projects/${pid}/documents/${docId}/file`;
+
 // Phases
 export const getPhases = (pid: number) => api.get(`/projects/${pid}/phases`).then(r => r.data);
 export const createPhase = (pid: number, data: { name: string; description?: string }) =>

@@ -10,6 +10,8 @@ services:
       # The same private endpoint works through either company VPN or WARP.
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       RUN_DB_STARTUP_ON_IMPORT: "false"
+    volumes:
+      - backend_uploads:/app/uploads
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -74,4 +76,5 @@ networks:
       com.docker.network.driver.mtu: "${DOCKER_NETWORK_MTU:-1420}"
 
 volumes:
+  backend_uploads:
   zalo-worker-artifacts:

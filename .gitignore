@@ -53,6 +53,7 @@ pm-new/
 
 # Local data databases/settings
 frontend/data/
+backend/uploads/
 
 .claude/
 

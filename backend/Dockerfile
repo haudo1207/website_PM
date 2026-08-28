@@ -15,7 +15,7 @@ COPY sync_all_accepted_candidates.py .
 COPY migrate_display_names.py .
 COPY Skill_Master_From_Sheet.xlsx .
 
-RUN useradd -m appuser && chown -R appuser /app
+RUN useradd -m appuser && mkdir -p /app/uploads && chown -R appuser /app
 USER appuser
 
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"]
