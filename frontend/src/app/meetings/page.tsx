@@ -14,7 +14,7 @@ import MeetingPlaybook from '@/components/meetings/MeetingPlaybook';
 import KpiCard from '@/components/dashboard/KpiCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
-import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights } from '@/lib/api';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
 
 function MeetingsPageContent() {
@@ -187,12 +187,20 @@ function MeetingsPageContent() {
     }
   }, [searchParams, meetings, lastHandledId]);
 
+  // 1 meeting giờ có thể gắn nhiều dự án (m.projects: [{id,name}]) — field cũ
+  // m.project/m.project_name (số ít) vẫn được API trả về để tương thích, dùng
+  // làm fallback cho dữ liệu cũ chưa qua bảng meeting_projects.
+  const getMeetingProjectNames = (m: any): string[] => {
+    if (Array.isArray(m.projects) && m.projects.length) {
+      return m.projects.map((p: any) => p.name).filter(Boolean);
+    }
+    const single = typeof m.project === 'string' ? m.project : (m.project?.name || m.project_name || '');
+    return single ? [single] : [];
+  };
+
   const projectOptions = useMemo(() => {
     const names = new Set<string>();
-    meetings.forEach(m => {
-      const p = typeof m.project === 'string' ? m.project : (m.project?.name || m.project_name || '');
-      if (p) names.add(p);
-    });
+    meetings.forEach(m => getMeetingProjectNames(m).forEach(p => names.add(p)));
     return Array.from(names).sort();
   }, [meetings]);
 
@@ -229,10 +237,10 @@ function MeetingsPageContent() {
     return (meetings || []).filter(m => {
       if (!m) return false;
       const title = String(m.title || '');
-      const project = typeof m.project === 'string' ? m.project : (m.project?.name || '');
-      const matchesSearch = title.toLowerCase().includes(searchTerm.toLowerCase()) || project.toLowerCase().includes(searchTerm.toLowerCase());
+      const projectNames = getMeetingProjectNames(m);
+      const matchesSearch = title.toLowerCase().includes(searchTerm.toLowerCase()) || projectNames.some(p => p.toLowerCase().includes(searchTerm.toLowerCase()));
       const matchesPlatform = platformFilter === 'All' || m.platform === platformFilter;
-      const matchesProject = projectFilter === 'All' || project === projectFilter;
+      const matchesProject = projectFilter === 'All' || projectNames.includes(projectFilter);
       const matchesPerson = personFilter === 'All' || (m.members || []).some((mm: any) => mm.display_name === personFilter);
       let matchesMonth = true;
       if (monthFilter !== 'All' && monthFilter !== '') matchesMonth = Boolean(m.date && String(m.date).startsWith(monthFilter));
@@ -266,7 +274,7 @@ function MeetingsPageContent() {
 
   const handleSaveMeeting = async (meetingData: any) => {
     try {
-      let savedObj = null;
+      let savedObj: any = null;
       if (meetingData.id) {
         const data = await updateMeeting(meetingData.id, meetingData);
         if (data.success) {
@@ -277,7 +285,16 @@ function MeetingsPageContent() {
         const data = await createMeeting(meetingData);
         if (data.success) {
           savedObj = data.data;
-          queryClient.setQueryData(['meetings'], (prev: any[] = []) => [data.data, ...prev]);
+          // Thành viên chọn lúc tạo được thêm bằng API riêng (endpoint tạo
+          // meeting không nhận members) — xong thì lấy lại bản mới nhất để
+          // có danh sách members thật thay vì chỉ có Host.
+          const memberIds: number[] = Array.isArray(meetingData.member_ids) ? meetingData.member_ids : [];
+          if (memberIds.length > 0) {
+            await Promise.all(memberIds.map(mid => addMeetingMember(savedObj.id, mid).catch(() => {})));
+            const refreshed = await getMeeting(savedObj.id).catch(() => null);
+            if (refreshed?.success) savedObj = refreshed.data;
+          }
+          queryClient.setQueryData(['meetings'], (prev: any[] = []) => [savedObj, ...prev]);
           // Meeting mới luôn được chèn lên đầu mảng — nếu đang xem trang khác
           // trang 1 thì quay lại trang 1 để thấy ngay, tránh cảm giác "biến mất".
           setCurrentPage(1);
@@ -579,7 +596,7 @@ function MeetingsPageContent() {
                       </thead>
                       <tbody>
                         {paginatedMeetings.map(m => {
-                          const project = typeof m.project === 'string' ? m.project : (m.project?.name || m.project_name || 'Dự án chung');
+                          const projectNames = getMeetingProjectNames(m);
                           const prep = m.score_prep;
                           const tasks: any[] = m.recommended_tasks || m.ai_summary?.recommended_tasks || [];
                           const syncedCount = tasks.filter(t => t.imported_task_id).length;
@@ -598,7 +615,13 @@ function MeetingsPageContent() {
                                 </div>
                               </td>
                               <td className="p-3">
-                                <span className="inline-flex items-center gap-1 bg-[#eef4ff] text-[#285dc4] border border-[#dbe8ff] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">▣ {project}</span>
+                                <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                  {projectNames.length > 0 ? projectNames.map(name => (
+                                    <span key={name} className="inline-flex items-center gap-1 bg-[#eef4ff] text-[#285dc4] border border-[#dbe8ff] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">▣ {name}</span>
+                                  )) : (
+                                    <span className="inline-flex items-center gap-1 bg-[#f1f5f9] text-[#64748b] border border-[#e2e8f0] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">Dự án chung</span>
+                                  )}
+                                </div>
                               </td>
                               <td className="p-3 text-[11px] text-[#52627a]">{(m.members || []).length} người</td>
                               <td className="p-3 whitespace-nowrap text-[11px]">{m.date} · {m.time}</td>

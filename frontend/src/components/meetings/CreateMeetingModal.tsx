@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Share2 } from 'lucide-react';
-import { generateMeetingLink, generateAiMeetingContent } from '@/lib/api';
+import { generateMeetingLink, generateAiMeetingContent, getProjects, getAccounts } from '@/lib/api';
+import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
@@ -20,6 +21,8 @@ interface MeetingFormData {
   auto_summarize?: boolean;
   objective?: string;
   agenda?: string;
+  project_ids: number[];
+  member_ids: number[];
 }
 
 export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData }: CreateMeetingModalProps) {
@@ -33,8 +36,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     transcript: '',
     auto_summarize: true,
     objective: '',
-    agenda: ''
+    agenda: '',
+    project_ids: [],
+    member_ids: []
   });
+  const [projectsList, setProjectsList] = useState<any[]>([]);
+  const [accountsList, setAccountsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   // Ref, not state: reads/writes happen synchronously so rapid repeated
   // clicks within the same render tick still see the lock (state would be
@@ -53,7 +60,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         transcript: initialData.transcript || '',
         auto_summarize: true,
         objective: initialData.objective || '',
-        agenda: initialData.agenda || ''
+        agenda: initialData.agenda || '',
+        project_ids: Array.isArray(initialData.project_ids) && initialData.project_ids.length
+          ? initialData.project_ids
+          : (initialData.project_id ? [initialData.project_id] : []),
+        member_ids: []
       });
     } else {
       const today = new Date().toISOString().split('T')[0];
@@ -67,11 +78,25 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         transcript: '',
         auto_summarize: true,
         objective: '',
-        agenda: ''
+        agenda: '',
+        project_ids: [],
+        member_ids: []
       });
     }
     setError('');
   }, [initialData, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    getProjects().then((res: any) => {
+      const items = res?.data || res || [];
+      if (Array.isArray(items)) setProjectsList(items);
+    }).catch(() => {});
+    getAccounts().then((res: any) => {
+      const items = res?.data || res || [];
+      if (Array.isArray(items)) setAccountsList(items);
+    }).catch(() => {});
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -155,7 +180,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     setIsGeneratingAiContent(true);
     setError('');
     try {
-      const res = await generateAiMeetingContent({ title: formData.title });
+      const firstProject = projectsList.find((p: any) => p.id === formData.project_ids[0]);
+      const res = await generateAiMeetingContent({ title: formData.title, project_name: firstProject?.name });
       if (res?.success) {
         setFormData(prev => ({ ...prev, objective: res.goal || prev.objective, agenda: res.agenda || prev.agenda }));
       } else {
@@ -171,7 +197,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // Mirrors the server's prep-score formula (meeting_score_engine.py) for instant feedback.
   const hasObjective = Boolean(formData.objective && formData.objective.trim());
   const hasAgenda = Boolean(formData.agenda && formData.agenda.trim());
-  const rawReadiness = (formData.title ? 2 : 0) + (hasObjective ? 8 : 0) + (hasAgenda ? 10 : 0) + (formData.date && formData.time ? 2 : 0);
+  const rawReadiness = (formData.title ? 2 : 0) + (formData.project_ids.length ? 3 : 0) + (hasObjective ? 8 : 0) + (hasAgenda ? 10 : 0) + (formData.date && formData.time ? 2 : 0);
   const readinessScore = hasObjective && hasAgenda ? rawReadiness : Math.min(rawReadiness, 5);
 
   return (
@@ -198,13 +224,36 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             
             <div>
               <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Tên cuộc họp *</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={formData.title}
                 onChange={e => setFormData({...formData, title: e.target.value})}
-                placeholder="VD: Review tiến độ tuần 26" 
+                placeholder="VD: Review tiến độ tuần 26"
                 className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Dự án liên quan</label>
+                <SearchableSelect
+                  label="dự án"
+                  isMulti
+                  options={projectsList.map((p: any) => ({ id: p.id, name: p.name }))}
+                  value={formData.project_ids}
+                  onChange={(ids: number[]) => setFormData({ ...formData, project_ids: ids })}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thành viên tham gia</label>
+                <SearchableSelect
+                  label="thành viên"
+                  isMulti
+                  options={accountsList.map((a: any) => ({ id: a.id, name: a.full_name || a.display_name || a.email || `#${a.id}` }))}
+                  value={formData.member_ids}
+                  onChange={(ids: number[]) => setFormData({ ...formData, member_ids: ids })}
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -239,8 +288,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
+            <div>
                 <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Giờ bắt đầu (AM/PM)</label>
                 <div className="flex items-center gap-1">
                   <select
@@ -283,18 +331,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     </button>
                   </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời lượng (phút)</label>
-                <input 
-                  type="number"
-                  min="1"
-                  value={formData.duration}
-                  onChange={e => setFormData({...formData, duration: e.target.value})}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  placeholder="VD: 60"
-                />
-              </div>
             </div>
 
             <div>
@@ -353,31 +389,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               )}
             </div>
 
-            {/* AI Meeting Copilot */}
-            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[#e7e3ff] text-[#6d28d9] flex items-center justify-center shrink-0">
-                <Sparkles size={16} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-[#6d28d9]">AI Meeting Copilot</p>
-                <p className="text-[11px] text-[#516079] leading-relaxed">Dùng tên cuộc họp để soạn mục tiêu & agenda phù hợp.</p>
-              </div>
-              <button
-                type="button"
-                onClick={handleGenerateAiContent}
-                disabled={isGeneratingAiContent}
-                className="px-3 py-2 text-[11px] font-bold text-white bg-[#6d28d9] hover:bg-[#5b21b6] rounded-lg transition-colors disabled:opacity-60 shrink-0"
-              >
-                {isGeneratingAiContent ? 'Đang soạn...' : '✦ AI đề xuất'}
-              </button>
-            </div>
-
             <div>
               <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Mục tiêu & kết quả mong đợi</label>
               <textarea
                 value={formData.objective}
                 onChange={e => setFormData({ ...formData, objective: e.target.value })}
-                placeholder="AI sẽ đề xuất hoặc bạn có thể nhập trực tiếp..."
+                placeholder="Nhập mục tiêu và kết quả mong đợi của cuộc họp — hoặc để trống rồi dùng AI đề xuất bên dưới..."
                 rows={2}
                 className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
               />
@@ -392,6 +409,25 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 rows={3}
                 className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
               />
+            </div>
+
+            {/* AI Meeting Copilot — đặt sau Mục tiêu/Agenda: gõ tay trước, cần thì mới nhờ AI đề xuất/viết lại */}
+            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-[#e7e3ff] text-[#6d28d9] flex items-center justify-center shrink-0">
+                <Sparkles size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-[#6d28d9]">AI Meeting Copilot</p>
+                <p className="text-[11px] text-[#516079] leading-relaxed">Chưa biết viết gì? Để AI soạn hộ mục tiêu & agenda từ tên cuộc họp, rồi bạn chỉnh lại.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateAiContent}
+                disabled={isGeneratingAiContent}
+                className="px-3 py-2 text-[11px] font-bold text-white bg-[#6d28d9] hover:bg-[#5b21b6] rounded-lg transition-colors disabled:opacity-60 shrink-0"
+              >
+                {isGeneratingAiContent ? 'Đang soạn...' : '✦ AI đề xuất'}
+              </button>
             </div>
 
             <div className="border border-[#e2e8f0] rounded-xl p-3 bg-[#fafbfc] space-y-1.5">
