@@ -143,6 +143,7 @@ def member_to_dict(m: Member) -> dict:
         "full_name": m.full_name,
         "email": m.email,
         "telegram_username": m.telegram_username,
+        "zalo_name": m.zalo_name,
         "phone": m.phone,
         "birth_date": m.birth_date.isoformat() if m.birth_date else None,
         "gender": m.gender,
@@ -313,23 +314,6 @@ def list_members(
     # never bypass the caller's assigned Workspace (super_admin / scope=all
     # keep seeing every member, exactly as before).
     q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
-
-    # Dashboard Leader Card authorization: when the caller is a Leader, exclude
-    # member records whose linked User account has role='leader'. A Leader must
-    # only see Member/Viewer member-cards on the Dashboard, never other Leader
-    # cards. super_admin callers are unaffected (they take the early-return
-    # path in member_query_for_user and see every member).
-    if getattr(current_user, "role", None) == "leader":
-        other_leader_member_ids = (
-            db.query(User.member_id)
-            .filter(
-                User.member_id.isnot(None),
-                User.role == "leader",
-                User.id != getattr(current_user, "id", -1),
-            )
-            .subquery()
-        )
-        q = q.filter(~Member.id.in_(other_leader_member_ids))
 
     results = q.order_by(Member.display_name.asc()).all()
     
@@ -516,6 +500,7 @@ def create_member(body: dict, db: Session = Depends(get_db), current_user=Depend
         full_name=full_name,
         email=body.get("email") or None,
         telegram_username=body.get("telegram_username") or None,
+        zalo_name=body.get("zalo_name") or None,
         phone=body.get("phone") or None,
         birth_date=birth_date,
         gender=body.get("gender") or None,
@@ -588,6 +573,7 @@ def update_member(id: int, body: dict, db: Session = Depends(get_db), current_us
     m.full_name = full_name
     m.email = body.get("email") or None
     m.telegram_username = body.get("telegram_username") or None
+    m.zalo_name = body.get("zalo_name") or None
     m.phone = body.get("phone") or None
     m.birth_date = birth_date
     m.gender = body.get("gender") or None

@@ -492,12 +492,24 @@ def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> 
         match = re.search(r"meet\.google\.com/([a-z-]+)", meeting_url or "")
         meeting_code = match.group(1) if match else ""
         if meeting_code:
+            # Try the Meet API first — it exposes the raw caption-level transcript
+            # (same data as the recording player's "Search transcript" panel: full
+            # dialogue with per-line timestamps), which is far more complete than
+            # the "Notes by Gemini" companion Doc the Drive search below finds.
             try:
-                transcript_data = _fetch_google_meet_transcript(db, user_id, meeting_code)
-                if transcript_data and transcript_data.get("text"):
-                    transcript_text = transcript_data["text"]
+                api_data = _fetch_meet_api_transcript(db, meeting_code)
+                if api_data and api_data.get("text"):
+                    transcript_text = api_data["text"]
             except Exception as e:
-                logger.warning(f"Fetch Google Meet transcript from Drive failed: {e}")
+                logger.warning(f"Fetch Google Meet transcript via Meet API failed: {e}")
+
+            if not transcript_text:
+                try:
+                    transcript_data = _fetch_google_meet_transcript(db, user_id, meeting_code)
+                    if transcript_data and transcript_data.get("text"):
+                        transcript_text = transcript_data["text"]
+                except Exception as e:
+                    logger.warning(f"Fetch Google Meet transcript from Drive failed: {e}")
 
     # Fallback: Use existing transcript stored on meeting if Drive transcript not found
     if not transcript_text:
@@ -517,6 +529,110 @@ def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> 
         "summary": summary,
         "status": "DONE",
     }
+
+
+def _fetch_meet_api_transcript(db, meeting_code: str) -> Optional[dict]:
+    """
+    Fetch the raw caption-level transcript via the Google Meet API
+    (scope: meetings.space.readonly) — spaces -> conferenceRecords ->
+    transcripts -> entries. This is the same underlying data shown in the
+    recording player's "Search transcript" panel (full dialogue, per-line
+    timestamps, per-speaker), independent from and richer than the
+    "Notes by Gemini" companion Doc that _fetch_google_meet_transcript()
+    finds on Drive. Returns None (never raises past logging) so callers can
+    fall back to the Drive-doc method — e.g. when the Meet API isn't enabled
+    yet, the OAuth token predates this scope, or no transcript exists.
+    """
+    token = get_shared_google_access_token(db)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    space_resp = requests.get(f"https://meet.googleapis.com/v2/spaces/{meeting_code}", headers=headers, timeout=15)
+    if space_resp.status_code != 200:
+        logger.warning(f"[MeetAPI] spaces.get({meeting_code}) failed: {space_resp.status_code} {space_resp.text[:200]}")
+        return None
+    space_name = space_resp.json().get("name")
+    if not space_name:
+        return None
+
+    records_resp = requests.get(
+        "https://meet.googleapis.com/v2/conferenceRecords",
+        headers=headers,
+        params={"filter": f'space.name="{space_name}"'},
+        timeout=15,
+    )
+    if records_resp.status_code != 200:
+        logger.warning(f"[MeetAPI] conferenceRecords.list failed: {records_resp.status_code} {records_resp.text[:200]}")
+        return None
+    records = records_resp.json().get("conferenceRecords", [])
+    if not records:
+        return None
+    conference_name = records[0].get("name")  # most recent first
+    if not conference_name:
+        return None
+
+    transcripts_resp = requests.get(f"https://meet.googleapis.com/v2/{conference_name}/transcripts", headers=headers, timeout=15)
+    if transcripts_resp.status_code != 200:
+        logger.warning(f"[MeetAPI] transcripts.list failed: {transcripts_resp.status_code} {transcripts_resp.text[:200]}")
+        return None
+    transcripts = transcripts_resp.json().get("transcripts", [])
+    if not transcripts:
+        return None
+    transcript_name = transcripts[0].get("name")
+
+    entries = []
+    page_token = None
+    while True:
+        params = {"pageSize": 100}
+        if page_token:
+            params["pageToken"] = page_token
+        entries_resp = requests.get(f"https://meet.googleapis.com/v2/{transcript_name}/entries", headers=headers, params=params, timeout=15)
+        if entries_resp.status_code != 200:
+            logger.warning(f"[MeetAPI] entries.list failed: {entries_resp.status_code} {entries_resp.text[:200]}")
+            break
+        data = entries_resp.json()
+        entries.extend(data.get("transcriptEntries", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not entries:
+        return None
+
+    participant_names = {}
+
+    def _resolve_participant(participant_ref: str) -> str:
+        if not participant_ref:
+            return "?"
+        if participant_ref in participant_names:
+            return participant_names[participant_ref]
+        name = participant_ref
+        try:
+            p_resp = requests.get(f"https://meet.googleapis.com/v2/{participant_ref}", headers=headers, timeout=10)
+            if p_resp.status_code == 200:
+                p = p_resp.json()
+                name = (
+                    p.get("signedinUser", {}).get("displayName")
+                    or p.get("anonymousUser", {}).get("displayName")
+                    or p.get("phoneUser", {}).get("displayName")
+                    or participant_ref
+                )
+        except Exception:
+            pass
+        participant_names[participant_ref] = name
+        return name
+
+    lines = []
+    for e in entries:
+        speaker = _resolve_participant(e.get("participant", ""))
+        ts = ""
+        try:
+            dt = datetime.datetime.fromisoformat(e.get("startTime", "").replace("Z", "+00:00"))
+            ts = dt.strftime("%H:%M:%S")
+        except Exception:
+            pass
+        lines.append(f"[{ts}] {speaker}: {e.get('text', '')}")
+
+    return {"text": "\n".join(lines), "fileName": f"Meet API transcript ({meeting_code})"}
 
 
 def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Optional[dict]:
@@ -581,6 +697,14 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
                 best_doc = None
                 min_diff = float("inf")
                 for doc in docs_resp.get("files", []):
+                    doc_mtype = doc.get("mimeType", "")
+                    doc_name = doc.get("name", "").lower()
+                    # Only consider transcript-like files here too — this search has
+                    # no filename anchor (matches by event title), so without this
+                    # filter it can just as easily match the meeting's video
+                    # recording and feed raw binary bytes into the AI prompt.
+                    if not ("document" in doc_mtype or "text" in doc_mtype or ".vtt" in doc_name or ".txt" in doc_name or ".srt" in doc_name):
+                        continue
                     doc_time = datetime.datetime.fromisoformat(doc["createdTime"].replace("Z", "+00:00"))
                     diff = abs((doc_time - event_time).total_seconds())
                     if diff < 86400 and diff < min_diff:
@@ -596,6 +720,15 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
 
     file_id = matched_file["id"]
     mime_type = matched_file.get("mimeType", "")
+
+    # Safety net: never treat a video/audio/binary file as text, no matter which
+    # search path matched it — reading raw video bytes as UTF-8 produces
+    # megabytes of garbage that blows up the AI prompt (seen in production:
+    # a matched .mp4 recording got decoded and sent to the summarizer as
+    # "transcript" text).
+    if mime_type.startswith("video/") or mime_type.startswith("audio/") or mime_type == "application/octet-stream":
+        logger.warning(f"[Sync] Matched Drive file '{matched_file.get('name')}' has binary mimeType '{mime_type}', skipping.")
+        return None
 
     # Export Google Doc or download text/vtt file directly
     if "application/vnd.google-apps.document" in mime_type:
@@ -693,6 +826,60 @@ def transcribe_with_assemblyai(audio_url: str) -> str:
 # AI SUMMARIZATION — Claude/GPT via Shopaikey
 # ═══════════════════════════════════════════════════════════
 
+def _call_shopaikey_chat(base_url: str, api_key: str, model: str, prompt: str, timeout: int, max_retries: int = 2) -> str:
+    """
+    Call the shopaikey (OpenAI-compatible) /chat/completions endpoint with retry.
+    Shopaikey routes requests through shared "channels" that intermittently return
+    503 model_not_found even for a model that normally works — retry a couple of
+    times before giving up, so a single flaky channel pick doesn't silently fall
+    back to canned text.
+    """
+    import time
+
+    MAX_PROMPT_CHARS = 100_000
+    if len(prompt) > MAX_PROMPT_CHARS:
+        logger.warning(f"Shopaikey prompt too long ({len(prompt)} chars), truncating to {MAX_PROMPT_CHARS}")
+        prompt = prompt[:MAX_PROMPT_CHARS] + "\n\n[... bị cắt do quá dài ...]"
+
+    last_status = None
+    last_body = ""
+    attempts_made = 0
+    for attempt in range(max_retries + 1):
+        attempts_made = attempt + 1
+        try:
+            resp = requests.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 4096,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=timeout,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+            last_status, last_body = resp.status_code, resp.text[:200]
+            if resp.status_code != 503 or attempt == max_retries:
+                break
+            logger.warning(f"Shopaikey call attempt {attempt + 1} got 503, retrying: {last_body}")
+            time.sleep(1.5)
+        except Exception as e:
+            logger.warning(f"Shopaikey API call attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries:
+                return ""
+            time.sleep(1.5)
+
+    if last_status is not None:
+        logger.warning(f"Shopaikey API call status={last_status} after {attempts_made} attempt(s), resp={last_body}")
+    return ""
+
+
 def summarize_meeting_with_ai_structured(transcript: str, meeting_info: dict) -> dict:
     """
     Summarize meeting transcript using Gemini AI and return a structured dict:
@@ -704,37 +891,26 @@ def summarize_meeting_with_ai_structured(transcript: str, meeting_info: dict) ->
     date_str = meeting_info.get("date") or meeting_info.get("meeting_date") or ""
 
     if not transcript or not transcript.strip():
-        prompt = f"""Bạn là chuyên gia AI phân tích cuộc họp. Dựa trên thông tin cuộc họp:
+        prompt = f"""Bạn là chuyên gia AI phân tích cuộc họp. Cuộc họp này CHƯA CÓ transcript, chỉ có thông tin:
 - Tên cuộc họp: {title}
 - Dự án liên quan: {project_name}
 - Ngày họp: {date_str}
 
-Hãy đóng vai AI tự động lắng nghe và phân tích cuộc họp này, trả về kết quả JSON THUẦN TÚY (JSON Object), KHÔNG bọc trong markdown block, KHÔNG thêm câu dẫn:
+QUY TẮC BẮT BUỘC: KHÔNG bịa tên người cụ thể, KHÔNG bịa ngày hạn chót cụ thể — vì không có transcript nên không có căn cứ. Với "assigned_name" và "deadline", luôn để chuỗi rỗng "" nếu không suy ra được từ tên cuộc họp/dự án.
+
+Trả về kết quả JSON THUẦN TÚY (JSON Object), KHÔNG bọc trong markdown block, KHÔNG thêm câu dẫn:
 {{
-  "executive_summary": "Tóm tắt điều hành 2-3 câu ngắn gọn, chính xác về mục đích, nội dung trao đổi chính và định hướng của cuộc họp '{title}'.",
+  "executive_summary": "Tóm tắt điều hành 2-3 câu ngắn gọn dựa trên tên cuộc họp '{title}' và dự án '{project_name}' — nêu rõ đây là dự đoán do chưa có biên bản chi tiết.",
   "decisions": [
-    "Quyết định 1 cụ thể thu được từ cuộc họp {title}",
-    "Quyết định 2 về tiến độ, chất lượng hoặc nhân sự",
-    "Quyết định 3 về cam kết công việc tiếp theo"
+    "Quyết định 1 dự kiến liên quan tới {title}",
+    "Quyết định 2 về tiến độ, chất lượng hoặc nhân sự"
   ],
   "recommended_tasks": [
     {{
-      "detail_task": "Hạng mục công việc 1 cụ thể giao trong cuộc họp {title}",
-      "priority": "Critical",
-      "assigned_name": "Nguyễn Hoàng Nam",
-      "deadline": "2026-08-08"
-    }},
-    {{
-      "detail_task": "Hạng mục công việc 2 cụ thể giao trong cuộc họp {title}",
-      "priority": "High",
-      "assigned_name": "Trần Khánh Vy",
-      "deadline": "2026-08-10"
-    }},
-    {{
-      "detail_task": "Hạng mục công việc 3 cụ thể giao trong cuộc họp {title}",
-      "priority": "Normal",
-      "assigned_name": "Phạm Nhật Minh",
-      "deadline": "2026-08-12"
+      "detail_task": "Hạng mục công việc cụ thể liên quan tới {title}",
+      "priority": "Critical | High | Normal",
+      "assigned_name": "",
+      "deadline": ""
     }}
   ]
 }}"""
@@ -747,6 +923,8 @@ THÔNG TIN CUỘC HỌP:
 
 BIÊN BẢN/TRANSCRIPT THỰC TẾ:
 {transcript}
+
+QUAN TRỌNG: Transcript có thể ngắn, rời rạc, hoặc lẫn đoạn test mic/chào hỏi không liên quan — TUYỆT ĐỐI KHÔNG vì vậy mà bỏ qua các từ khóa được nói THẲNG và RÕ RÀNG (ví dụ: "Critical", "gấp", "deadline ngày X", tên người được giao việc...). Dù transcript chỉ có 1-2 câu thực chất, vẫn phải quét kỹ và trích xuất đúng những gì đã nói ra, không được mặc định để trống/"Không đề cập" nếu từ khóa đó tồn tại trong transcript.
 
 CẤU TRÚC JSON YÊU CẦU:
 {{
@@ -793,28 +971,8 @@ CẤU TRÚC JSON YÊU CẦU:
 
     effective_key = openai_key or gemini_key
     if not raw_text and effective_key:
-        try:
-            req_model = model if (model and not model.startswith("gemini-2.5")) else "gpt-4o-mini"
-            resp = requests.post(
-                f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {effective_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": req_model,
-                    "max_tokens": 4096,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=60,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                raw_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            else:
-                logger.warning(f"ShopAIKey API call status={resp.status_code}, resp={resp.text[:200]}")
-        except Exception as e:
-            logger.warning(f"OpenAI API call failed: {e}")
+        req_model = model if (model and not model.startswith("gemini-2.5")) else "gpt-4o-mini"
+        raw_text = _call_shopaikey_chat(base_url, effective_key, req_model, prompt, timeout=60)
 
     if raw_text:
         try:
@@ -827,22 +985,38 @@ CẤU TRÚC JSON YÊU CẦU:
                 cleaned = cleaned[:-3]
             parsed = json.loads(cleaned.strip())
             if isinstance(parsed, dict) and "executive_summary" in parsed:
+                # Guard against the model inventing a name instead of leaving
+                # assigned_name empty as instructed — only keep it if the name
+                # actually appears in the source transcript.
+                tasks = parsed.get("recommended_tasks")
+                if isinstance(tasks, list):
+                    transcript_lower = (transcript or "").lower()
+                    for t in tasks:
+                        if isinstance(t, dict):
+                            name = (t.get("assigned_name") or "").strip()
+                            if name:
+                                # assigned_name can list multiple people separated by
+                                # commas — check each individually since they're often
+                                # mentioned in different sentences, not as one phrase.
+                                names = [n.strip() for n in name.split(",") if n.strip()]
+                                valid_names = [n for n in names if n.lower() in transcript_lower]
+                                t["assigned_name"] = ", ".join(valid_names)
                 return parsed
         except Exception as e:
             logger.warning(f"Failed to parse JSON from AI response: {e}")
 
-    # Fallback customized per meeting title and project name (No static hardcoded copy-paste!)
+    # Fallback khi AI call thất bại/không parse được — không bịa người/ngày cụ thể
     return {
-        "executive_summary": f"Cuộc họp '{title}' thuộc dự án '{project_name}' đã rà soát tiến độ và thống nhất kế hoạch làm việc.",
+        "executive_summary": f"Cuộc họp '{title}' thuộc dự án '{project_name}' đã rà soát tiến độ và thống nhất kế hoạch làm việc. (AI Summary tạm thời không khả dụng)",
         "decisions": [
             f"Chốt mục tiêu chính của cuộc họp '{title}'.",
             "Ưu tiên hoàn thiện các hạng mục quan trọng đúng hạn.",
             "Leader chịu trách nhiệm nghiệm thu kết quả bàn giao."
         ],
         "recommended_tasks": [
-            { "detail_task": f"Thực hiện công việc trọng điểm cuộc họp {title}", "priority": "Critical", "assigned_name": "Nguyễn Hoàng Nam", "deadline": "2026-08-08" },
-            { "detail_task": f"Hoàn thiện tài liệu và checklist {title}", "priority": "High", "assigned_name": "Trần Khánh Vy", "deadline": "2026-08-10" },
-            { "detail_task": f"Báo cáo kết quả {title} cho Leader", "priority": "Normal", "assigned_name": "Phạm Nhật Minh", "deadline": "2026-08-12" }
+            { "detail_task": f"Thực hiện công việc trọng điểm cuộc họp {title}", "priority": "Critical", "assigned_name": "", "deadline": "" },
+            { "detail_task": f"Hoàn thiện tài liệu và checklist {title}", "priority": "High", "assigned_name": "", "deadline": "" },
+            { "detail_task": f"Báo cáo kết quả {title} cho Leader", "priority": "Normal", "assigned_name": "", "deadline": "" }
         ]
     }
 
@@ -924,26 +1098,8 @@ TRANSCRIPT:
 
     effective_key = openai_key or gemini_key
     if not content and effective_key:
-        try:
-            req_model = model if (model and not model.startswith("gemini-2.5")) else "gpt-4o-mini"
-            resp = requests.post(
-                f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {effective_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": req_model,
-                    "max_tokens": 4096,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=90,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        except Exception as e:
-            logger.warning(f"OpenAI/Shopaikey API call failed: {e}")
+        req_model = model if (model and not model.startswith("gemini-2.5")) else "gpt-4o-mini"
+        content = _call_shopaikey_chat(base_url, effective_key, req_model, prompt, timeout=90)
 
     if not content:
         raise ValueError("Không nhận được kết quả từ AI. Vui lòng kiểm tra lại GEMINI_API_KEY hoặc AI_API_KEY trong file .env.")

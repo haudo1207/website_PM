@@ -3,6 +3,8 @@
 env
 secrets/
 google-service-account.json
+Meeting_AI_Summary_Sheets_Webhook.json
+INFRA_ACCESS.local.md
 
 # Python
 __pycache__/
@@ -51,6 +53,7 @@ pm-new/
 
 # Local data databases/settings
 frontend/data/
+backend/uploads/
 
 .claude/
 

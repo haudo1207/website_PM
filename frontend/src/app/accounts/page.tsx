@@ -39,6 +39,9 @@ interface Account {
   outlook_mail?: string | null;
   role: string;
   data_scope: string;
+  workspace_ids?: string[];
+  workspaces?: { id: number; code: string; name: string }[];
+  workspace_scope?: string;
   is_active: boolean;
   member_id: number | null;
   member: MemberInfo | null;
@@ -84,11 +87,11 @@ export default function AccountsPage() {
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: '', role: 'member', data_scope: '', full_name: '', member_id: 0, outlook_mail: '' });
+  const [createForm, setCreateForm] = useState<{ email: string; role: string; data_scope: string; workspace_ids: string[]; full_name: string; member_id: number; outlook_mail: string }>({ email: '', role: 'member', data_scope: '', workspace_ids: [], full_name: '', member_id: 0, outlook_mail: '' });
 
   // Edit modal
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', full_name: '', role: '', data_scope: '', member_id: 0, outlook_mail: '' });
+  const [editForm, setEditForm] = useState<{ email: string; full_name: string; role: string; data_scope: string; workspace_ids: string[]; member_id: number; outlook_mail: string }>({ email: '', full_name: '', role: '', data_scope: '', workspace_ids: [], member_id: 0, outlook_mail: '' });
 
   // Reset password modal
 
@@ -100,29 +103,44 @@ export default function AccountsPage() {
     }
   }, [router]);
 
+  // Shared ['workspaces'] react-query cache — same key/staleTime as Navbar/
+  // Dashboard/ProjectListContent, so this doesn't fire a duplicate request.
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const workspaces: Workspace[] = workspacesData || [];
+
   const { data: accountsData, isLoading: loading, refetch: reload } = useQuery({
     queryKey: ['accounts-list'],
     queryFn: async () => {
-      const [accs, members, wss] = await Promise.all([
+      const [accs, members] = await Promise.all([
         getAccounts(),
         getAvailableMembers(),
-        getWorkspaces().catch(() => [])
       ]);
-      return { accounts: accs, availableMembers: members, workspaces: wss || [] };
+      return { accounts: accs, availableMembers: members };
     },
     enabled: authorized,
     staleTime: 2 * 60_000,
   });
   const accounts: Account[] = accountsData?.accounts || [];
   const availableMembers: MemberInfo[] = accountsData?.availableMembers || [];
-  const workspaces: Workspace[] = accountsData?.workspaces || [];
 
   // Default data_scope for the create/edit forms once workspaces load —
   // was previously set as a side effect inside reload() itself.
   useEffect(() => {
     if (workspaces.length === 0) return;
-    setCreateForm(f => ({ ...f, data_scope: f.data_scope || workspaces[0].code }));
-    setEditForm(f => ({ ...f, data_scope: f.data_scope || workspaces[0].code }));
+    setCreateForm(f => ({
+      ...f,
+      data_scope: f.data_scope || workspaces[0].code,
+      workspace_ids: f.workspace_ids.length ? f.workspace_ids : [workspaces[0].code],
+    }));
+    setEditForm(f => ({
+      ...f,
+      data_scope: f.data_scope || workspaces[0].code,
+      workspace_ids: f.workspace_ids.length ? f.workspace_ids : [workspaces[0].code],
+    }));
   }, [workspaces]);
 
   const flash = (msg: string) => {
@@ -160,9 +178,15 @@ export default function AccountsPage() {
       ].some(value => (value || '').toLowerCase().includes(nameQuery));
 
       const roleMatch = !filterRole || acc.role === filterRole;
-      // An "all"-scope account belongs to every Workspace — same fallback
-      // already applied to the Members/Customers/Projects workspace filters.
-      const scopeMatch = !filterScope || acc.data_scope === filterScope || acc.data_scope === 'all';
+      // An "all"-scope account belongs to every Workspace. For multi-Workspace
+      // Leaders, the account matches a Workspace filter when *any* of its
+      // granted Workspaces matches the filter (or its primary data_scope is
+      // 'all'). Same escape-hatch semantics as the Projects/Members tabs.
+      const accWs = (acc.workspace_ids && acc.workspace_ids.length) ? acc.workspace_ids : [acc.data_scope];
+      const scopeMatch = !filterScope
+        || acc.data_scope === 'all'
+        || accWs.includes('all')
+        || accWs.includes(filterScope);
       const statusMatch = !filterStatus || (filterStatus === 'active' ? acc.is_active : !acc.is_active);
 
       return nameMatch && roleMatch && scopeMatch && statusMatch;
@@ -202,17 +226,32 @@ export default function AccountsPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await createAccount({
+      const payload: any = {
         email: createForm.email,
         role: createForm.role,
-        data_scope: createForm.data_scope,
         full_name: createForm.full_name,
         member_id: createForm.member_id || undefined,
         outlook_mail: createForm.outlook_mail || undefined,
-      });
+      };
+      if (createForm.role === 'leader') {
+        // Multi-Workspace leader — send the full list to the backend, which
+        // will write one row per code into `user_workspace_access`. `data_scope`
+        // is also accepted for backwards compatibility, but the backend now
+        // derives it from the first code in `workspace_ids`.
+        payload.workspace_ids = createForm.workspace_ids;
+      } else if (createForm.role === 'super_admin') {
+        // No Workspace assignment needed for Super Admin — backend coerces
+        // data_scope='all'. Don't send `workspace_ids` so the backend treats
+        // it as the global-all scope rather than a literal Workspace list.
+      } else {
+        // Member/Viewer — exactly one Workspace. Always send a single string
+        // `data_scope` (the backend ignores `workspace_ids` for these roles).
+        payload.data_scope = createForm.data_scope;
+      }
+      await createAccount(payload);
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
-      setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), full_name: '', member_id: 0, outlook_mail: '' });
+      setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), workspace_ids: (workspaces?.[0]?.code ? [workspaces[0].code] : []), full_name: '', member_id: 0, outlook_mail: '' });
       reload();
     } catch (err: any) {
       flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
@@ -239,14 +278,39 @@ export default function AccountsPage() {
   const openEdit = (acc: Account) => {
     if (!canLeaderManageAccount(acc)) return;
     setEditAccount(acc);
-    setEditForm({ email: acc.email, full_name: acc.full_name || '', role: acc.role, data_scope: acc.data_scope || (workspaces?.[0]?.code || ''), member_id: acc.member_id || 0, outlook_mail: acc.outlook_mail || '' });
+    const initialWorkspaces = (acc.workspace_ids && acc.workspace_ids.length)
+      ? acc.workspace_ids.filter(code => code !== 'all')
+      : (acc.data_scope ? [acc.data_scope] : (workspaces?.[0]?.code ? [workspaces[0].code] : []));
+    setEditForm({
+      email: acc.email,
+      full_name: acc.full_name || '',
+      role: acc.role,
+      data_scope: acc.data_scope || (workspaces?.[0]?.code || ''),
+      workspace_ids: initialWorkspaces,
+      member_id: acc.member_id || 0,
+      outlook_mail: acc.outlook_mail || '',
+    });
   };
 
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editAccount) return;
     try {
-      await updateAccount(editAccount.id, editForm);
+      const payload: any = {
+        email: editForm.email,
+        full_name: editForm.full_name,
+        role: editForm.role,
+        member_id: editForm.member_id || null,
+        outlook_mail: editForm.outlook_mail || null,
+      };
+      if (editForm.role === 'leader') {
+        payload.workspace_ids = editForm.workspace_ids;
+      } else if (editForm.role === 'super_admin') {
+        // No Workspace selector — backend handles 'all' globally.
+      } else {
+        payload.data_scope = editForm.data_scope;
+      }
+      await updateAccount(editAccount.id, payload);
       flash('Đã cập nhật tài khoản');
       setEditAccount(null);
       reload();
@@ -451,7 +515,25 @@ export default function AccountsPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-600">
-                          {scopeLabels[acc.data_scope] || acc.data_scope}
+                          {acc.role === 'super_admin' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
+                              ALL Workspaces
+                            </span>
+                          ) : acc.workspace_ids && acc.workspace_ids.length > 1 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {acc.workspace_ids.filter(code => code !== 'all').map(code => (
+                                <span key={code} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase tracking-wider">
+                                  {scopeLabels[code] || code}
+                                </span>
+                              ))}
+                            </div>
+                          ) : acc.workspace_ids && acc.workspace_ids[0] === 'all' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
+                              ALL Workspaces
+                            </span>
+                          ) : (
+                            <span>{scopeLabels[acc.data_scope] || acc.data_scope}</span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           {acc.member ? (
@@ -575,16 +657,44 @@ export default function AccountsPage() {
 
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Phạm vi dự án</label>
-                <select
-                  value={createForm.data_scope}
-                  onChange={e => setCreateForm(f => ({ ...f, data_scope: e.target.value }))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  {workspaces.map(ws => (
-                    <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
-                  ))}
-                  {!isLeaderUser && <option value="all">All — Tất cả dự án</option>}
-                </select>
+                {createForm.role === 'super_admin' ? (
+                  <div className="w-full bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-700 font-bold flex items-center gap-2">
+                    <span className="text-base">∞</span>
+                    ALL Workspaces — Quản trị viên toàn hệ thống
+                  </div>
+                ) : createForm.role === 'leader' ? (
+                  <SearchableSelect
+                    label="Workspace"
+                    icon="🗂️"
+                    options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
+                    value={createForm.workspace_ids}
+                    onChange={(vals: string[]) => setCreateForm(f => ({
+                      ...f,
+                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
+                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
+                    }))}
+                    isMulti={true}
+                    placeholder="Chọn Workspace cho Team Leader..."
+                    className="w-full"
+                  />
+                ) : (
+                  <select
+                    value={createForm.data_scope}
+                    onChange={e => setCreateForm(f => ({ ...f, data_scope: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  >
+                    {workspaces.map(ws => (
+                      <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
+                    ))}
+                  </select>
+                )}
+                <p className="text-[10px] text-slate-400 italic">
+                  {createForm.role === 'super_admin'
+                    ? 'Super Admin truy cập tất cả Workspace — không cần chọn.'
+                    : createForm.role === 'leader'
+                      ? 'Chọn một hoặc nhiều Workspace. Chỉ Super Admin mới có thể thay đổi phạm vi này sau khi tạo.'
+                      : 'Member/Viewer chỉ thuộc một Workspace duy nhất.'}
+                </p>
               </div>
 
               {/* Member preview */}
@@ -616,14 +726,14 @@ export default function AccountsPage() {
       {/* ═══ EDIT MODAL ═══ */}
       {editAccount && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 w-full max-w-lg rounded-xl shadow-xl overflow-hidden">
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+          <div className="bg-white border border-slate-200 w-full max-w-lg rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
               <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider">Chỉnh sửa tài khoản</h3>
               <button onClick={() => setEditAccount(null)} className="text-slate-400 hover:text-slate-600">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <form onSubmit={handleEdit} className="p-6 space-y-4">
+            <form onSubmit={handleEdit} className="p-6 space-y-4 overflow-y-auto flex-1">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email</label>
                 <input
@@ -677,16 +787,44 @@ export default function AccountsPage() {
               </div>
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Workspace</label>
-                <select
-                  value={editForm.data_scope}
-                  onChange={e => setEditForm(f => ({ ...f, data_scope: e.target.value }))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                >
-                  {workspaces.map(ws => (
-                    <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
-                  ))}
-                  {!isLeaderUser && <option value="all">All — Tất cả dự án</option>}
-                </select>
+                {editForm.role === 'super_admin' ? (
+                  <div className="w-full bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-700 font-bold flex items-center gap-2">
+                    <span className="text-base">∞</span>
+                    ALL Workspaces — Quản trị viên toàn hệ thống
+                  </div>
+                ) : editForm.role === 'leader' ? (
+                  <SearchableSelect
+                    label="Workspace"
+                    icon="🗂️"
+                    options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
+                    value={editForm.workspace_ids}
+                    onChange={(vals: string[]) => setEditForm(f => ({
+                      ...f,
+                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
+                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
+                    }))}
+                    isMulti={true}
+                    placeholder="Chọn Workspace cho Team Leader..."
+                    className="w-full"
+                  />
+                ) : (
+                  <select
+                    value={editForm.data_scope}
+                    onChange={e => setEditForm(f => ({ ...f, data_scope: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  >
+                    {workspaces.map(ws => (
+                      <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
+                    ))}
+                  </select>
+                )}
+                <p className="text-[10px] text-slate-400 italic">
+                  {editForm.role === 'super_admin'
+                    ? 'Super Admin truy cập tất cả Workspace — không cần chọn.'
+                    : editForm.role === 'leader'
+                      ? 'Chỉ Super Admin mới có thể thay đổi phạm vi Workspace của Leader.'
+                      : 'Member/Viewer chỉ thuộc một Workspace duy nhất.'}
+                </p>
               </div>
             </form>
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">

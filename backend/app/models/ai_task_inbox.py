@@ -13,6 +13,10 @@ class AITaskInbox(Base):
     id                    = Column(Integer, primary_key=True, index=True)
     project_id            = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     chat_group_id         = Column(Integer, ForeignKey("project_links.id", ondelete="SET NULL"), nullable=True)
+    # Set when this inbox row originated from a meeting's recommended_tasks
+    # (see meetings.py::push_meeting_tasks) — lets the import step recalc that
+    # meeting's KPI-Tasks sync score.
+    meeting_id             = Column(Integer, ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True)
     source_platform       = Column(String(50), default="Telegram")  # Telegram / Zalo / Slack / Manual Paste
     source_group_name     = Column(String(150), default="Telegram Group")
     source_message        = Column(Text, nullable=True)  # Snapshot of original raw message

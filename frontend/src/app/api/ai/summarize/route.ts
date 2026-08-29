@@ -98,6 +98,8 @@ export async function POST(request: Request) {
 BIÊN BẢN/TRANSCRIPT THỰC TẾ:
 ${transcript}
 
+QUAN TRỌNG: Transcript có thể ngắn, rời rạc, hoặc lẫn đoạn test mic/chào hỏi không liên quan — TUYỆT ĐỐI KHÔNG vì vậy mà bỏ qua các từ khóa được nói THẲNG và RÕ RÀNG (ví dụ: "Critical", "gấp", "deadline ngày X", tên người được giao việc...). Dù transcript chỉ có 1-2 câu thực chất, vẫn phải quét kỹ và trích xuất đúng những gì đã nói ra, không được mặc định để trống/"Không đề cập" nếu từ khóa đó tồn tại trong transcript.
+
 CẤU TRÚC JSON YÊU CẦU:
 {
   "executive_summary": "Tóm tắt điều hành 2-3 câu ngắn gọn chính xác tuyệt đối từ transcript.",
@@ -110,7 +112,7 @@ CẤU TRÚC JSON YÊU CẦU:
       "detail_task": "Tên công việc cụ thể được giao",
       "priority": "Critical | High | Normal",
       "assigned_name": "Tên người chịu trách nhiệm (nếu có, để rỗng nếu không có)",
-      "deadline": "2026-08-08"
+      "deadline": "Định dạng YYYY-MM-DD nếu transcript có nêu, để rỗng nếu không có"
     }
   ]
 }`;
@@ -142,31 +144,41 @@ CẤU TRÚC JSON YÊU CẦU:
 
     const effectiveKey = process.env.AI_API_KEY || geminiKey;
     if (!generatedText && effectiveKey) {
-      try {
-        const baseUrl = (process.env.AI_BASE_URL || 'https://api.shopaikey.com/v1').replace(/\/$/, '');
-        let model = process.env.AI_MODEL || 'gpt-4o-mini';
-        if (model.startsWith('gemini-2.5')) model = 'gpt-4o-mini';
+      const baseUrl = (process.env.AI_BASE_URL || 'https://api.shopaikey.com/v1').replace(/\/$/, '');
+      let model = process.env.AI_MODEL || 'gpt-4o-mini';
+      if (model.startsWith('gemini-2.5')) model = 'gpt-4o-mini';
 
-        const res = await fetch(`${baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${effectiveKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: [{ role: 'user', content: jsonPrompt }],
-            temperature: 0.2
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          generatedText = data.choices?.[0]?.message?.content || '';
-        } else {
-          console.warn('ShopAIKey response not OK:', res.status, await res.text());
+      // Shopaikey routes through shared channels that intermittently return
+      // 429/503/529 (rate-limited/no-channel/overloaded) even for a valid
+      // model — retry a couple of times before giving up.
+      const maxRetries = 2;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const res = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${effectiveKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: [{ role: 'user', content: jsonPrompt }]
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            generatedText = data.choices?.[0]?.message?.content || '';
+            break;
+          }
+          const errText = await res.text();
+          console.warn(`ShopAIKey response not OK (attempt ${attempt + 1}):`, res.status, errText);
+          if (![429, 503, 529].includes(res.status) || attempt === maxRetries) break;
+          await new Promise(r => setTimeout(r, 1500));
+        } catch (err) {
+          console.error(`OpenAI / ShopAIKey API fallback failed (attempt ${attempt + 1}):`, err);
+          if (attempt === maxRetries) break;
+          await new Promise(r => setTimeout(r, 1500));
         }
-      } catch (err) {
-        console.error('OpenAI / ShopAIKey API fallback failed:', err);
       }
     }
 
@@ -190,9 +202,26 @@ CẤU TRÚC JSON YÊU CẦU:
         executive_summary: generatedText,
         decisions: ["Chốt mục tiêu chính của cuộc họp"],
         recommended_tasks: [
-          { detail_task: `Thực hiện kết luận cuộc họp`, priority: "High", assigned_name: "", deadline: "2026-08-08" }
+          { detail_task: `Thực hiện kết luận cuộc họp`, priority: "High", assigned_name: "", deadline: "" }
         ]
       };
+    }
+
+    // Guard against the model inventing a name/date instead of leaving the
+    // field empty as instructed — only keep assigned_name if it's actually
+    // present in the source transcript, otherwise it's a fabrication.
+    if (Array.isArray(parsedSummary?.recommended_tasks)) {
+      const transcriptLower = transcript.normalize('NFC').toLowerCase();
+      parsedSummary.recommended_tasks = parsedSummary.recommended_tasks.map((t: any) => {
+        const name = (t?.assigned_name || '').trim();
+        if (!name) return t;
+        // assigned_name can list multiple people separated by commas — check each
+        // individually since they're often mentioned in different sentences, not
+        // as one contiguous phrase.
+        const names = name.split(',').map((n: string) => n.trim()).filter(Boolean);
+        const validNames = names.filter((n: string) => transcriptLower.includes(n.normalize('NFC').toLowerCase()));
+        return { ...t, assigned_name: validNames.join(', ') };
+      });
     }
 
     // Update the meeting in PostgreSQL via FastAPI Backend

@@ -1,10 +1,201 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, ShieldCheck, Search, FolderPlus, Users } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib/api';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getPhases, createPhase, getTaskGroups, createTaskGroup, getCategories, getMe } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import ProgressBar from '@/components/dashboard/ProgressBar';
 import { useQueryClient } from '@tanstack/react-query';
+
+interface PickedRef { id: number; name: string; }
+
+// Per-task Phase + "Task cha" (TaskGroup) pickers used in the AI task table.
+// Split into two standalone cell components (instead of one combined block)
+// so each can sit in its own <td> in the task table. Both include a
+// "+ Tạo mới" option that reveals an inline text input — if the project
+// doesn't have the right Phase/Task cha yet, the user can create it right
+// here instead of leaving the meeting screen.
+const NEW_PHASE = '__new_phase__';
+const NEW_GROUP = '__new_group__';
+
+function PhaseSelectCell({
+  projectId,
+  phase,
+  onPhaseChange,
+  onTaskGroupChange,
+}: {
+  projectId?: number | string;
+  phase?: PickedRef;
+  onPhaseChange: (p: PickedRef | undefined) => void;
+  onTaskGroupChange: (tg: PickedRef | undefined) => void;
+}) {
+  const [phases, setPhases] = useState<any[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setPhases([]);
+    if (!projectId) return;
+    getPhases(Number(projectId)).then((res: any) => setPhases(Array.isArray(res) ? res : (res?.data || []))).catch(() => setPhases([]));
+  }, [projectId]);
+
+  const handleCreate = async () => {
+    const name = newName.trim();
+    if (!name || !projectId) return;
+    setBusy(true);
+    try {
+      const ph = await createPhase(Number(projectId), { name });
+      setPhases(prev => [...prev, ph]);
+      onPhaseChange({ id: ph.id, name: ph.name });
+      onTaskGroupChange(undefined);
+      setNewName('');
+      setCreating(false);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Không tạo được Phase mới');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (creating) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          type="text"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setCreating(false); }}
+          placeholder="Tên phase mới..."
+          disabled={busy}
+          className="w-24 px-2 py-1 text-xs border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
+        />
+        <button type="button" onClick={handleCreate} disabled={busy} className="text-emerald-600 font-bold text-xs px-1">✓</button>
+        <button type="button" onClick={() => setCreating(false)} disabled={busy} className="text-slate-400 font-bold text-xs px-1">✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      disabled={!projectId}
+      value={phase?.id || ''}
+      onChange={e => {
+        const val = e.target.value;
+        if (val === NEW_PHASE) { setCreating(true); return; }
+        const pid = Number(val);
+        const found = phases.find((p: any) => p.id === pid);
+        onPhaseChange(found ? { id: found.id, name: found.name } : undefined);
+        onTaskGroupChange(undefined);
+      }}
+      className={`text-xs border rounded-lg px-2 py-1.5 bg-white disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none focus:border-[#6366f1] w-full ${phase?.id ? 'border-[#cbd5e1]' : 'border-red-400'}`}
+    >
+      <option value="">-- Chọn phase --</option>
+      {phases.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      <option value={NEW_PHASE}>+ Tạo phase mới</option>
+    </select>
+  );
+}
+
+function TaskGroupSelectCell({
+  phase,
+  taskGroup,
+  onTaskGroupChange,
+}: {
+  phase?: PickedRef;
+  taskGroup?: PickedRef;
+  onTaskGroupChange: (tg: PickedRef | undefined) => void;
+}) {
+  const [groups, setGroups] = useState<any[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setGroups([]);
+    if (!phase?.id) return;
+    getTaskGroups(phase.id).then((res: any) => setGroups(Array.isArray(res) ? res : (res?.data || []))).catch(() => setGroups([]));
+  }, [phase?.id]);
+
+  const handleCreate = async () => {
+    const name = newName.trim();
+    if (!name || !phase?.id) return;
+    setBusy(true);
+    try {
+      const tg = await createTaskGroup(phase.id, { name });
+      setGroups(prev => [...prev, tg]);
+      onTaskGroupChange({ id: tg.id, name: tg.name });
+      setNewName('');
+      setCreating(false);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Không tạo được Task cha mới');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (creating) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          type="text"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setCreating(false); }}
+          placeholder="Tên task cha mới..."
+          disabled={busy}
+          className="w-24 px-2 py-1 text-xs border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
+        />
+        <button type="button" onClick={handleCreate} disabled={busy} className="text-emerald-600 font-bold text-xs px-1">✓</button>
+        <button type="button" onClick={() => setCreating(false)} disabled={busy} className="text-slate-400 font-bold text-xs px-1">✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      disabled={!phase?.id}
+      value={taskGroup?.id || ''}
+      onChange={e => {
+        const val = e.target.value;
+        if (val === NEW_GROUP) { setCreating(true); return; }
+        const gid = Number(val);
+        const found = groups.find((g: any) => g.id === gid);
+        onTaskGroupChange(found ? { id: found.id, name: found.name } : undefined);
+      }}
+      className={`text-xs border rounded-lg px-2 py-1.5 bg-white disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none focus:border-[#6366f1] w-full ${taskGroup?.id ? 'border-[#cbd5e1]' : 'border-red-400'}`}
+    >
+      <option value="">-- Chọn task cha --</option>
+      {groups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+      <option value={NEW_GROUP}>+ Tạo task cha mới</option>
+    </select>
+  );
+}
+
+// Mirrors backend's recalculate_task_group_dates() formula so the table can
+// preview the computed End Date before push, without needing a round trip.
+function getEstimatedEndDate(startDateStr?: string, mandayStr?: string | number): string | null {
+  if (!startDateStr) return null;
+  const manday = Number(mandayStr);
+  if (!manday || isNaN(manday) || manday <= 0) return null;
+  const start = new Date(startDateStr + 'T00:00:00');
+  if (isNaN(start.getTime())) return null;
+  const days = Math.ceil(manday) - 1;
+  const end = new Date(start.getTime() + Math.max(days, 0) * 86400000);
+  return end.toISOString().slice(0, 10);
+}
+
+function getIsoWeekNumber(dateStr?: string): number | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
 
 interface MeetingDetailModalProps {
   isOpen: boolean;
@@ -12,6 +203,7 @@ interface MeetingDetailModalProps {
   meeting: any;
   onEdit?: (meeting: any) => void;
   onSummarize?: (meeting: any) => void;
+  onSync?: (meeting: any) => Promise<any>;
 }
 
 export default function MeetingDetailModal({
@@ -19,26 +211,51 @@ export default function MeetingDetailModal({
   onClose,
   meeting,
   onEdit,
-  onSummarize
+  onSummarize,
+  onSync
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'tasks' | 'transcript' | 'details'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'tasks' | 'transcript' | 'score'>('overview');
+  const [isRecalculatingScore, setIsRecalculatingScore] = useState(false);
+  const [localScore, setLocalScore] = useState<any>(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackChoice, setFeedbackChoice] = useState<'helpful' | 'not_helpful' | null>(null);
   const [isPushing, setIsPushing] = useState(false);
   const [pushedSuccess, setPushedSuccess] = useState(false);
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Assign Project Modal State
   const [isAssignProjectOpen, setIsAssignProjectOpen] = useState(false);
   const [projectsList, setProjectsList] = useState<any[]>([]);
   const [projectSearch, setProjectSearch] = useState('');
+  // Meeting created with projects pre-selected → route recommended tasks to
+  // that shortlist instead of every project in the system.
+  const taskProjectOptions = (meeting?.projects && meeting.projects.length > 0) ? meeting.projects : projectsList;
   const [isAssigningProject, setIsAssigningProject] = useState(false);
 
   // Add Member Modal State (Multi-Select Supported)
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [accountsList, setAccountsList] = useState<any[]>([]);
+
+  // Best-effort match of an AI-extracted name string against the real member
+  // list — used to pre-select "Assigned" in the task table so the user only
+  // has to fix it when the guess is wrong, not pick from scratch every time.
+  const matchAccountByName = (name?: string): PickedRef | undefined => {
+    if (!name) return undefined;
+    const target = name.trim().toLowerCase();
+    if (!target) return undefined;
+    const found = accountsList.find((acc: any) => {
+      const accName = (acc.full_name || acc.display_name || '').trim().toLowerCase();
+      return accName && (accName === target || accName.includes(target) || target.includes(accName));
+    });
+    if (!found) return undefined;
+    return { id: found.id, name: found.full_name || found.display_name };
+  };
+
   const [selectedMemberNames, setSelectedMemberNames] = useState<string[]>([]);
   const [customMemberInput, setCustomMemberInput] = useState('');
   const [memberSearch, setMemberSearch] = useState('');
@@ -49,7 +266,23 @@ export default function MeetingDetailModal({
 
   // Per-task project selection and check state
   const [taskProjectsMap, setTaskProjectsMap] = useState<Record<number, number>>({});
+  const [taskPhaseMap, setTaskPhaseMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskGroupMap, setTaskGroupMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskAssigneeMap, setTaskAssigneeMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSupportMap, setTaskSupportMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSkillSolutionMap, setTaskSkillSolutionMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSkillVendorMap, setTaskSkillVendorMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [categoriesList, setCategoriesList] = useState<any[]>([]);
+  const [taskEditMap, setTaskEditMap] = useState<Record<number, { detail_task?: string; priority?: string; manday_est?: string; start_date?: string; notes?: string }>>({});
   const [taskCheckedMap, setTaskCheckedMap] = useState<Record<number, boolean>>({});
+
+  // Skill Solution = Group, Skill Vendor = Skill nested under it (categories → groups → skills).
+  const allSkillGroups: any[] = categoriesList.flatMap((c: any) => c.groups || []);
+  const getSkillVendorsForGroup = (groupId?: number) => {
+    if (!groupId) return [];
+    const group = allSkillGroups.find((g: any) => g.id === groupId);
+    return group?.skills || [];
+  };
 
   // Local State for Instant UI Feedback
   const [localProjectName, setLocalProjectName] = useState('');
@@ -58,12 +291,27 @@ export default function MeetingDetailModal({
 
   const creatorName = meeting?.creator_name || meeting?.creator?.display_name || meeting?.created_by_name || 'Host mkt.szone';
 
+  const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
+  const isMeetingCreator = !!(meeting?.created_by && currentMemberId && meeting.created_by === currentMemberId);
+
   // Auto fetch projects list when modal opens
   useEffect(() => {
     if (isOpen) {
+      getMe().then(me => setCurrentMemberId(me?.member_id ?? null)).catch(() => setCurrentMemberId(null));
       getProjects().then((res: any) => {
         const items = res?.data || res || [];
         if (Array.isArray(items)) setProjectsList(items);
+      }).catch(console.error);
+      // Cần sẵn danh sách nhân sự cho cột Assigned/Support ở bảng Task đề xuất —
+      // trước đây chỉ tải khi mở modal "Thêm thành viên", nên bảng task luôn rỗng.
+      getAccounts().then((res: any) => {
+        const items = res?.data || res || [];
+        if (Array.isArray(items)) setAccountsList(items);
+      }).catch(console.error);
+      // Skill Solution / Skill Vendor cho bảng Task đề xuất (categories → groups → skills)
+      getCategories().then((res: any) => {
+        const items = res?.data || res || [];
+        if (Array.isArray(items)) setCategoriesList(items);
       }).catch(console.error);
     }
   }, [isOpen]);
@@ -83,7 +331,47 @@ export default function MeetingDetailModal({
     }
   }, [meeting, creatorName]);
 
+  useEffect(() => {
+    setLocalScore(null);
+    setFeedbackChoice(null);
+  }, [meeting?.id]);
+
   if (!isOpen || !meeting) return null;
+
+  const score = localScore || meeting;
+  const scoreTotal = score.score_total ?? null;
+
+  const handleRecalculateScore = async () => {
+    if (!meeting?.id) return;
+    setIsRecalculatingScore(true);
+    try {
+      const res = await recalculateMeetingScore(meeting.id);
+      if (res?.data) {
+        setLocalScore(res.data);
+        queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? { ...m, ...res.data } : m));
+      }
+    } catch (e) {
+      console.error('Failed to recalculate meeting score', e);
+    } finally {
+      setIsRecalculatingScore(false);
+    }
+  };
+
+  const handleSubmitFeedback = async (helpful: boolean) => {
+    if (!meeting?.id) return;
+    setFeedbackSubmitting(true);
+    try {
+      const res = await submitMeetingFeedback(meeting.id, { helpful });
+      setFeedbackChoice(helpful ? 'helpful' : 'not_helpful');
+      if (res) {
+        setLocalScore((prev: any) => ({ ...(prev || meeting), score_feedback: res.score_feedback, score_total: res.score_total }));
+      }
+    } catch (e) {
+      console.error('Failed to submit meeting feedback', e);
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
 
   // Real Meeting Fields
   const meetingTitle = meeting.title || 'Cuộc họp chưa có tên';
@@ -106,7 +394,21 @@ export default function MeetingDetailModal({
   const execSummary = meeting.executive_summary || (meeting.ai_summary?.executive_summary) || (Array.isArray(meeting.summary) && meeting.summary.length ? meeting.summary[0] : '');
 
   const decisionsList: string[] = meeting.decisions || (meeting.ai_summary?.decisions) || [];
-  const tasksList: any[] = meeting.recommended_tasks || (meeting.ai_summary?.recommended_tasks) || [];
+  const issuesList: string[] = meeting.issues || (meeting.ai_summary?.issues) || [];
+  const nextStepsList: string[] = meeting.next_steps || (meeting.ai_summary?.next_steps) || [];
+  const tasksList: any[] = score.recommended_tasks || (score.ai_summary?.recommended_tasks) || [];
+  const tasksNeedingReviewCount = tasksList.filter((t: any, idx: number) => {
+    const pid = taskProjectsMap[idx] || localProjectId || meeting.project_id || '';
+    const assignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
+    const edit = taskEditMap[idx] || {};
+    return !pid || !assignee || !taskPhaseMap[idx] || !taskGroupMap[idx]
+      || !edit.start_date || !taskSkillSolutionMap[idx] || !taskSkillVendorMap[idx];
+  }).length;
+  const summaryTeamName: string = meeting.team_name || meeting.ai_summary?.team_name || '';
+  const summaryOrganizerName: string = meeting.organizer_name || meeting.ai_summary?.organizer_name || '';
+  const summaryParticipantCount = meeting.participant_count ?? meeting.ai_summary?.participant_count ?? null;
+  const summaryWeekLabel = getIsoWeekNumber(meeting.date || meeting.meeting_date);
+  const isAutoCreated: boolean = Boolean(meeting.is_auto_created ?? meeting.ai_summary?.is_auto_created);
   const membersList: any[] = localMembers;
   const rawTranscript = meeting.transcript || meeting.ai_summary?.transcript || '';
 
@@ -230,6 +532,19 @@ export default function MeetingDetailModal({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const handleSyncClick = async () => {
+    if (!onSync || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await onSync(meeting);
+      triggerToast('✓ Đã đồng bộ transcript & AI Summary thành công!');
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Lỗi khi đồng bộ cuộc họp');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handlePushTasks = async () => {
     if (!tasksList.length) {
       alert("Cuộc họp này chưa có Task AI đề xuất để push!");
@@ -240,10 +555,27 @@ export default function MeetingDetailModal({
       .map((t: any, idx: number) => {
         const selectedPid = taskProjectsMap[idx] || localProjectId || meeting.project_id || (projectsList[0]?.id);
         const selectedProj = projectsList.find((p: any) => p.id === selectedPid);
+        const phase = taskPhaseMap[idx];
+        const taskGroup = taskGroupMap[idx];
+        const edit = taskEditMap[idx] || {};
+        const assignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
+        const mandayRaw = edit.manday_est ?? t.manday_est;
+        const manday = mandayRaw === '' || mandayRaw === undefined || mandayRaw === null ? undefined : Number(mandayRaw);
         return {
           ...t,
+          detail_task: edit.detail_task ?? t.detail_task,
+          priority: edit.priority ?? t.priority,
+          manday_est: (manday === undefined || isNaN(manday)) ? undefined : manday,
+          // Assignee đã được xác nhận trực tiếp trên bảng (chọn từ danh sách nhân sự
+          // thật) — gửi kèm assigned_id để backend dùng thẳng, khỏi phải dò tên nữa.
+          assigned_id: assignee?.id,
+          assigned_name: assignee?.name || t.assigned_name || t.owner,
           project_id: selectedPid,
           project_name: selectedProj?.name || t.project_name || localProjectName,
+          phase_id: phase?.id,
+          phase_name: phase?.name,
+          task_group_id: taskGroup?.id,
+          task_group_name: taskGroup?.name,
           checked: taskCheckedMap[idx] !== false
         };
       })
@@ -254,6 +586,16 @@ export default function MeetingDetailModal({
       return;
     }
 
+    if (tasksToPush.some((t: any) => !t.phase_id || !t.task_group_id)) {
+      const proceed = confirm(
+        "Có task chưa chọn đủ Phase / Task cha. Task đó sẽ được đẩy vào Inbox nhưng chưa gắn đúng vị trí trong kế hoạch dự án — bạn vẫn muốn tiếp tục?"
+      );
+      if (!proceed) return;
+    }
+
+    // Bảng Task Đề Xuất giờ đã là bước review (mọi field đều sửa được ngay
+    // tại đây, ô còn thiếu viền đỏ) — push thẳng, không cần màn hình review
+    // trung gian nữa.
     setIsPushing(true);
     try {
       await pushMeetingTasks(meeting.id, tasksToPush);
@@ -323,6 +665,14 @@ export default function MeetingDetailModal({
 
               {/* Sub-Badges */}
               <div className="flex items-center gap-2 flex-wrap">
+                {isAutoCreated && (
+                  <span
+                    className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-700 border border-teal-200 flex items-center gap-1"
+                    title="Meeting này không được tạo qua nút 'Tạo meeting' trên web — n8n tự động tạo từ video ghi hình phát hiện được"
+                  >
+                    🤖 Tự động tạo từ n8n
+                  </span>
+                )}
                 {execSummary ? (
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#f5f3ff] text-[#6366f1]">
                     AI Summary sẵn sàng
@@ -358,6 +708,20 @@ export default function MeetingDetailModal({
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f1f5f9] text-[#64748b]">
                   {platformName}
                 </span>
+
+                {scoreTotal !== null && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('score')}
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 ${
+                      scoreTotal >= 75 ? 'bg-emerald-50 text-emerald-700' : scoreTotal >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
+                    }`}
+                    title="Xem chi tiết điểm hiệu quả"
+                  >
+                    <Gauge size={12} />
+                    <span>Hiệu quả {scoreTotal}/100</span>
+                  </button>
+                )}
               </div>
 
               {/* Sub-Info Line */}
@@ -439,6 +803,15 @@ export default function MeetingDetailModal({
                         <span>✨ Dán biên bản / Chạy AI</span>
                       </button>
                     )}
+                    {onSync && (
+                      <button
+                        onClick={() => { setShowMenu(false); handleSyncClick(); }}
+                        disabled={isSyncing}
+                        className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be] flex items-center gap-2 disabled:opacity-50"
+                      >
+                        <span>{isSyncing ? '⏳ Đang đồng bộ...' : '🔄 Đồng bộ (Sync)'}</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -484,10 +857,11 @@ export default function MeetingDetailModal({
               Biên bản
             </button>
             <button
-              onClick={() => setActiveTab('details')}
-              className={`pb-2 border-b-2 transition-colors ${activeTab === 'details' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
+              onClick={() => setActiveTab('score')}
+              className={`pb-2 border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'score' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
             >
-              Thông tin chi tiết
+              <Gauge size={13} />
+              <span>Hiệu quả{scoreTotal !== null ? ` (${scoreTotal})` : ''}</span>
             </button>
           </div>
         </div>
@@ -578,6 +952,14 @@ export default function MeetingDetailModal({
                         <Info size={16} className="text-[#2563eb] shrink-0" />
                         <span>Cuộc họp này đã được xử lý và đồng bộ tự động lúc {n8nTime ? String(n8nTime).slice(0, 16) : 'gần đây'}.</span>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Host account reminder — only shown to the meeting creator, since only they need to act as host */}
+                  {isMeetingCreator && rawLink && (
+                    <div className="bg-[#eff6ff] border border-[#bfdbfe] rounded-xl p-3 flex items-start gap-2 text-xs text-[#1e40af]">
+                      <Info size={16} className="text-[#2563eb] shrink-0 mt-0.5" />
+                      <span><span className="font-bold">Lưu ý host:</span> Bạn là người tạo cuộc họp này — hãy đăng nhập Google bằng tài khoản <b>mkt.szone@gmail.com</b> trước khi vào Meet để có quyền duyệt người tham gia phòng chờ.</span>
                     </div>
                   )}
                 </div>
@@ -672,7 +1054,7 @@ export default function MeetingDetailModal({
 
               {/* Right Column: AI TÓM TẮT Widget (5 Cols ~ 40%) */}
               <div className="lg:col-span-5">
-                <div className="bg-white rounded-2xl p-5 border border-[#e0e7ff] shadow-sm space-y-5 sticky top-4">
+                <div className="bg-white rounded-2xl p-5 border border-[#e0e7ff] shadow-sm space-y-4 sticky top-4">
                   
                   {/* Widget Header */}
                   <div className="flex items-center justify-between">
@@ -689,8 +1071,9 @@ export default function MeetingDetailModal({
 
                   {/* Section 1: TÓM TẮT ĐIỀU HÀNH */}
                   <div className="space-y-1.5">
-                    <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                      TÓM TẮT ĐIỀU HÀNH
+                    <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#6366f1]"></span>
+                      Tóm tắt điều hành
                     </h4>
                     {execSummary ? (
                       <p className="text-xs text-[#334155] leading-relaxed font-normal bg-[#f8f6ff] p-3 rounded-xl border border-[#eee9fe]">
@@ -705,27 +1088,65 @@ export default function MeetingDetailModal({
 
                   {/* Section 2: QUYẾT ĐỊNH CHÍNH */}
                   {decisionsList.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                        QUYẾT ĐỊNH CHÍNH
+                    <div className="space-y-1.5">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        Quyết định chính
                       </h4>
-                      <ul className="space-y-2 text-xs text-[#334155]">
+                      <div className="space-y-1.5">
                         {decisionsList.map((dec: string, idx: number) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <Check size={14} className="text-emerald-600 mt-0.5 shrink-0" />
+                          <div key={idx} className="flex items-start gap-2 text-xs text-[#334155] bg-emerald-50/60 border border-emerald-100 rounded-lg px-2.5 py-2">
+                            <Check size={13} className="text-emerald-600 mt-0.5 shrink-0" />
                             <span>{dec}</span>
-                          </li>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Section 2b: VẤN ĐỀ & RỦI RO */}
+                  {issuesList.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                        Vấn đề & rủi ro
+                      </h4>
+                      <div className="space-y-1.5">
+                        {issuesList.map((it: string, idx: number) => (
+                          <div key={idx} className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-2">
+                            <span className="text-amber-600 shrink-0 leading-4">⚠</span>
+                            <span>{it}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Section 2c: BƯỚC TIẾP THEO */}
+                  {nextStepsList.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#6366f1]"></span>
+                        Bước tiếp theo
+                      </h4>
+                      <div className="space-y-1.5">
+                        {nextStepsList.map((it: string, idx: number) => (
+                          <div key={idx} className="flex items-start gap-2 text-xs text-[#4338ca] bg-[#f5f3ff] border border-[#eee9fe] rounded-lg px-2.5 py-2">
+                            <span className="shrink-0 leading-4">→</span>
+                            <span>{it}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
                   {/* Section 3: TASK ĐỀ XUẤT */}
                   {tasksList.length > 0 && (
-                    <div className="space-y-2.5 pt-1">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
-                          TASK ĐỀ XUẤT
+                    <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                      <div className="flex items-center justify-between pt-3">
+                        <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                          Task đề xuất
                         </h4>
                         <span className="px-2 py-0.5 bg-[#f1f5f9] text-[#475569] text-[10px] font-bold rounded-full">
                           {tasksList.length} tasks
@@ -801,13 +1222,82 @@ export default function MeetingDetailModal({
 
               {execSummary ? (
                 <div className="space-y-6">
+                  {/* Header info — mirrors the Google Sheet's meeting info table */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs">
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Ngày họp</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{meeting.date || meeting.meeting_date || 'Chưa xác định'} · {meeting.time || meeting.start_time || ''}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Tuần</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryWeekLabel ? `Tuần ${summaryWeekLabel}` : 'Không đề cập'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Thời lượng</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{durationStr}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-[#94a3b8] font-semibold">Link record</p>
+                      {meeting.meeting_url || meeting.link ? (
+                        <a href={meeting.meeting_url || meeting.link} target="_blank" rel="noreferrer" className="text-[#6366f1] font-bold mt-0.5 hover:underline break-all block">
+                          {meeting.meeting_url || meeting.link}
+                        </a>
+                      ) : (
+                        <p className="text-[#0b1c30] font-bold mt-0.5">Không đề cập</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Team</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryTeamName || 'Không đề cập'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Người summary</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryOrganizerName || 'Không đề cập'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[#94a3b8] font-semibold">Số người tham gia</p>
+                      <p className="text-[#0b1c30] font-bold mt-0.5">{summaryParticipantCount ?? 'Không đề cập'}</p>
+                    </div>
+                  </div>
+
                   {/* Executive Summary Box */}
                   <div className="space-y-2">
-                    <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">TÓM TẮT ĐIỀU HÀNH</h4>
+                    <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">TỔNG QUAN</h4>
                     <div className="p-4 bg-[#f8f6ff] border border-[#eee9fe] rounded-2xl text-sm text-[#334155] leading-relaxed">
                       {execSummary}
                     </div>
                   </div>
+
+                  {/* Task cha đã chốt — mirrors the Sheet's per-project field rows */}
+                  {tasksList.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">TASK CHA ĐÃ CHỐT ({tasksList.length})</h4>
+                      <div className="space-y-3">
+                        {tasksList.map((t, i) => (
+                          <div key={i} className="border border-[#e2e8f0] rounded-2xl overflow-hidden">
+                            <div className="px-4 py-2 bg-rose-50 border-b border-rose-100 text-xs font-bold text-rose-700">
+                              {i + 1}. Project: {t.project_name || ''}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 text-xs divide-y divide-slate-100 sm:divide-y-0">
+                              {[
+                                ['Task cha', t.detail_task || 'Không đề cập'],
+                                ['Priority', t.priority || 'Normal'],
+                                ['Manday Budget', t.manday_est ?? 'Không đề cập'],
+                                ['Owner', t.assigned_name || t.owner || 'Không đề cập'],
+                                ['Deadline', t.deadline || 'Không đề cập'],
+                                ['KPI / Output', t.kpi_output || 'Không đề cập'],
+                              ].map(([label, value], fi) => (
+                                <div key={fi} className="px-4 py-2">
+                                  <span className="text-[#94a3b8] font-semibold">{label}: </span>
+                                  <span className="text-[#334155] font-medium">{String(value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Decisions List */}
                   <div className="space-y-3">
@@ -825,6 +1315,36 @@ export default function MeetingDetailModal({
                       <p className="text-xs text-[#94a3b8] italic">Chưa ghi nhận quyết định nào từ AI.</p>
                     )}
                   </div>
+
+                  {/* Issues & Risks */}
+                  {issuesList.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">VẤN ĐỀ & RỦI RO ({issuesList.length})</h4>
+                      <div className="space-y-2">
+                        {issuesList.map((it, i) => (
+                          <div key={i} className="p-3.5 bg-amber-50/60 border border-amber-200/80 rounded-xl flex items-start gap-3 text-xs text-amber-900">
+                            <span className="shrink-0 mt-0.5 font-bold">{i + 1}.</span>
+                            <span className="font-medium">{it}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Next Steps */}
+                  {nextStepsList.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">BƯỚC TIẾP THEO ({nextStepsList.length})</h4>
+                      <div className="space-y-2">
+                        {nextStepsList.map((it, i) => (
+                          <div key={i} className="p-3.5 bg-[#f5f3ff] border border-[#eee9fe] rounded-xl flex items-start gap-3 text-xs text-[#4338ca]">
+                            <span className="shrink-0 mt-0.5 font-bold">{i + 1}.</span>
+                            <span className="font-medium">{it}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-12 space-y-3">
@@ -850,12 +1370,12 @@ export default function MeetingDetailModal({
                 {tasksList.length > 0 && (
                   <div className="flex flex-wrap items-center gap-3">
                     {/* Global Apply Project SearchableSelect */}
-                    {projectsList.length > 0 && (
+                    {taskProjectOptions.length > 0 && (
                       <div className="flex items-center gap-1.5 min-w-[200px]">
                         <span className="hidden sm:inline text-xs font-semibold text-[#475569] shrink-0">Gán tất cả:</span>
                         <SearchableSelect
                           label="dự án"
-                          options={projectsList.map((p) => ({ id: p.id, name: p.name }))}
+                          options={taskProjectOptions.map((p: any) => ({ id: p.id, name: p.name }))}
                           value=""
                           onChange={(val: any) => {
                             const pid = Number(val);
@@ -863,6 +1383,10 @@ export default function MeetingDetailModal({
                             const updated: Record<number, number> = {};
                             tasksList.forEach((_, i) => { updated[i] = pid; });
                             setTaskProjectsMap(updated);
+                            // Phase/Task cha thuộc về 1 project cụ thể — đổi project hàng
+                            // loạt thì phải reset hết, tránh giữ lại lựa chọn của dự án cũ.
+                            setTaskPhaseMap({});
+                            setTaskGroupMap({});
                           }}
                           placeholder="Gõ tìm & gán tất cả..."
                           searchThreshold={0}
@@ -883,62 +1407,228 @@ export default function MeetingDetailModal({
                 )}
               </div>
 
-              {tasksList.length > 0 ? (
-                <div className="space-y-3">
-                  {tasksList.map((t, idx) => {
-                    const priority = t.priority || 'Normal';
-                    const pBadge = priority === 'High' || priority === 'Critical'
-                      ? 'bg-red-100 text-red-800 border-red-200'
-                      : priority === 'Medium'
-                      ? 'bg-blue-100 text-blue-800 border-blue-200'
-                      : 'bg-emerald-100 text-emerald-800 border-emerald-200';
+              {tasksList.length > 0 && (
+                <p className="text-xs text-[#64748b]">
+                  Đã nhận diện <b className="text-[#0b1c30]">{tasksList.length} task</b> từ AI Summary.
+                  {tasksNeedingReviewCount > 0 ? (
+                    <> Các ô <span className="text-red-500 font-bold">viền đỏ</span> cần chọn/nhập lại trước khi push — <b className="text-red-500">{tasksNeedingReviewCount}/{tasksList.length} task</b>.</>
+                  ) : (
+                    <> Tất cả task đã đủ thông tin, sẵn sàng push.</>
+                  )}
+                </p>
+              )}
 
+              {tasksList.length > 0 ? (
+                <div className="space-y-4">
+                  {tasksList.map((t, idx) => {
                     const isChecked = taskCheckedMap[idx] !== false;
                     const currentTaskProjectId = taskProjectsMap[idx] || localProjectId || meeting.project_id || '';
+                    const edit = taskEditMap[idx] || {};
+                    const detailValue = edit.detail_task ?? (t.detail_task || t.title || t.name || '');
+                    const priorityValue = edit.priority ?? (t.priority || 'Normal');
+                    const mandayValue = edit.manday_est ?? (t.manday_est ?? '');
+                    const currentAssignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
+                    const currentPhase = taskPhaseMap[idx];
+                    const endDate = getEstimatedEndDate(edit.start_date, mandayValue);
+                    const fieldLabelCls = "block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1";
 
                     return (
-                      <div key={idx} className={`p-4 border rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-60 bg-slate-50'}`}>
-                        <div className="space-y-2 flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${pBadge}`}>
-                              {priority}
-                            </span>
-                            <h4 className="font-bold text-[#0b1c30] text-xs sm:text-sm">{t.detail_task || t.title || t.name}</h4>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-3 text-xs text-[#64748b] font-medium pt-0.5">
-                            <span>👤 Người thực hiện: <b className="text-[#0b1c30]">{t.owner || t.assigned_name || creatorName}</b></span>
-                            {t.deadline && <span>📅 Hạn chót: <b className="text-[#0b1c30]">{t.deadline}</b></span>}
-
-                            {/* Per-task Searchable Project Selector */}
-                            <div className="flex items-center gap-1.5 min-w-[200px]">
-                              <span className="text-[11px] font-bold text-[#475569] shrink-0">📁 Dự án:</span>
-                              <SearchableSelect
-                                label="dự án"
-                                options={projectsList.map((p) => ({ id: p.id, name: p.name }))}
-                                value={currentTaskProjectId}
-                                onChange={(val: any) => {
-                                  const pid = Number(val);
-                                  setTaskProjectsMap(prev => ({ ...prev, [idx]: pid }));
-                                }}
-                                placeholder="Gõ tìm dự án..."
-                                searchThreshold={0}
-                                className="w-48 sm:w-56"
-                              />
-                            </div>
+                      <div key={idx} className={`border rounded-2xl p-4 transition-all ${isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-50 bg-slate-50'}`}>
+                        {/* Header: checkbox + Detail Task */}
+                        <div className="flex items-start gap-3 mb-4">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => setTaskCheckedMap(prev => ({ ...prev, [idx]: e.target.checked }))}
+                            className="w-4 h-4 mt-1.5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer shrink-0"
+                            title="Chọn task để đẩy vào dự án"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <label className={fieldLabelCls}>Detail Task</label>
+                            <input
+                              type="text"
+                              value={detailValue}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], detail_task: e.target.value } }))}
+                              className="w-full px-2.5 py-1.5 text-sm font-bold text-[#0b1c30] border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
+                            />
+                            {t.kpi_output && (
+                              <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">
+                                <b className="text-[#64748b]">KPI/Output (AI):</b> {t.kpi_output}
+                              </p>
+                            )}
+                            {t.deadline && (
+                              <p className="text-[11px] text-[#94a3b8]">📅 AI gợi ý hạn: {t.deadline}</p>
+                            )}
                           </div>
                         </div>
 
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setTaskCheckedMap(prev => ({ ...prev, [idx]: checked }));
-                          }}
-                          className="w-5 h-5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer self-end sm:self-center shrink-0"
-                          title="Chọn task để đẩy vào dự án"
-                        />
+                        {/* Field grid — tự xuống dòng theo bề rộng màn hình, không cuộn ngang */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                          <div>
+                            <label className={fieldLabelCls}>Priority</label>
+                            <select
+                              value={priorityValue}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], priority: e.target.value } }))}
+                              className="text-xs border border-[#cbd5e1] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[#6366f1] w-full"
+                            >
+                              <option value="Critical">Critical</option>
+                              <option value="High">High</option>
+                              <option value="Normal">Normal</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Manday Est</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.25}
+                              value={mandayValue}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], manday_est: e.target.value } }))}
+                              placeholder="—"
+                              className="text-xs border border-[#cbd5e1] rounded-lg px-2 py-1.5 w-full focus:outline-none focus:border-[#6366f1]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Start Date</label>
+                            <input
+                              type="date"
+                              value={edit.start_date ?? ''}
+                              onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], start_date: e.target.value } }))}
+                              className={`text-xs border rounded-lg px-2 py-1.5 w-full focus:outline-none focus:border-[#6366f1] ${edit.start_date ? 'border-[#cbd5e1]' : 'border-red-400'}`}
+                            />
+                            {endDate && <p className="text-[10px] text-[#94a3b8] mt-1">→ Kết thúc dự kiến: {endDate}</p>}
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Assigned</label>
+                            <SearchableSelect
+                              label="người thực hiện"
+                              options={accountsList.map((a: any) => ({ id: a.id, name: a.full_name || a.display_name || a.email || `#${a.id}` }))}
+                              value={currentAssignee?.id || ''}
+                              onChange={(val: any) => {
+                                const aid = Number(val);
+                                const found = accountsList.find((a: any) => a.id === aid);
+                                setTaskAssigneeMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.full_name || found.display_name || found.email } : undefined }));
+                              }}
+                              placeholder="Gõ tìm người..."
+                              searchThreshold={0}
+                              className={`w-full ${currentAssignee ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Support</label>
+                            <SearchableSelect
+                              label="người hỗ trợ"
+                              options={accountsList.map((a: any) => ({ id: a.id, name: a.full_name || a.display_name || a.email || `#${a.id}` }))}
+                              value={taskSupportMap[idx]?.id || ''}
+                              onChange={(val: any) => {
+                                const aid = Number(val);
+                                const found = accountsList.find((a: any) => a.id === aid);
+                                setTaskSupportMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.full_name || found.display_name || found.email } : undefined }));
+                              }}
+                              placeholder="Không bắt buộc..."
+                              searchThreshold={0}
+                              className="w-full"
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Skill Solution</label>
+                            <SearchableSelect
+                              label="skill solution"
+                              options={allSkillGroups.map((g: any) => ({ id: g.id, name: g.name }))}
+                              value={taskSkillSolutionMap[idx]?.id || ''}
+                              onChange={(val: any) => {
+                                const gid = Number(val);
+                                const found = allSkillGroups.find((g: any) => g.id === gid);
+                                setTaskSkillSolutionMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.name } : undefined }));
+                                setTaskSkillVendorMap(prev => ({ ...prev, [idx]: undefined }));
+                              }}
+                              placeholder="Gõ tìm..."
+                              searchThreshold={0}
+                              className={`w-full ${taskSkillSolutionMap[idx] ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Skill Vendor</label>
+                            <SearchableSelect
+                              label="skill vendor"
+                              options={getSkillVendorsForGroup(taskSkillSolutionMap[idx]?.id).map((s: any) => ({ id: s.id, name: s.name }))}
+                              value={taskSkillVendorMap[idx]?.id || ''}
+                              onChange={(val: any) => {
+                                const sid = Number(val);
+                                const found = getSkillVendorsForGroup(taskSkillSolutionMap[idx]?.id).find((s: any) => s.id === sid);
+                                setTaskSkillVendorMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.name } : undefined }));
+                              }}
+                              disabled={!taskSkillSolutionMap[idx]}
+                              placeholder={taskSkillSolutionMap[idx] ? 'Gõ tìm...' : 'Chọn Skill Solution trước'}
+                              searchThreshold={0}
+                              className={`w-full ${!taskSkillSolutionMap[idx] || taskSkillVendorMap[idx] ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Dự án</label>
+                            <SearchableSelect
+                              label="dự án"
+                              options={taskProjectOptions.map((p: any) => ({ id: p.id, name: p.name }))}
+                              value={currentTaskProjectId}
+                              onChange={(val: any) => {
+                                const pid = Number(val);
+                                setTaskProjectsMap(prev => ({ ...prev, [idx]: pid }));
+                                // Phase/Task cha thuộc về 1 project cụ thể — đổi project thì reset lại 2 lựa chọn này
+                                setTaskPhaseMap(prev => ({ ...prev, [idx]: undefined }));
+                                setTaskGroupMap(prev => ({ ...prev, [idx]: undefined }));
+                              }}
+                              placeholder="Gõ tìm dự án..."
+                              searchThreshold={0}
+                              className={`w-full ${currentTaskProjectId ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Phase</label>
+                            {currentTaskProjectId ? (
+                              <PhaseSelectCell
+                                projectId={currentTaskProjectId}
+                                phase={currentPhase}
+                                onPhaseChange={(p) => setTaskPhaseMap(prev => ({ ...prev, [idx]: p }))}
+                                onTaskGroupChange={(g) => setTaskGroupMap(prev => ({ ...prev, [idx]: g }))}
+                              />
+                            ) : (
+                              <p className="text-[11px] text-slate-400 py-1.5">Chọn dự án trước</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelCls}>Task cha</label>
+                            {currentPhase ? (
+                              <TaskGroupSelectCell
+                                phase={currentPhase}
+                                taskGroup={taskGroupMap[idx]}
+                                onTaskGroupChange={(g) => setTaskGroupMap(prev => ({ ...prev, [idx]: g }))}
+                              />
+                            ) : (
+                              <p className="text-[11px] text-slate-400 py-1.5">Chọn phase trước</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Notes — full width */}
+                        <div className="mt-3">
+                          <label className={fieldLabelCls}>Notes</label>
+                          <textarea
+                            value={edit.notes ?? (t.kpi_output || '')}
+                            onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], notes: e.target.value } }))}
+                            rows={2}
+                            placeholder="Ghi chú thêm (không bắt buộc)..."
+                            className="text-xs border border-[#cbd5e1] rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-[#6366f1] resize-y"
+                          />
+                        </div>
                       </div>
                     );
                   })}
@@ -1001,45 +1691,112 @@ export default function MeetingDetailModal({
             </div>
           )}
 
-          {/* TAB 5: THÔNG TIN CHI TIẾT */}
-          {activeTab === 'details' && (
-            <div className="bg-white rounded-2xl p-6 border border-[#e2e8f0] shadow-2xs space-y-6">
-              <div className="flex items-center gap-2 text-[#6366f1] border-b border-slate-100 pb-4">
-                <ShieldCheck size={20} />
-                <h3 className="text-base font-extrabold text-[#0b1c30]">Thông Tin Kỹ Thuật & Chi Tiết</h3>
+          {/* TAB 6: HIỆU QUẢ (điểm hiệu quả — deterministic, tính từ dữ liệu thật) */}
+          {activeTab === 'score' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 space-y-5">
+                <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2 text-[#6366f1]">
+                      <Gauge size={18} />
+                      <h3 className="text-sm font-extrabold text-[#0b1c30]">Chi tiết điểm hiệu quả</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRecalculateScore}
+                      disabled={isRecalculatingScore}
+                      className="px-3 py-1.5 text-[11px] font-bold text-[#6366f1] border border-[#e0e7ff] bg-[#f5f3ff] hover:bg-[#eee9fe] rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {isRecalculatingScore ? '⏳ Đang tính...' : '↻ Tính lại điểm'}
+                    </button>
+                  </div>
+
+                  {scoreTotal === null ? (
+                    <p className="text-xs text-[#64748b]">Chưa có điểm hiệu quả — bấm "Tính lại điểm" để tính từ dữ liệu hiện tại.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <span className={`text-3xl font-extrabold ${scoreTotal >= 75 ? 'text-emerald-600' : scoreTotal >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                          {scoreTotal}
+                        </span>
+                        <span className="text-xs text-[#64748b]">/ 100 điểm · {score.score_status === 'final' ? 'Đã chốt' : 'Tạm tính (chờ task tới hạn)'}</span>
+                      </div>
+
+                      {[
+                        { label: 'Chuẩn bị', value: score.score_prep, max: 25, color: 'bg-[#6366f1]' },
+                        { label: 'Điều hành', value: score.score_execution, max: 15, color: 'bg-[#5aa1ed]' },
+                        { label: 'Kết quả & KPI Tasks', value: score.score_result, max: 35, color: 'bg-[#07966d]' },
+                        { label: 'Thực thi', value: score.score_followthrough, max: 20, color: 'bg-[#f5a542]' },
+                        { label: 'Phản hồi', value: score.score_feedback, max: 5, color: 'bg-[#37b792]' },
+                      ].map(row => (
+                        <div key={row.label} className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-[#475569]">
+                            <span>{row.label}</span>
+                            <span>{row.value ?? 0}/{row.max}</span>
+                          </div>
+                          <ProgressBar value={((row.value ?? 0) / row.max) * 100} color={row.color} showLabel={false} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-3">
+                  <h3 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">Đồng bộ KPI Tasks</h3>
+                  {tasksList.length === 0 ? (
+                    <p className="text-xs text-[#64748b]">Chưa có task sau họp.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {tasksList.map((t: any, idx: number) => {
+                        const synced = Boolean(t.imported_task_id || t.kpi_task_id);
+                        const pushed = Boolean(t.ai_task_inbox_id);
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                            <span className="font-semibold text-[#0b1c30] truncate pr-3">{t.detail_task || t.title || t.name}</span>
+                            {synced ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0">✓ Đã vào KPI Tasks</span>
+                            ) : pushed ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 shrink-0">! Chờ import ở Project</span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 shrink-0">× Chưa push</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">ID Cuộc họp</span>
-                  <p className="font-bold text-[#0b1c30]">#{meeting.id}</p>
-                </div>
-
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Nền tảng & Host Link</span>
-                  <p className="font-bold text-[#6366f1] truncate">{hostJoinLink}</p>
-                </div>
-
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Dự án liên kết</span>
-                  <p className="font-bold text-[#0b1c30]">{projectName || 'Chưa gán dự án'}</p>
-                </div>
-
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Thời gian tạo bản ghi</span>
-                  <p className="font-bold text-[#0b1c30]">{meeting.created_at ? String(meeting.created_at) : 'N/A'}</p>
+              <div className="lg:col-span-4">
+                <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-3">
+                  <h3 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">Đánh giá nhanh</h3>
+                  <p className="text-[11px] text-[#64748b]">Cuộc họp này có hữu ích với bạn không?</p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSubmitFeedback(true)}
+                      disabled={feedbackSubmitting}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold border transition-colors disabled:opacity-50 ${
+                        feedbackChoice === 'helpful' ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'border-[#cbd5e1] text-[#475569] hover:bg-slate-50'
+                      }`}
+                    >
+                      <ThumbsUp size={14} /> Hữu ích
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSubmitFeedback(false)}
+                      disabled={feedbackSubmitting}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold border transition-colors disabled:opacity-50 ${
+                        feedbackChoice === 'not_helpful' ? 'bg-red-50 border-red-300 text-red-700' : 'border-[#cbd5e1] text-[#475569] hover:bg-slate-50'
+                      }`}
+                    >
+                      <ThumbsDown size={14} /> Chưa hữu ích
+                    </button>
+                  </div>
+                  {feedbackChoice && <p className="text-[11px] text-emerald-600 font-semibold">✓ Đã ghi nhận phản hồi.</p>}
                 </div>
               </div>
-
-              {/* Raw AI Summary Payload if available */}
-              {meeting.ai_summary && (
-                <div className="space-y-2 pt-2">
-                  <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">DỮ LIỆU GỐC AI PAYLOAD (JSON)</h4>
-                  <pre className="p-4 bg-slate-900 text-emerald-400 rounded-2xl text-[11px] font-mono overflow-x-auto max-h-60">
-                    {JSON.stringify(meeting.ai_summary, null, 2)}
-                  </pre>
-                </div>
-              )}
             </div>
           )}
 

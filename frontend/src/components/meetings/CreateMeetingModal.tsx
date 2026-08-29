@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Share2 } from 'lucide-react';
-import { generateMeetingLink } from '@/lib/api';
+import { generateMeetingLink, generateAiMeetingContent, getProjects, getMembers } from '@/lib/api';
+import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (meeting: any) => void;
+  onSave: (meeting: any) => void | Promise<void>;
   initialData?: any;
 }
 
@@ -18,6 +19,10 @@ interface MeetingFormData {
   link: string;
   transcript?: string;
   auto_summarize?: boolean;
+  objective?: string;
+  agenda?: string;
+  project_ids: number[];
+  member_ids: number[];
 }
 
 export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData }: CreateMeetingModalProps) {
@@ -29,20 +34,42 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     duration: '60',
     link: '',
     transcript: '',
-    auto_summarize: true
+    auto_summarize: true,
+    objective: '',
+    agenda: '',
+    project_ids: [],
+    member_ids: []
   });
+  const [projectsList, setProjectsList] = useState<any[]>([]);
+  const [membersList, setMembersList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // Ref, not state: reads/writes happen synchronously so rapid repeated
+  // clicks within the same render tick still see the lock (state would be
+  // stale-closured across those clicks since React hasn't re-rendered yet).
+  const isSubmittingRef = useRef(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
+  const [isGeneratingAiContent, setIsGeneratingAiContent] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (initialData) {
-      setFormData({ 
-        ...initialData, 
+      setFormData({
+        ...initialData,
         platform: initialData.platform || 'Google Meet',
         transcript: initialData.transcript || '',
-        auto_summarize: true
+        auto_summarize: true,
+        objective: initialData.objective || '',
+        agenda: initialData.agenda || '',
+        project_ids: Array.isArray(initialData.project_ids) && initialData.project_ids.length
+          ? initialData.project_ids
+          : (initialData.project_id ? [initialData.project_id] : []),
+        // Prefill from the meeting's real MeetingMember rows (member_id, not
+        // the synthesized "Host" entry which has no member_id) so editing
+        // doesn't silently drop everyone already added.
+        member_ids: (initialData.members || [])
+          .map((mm: any) => mm.member_id)
+          .filter((id: any) => id !== undefined && id !== null)
       });
     } else {
       const today = new Date().toISOString().split('T')[0];
@@ -54,11 +81,27 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         duration: '60',
         link: '',
         transcript: '',
-        auto_summarize: true
+        auto_summarize: true,
+        objective: '',
+        agenda: '',
+        project_ids: [],
+        member_ids: []
       });
     }
     setError('');
   }, [initialData, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    getProjects().then((res: any) => {
+      const items = res?.data || res || [];
+      if (Array.isArray(items)) setProjectsList(items);
+    }).catch(() => {});
+    getMembers().then((res: any) => {
+      const items = res?.data || res || [];
+      if (Array.isArray(items)) setMembersList(items);
+    }).catch(() => {});
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -110,54 +153,112 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return; // synchronous guard — see ref comment above
+    isSubmittingRef.current = true;
     setError('');
-    
+
     if (!formData.title || !formData.date || !formData.time) {
       setError('Vui lòng điền đầy đủ thông tin bắt buộc');
+      isSubmittingRef.current = false;
       return;
     }
 
     setIsLoading(true);
     try {
-      onSave({ ...formData, meeting_url: formData.link });
+      // Must await — otherwise isLoading resets before the create request
+      // finishes, the button re-enables while still in flight, and repeated
+      // clicks fire off duplicate meetings.
+      await onSave({ ...formData, meeting_url: formData.link });
     } catch (err: any) {
       setError(err.message || 'Có lỗi xảy ra');
     } finally {
       setIsLoading(false);
+      isSubmittingRef.current = false;
     }
   };
 
+  const handleGenerateAiContent = async () => {
+    if (!formData.title) {
+      setError('Nhập tên cuộc họp trước để AI đề xuất nội dung');
+      return;
+    }
+    setIsGeneratingAiContent(true);
+    setError('');
+    try {
+      const firstProject = projectsList.find((p: any) => p.id === formData.project_ids[0]);
+      const res = await generateAiMeetingContent({ title: formData.title, project_name: firstProject?.name });
+      if (res?.success) {
+        setFormData(prev => ({ ...prev, objective: res.goal || prev.objective, agenda: res.agenda || prev.agenda }));
+      } else {
+        setError('AI không đề xuất được nội dung, hãy nhập trực tiếp');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || err.message || 'AI đề xuất thất bại');
+    } finally {
+      setIsGeneratingAiContent(false);
+    }
+  };
+
+  // Mirrors the server's prep-score formula (meeting_score_engine.py) for instant feedback.
+  const hasObjective = Boolean(formData.objective && formData.objective.trim());
+  const hasAgenda = Boolean(formData.agenda && formData.agenda.trim());
+  const rawReadiness = (formData.title ? 2 : 0) + (formData.project_ids.length ? 3 : 0) + (hasObjective ? 8 : 0) + (hasAgenda ? 10 : 0) + (formData.date && formData.time ? 2 : 0);
+  const readinessScore = hasObjective && hasAgenda ? rawReadiness : Math.min(rawReadiness, 5);
+
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
-        
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+
         {/* Header */}
-        <div className="px-6 py-4 border-b border-[#c2c6d6]/40 flex items-center justify-between bg-[#f8f9fe]">
+        <div className="px-6 py-4 border-b border-[#c2c6d6]/40 flex items-center justify-between bg-[#f8f9fe] shrink-0">
           <div className="flex items-center gap-2 text-[#0058be]">
             <CalendarIcon size={18} />
             <h2 className="text-[14px] font-bold text-[#0b1c30]">
               {initialData ? 'Sửa Meeting' : 'Tạo Meeting mới'}
             </h2>
           </div>
-          <button onClick={onClose} className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-[#eff4ff] transition-colors">
+          <button onClick={onClose} disabled={isLoading} className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-[#eff4ff] transition-colors disabled:opacity-40">
             <X size={18} />
           </button>
         </div>
 
         {/* Body & Form */}
-        <form onSubmit={handleSubmit}>
-          <div className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
             {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg font-semibold border border-red-200">{error}</div>}
             
             <div>
               <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Tên cuộc họp *</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={formData.title}
                 onChange={e => setFormData({...formData, title: e.target.value})}
-                placeholder="VD: Review tiến độ tuần 26" 
+                placeholder="VD: Review tiến độ tuần 26"
                 className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Dự án liên quan</label>
+                <SearchableSelect
+                  label="dự án"
+                  isMulti
+                  options={projectsList.map((p: any) => ({ id: p.id, name: p.name }))}
+                  value={formData.project_ids}
+                  onChange={(ids: number[]) => setFormData({ ...formData, project_ids: ids })}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thành viên tham gia</label>
+                <SearchableSelect
+                  label="thành viên"
+                  isMulti
+                  options={membersList.map((m: any) => ({ id: m.id, name: m.display_name || m.full_name || `#${m.id}` }))}
+                  value={formData.member_ids}
+                  onChange={(ids: number[]) => setFormData({ ...formData, member_ids: ids })}
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -192,8 +293,16 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
+            {formData.platform === 'Google Meet' && (
+              <div className="p-3 bg-[#eff6ff] border border-[#bfdbfe] rounded-lg text-[11px] text-[#1e40af] leading-relaxed flex items-start gap-2">
+                <span className="material-symbols-outlined text-[#2563eb] text-[16px] shrink-0 mt-0.5">info</span>
+                <div>
+                  <span className="font-bold">Lưu ý host cuộc họp:</span> Link Google Meet dùng tài khoản chung <b>mkt.szone@gmail.com</b>. Người đóng vai trò host (duyệt người tham gia vào phòng chờ) cần đăng nhập Google bằng đúng tài khoản này trước khi bấm vào link, nếu không sẽ không ai duyệt được.
+                </div>
+              </div>
+            )}
+
+            <div>
                 <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Giờ bắt đầu (AM/PM)</label>
                 <div className="flex items-center gap-1">
                   <select
@@ -236,18 +345,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     </button>
                   </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời lượng (phút)</label>
-                <input 
-                  type="number"
-                  min="1"
-                  value={formData.duration}
-                  onChange={e => setFormData({...formData, duration: e.target.value})}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                  placeholder="VD: 60"
-                />
-              </div>
             </div>
 
             <div>
@@ -306,6 +403,63 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               )}
             </div>
 
+            <div>
+              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Mục tiêu & kết quả mong đợi</label>
+              <textarea
+                value={formData.objective}
+                onChange={e => setFormData({ ...formData, objective: e.target.value })}
+                placeholder="Nhập mục tiêu và kết quả mong đợi của cuộc họp — hoặc để trống rồi dùng AI đề xuất bên dưới..."
+                rows={2}
+                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Agenda / vấn đề cần xử lý</label>
+              <textarea
+                value={formData.agenda}
+                onChange={e => setFormData({ ...formData, agenda: e.target.value })}
+                placeholder={'1. Nội dung cần cập nhật\n2. Vấn đề cần thảo luận\n3. Quyết định cần chốt'}
+                rows={3}
+                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
+              />
+            </div>
+
+            {/* AI Meeting Copilot — đặt sau Mục tiêu/Agenda: gõ tay trước, cần thì mới nhờ AI đề xuất/viết lại */}
+            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-[#e7e3ff] text-[#6d28d9] flex items-center justify-center shrink-0">
+                <Sparkles size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-[#6d28d9]">AI Meeting Copilot</p>
+                <p className="text-[11px] text-[#516079] leading-relaxed">Chưa biết viết gì? Để AI soạn hộ mục tiêu & agenda từ tên cuộc họp, rồi bạn chỉnh lại.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateAiContent}
+                disabled={isGeneratingAiContent}
+                className="px-3 py-2 text-[11px] font-bold text-white bg-[#6d28d9] hover:bg-[#5b21b6] rounded-lg transition-colors disabled:opacity-60 shrink-0"
+              >
+                {isGeneratingAiContent ? 'Đang soạn...' : '✦ AI đề xuất'}
+              </button>
+            </div>
+
+            <div className="border border-[#e2e8f0] rounded-xl p-3 bg-[#fafbfc] space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-bold text-[#475569]">
+                <span>Mức sẵn sàng trước họp</span>
+                <span>{readinessScore}/25 điểm</span>
+              </div>
+              <div className="h-1.5 bg-[#e7ebf1] rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-300"
+                  style={{ width: `${(readinessScore / 25) * 100}%`, background: 'linear-gradient(90deg,#635bff,#35b58d)' }}
+                />
+              </div>
+              {(!hasObjective || !hasAgenda) && (
+                <p className="text-[10px] text-amber-700">Thiếu mục tiêu hoặc agenda sẽ giới hạn điểm Chuẩn bị tối đa 5/25.</p>
+              )}
+            </div>
+
             {/* Auto AI Summary Notice */}
             <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 space-y-1">
               <div className="flex items-center gap-1.5 font-bold text-[#6d28d9] text-xs">
@@ -319,11 +473,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 bg-[#f8f9fe] border-t border-[#c2c6d6]/40 flex items-center justify-end gap-3">
-            <button 
-              type="button" 
+          <div className="px-6 py-4 bg-[#f8f9fe] border-t border-[#c2c6d6]/40 flex items-center justify-end gap-3 shrink-0">
+            <button
+              type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-bold text-[#565e74] bg-white border border-[#c2c6d6] rounded-lg hover:bg-[#f0f2f5] transition-colors"
+              disabled={isLoading}
+              className="px-4 py-2 text-xs font-bold text-[#565e74] bg-white border border-[#c2c6d6] rounded-lg hover:bg-[#f0f2f5] transition-colors disabled:opacity-40"
             >
               Hủy
             </button>

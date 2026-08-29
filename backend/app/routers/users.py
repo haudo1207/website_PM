@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.user import User
+from ..models.workspace_access import UserWorkspaceAccess
+from ..models.system_category import Workspace
 from ..utils.auth import require_admin, hash_password, get_current_user
-from ..utils.access import default_scope, is_valid_scope, valid_data_scopes
+from ..utils.access import ALL_SCOPE, default_scope, is_valid_scope, valid_data_scopes
 from .accounts import (
     VALID_ROLES,
     ensure_superadmin_remains,
@@ -209,9 +212,33 @@ def delete_user(uid: int, db: Session = Depends(get_db), admin=Depends(require_a
     return {"message": "Deleted"}
 
 @router.get("/me")
-def me(user=Depends(get_current_user)):
+def me(user=Depends(get_current_user), db: Session = Depends(get_db)):
     member = user.member
     skills = [s.name for s in user.skills] or ([s.name for s in member.skills] if member else [])
+
+    # Surface the full Workspace grant list (multi-Workspace support for
+    # Leaders) — additive to the legacy `data_scope` column. Super Admins
+    # receive every active Workspace and `workspace_scope='all'` so callers
+    # know they have global access.
+    if (user.role or "").strip().lower() == "super_admin" or (user.data_scope or "").strip().lower() == ALL_SCOPE:
+        workspace_ids = [ALL_SCOPE]
+        workspaces = [
+            {"id": w.id, "code": w.code, "name": w.name}
+            for w in db.query(Workspace).order_by(Workspace.id.asc()).all()
+        ]
+    else:
+        rows = (
+            db.query(Workspace)
+            .join(UserWorkspaceAccess, UserWorkspaceAccess.workspace_id == Workspace.id)
+            .filter(UserWorkspaceAccess.user_id == user.id)
+            .order_by(Workspace.id.asc())
+            .all()
+        )
+        workspace_ids = [w.code for w in rows]
+        workspaces = [{"id": w.id, "code": w.code, "name": w.name} for w in rows]
+        if not workspace_ids and user.data_scope:
+            workspace_ids = [(user.data_scope or "").strip().lower()]
+
     return {
         "id": user.id,
         "email": user.email,
@@ -219,6 +246,8 @@ def me(user=Depends(get_current_user)):
         "avatar_url": user.avatar_url,
         "role": user.role,
         "data_scope": user.data_scope,
+        "workspace_ids": workspace_ids,
+        "workspaces": workspaces,
         "member_id": user.member_id,
         "is_active": user.is_active,
         "login_method": "Google OAuth" if user.google_sub else ("Microsoft OAuth" if user.outlook_sub else "Password"),
@@ -231,8 +260,29 @@ def me(user=Depends(get_current_user)):
             "phone": member.phone,
             "experience_year": member.experience_year,
             "leader_name": member.leader_name,
+            "zalo_name": member.zalo_name,
         } if member else None,
     }
+
+
+class UpdateZaloNameRequest(BaseModel):
+    zalo_name: str
+
+
+@router.patch("/me/zalo-name")
+def update_my_zalo_name(payload: UpdateZaloNameRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Self-service — any user sets their OWN Zalo display name here so the
+    Zalo task-assignment feature (@mention resolution, roster matching) can
+    recognize them; admins can additionally set it for anyone else via the
+    Members admin panel (PUT /members/{id})."""
+    member = user.member
+    if not member:
+        raise HTTPException(400, "Tài khoản chưa liên kết hồ sơ nhân sự, không thể đặt tên Zalo.")
+    zalo_name = payload.zalo_name.strip()
+    member.zalo_name = zalo_name or None
+    db.commit()
+    return {"zalo_name": member.zalo_name}
+
 
 @router.get("/me/login-history")
 def my_login_history(limit: int = 20, db: Session = Depends(get_db), user=Depends(get_current_user)):

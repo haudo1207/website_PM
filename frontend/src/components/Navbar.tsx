@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin } from '@/lib/auth';
 import { useState, useEffect, useRef, Suspense } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { getWorkspaces, getMe } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getWorkspaces, getMe, getInboxNotifications, markNotificationRead, requestZaloDemo, InboxNotificationItem } from '@/lib/api';
 import { brand } from '@/lib/brand';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
@@ -16,7 +16,7 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 // it ends up pointing at whichever instance mounted last, so a click inside
 // the *other* instance's dropdown reads as "outside" and closes the menu
 // before the Link's navigation can fire.
-function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null }) {
+function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode, fixedWsNames, onProjectHub }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null; fixedWsNames?: string | null; onProjectHub: boolean }) {
   const { setWorkspaceCode } = useWorkspaceFilter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -24,6 +24,19 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode 
   // Leader/Member/Viewer: the assigned Workspace is authoritative and fixed —
   // the switcher becomes a static label (no dropdown, no way to switch).
   const fixedWs = fixedWsCode ? (workspaces.find((w: any) => w.code === fixedWsCode) || { name: fixedWsCode }) : null;
+
+  // Picking a Workspace from any OTHER page (Dashboard/KPI/Accounts/...)
+  // must just update the shared filter and stay put — only on Project Hub
+  // itself (where the URL segment is authoritative) does it navigate.
+  const handlePick = (code: string | null) => {
+    setWorkspaceCode(code);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('active_workspace_code', code || '');
+      window.dispatchEvent(new CustomEvent('workspace-changed', { detail: code || '' }));
+    }
+    setOpen(false);
+    onNavigate?.();
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -52,6 +65,25 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode 
     );
   }
 
+  // Multi-Workspace Leader label (read-only badge; the user cannot switch
+  // because their access is the union of every granted Workspace).
+  if (fixedWsNames) {
+    return (
+      <div className="relative mb-2" ref={ref}>
+        <div
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60"
+          title={`Workspaces được gán: ${fixedWsNames}`}
+        >
+          <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🗂️</span>
+          <span className="flex-1 min-w-0 text-left">
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspaces</span>
+            <span className="block text-[12.5px] font-bold text-white truncate">{fixedWsNames}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative mb-2" ref={ref}>
       <button
@@ -69,20 +101,273 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode 
       </button>
       {open && (
         <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-20 py-1">
-          <Link href="/project-hub" onClick={() => { setWorkspaceCode(null); setOpen(false); onNavigate?.(); }}
-            className={`block px-3 py-2 text-xs font-semibold transition-colors ${
-              !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
-            }`}>
-            Tất cả Workspace
-          </Link>
-          {workspaces.map((ws: any) => (
-            <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => { setWorkspaceCode(ws.code); setOpen(false); onNavigate?.(); }}
-              className={`block px-3 py-2 text-xs font-semibold truncate transition-colors ${
-                ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+          {onProjectHub ? (
+            <Link href="/project-hub" onClick={() => handlePick(null)}
+              className={`block px-3 py-2 text-xs font-semibold transition-colors ${
+                !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
               }`}>
-              {ws.name}
+              Tất cả Workspace
             </Link>
+          ) : (
+            <div role="button" tabIndex={0} onClick={() => handlePick(null)}
+              className={`block px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                !currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+              }`}>
+              Tất cả Workspace
+            </div>
+          )}
+          {workspaces.map((ws: any) => (
+            onProjectHub ? (
+              <Link key={ws.code} href={`/project-hub/${ws.code}`} onClick={() => handlePick(ws.code)}
+                className={`block px-3 py-2 text-xs font-semibold truncate transition-colors ${
+                  ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                }`}>
+                {ws.name}
+              </Link>
+            ) : (
+              <div key={ws.code} role="button" tabIndex={0} onClick={() => handlePick(ws.code)}
+                className={`block px-3 py-2 text-xs font-semibold truncate transition-colors cursor-pointer ${
+                  ws.code === currentWsCode ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                }`}>
+                {ws.name}
+              </div>
+            )
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Bell icon + dropdown for the notification inbox — mounted once in the
+// desktop sidebar header and once in the mobile top bar (same reason
+// WorkspaceSwitcher needs its own ref/state per mount: both live in the DOM
+// at once, CSS just hides one of them, so a shared ref would only ever
+// attach to whichever instance rendered last). Both instances share the
+// same react-query cache key, so react-query dedupes the actual polling to
+// a single request/interval and a read-mark in one instance is reflected in
+// the other immediately via the shared cache.
+function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
+  const [open, setOpen] = useState(false);
+  const [demoNotifId, setDemoNotifId] = useState<number | null>(null);
+  const [demoDate, setDemoDate] = useState('');
+  const [demoTime, setDemoTime] = useState('');
+  const [sendingDemo, setSendingDemo] = useState(false);
+  const [demoError, setDemoError] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  const { data } = useQuery({
+    queryKey: ['inbox-notifications'],
+    queryFn: () => getInboxNotifications(),
+    refetchInterval: 20000,
+  });
+  const items = data?.items || [];
+  const unread = data?.unread_count || 0;
+  const demoNotif = demoNotifId !== null ? items.find(x => x.id === demoNotifId) || null : null;
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const markRead = async (id: number) => {
+    await markNotificationRead(id).catch(() => {});
+    queryClient.setQueryData(['inbox-notifications'], (prev: any) => {
+      if (!prev) return prev;
+      const target = prev.items.find((x: InboxNotificationItem) => x.id === id);
+      if (!target || target.is_read) return prev;
+      return {
+        unread_count: Math.max(0, prev.unread_count - 1),
+        items: prev.items.map((x: InboxNotificationItem) => (x.id === id ? { ...x, is_read: true } : x)),
+      };
+    });
+  };
+
+  const openDemoModal = (n: InboxNotificationItem) => {
+    setDemoNotifId(n.id);
+    setDemoDate('');
+    setDemoTime('');
+    setDemoError('');
+    if (!n.is_read) markRead(n.id);
+  };
+
+  const handleItemClick = (n: InboxNotificationItem) => {
+    if (n.notification_type === 'zalo_demo_ready' && n.zalo_conversation_id && n.task_id) {
+      openDemoModal(n);
+      return;
+    }
+    if (!n.is_read) markRead(n.id);
+    setOpen(false);
+    if (n.project_id) {
+      window.location.href = `/project/detail/tasks?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
+    }
+  };
+
+  const handleSendDemo = async () => {
+    if (!demoNotif || !demoNotif.zalo_conversation_id || !demoNotif.task_id) return;
+    if (!demoDate || !demoTime) { setDemoError('Chọn cả ngày và giờ demo.'); return; }
+    setSendingDemo(true);
+    setDemoError('');
+    try {
+      await requestZaloDemo(demoNotif.zalo_conversation_id, { task_id: demoNotif.task_id, demo_at: `${demoDate}T${demoTime}` });
+      setDemoNotifId(null);
+      setOpen(false);
+    } catch (err: any) {
+      setDemoError(err?.response?.data?.detail || 'Gửi yêu cầu demo thất bại.');
+    } finally {
+      setSendingDemo(false);
+    }
+  };
+
+  const bellIcon = (
+    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+    </svg>
+  );
+
+  return (
+    <div ref={ref} className="relative">
+      {variant === 'sidebar' ? (
+        <button
+          onClick={() => setOpen(o => !o)}
+          title="Thông báo"
+          className="relative flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors shrink-0"
+        >
+          {bellIcon}
+          {unread > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+              {unread > 9 ? '9+' : unread}
+            </span>
+          )}
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen(o => !o)}
+          title="Thông báo"
+          className="relative p-2 text-slate-400 hover:text-white"
+        >
+          {bellIcon}
+          {unread > 0 && (
+            <span className="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+              {unread > 9 ? '9+' : unread}
+            </span>
+          )}
+        </button>
+      )}
+
+      {open && (
+        <div
+          className={`fixed z-[300] w-[92vw] max-w-[380px] max-h-[70vh] overflow-y-auto bg-white border border-slate-300 rounded-2xl shadow-2xl flex flex-col ${
+            variant === 'sidebar' ? 'left-[240px] top-4' : 'right-3 top-14'
+          }`}
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 sticky top-0 bg-white z-10">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🔔</span>
+              <h4 className="text-sm font-extrabold text-[#0b1c30]">Thông báo</h4>
+              {unread > 0 && (
+                <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-[11px] font-bold rounded-full">{unread} chưa đọc</span>
+              )}
+            </div>
+            <button onClick={() => setOpen(false)} className="text-slate-500 hover:text-slate-700 text-base cursor-pointer">✕</button>
+          </div>
+
+          {items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+              <span className="text-4xl mb-2">📭</span>
+              <p className="text-[13px]">Chưa có thông báo nào</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-200">
+              {items.map(n => (
+                <div
+                  key={n.id}
+                  onClick={() => handleItemClick(n)}
+                  className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-70' : 'bg-indigo-50/60'}`}
+                >
+                  <span className="text-xl mt-0.5 shrink-0">
+                    {n.notification_type === 'zalo_demo_ready' ? '🎥' : n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[13px] leading-snug ${n.is_read ? 'text-slate-600' : 'text-[#0b1c30] font-semibold'}`}>
+                      {n.message}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {n.project_name && (
+                        <span className="text-[11px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">{n.project_name}</span>
+                      )}
+                      {n.zalo_conversation_name && (
+                        <span className="text-[11px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">💬 {n.zalo_conversation_name}</span>
+                      )}
+                    </div>
+                    {n.notification_type === 'zalo_demo_ready' && n.zalo_conversation_id && n.task_id && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openDemoModal(n); }}
+                        className="mt-2 px-3 py-1.5 text-[12px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
+                        🎥 Yêu cầu xem demo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {demoNotif && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[400] p-4"
+          onClick={() => !sendingDemo && setDemoNotifId(null)}
+        >
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-900 mb-1">Yêu cầu xem demo</h3>
+            <p className="text-[13px] text-slate-600 mb-4">{demoNotif.message}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-600 block mb-1.5">Ngày</label>
+                <input
+                  type="date"
+                  value={demoDate}
+                  onChange={e => setDemoDate(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm font-semibold text-slate-900 bg-slate-50 border-2 border-slate-400 rounded-lg focus:border-[#0058be] focus:bg-white focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600 block mb-1.5">Giờ</label>
+                <input
+                  type="time"
+                  value={demoTime}
+                  onChange={e => setDemoTime(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm font-semibold text-slate-900 bg-slate-50 border-2 border-slate-400 rounded-lg focus:border-[#0058be] focus:bg-white focus:outline-none"
+                />
+              </div>
+            </div>
+            {demoError && <p className="text-xs text-red-600 mt-2">{demoError}</p>}
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setDemoNotifId(null)}
+                disabled={sendingDemo}
+                className="px-4 py-2 text-sm font-semibold rounded-lg border-2 border-slate-300 text-slate-700 hover:bg-slate-50"
+              >
+                Huỷ
+              </button>
+              <button
+                onClick={handleSendDemo}
+                disabled={sendingDemo}
+                className="px-4 py-2 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {sendingDemo ? 'Đang gửi…' : 'Gửi yêu cầu'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -108,8 +393,10 @@ function NavbarContent() {
   const workspaces = workspacesData || [];
 
   // The authoritative Workspace assignment comes from the backend
-  // (GET /users/me → data_scope). Leader/Member/Viewer have their Workspace
-  // fixed to that assignment; only Super Admin keeps the selectable dropdown.
+  // (GET /users/me → data_scope for legacy single-Workspace, workspace_ids[]
+  // for the new multi-Workspace Leader grant). Leader/Member/Viewer have
+  // their Workspace(s) fixed to that assignment; only Super Admin keeps
+  // the selectable dropdown.
   const { data: meData } = useQuery({
     queryKey: ['me-profile'],
     queryFn: () => getMe(),
@@ -117,8 +404,19 @@ function NavbarContent() {
   });
   const effectiveRole = meData?.role || getRole() || '';
   const isFullAccessUser = effectiveRole === 'super_admin';
-  const fixedWsCode = !isFullAccessUser && meData?.data_scope && meData.data_scope !== 'all'
-    ? meData.data_scope
+  // Multi-Workspace aware — for Leaders with several Workspaces we render
+  // a comma-separated list in the switcher label rather than collapsing it
+  // back to the first code (which would mislead the user).
+  const myWorkspaceIds: string[] = (() => {
+    if (!meData) return [];
+    if (isFullAccessUser || (meData.data_scope || '').toLowerCase() === 'all') return [];
+    const ids = (meData.workspace_ids || []).filter(code => code && code !== 'all');
+    if (ids.length) return ids;
+    return meData.data_scope ? [meData.data_scope] : [];
+  })();
+  const fixedWsCode = !isFullAccessUser && myWorkspaceIds.length === 1 ? myWorkspaceIds[0] : null;
+  const fixedWsNames = !isFullAccessUser && myWorkspaceIds.length > 1
+    ? myWorkspaceIds.map(code => (workspaces.find((w: any) => w.code === code)?.name) || code).join(', ')
     : null;
 
   useEffect(() => {
@@ -142,6 +440,10 @@ function NavbarContent() {
   const { workspaceCode: ctxWorkspaceCode, setWorkspaceCode } = useWorkspaceFilter();
   const urlWsCode = path.startsWith('/project-hub/') ? path.split('/')[2] : null;
   const currentWsCode = fixedWsCode || urlWsCode || ctxWorkspaceCode;
+  // Only Project Hub encodes the Workspace in its URL — the switcher should
+  // navigate there; everywhere else it must just update the shared filter
+  // and stay on the current page (was wrongly bouncing to Project Hub).
+  const isOnProjectHub = path.startsWith('/project-hub');
 
   useEffect(() => {
     if (!fixedWsCode && urlWsCode && urlWsCode !== ctxWorkspaceCode) setWorkspaceCode(urlWsCode);
@@ -154,6 +456,18 @@ function NavbarContent() {
       }`}>
       {projectHubIcon}
       Projects
+    </Link>
+  );
+
+  const renderDashboardLink = (onNavigate?: () => void) => (
+    <Link href="/dashboard/overview" onClick={onNavigate}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+        path.startsWith('/dashboard') ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+      }`}>
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+      </svg>
+      Dashboard
     </Link>
   );
 
@@ -178,6 +492,11 @@ function NavbarContent() {
         <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
       </svg>
     ), show: isAdmin() },
+    { href: '/zalo-account', label: 'Tài khoản Zalo giao task', icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+      </svg>
+    ), show: isAdmin() },
   ].filter(n => n.show !== false);
 
   return (
@@ -188,20 +507,23 @@ function NavbarContent() {
           <img src={brand.logo} alt={`${brand.name} logo`} className="w-6 h-6 rounded-lg flex-shrink-0 object-cover" />
           <span className="text-sm font-bold text-white">{brand.productName}</span>
         </div>
-        <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-2 text-slate-400 hover:text-white"
-        >
-          {mobileMenuOpen ? (
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          )}
-        </button>
+        <div className="flex items-center gap-1">
+          {isAdmin() && <NotificationBell variant="mobile" />}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="p-2 text-slate-400 hover:text-white"
+          >
+            {mobileMenuOpen ? (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Menu Overlay */}
@@ -217,35 +539,24 @@ function NavbarContent() {
 
         {/* Logo */}
         <div className="p-5 border-b border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <img src={brand.logo} alt={`${brand.name} logo`} className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
-            <div>
-              <div className="text-sm font-extrabold text-white tracking-tight leading-none">{brand.productName}</div>
-              <div className="text-[10px] text-slate-400 font-semibold mt-0.5">{brand.subtitle}</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <img src={brand.logo} alt={`${brand.name} logo`} className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
+              <div className="min-w-0">
+                <div className="text-sm font-extrabold text-white tracking-tight leading-none truncate">{brand.productName}</div>
+                <div className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate">{brand.subtitle}</div>
+              </div>
             </div>
+            {isAdmin() && <NotificationBell variant="sidebar" />}
           </div>
         </div>
 
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
 
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsNames={fixedWsNames} onProjectHub={isOnProjectHub} />
 
-          {/* Dashboard single link */}
-          {(() => {
-            const active = path.startsWith('/dashboard');
-            return (
-              <Link href="/dashboard/overview"
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
-                  active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-                Dashboard
-              </Link>
-            );
-          })()}
+          {renderDashboardLink()}
 
           {renderProjectsLink()}
 
@@ -339,23 +650,9 @@ function NavbarContent() {
 
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} onNavigate={() => setMobileMenuOpen(false)} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsNames={fixedWsNames} onProjectHub={isOnProjectHub} onNavigate={() => setMobileMenuOpen(false)} />
 
-          {/* Dashboard single link */}
-          {(() => {
-            const active = path.startsWith('/dashboard');
-            return (
-              <Link href="/dashboard/overview" onClick={() => setMobileMenuOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
-                  active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-                Dashboard
-              </Link>
-            );
-          })()}
+          {renderDashboardLink(() => setMobileMenuOpen(false))}
 
           {renderProjectsLink(() => setMobileMenuOpen(false))}
 

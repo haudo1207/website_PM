@@ -12,8 +12,21 @@ interface MeetingCardProps {
   onOpenDetail?: (meeting: any) => void;
 }
 
-export default function MeetingCard({ meeting, onDelete, onSummarize, onOpenDetail }: MeetingCardProps) {
+export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, onOpenDetail }: MeetingCardProps) {
   const [showMenu, setShowMenu] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncClick = async () => {
+    if (!onSync || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await onSync(meeting);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Lỗi khi đồng bộ cuộc họp');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const statusUpper = String(meeting.status || 'SẮP TỚI').toUpperCase();
   const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
@@ -26,6 +39,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onOpenDeta
   const creatorName = meeting.creator_name || meeting.creator?.display_name || meeting.created_by_name || 'Host mkt.szone';
   const platformName = meeting.platform || 'Google Meet';
   const isN8nSource = meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata;
+  const isAutoCreated = Boolean(meeting.is_auto_created ?? meeting.ai_summary?.is_auto_created);
 
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
   const baseLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
@@ -79,6 +93,15 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onOpenDeta
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f1f5f9] text-[#64748b]">
                 {platformName}
               </span>
+
+              {isAutoCreated && (
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-700 border border-teal-200"
+                  title="Meeting này không được tạo qua nút 'Tạo meeting' trên web — n8n tự động tạo từ video ghi hình phát hiện được"
+                >
+                  🤖 Tự động tạo
+                </span>
+              )}
             </div>
           </div>
 
@@ -176,6 +199,15 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onOpenDeta
               >
                 Chạy AI Tóm tắt
               </button>
+              {onSync && (
+                <button
+                  onClick={() => { setShowMenu(false); handleSyncClick(); }}
+                  disabled={isSyncing}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be] disabled:opacity-50"
+                >
+                  {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ (Sync)'}
+                </button>
+              )}
               {onDelete && (
                 <button
                   onClick={() => { setShowMenu(false); onDelete(meeting.id); }}

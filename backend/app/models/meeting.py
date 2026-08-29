@@ -21,10 +21,29 @@ class Meeting(Base):
     created_at   = Column(DateTime, server_default=func.now())
     updated_at   = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
+    # Meeting Intelligence — preparation fields (mục tiêu / agenda), scored by
+    # meeting_score_engine.recalculate_meeting_score.
+    objective        = Column(Text, nullable=True)
+    agenda           = Column(Text, nullable=True)
+    no_action_reason = Column(Text, nullable=True)
+
+    # Effectiveness score — deterministic, computed from real data (not AI-judged).
+    # See backend/app/services/meeting_score_engine.py for the formula.
+    score_total              = Column(Integer, nullable=True)
+    score_prep               = Column(Integer, nullable=True)
+    score_execution          = Column(Integer, nullable=True)
+    score_result             = Column(Integer, nullable=True)
+    score_followthrough      = Column(Integer, nullable=True)
+    score_feedback           = Column(Integer, nullable=True)
+    score_status             = Column(String(20), nullable=True, default="provisional")
+    last_score_calculated_at = Column(DateTime, nullable=True)
+
     # Relationships
     project      = relationship("Project", foreign_keys=[project_id], lazy="select")
     creator      = relationship("Member", foreign_keys=[created_by], lazy="select")
     members      = relationship("MeetingMember", back_populates="meeting", cascade="all, delete-orphan")
+    # Extra dự án ngoài project_id (dự án "chính") — xem models/meeting_project.py
+    extra_projects = relationship("MeetingProject", back_populates="meeting", cascade="all, delete-orphan", lazy="select")
 
 
 class MeetingMember(Base):

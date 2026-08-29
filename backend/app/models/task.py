@@ -7,7 +7,7 @@ Changes from v4:
 - Added: task_group_id (FK → task_groups)
 - Renamed: task_id → task_code
 """
-from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text, ForeignKey, Boolean, func
 from sqlalchemy.orm import relationship
 from ..database import Base
 from .skill_master import Group, Skill
@@ -110,6 +110,11 @@ class Task(Base):
     last_ai_check_at = Column(DateTime, nullable=True)
     last_ai_score    = Column(Integer, nullable=True)
     last_review_id   = Column(Integer, nullable=True)
+
+    # Zalo "Yêu cầu xem demo" flow — some Done tasks just don't need a demo;
+    # marking this hides the request button/nag for this task without ever
+    # having deleted its demo-request history.
+    zalo_demo_skip   = Column(Boolean, nullable=False, default=False, server_default="false")
 
     # Relationships
     task_group        = relationship("TaskGroup", back_populates="tasks")

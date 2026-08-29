@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     CHECK_INTERVAL_SECONDS: int = 3600
     REDIS_URL: str = ""
 
+    # Local disk storage for Resources/Documents file uploads (relative to the
+    # backend process working directory; mounted as a Docker volume in prod/dev
+    # so files survive container rebuilds).
+    UPLOAD_DIR: str = "uploads"
+
     # DB connection pool — was hard-coded pool_size=2/max_overflow=0 in database.py,
     # which exhausts under concurrent Dashboard load and forces requests to queue.
     # Kept conservative: measured on the dev DB (Supabase pooler) max_connections=60
@@ -83,6 +88,9 @@ class Settings(BaseSettings):
     # AssemblyAI (for speech-to-text transcription)
     ASSEMBLYAI_API_KEY: str = ""
 
+    # n8n Integration Webhook Secret
+    N8N_WEBHOOK_SECRET: str = ""
+
     # Telegram Bot integration (Leave Request notifications)
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_SECRET: str = ""
@@ -94,6 +102,12 @@ class Settings(BaseSettings):
     # Public base URL used to build the "View Leave Request" deep link in
     # Telegram notifications. Falls back to FRONTEND_URL when not set.
     APP_BASE_URL: str = ""
+
+    # Zalo integration — internal Docker-network URL of the zalo-worker Node
+    # sidecar (holds the persistent zca-js session) and a shared secret so
+    # only that sidecar can push received messages into /api/zalo/internal.
+    ZALO_WORKER_URL: str = "http://zalo-worker:8090"
+    ZALO_WORKER_INTERNAL_TOKEN: str = ""
 
     @property
     def telegram_base_url(self) -> str:

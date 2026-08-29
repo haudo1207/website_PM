@@ -9,7 +9,7 @@ import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
-import ProjectResourcesTab from '@/components/ProjectResourcesTab';
+import ProjectDocumentsTab from '@/components/ProjectDocumentsTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProjectFormModal from '@/components/ProjectFormModal';
 import {
@@ -27,8 +27,8 @@ import {
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup
 } from '@/lib/api';
-import { isAdmin, isMember } from '@/lib/auth';
-import { calculateDaysLate } from '@/app/dashboard/constants';
+import { isAdmin, isMember, getEmail } from '@/lib/auth';
+import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod } from '@/app/dashboard/constants';
 
 const ROMAN_PAIRS: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
 const to_roman = (n: number): string => {
@@ -450,32 +450,34 @@ function ProjectDetailContent() {
       let loadedTasks: any[] = [];
       let allGroups: any[] = [];
       let loadedPhases: any[] = [];
+      let phs: any[] = [];
       try {
-        const phs = await getPhases(Number(id));
+        phs = await getPhases(Number(id));
         loadedPhases = phs || [];
-
-        if (phs && phs.length > 0) {
-          for (const p of phs) {
-            try {
-              const grps = await getTaskGroups(p.id);
-              allGroups.push(...(grps || []));
-            } catch (e) {
-              console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
-            }
-          }
-        }
       } catch (err: any) {
         console.error('Lỗi khi tải danh sách Phase dự án:', err);
         flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
       }
 
-      try {
-        const tsks = await getAllProjectTasks(Number(id));
-        loadedTasks = tsks || [];
-      } catch (err: any) {
-        console.error('Lỗi khi tải danh sách Task dự án:', err);
-        flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
-      }
+      // Every phase's task groups + the project's full task list are independent
+      // of each other — fetch them all concurrently instead of one phase at a
+      // time (was serial, so reloadAll() got slower the more phases a project
+      // had; every write anywhere on this page calls reloadAll() afterward).
+      const [groupResults, tsks] = await Promise.all([
+        Promise.all((phs || []).map(p =>
+          getTaskGroups(p.id).catch(e => {
+            console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
+            return [];
+          })
+        )),
+        getAllProjectTasks(Number(id)).catch(err => {
+          console.error('Lỗi khi tải danh sách Task dự án:', err);
+          flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+          return [];
+        }),
+      ]);
+      allGroups = groupResults.flat();
+      loadedTasks = tsks || [];
 
       return { phases: loadedPhases, groups: allGroups, tasks: loadedTasks };
     },
@@ -520,6 +522,36 @@ function ProjectDetailContent() {
   const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
+
+  // Overview Time Filter States
+  const [overviewYear, setOverviewYear] = useState<number | 'all'>('all');
+  const [overviewMonth, setOverviewMonth] = useState<number | 'all'>('all');
+  const [overviewWeek, setOverviewWeek] = useState<number | 'all'>('all');
+  const [overviewQuickFilter, setOverviewQuickFilter] = useState<string | null>('all');
+
+  const applyOverviewQuickFilter = (type: string) => {
+    setOverviewQuickFilter(type);
+    const now = new Date();
+    if (type === 'Tuần trước') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setOverviewYear(d.getFullYear()); setOverviewMonth(d.getMonth() + 1); setOverviewWeek(getWeekOfMonth(d));
+    } else if (type === 'Tuần này') {
+      setOverviewYear(now.getFullYear()); setOverviewMonth(now.getMonth() + 1); setOverviewWeek(getWeekOfMonth(now));
+    } else if (type === 'Tuần tới') {
+      const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setOverviewYear(d.getFullYear()); setOverviewMonth(d.getMonth() + 1); setOverviewWeek(getWeekOfMonth(d));
+    } else if (type === 'Tháng trước') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setOverviewYear(d.getFullYear()); setOverviewMonth(d.getMonth() + 1); setOverviewWeek('all');
+    } else if (type === 'Tháng này') {
+      setOverviewYear(now.getFullYear()); setOverviewMonth(now.getMonth() + 1); setOverviewWeek('all');
+    } else if (type === 'Tháng tới') {
+      const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setOverviewYear(d.getFullYear()); setOverviewMonth(d.getMonth() + 1); setOverviewWeek('all');
+    } else if (type === 'all') {
+      setOverviewYear('all'); setOverviewMonth('all'); setOverviewWeek('all');
+    }
+  };
 
   const [chats, setChats] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -1660,8 +1692,83 @@ function ProjectDetailContent() {
     return null;
   };
 
+  // --- Overview Filtered Tasks & Summary Stats ---
+  const overviewTasksInPeriod = useMemo(() => {
+    if (overviewYear === 'all' && overviewMonth === 'all' && overviewWeek === 'all' && (overviewQuickFilter === 'all' || !overviewQuickFilter)) {
+      return items;
+    }
+    return items.filter(t => checkTaskInPeriod(t, overviewYear, overviewMonth, overviewWeek, overviewQuickFilter));
+  }, [items, overviewYear, overviewMonth, overviewWeek, overviewQuickFilter]);
+
+  const summaryProjectStats = useMemo(() => {
+    const isMaintenance = (t: any) => {
+      const n = (t.phase_name || t.group_name || t.phase || '').toLowerCase();
+      return n.includes('ma') || n.includes('bảo trì') || n.includes('maintenance') || n.startsWith('4.');
+    };
+
+    const impTasks = overviewTasksInPeriod.filter(t => !isMaintenance(t));
+    const mainTasks = overviewTasksInPeriod.filter(t => isMaintenance(t));
+
+    const calcDurationDays = (tList: any[], useActual = false) => {
+      if (!tList || tList.length === 0) return 0;
+      let minDate: Date | null = null;
+      let maxDate: Date | null = null;
+
+      tList.forEach(t => {
+        const startStr = t.start_date || t.created_at;
+        const endStr = useActual ? (t.end_date_actual || t.end_date_est) : (t.end_date_est || t.end_date_actual);
+        const sD = parseDateString(startStr);
+        const eD = parseDateString(endStr);
+
+        if (sD) {
+          if (!minDate || sD < (minDate as Date)) minDate = sD;
+        }
+        if (eD) {
+          if (!maxDate || eD > (maxDate as Date)) maxDate = eD;
+        }
+      });
+
+      if (!minDate || !maxDate) return 0;
+      const minMs = (minDate as Date).getTime();
+      const maxMs = (maxDate as Date).getTime();
+      if (maxMs < minMs) return 0;
+      const diffTime = Math.abs(maxMs - minMs);
+      return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    };
+
+    const calcMandayEst = (tList: any[]) => tList.reduce((acc, t) => acc + (parseFloat(t.manday_est) || 0), 0);
+    const calcMandayAct = (tList: any[]) => tList.reduce((acc, t) => acc + (parseFloat(t.manday_actual != null ? t.manday_actual : t.manday_est) || 0), 0);
+    const calcOverdueDays = (tList: any[]) => tList.reduce((acc, t) => acc + calculateDaysLate(t), 0);
+    const getOverdueTasks = (tList: any[]) => tList.filter(t => calculateDaysLate(t) > 0);
+    const calcKpi = (tList: any[]) => tList.reduce((acc, t) => {
+      const isDone = (t.status || '').toLowerCase() === 'done' || (t.status || '').toLowerCase() === 'completed';
+      return acc + (isDone ? (parseFloat(t.kpi_base) || 0) : 0);
+    }, 0);
+
+    const countPrio = (tList: any[], prio: string) => tList.filter(t => (t.priority || '').toLowerCase() === prio.toLowerCase()).length;
+
+    const impOverdue = getOverdueTasks(impTasks);
+    const mainOverdue = getOverdueTasks(mainTasks);
+    const totalOverdue = getOverdueTasks(overviewTasksInPeriod);
+
+    return {
+      durationEst: { total: calcDurationDays(overviewTasksInPeriod, false), imp: calcDurationDays(impTasks, false), main: calcDurationDays(mainTasks, false) },
+      durationAct: { total: calcDurationDays(overviewTasksInPeriod, true), imp: calcDurationDays(impTasks, true), main: calcDurationDays(mainTasks, true) },
+      mandayEst: { total: Math.round(calcMandayEst(overviewTasksInPeriod) * 10) / 10, imp: Math.round(calcMandayEst(impTasks) * 10) / 10, main: Math.round(calcMandayEst(mainTasks) * 10) / 10 },
+      mandayAct: { total: Math.round(calcMandayAct(overviewTasksInPeriod) * 10) / 10, imp: Math.round(calcMandayAct(impTasks) * 10) / 10, main: Math.round(calcMandayAct(mainTasks) * 10) / 10 },
+      overdueDays: { total: calcOverdueDays(overviewTasksInPeriod), imp: calcOverdueDays(impTasks), main: calcOverdueDays(mainTasks) },
+      overdueTasksCount: { total: totalOverdue.length, imp: impOverdue.length, main: mainOverdue.length },
+      overdueNotesList: totalOverdue.map((t: any, i: number) => `${t.task_code || t.id}. ${t.detail_task || t.name || 'Task trễ'}`),
+      kpi: { total: Math.round(calcKpi(overviewTasksInPeriod) * 10) / 10, imp: Math.round(calcKpi(impTasks) * 10) / 10, main: Math.round(calcKpi(mainTasks) * 10) / 10 },
+      totalTasksCount: { total: overviewTasksInPeriod.length, imp: impTasks.length, main: mainTasks.length },
+      criticalCount: { total: countPrio(overviewTasksInPeriod, 'critical'), imp: countPrio(impTasks, 'critical'), main: countPrio(mainTasks, 'critical') },
+      highCount: { total: countPrio(overviewTasksInPeriod, 'high'), imp: countPrio(impTasks, 'high'), main: countPrio(mainTasks, 'high') },
+      normalCount: { total: countPrio(overviewTasksInPeriod, 'normal'), imp: countPrio(impTasks, 'normal'), main: countPrio(mainTasks, 'normal') },
+    };
+  }, [overviewTasksInPeriod]);
+
   // --- Dynamic Stats calculation ---
-  const kpiTasks = activeMainTab === 'overview' ? filteredItems : getFilteredTasks();
+  const kpiTasks = activeMainTab === 'overview' ? overviewTasksInPeriod : getFilteredTasks();
   const kpiTotal = kpiTasks.length;
 
   // 1 & 2. Số task hoàn thành & % Tiến độ
@@ -1672,10 +1779,11 @@ function ProjectDetailContent() {
   const devProgressPercent = kpiTotal > 0 ? Math.round((kpiDone / kpiTotal) * 100) : 0;
 
   // 3. Tổng Manday
-  const kpiTotalManday = kpiTasks.reduce((sum, task) => {
-    const md = parseFloat(task.manday_est as string);
+  const kpiTotalManday = Math.round(kpiTasks.reduce((sum, task) => {
+    const rawMd = task.manday_actual != null ? task.manday_actual : task.manday_est;
+    const md = parseFloat(rawMd as string);
     return sum + (isNaN(md) ? 0 : md);
-  }, 0);
+  }, 0) * 10) / 10;
 
   // 4. Trễ deadline (Chưa hoàn thành và quá hạn)
   const overdueTasksList = kpiTasks.filter(x => {
@@ -1683,20 +1791,16 @@ function ProjectDetailContent() {
   });
   const kpiWarning = overdueTasksList.length;
 
-  // 5. Critical thực hiện tuần này
-  const today = new Date();
-  const firstDay = new Date(today);
-  firstDay.setDate(today.getDate() - today.getDay() + 1);
-  const lastDay = new Date(today);
-  lastDay.setDate(today.getDate() - today.getDay() + 7);
-  firstDay.setHours(0, 0, 0, 0);
-  lastDay.setHours(23, 59, 59, 999);
+  // 5. Critical thực hiện tuần này (Xác định Thứ 2 00:00:00 -> Chủ nhật 23:59:59)
+  const { monday: thisWeekMon, sunday: thisWeekSun } = getMondayToSundayRange(new Date());
 
   const kpiCriticalThisWeek = kpiTasks.filter(x => {
     if ((x.priority || '').toLowerCase() !== 'critical') return false;
-    if (!x.start_date) return false;
-    const d = new Date(x.start_date);
-    return d >= firstDay && d <= lastDay;
+    const dateStr = x.end_date_est || x.end_date_actual || x.end_date || x.deadline || x.created_at;
+    if (!dateStr) return false;
+    const d = parseDateString(dateStr);
+    if (!d) return false;
+    return d >= thisWeekMon && d <= thisWeekSun;
   }).length;
 
   const kpiInProgress = kpiTasks.filter(x => {
@@ -1710,7 +1814,7 @@ function ProjectDetailContent() {
     const doneCounts: Record<string, number> = {};
     let unassignedTotal = 0;
     let unassignedDone = 0;
-    filteredItems.forEach(t => {
+    overviewTasksInPeriod.forEach(t => {
       const s = (t.status || '').toLowerCase();
       const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
       const name = (t.assigned_name || '').trim();
@@ -1736,17 +1840,23 @@ function ProjectDetailContent() {
   // --- KPI FINAL Leaderboard ---
   const kpiLeaderboardStats = (() => {
     const kpiSums: Record<string, number> = {};
-    filteredItems.forEach(t => {
+    overviewTasksInPeriod.forEach(t => {
+      const s = (t.status || '').toLowerCase();
+      const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+      if (!isDone) return;
       const name = (t.assigned_name || '').trim();
-      const val = parseFloat(t.kpi_final);
-      if (name !== '' && !isNaN(val) && val > 0) {
-        kpiSums[name] = (kpiSums[name] || 0) + val;
-      }
+      if (!name) return;
+      const kpiVal = parseFloat(t.kpi_base as string) || 0;
+      kpiSums[name] = (kpiSums[name] || 0) + kpiVal;
     });
-    return Object.entries(kpiSums)
-      .map(([name, total]) => ({ name, total: Math.round(total * 10) / 10 }))
+    return Object.keys(kpiSums)
+      .map(name => {
+        const val = Math.round(kpiSums[name] * 10) / 10;
+        return { name, total: val, kpi: val };
+      })
       .sort((a, b) => b.total - a.total);
   })();
+
 
   const getGroupIndex = (groupId: number) => {
     const group = taskGroups.find(g => g.id === groupId);
@@ -4215,6 +4325,85 @@ function ProjectDetailContent() {
               {activeMainTab === 'overview' && (
                 <div className="space-y-6">
 
+                  {/* TIME FILTER BAR (Identical to Dashboard) */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#0058be] text-xl">filter_alt</span>
+                      <span className="text-sm font-bold text-slate-800">Bộ lọc thời gian dự án:</span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Dropdown Năm */}
+                      <select
+                        value={overviewYear}
+                        onChange={(e) => setOverviewYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                        className="bg-slate-50 border border-slate-300 text-slate-700 text-xs rounded-lg px-2.5 py-1.5 font-medium focus:ring-1 focus:ring-blue-500 outline-none"
+                      >
+                        <option value="all">Tất cả các năm</option>
+                        <option value={2024}>Năm 2024</option>
+                        <option value={2025}>Năm 2025</option>
+                        <option value={2026}>Năm 2026</option>
+                      </select>
+
+                      {/* Dropdown Tháng */}
+                      <select
+                        value={overviewMonth}
+                        onChange={(e) => setOverviewMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                        className="bg-slate-50 border border-slate-300 text-slate-700 text-xs rounded-lg px-2.5 py-1.5 font-medium focus:ring-1 focus:ring-blue-500 outline-none"
+                      >
+                        <option value="all">Tất cả các tháng</option>
+                        {Array.from({ length: 12 }, (_, i) => (
+                          <option key={i + 1} value={i + 1}>Tháng {i + 1}</option>
+                        ))}
+                      </select>
+
+                      {/* Dropdown Tuần */}
+                      <select
+                        value={overviewWeek}
+                        onChange={(e) => setOverviewWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                        className="bg-slate-50 border border-slate-300 text-slate-700 text-xs rounded-lg px-2.5 py-1.5 font-medium focus:ring-1 focus:ring-blue-500 outline-none"
+                      >
+                        <option value="all">Tất cả các tuần</option>
+                        <option value={1}>Tuần 1</option>
+                        <option value={2}>Tuần 2</option>
+                        <option value={3}>Tuần 3</option>
+                        <option value={4}>Tuần 4</option>
+                        <option value={5}>Tuần 5</option>
+                      </select>
+
+                      <div className="h-4 w-px bg-slate-200 mx-1 hidden sm:block"></div>
+
+                      {/* Nút lọc nhanh */}
+                      <div className="flex items-center gap-1">
+                        {[
+                          { key: 'all', label: 'Tất cả' },
+                          { key: 'Tuần trước', label: 'Tuần trước' },
+                          { key: 'Tuần này', label: 'Tuần này' },
+                          { key: 'Tuần tới', label: 'Tuần tới' },
+                          { key: 'Tháng trước', label: 'Tháng trước' },
+                          { key: 'Tháng này', label: 'Tháng này' },
+                          { key: 'Tháng tới', label: 'Tháng tới' },
+                        ].map((btn) => {
+                          const isActive = overviewQuickFilter === btn.key;
+                          return (
+                            <button
+                              key={btn.key}
+                              onClick={() => applyOverviewQuickFilter(btn.key)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                                isActive
+                                  ? 'bg-[#0058be] text-white shadow-sm'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              }`}
+                            >
+                              {btn.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 5 METRIC CARDS */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                     {/* Thẻ 1: Tổng số task hoàn thành / tổng task */}
                     <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-0.5">
@@ -4262,9 +4451,9 @@ function ProjectDetailContent() {
                       </div>
                     </div>
 
-                    {/* Thẻ 5: Critical tuần này */}
+                    {/* Thẻ 5: Critical trong kỳ */}
                     <div className="bg-white p-5 rounded-xl border border-emerald-200 border-2 shadow-sm transition-transform hover:-translate-y-0.5">
-                      <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Critical Tuần Này</p>
+                      <p className="text-[10px] text-emerald-700 uppercase font-bold tracking-wider">Critical Trong Kỳ</p>
                       <div className="flex items-baseline justify-between mt-1">
                         <span className="text-2xl font-bold text-emerald-600">{kpiCriticalThisWeek}</span>
                         <span className="material-symbols-outlined text-emerald-500 text-[18px]">priority_high</span>
@@ -4272,6 +4461,133 @@ function ProjectDetailContent() {
                       <div className="w-full bg-slate-100 h-1 rounded-full mt-3 overflow-hidden">
                         <div className="bg-emerald-500 h-full" style={{ width: `${kpiTotal > 0 ? (kpiCriticalThisWeek / kpiTotal) * 100 : 0}%` }}></div>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* BẢNG TỔNG HỢP SUMMARY PROJECT (Theo mẫu Excel) */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-6">
+                    <div className="bg-amber-400 px-5 py-3 border-b border-amber-500 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-slate-900 font-bold">table_chart</span>
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">SUMMARY PROJECT (BÁO CÁO TỔNG QUAN DỰ ÁN)</h3>
+                      </div>
+                      <span className="text-xs font-semibold text-slate-800 bg-white/80 px-3 py-1 rounded-full shadow-sm">
+                        Số liệu tự động lọc theo bộ lọc thời gian
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-300">
+                            <th className="p-3 border-r border-slate-200 w-12 text-center bg-slate-200/80">NO.</th>
+                            <th className="p-3 border-r border-slate-200 min-w-[180px] bg-slate-200/80">INFOR (THÔNG TIN CHỈ SỐ)</th>
+                            <th className="p-3 border-r border-slate-200 text-center w-32 bg-emerald-100 text-emerald-900">TOTAL (TỔNG)</th>
+                            <th className="p-3 border-r border-slate-200 text-center w-36 bg-amber-100 text-amber-900">IMPLEMENT (TRIỂN KHAI)</th>
+                            <th className="p-3 border-r border-slate-200 text-center w-36 bg-blue-100 text-blue-900">MAINTENANCE (BẢO TRÌ)</th>
+                            <th className="p-3 min-w-[250px] bg-slate-200/80">NOTE (GHI CHÚ / TÊN TASK TRỄ)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
+                          {/* STT 1: THỜI GIAN */}
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={2}>1</td>
+                            <td className="p-3 border-r border-slate-200">Tổng thời gian ước tính</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-900">{summaryProjectStats.durationEst.total} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationEst.imp} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationEst.main} Ngày</td>
+                            <td className="p-3 text-slate-500 italic text-[11px]" rowSpan={2}>
+                              Tính theo Initiation Start Date và Final Acceptance Date
+                            </td>
+                          </tr>
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 border-r border-slate-200">Tổng thời gian thực hiện thực tế</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-900">{summaryProjectStats.durationAct.total} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationAct.imp} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationAct.main} Ngày</td>
+                          </tr>
+
+                          {/* STT 2: MANDAYS */}
+                          <tr className="hover:bg-slate-50 bg-slate-50/50">
+                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={2}>2</td>
+                            <td className="p-3 border-r border-slate-200 font-semibold text-blue-900">Tổng Mandays ước tính</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-blue-900">{summaryProjectStats.mandayEst.total} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200 text-amber-900 font-bold">{summaryProjectStats.mandayEst.imp} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200 text-blue-900 font-bold">{summaryProjectStats.mandayEst.main} Ngày</td>
+                            <td className="p-3" rowSpan={2}></td>
+                          </tr>
+                          <tr className="hover:bg-slate-50 bg-slate-50/50">
+                            <td className="p-3 border-r border-slate-200 font-semibold text-blue-900">Tổng Mandays thực tế</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-blue-900">{summaryProjectStats.mandayAct.total} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200 text-amber-900 font-bold">{summaryProjectStats.mandayAct.imp} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200 text-blue-900 font-bold">{summaryProjectStats.mandayAct.main} Ngày</td>
+                          </tr>
+
+                          {/* STT 3: TASK TRỄ */}
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={2}>3</td>
+                            <td className="p-3 border-r border-slate-200 font-semibold text-red-700">Tổng số ngày trễ task</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueDays.total} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueDays.imp} Ngày</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueDays.main} Ngày</td>
+                            <td className="p-3 border-l border-slate-200" rowSpan={2}>
+                              {summaryProjectStats.overdueNotesList.length === 0 ? (
+                                <span className="text-slate-400 italic">Không có task trễ</span>
+                              ) : (
+                                <ul className="space-y-1 text-[11px] text-red-700 font-semibold max-h-24 overflow-y-auto">
+                                  {summaryProjectStats.overdueNotesList.map((item, idx) => (
+                                    <li key={idx} className="truncate" title={item}>{item}</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
+                          </tr>
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 border-r border-slate-200 font-semibold text-red-700">Tổng số task trễ</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueTasksCount.total}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueTasksCount.imp}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueTasksCount.main}</td>
+                          </tr>
+
+                          {/* STT 4: KPI */}
+                          <tr className="hover:bg-slate-50 bg-slate-50/50">
+                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50">4</td>
+                            <td className="p-3 border-r border-slate-200 font-semibold text-emerald-800">Tổng KPI</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-emerald-700">{summaryProjectStats.kpi.total}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-emerald-700">{summaryProjectStats.kpi.imp}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-emerald-700">{summaryProjectStats.kpi.main}</td>
+                            <td className="p-3"></td>
+                          </tr>
+
+                          {/* STT 5: PHÂN BỔ PRIORITY */}
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={4}>5</td>
+                            <td className="p-3 border-r border-slate-200 font-bold">Tổng số tasks</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold">{summaryProjectStats.totalTasksCount.total}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold">{summaryProjectStats.totalTasksCount.imp}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold">{summaryProjectStats.totalTasksCount.main}</td>
+                            <td className="p-3" rowSpan={4}></td>
+                          </tr>
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 border-r border-slate-200 text-rose-700 font-bold">Tổng số tasks Critical</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-rose-600">{summaryProjectStats.criticalCount.total}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-rose-600">{summaryProjectStats.criticalCount.imp}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-rose-600">{summaryProjectStats.criticalCount.main}</td>
+                          </tr>
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 border-r border-slate-200 text-amber-700 font-bold">Tổng số tasks High</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-amber-600">{summaryProjectStats.highCount.total}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-amber-600">{summaryProjectStats.highCount.imp}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-amber-600">{summaryProjectStats.highCount.main}</td>
+                          </tr>
+                          <tr className="hover:bg-slate-50">
+                            <td className="p-3 border-r border-slate-200 text-slate-700 font-bold">Tổng số tasks Normal</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-700">{summaryProjectStats.normalCount.total}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-700">{summaryProjectStats.normalCount.imp}</td>
+                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-700">{summaryProjectStats.normalCount.main}</td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
                   </div>
 
@@ -7060,9 +7376,14 @@ function ProjectDetailContent() {
               )}
 
               {activeMainTab === 'resources' && (
-                <ProjectResourcesTab
+                <ProjectDocumentsTab
+                  projectId={Number(id)}
+                  phases={phases}
                   tasks={items || []}
                   projectName={project?.name || ''}
+                  isProjectLeader={isAdmin() || projectMembers.some(
+                    (m: any) => m.role === 'Leader' && m.email && m.email.toLowerCase() === (getEmail() || '').toLowerCase()
+                  )}
                   onNavigateToTask={(taskCodeOrId) => {
                     const found = items.find(t => t.task_code === taskCodeOrId || String(t.id) === String(taskCodeOrId));
                     if (found) {

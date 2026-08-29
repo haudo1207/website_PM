@@ -1,0 +1,17 @@
+{
+  "name": "zalo-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "tough-cookie": "^5.1.2",
+    "zca-js": "^2.1.2"
+  }
+}

@@ -15,6 +15,7 @@ import {
   activityColor,
   MONTH_WEEKS_COUNT,
   getWeekOfMonth,
+  checkTaskInPeriod,
   CYCLE_TEMPLATE,
   calculateDaysLate
 } from '@/app/dashboard/constants';
@@ -273,30 +274,7 @@ export default function ReportTab() {
     const acts: any[] = [];
     const now = new Date();
 
-    const filteredTasks = rawMyTasks.filter(t => {
-      const isDone = t.status === 'Done' || t.status === 'done';
-      const tDateStr = isDone ? (t.end_date_actual || t.end_date_est || t.created_at) : (t.end_date_est || t.created_at);
-      if (!tDateStr) return true;
-      const taskDate = new Date(tDateStr);
-      if (isNaN(taskDate.getTime())) return true;
-
-      if (selectedYear !== 'all' && typeof selectedYear === 'number' && taskDate.getFullYear() !== selectedYear) return false;
-
-      if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
-        const cycle = CYCLE_TEMPLATE[selectedMonth];
-        if (cycle) {
-          const yr = (selectedYear !== 'all' && typeof selectedYear === 'number') ? selectedYear : taskDate.getFullYear();
-          const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
-          const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
-          if (taskDate < startDt || taskDate > endDt) return false;
-        } else {
-          if ((taskDate.getMonth() + 1) !== selectedMonth) return false;
-        }
-      }
-
-      if (selectedWeek !== 'all' && getWeekOfMonth(taskDate) !== selectedWeek) return false;
-      return true;
-    });
+    const filteredTasks = rawMyTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
 
     filteredTasks.forEach((t: any) => {
       mandayTotal += getMyTaskManday(t);
