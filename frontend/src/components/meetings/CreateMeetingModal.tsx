@@ -293,6 +293,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               </div>
             )}
 
+            {formData.platform === 'Google Meet' && (
+              <div className="p-3 bg-[#eff6ff] border border-[#bfdbfe] rounded-lg text-[11px] text-[#1e40af] leading-relaxed flex items-start gap-2">
+                <span className="material-symbols-outlined text-[#2563eb] text-[16px] shrink-0 mt-0.5">info</span>
+                <div>
+                  <span className="font-bold">Lưu ý host cuộc họp:</span> Link Google Meet dùng tài khoản chung <b>mkt.szone@gmail.com</b>. Người đóng vai trò host (duyệt người tham gia vào phòng chờ) cần đăng nhập Google bằng đúng tài khoản này trước khi bấm vào link, nếu không sẽ không ai duyệt được.
+                </div>
+              </div>
+            )}
+
             <div>
                 <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Giờ bắt đầu (AM/PM)</label>
                 <div className="flex items-center gap-1">

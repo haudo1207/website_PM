@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Search, Sparkles, Calendar as CalendarIcon, Video, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Sparkles, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
@@ -16,6 +16,46 @@ import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
+
+// Deterministic color per project (no color field on Project yet — same
+// project.id/name always hashes to the same palette entry, so week-grid
+// event cards stay visually consistent across renders/sessions).
+const PROJECT_COLOR_PALETTE = [
+  { barBorder: 'border-l-blue-500', bg: 'bg-blue-50', badgeBg: 'bg-blue-100', badgeText: 'text-blue-700', dot: 'bg-blue-500' },
+  { barBorder: 'border-l-emerald-500', bg: 'bg-emerald-50', badgeBg: 'bg-emerald-100', badgeText: 'text-emerald-700', dot: 'bg-emerald-500' },
+  { barBorder: 'border-l-purple-500', bg: 'bg-purple-50', badgeBg: 'bg-purple-100', badgeText: 'text-purple-700', dot: 'bg-purple-500' },
+  { barBorder: 'border-l-pink-500', bg: 'bg-pink-50', badgeBg: 'bg-pink-100', badgeText: 'text-pink-700', dot: 'bg-pink-500' },
+  { barBorder: 'border-l-amber-500', bg: 'bg-amber-50', badgeBg: 'bg-amber-100', badgeText: 'text-amber-700', dot: 'bg-amber-500' },
+  { barBorder: 'border-l-rose-500', bg: 'bg-rose-50', badgeBg: 'bg-rose-100', badgeText: 'text-rose-700', dot: 'bg-rose-500' },
+  { barBorder: 'border-l-teal-500', bg: 'bg-teal-50', badgeBg: 'bg-teal-100', badgeText: 'text-teal-700', dot: 'bg-teal-500' },
+  { barBorder: 'border-l-sky-500', bg: 'bg-sky-50', badgeBg: 'bg-sky-100', badgeText: 'text-sky-700', dot: 'bg-sky-500' },
+];
+const DEFAULT_PROJECT_COLOR = { barBorder: 'border-l-indigo-500', bg: 'bg-indigo-50', badgeBg: 'bg-indigo-100', badgeText: 'text-indigo-700', dot: 'bg-indigo-500' };
+
+const hashStringToIndex = (str: string, mod: number): number => {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return h % mod;
+};
+
+const getProjectColor = (projectId?: number | string, projectName?: string) => {
+  const key = projectId !== undefined && projectId !== null && projectId !== '' ? String(projectId) : (projectName || '');
+  if (!key) return DEFAULT_PROJECT_COLOR;
+  return PROJECT_COLOR_PALETTE[hashStringToIndex(key, PROJECT_COLOR_PALETTE.length)];
+};
+
+const getInitials = (name: string): string => {
+  if (!name) return '?';
+  return name.trim().split(/\s+/).map(n => n[0]).join('').substring(0, 2).toUpperCase();
+};
+
+const parseTimeToMinutes = (t?: string): number => {
+  const match = /^(\d{1,2}):(\d{2})/.exec(String(t || '').trim());
+  if (!match) return 9 * 60;
+  const h = Math.min(23, parseInt(match[1], 10));
+  const m = Math.min(59, parseInt(match[2], 10));
+  return h * 60 + m;
+};
 
 function MeetingsPageContent() {
   const router = useRouter();
@@ -203,12 +243,23 @@ function MeetingsPageContent() {
   // 1 meeting giờ có thể gắn nhiều dự án (m.projects: [{id,name}]) — field cũ
   // m.project/m.project_name (số ít) vẫn được API trả về để tương thích, dùng
   // làm fallback cho dữ liệu cũ chưa qua bảng meeting_projects.
-  const getMeetingProjectNames = (m: any): string[] => {
+  const getMeetingProjects = (m: any): { id?: number; name: string }[] => {
     if (Array.isArray(m.projects) && m.projects.length) {
-      return m.projects.map((p: any) => p.name).filter(Boolean);
+      return m.projects.map((p: any) => ({ id: p.id, name: p.name })).filter((p: any) => p.name);
     }
     const single = typeof m.project === 'string' ? m.project : (m.project?.name || m.project_name || '');
-    return single ? [single] : [];
+    return single ? [{ id: m.project_id, name: single }] : [];
+  };
+  const getMeetingProjectNames = (m: any): string[] => getMeetingProjects(m).map(p => p.name);
+
+  const getMeetingParticipants = (m: any): { key: string; name: string }[] => {
+    const list = Array.isArray(m.members) ? m.members : [];
+    return list
+      .map((mm: any, idx: number) => ({
+        key: String(mm.member_id ?? mm.id ?? `${mm.display_name || 'nv'}-${idx}`),
+        name: mm.display_name || mm.full_name || '',
+      }))
+      .filter((p: any) => p.name);
   };
 
   const projectOptions = useMemo(() => {
@@ -385,46 +436,111 @@ function MeetingsPageContent() {
     ? Math.round((allRecommendedTasks.filter(t => t.assigned_name && t.deadline).length / allRecommendedTasks.length) * 100)
     : 0;
 
-  const renderWeekGrid = (weekMeetings: any[], emptyText: string) => (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 pt-2">
-      {currentWeekInfo.days.map((d, i) => {
-        const dayMeetings = weekMeetings.filter(m => {
-          if (!m || !m.date) return false;
-          const dateStr = String(m.date).trim();
-          if (dateStr.startsWith(d.isoDate)) return true;
-          const fullFormattedDate = `${d.formattedDate}/${d.yearNum}`;
-          if (dateStr === fullFormattedDate || dateStr.startsWith(fullFormattedDate)) return true;
-          if (dateStr === d.formattedDate) return true;
-          return false;
-        });
+  const matchesDay = (m: any, d: { isoDate: string; formattedDate: string; yearNum: number }) => {
+    if (!m || !m.date) return false;
+    const dateStr = String(m.date).trim();
+    if (dateStr.startsWith(d.isoDate)) return true;
+    const fullFormattedDate = `${d.formattedDate}/${d.yearNum}`;
+    if (dateStr === fullFormattedDate || dateStr.startsWith(fullFormattedDate)) return true;
+    if (dateStr === d.formattedDate) return true;
+    return false;
+  };
 
-        return (
-          <div key={i} className={`border rounded-2xl p-3.5 min-h-[200px] ${d.isWeekend ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-[#e2e8f0]'}`}>
-            <h4 className="text-[13px] font-extrabold text-[#0b1c30] mb-3">{d.label}</h4>
-            {dayMeetings.length > 0 ? (
-              dayMeetings.map(item => (
-                <div
-                  key={item.id}
-                  onClick={() => handleCalendarMeetingClick(item)}
-                  className="bg-[#f5f3ff] border-l-4 border-l-[#6366f1] rounded-xl p-3 mb-3 cursor-pointer hover:shadow-md transition-all space-y-1"
-                >
-                  <p className="text-xs font-bold text-[#0b1c30] leading-snug">
-                    {item.time || '14:00'} {item.title}
-                  </p>
-                  <p className="text-[11px] text-[#64748b] font-medium flex items-center gap-1">
-                    <Video size={12} className="text-[#6366f1]" />
-                    <span>{item.platform || 'Google Meet'} · <b className="text-[#6366f1]">AI On</b></span>
-                  </p>
+  // Per-day card list — every card always shows all 3 required fields (tên
+  // cuộc họp + dự án + người tham gia) regardless of how many meetings land
+  // on the same day/time, unlike a fixed-height hour-grid which has to hide
+  // fields on short/crowded slots.
+  const renderWeekGrid = (weekMeetings: any[], emptyText: string) => (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 pt-2">
+        {currentWeekInfo.days.map(d => {
+          const dayMeetings = weekMeetings
+            .filter(m => matchesDay(m, d))
+            .sort((a, b) => parseTimeToMinutes(a.time || a.start_time) - parseTimeToMinutes(b.time || b.start_time));
+
+          return (
+            <div key={d.isoDate} className={`border rounded-2xl p-3.5 min-h-[200px] ${d.isWeekend ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-[#e2e8f0]'}`}>
+              <h4 className="text-[13px] font-extrabold text-[#0b1c30] mb-3">{d.label}</h4>
+              {dayMeetings.length > 0 ? (
+                dayMeetings.map(item => {
+                  const projects = getMeetingProjects(item);
+                  const participants = getMeetingParticipants(item);
+                  const color = getProjectColor(projects[0]?.id, projects[0]?.name);
+
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => handleCalendarMeetingClick(item)}
+                      className={`${color.bg} border-l-4 ${color.barBorder} rounded-xl p-3 mb-3 cursor-pointer hover:shadow-md transition-all space-y-1.5`}
+                    >
+                      <p className="text-xs font-bold text-[#0b1c30] leading-snug">
+                        {item.time || item.start_time || '--:--'} {item.title}
+                      </p>
+
+                      {projects.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {projects.map((p, idx) => {
+                            const pc = getProjectColor(p.id, p.name);
+                            return (
+                              <span key={idx} className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${pc.badgeBg} ${pc.badgeText}`}>
+                                {p.name}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {participants.length > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex -space-x-1.5">
+                            {participants.slice(0, 4).map(p => (
+                              <div key={p.key} className="h-5 w-5 rounded-full ring-2 ring-white bg-[#6366f1] flex items-center justify-center text-[8px] font-bold text-white" title={p.name}>
+                                {getInitials(p.name)}
+                              </div>
+                            ))}
+                            {participants.length > 4 && (
+                              <div className="h-5 w-5 rounded-full ring-2 ring-white bg-slate-300 flex items-center justify-center text-[8px] font-bold text-slate-700">
+                                +{participants.length - 4}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-[#64748b] font-medium truncate">
+                            {participants.length === 1 ? participants[0].name : `${participants.length} người tham gia`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="border border-dashed border-[#e2e8f0] rounded-xl p-4 text-center text-[12px] text-[#94a3b8] mt-2">
+                  {emptyText}
                 </div>
-              ))
-            ) : (
-              <div className="border border-dashed border-[#e2e8f0] rounded-xl p-4 text-center text-[12px] text-[#94a3b8] mt-2">
-                {emptyText}
-              </div>
-            )}
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Project color legend */}
+      {(() => {
+        const legend = new Map<string, { name: string; dot: string }>();
+        weekMeetings.forEach(m => getMeetingProjects(m).forEach(p => {
+          const k = String(p.id ?? p.name);
+          if (!legend.has(k)) legend.set(k, { name: p.name, dot: getProjectColor(p.id, p.name).dot });
+        }));
+        if (legend.size === 0) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100">
+            {Array.from(legend.values()).map(l => (
+              <span key={l.name} className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748b]">
+                <span className={`w-2 h-2 rounded-full ${l.dot}`} />
+                {l.name}
+              </span>
+            ))}
           </div>
         );
-      })}
+      })()}
     </div>
   );
 
@@ -881,7 +997,7 @@ function MeetingsPageContent() {
                       onClick={() => setWeekOffset(0)}
                       className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${weekOffset === 0 ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#64748b] hover:bg-white'}`}
                     >
-                      Hôm nay
+                      Tuần này
                     </button>
                     <button
                       type="button"
@@ -934,7 +1050,7 @@ function MeetingsPageContent() {
                       onClick={() => setWeekOffset(0)}
                       className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${weekOffset === 0 ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#64748b] hover:bg-white'}`}
                     >
-                      Hôm nay
+                      Tuần này
                     </button>
                     <button
                       type="button"
