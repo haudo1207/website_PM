@@ -666,6 +666,77 @@ export const getSessionTimeline = (sessionId: string) =>
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);
 
+// ── System Audit → Team Comparison (Section 2 & 3) ─────────────
+// Strictly super_admin — the backend router already enforces this.
+export interface TeamComparisonMember {
+  member_id: number;
+  name: string;
+  position?: string | null;
+  department?: string | null;
+  team?: string | null;
+  assigned: number;
+  support: number;
+  total: number;
+  done: number;
+  in_progress: number;
+  overdue: number;
+  manday_est: number;
+  manday_actual: number;
+  kpi: number;
+  progress_pct: number;
+}
+export interface TeamComparisonProject {
+  project_id: number;
+  name: string;
+  status?: string | null;
+  current_phase?: string | null;
+  data_scope?: string | null;
+  business?: string | null;
+  workspace?: string | null;
+  total: number;
+  done: number;
+  in_progress: number;
+  overdue: number;
+  manday_est: number;
+  manday_actual: number;
+  kpi: number;
+  progress_pct: number;
+  timeline_pct: number;
+  health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
+}
+export interface TeamComparisonTeam {
+  leader_user_id: number;
+  leader_member_id: number;
+  leader_name: string;
+  leader_email: string;
+  team_name: string;
+  workspace: string;
+  data_scope: string;
+  member_count: number;
+  members: TeamComparisonMember[];
+  kpi: number;
+  plan_md: number;
+  actual_md: number;
+  util: number;
+  efficiency: number;
+  on_time: number;
+  overdue: number;
+  total: number;
+  done: number;
+  in_progress: number;
+  health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
+  projects: TeamComparisonProject[];
+}
+export interface TeamComparisonResponse {
+  workspace: string;
+  workspace_filter: string;
+  teams: TeamComparisonTeam[];
+}
+export const getTeamComparison = (params?: { workspace?: string }) =>
+  api.get<TeamComparisonResponse>('/system-audit/team-comparison', { params }).then(r => r.data);
+export const getTeamDetail = (leader_user_id: number) =>
+  api.get<{ team: TeamComparisonTeam }>('/system-audit/team-detail', { params: { leader_user_id } }).then(r => r.data);
+
 // Telegram connection (Leave Request notifications)
 export interface TelegramStatus {
   connected: boolean;
