@@ -260,6 +260,8 @@ def meeting_to_dict(m: Meeting) -> dict:
         "objective": m.objective,
         "agenda": m.agenda,
         "no_action_reason": m.no_action_reason,
+        "reminder_minutes": m.reminder_minutes,
+        "notify_channels": m.notify_channels,
         "score_total": m.score_total,
         "score_prep": m.score_prep,
         "score_execution": m.score_execution,
@@ -671,6 +673,13 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         # Store flat list of strings directly
         ai_summary = [str(item) for item in ai_summary]
 
+    try:
+        reminder_minutes = int(body.get("reminder_minutes", 15))
+    except (TypeError, ValueError):
+        reminder_minutes = 15
+    notify_channels_input = body.get("notify_channels")
+    notify_channels = [str(c) for c in notify_channels_input] if isinstance(notify_channels_input, list) else None
+
     m = Meeting(
         title=title,
         description=body.get("description"),
@@ -687,6 +696,8 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         objective=body.get("objective"),
         agenda=body.get("agenda"),
         no_action_reason=body.get("no_action_reason"),
+        reminder_minutes=reminder_minutes,
+        notify_channels=notify_channels,
     )
     # Auto-summarize with AI on create (using structured output)
     try:
@@ -811,6 +822,14 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     m.objective = body.get("objective", m.objective)
     m.agenda = body.get("agenda", m.agenda)
     m.no_action_reason = body.get("no_action_reason", m.no_action_reason)
+
+    if "reminder_minutes" in body:
+        try:
+            m.reminder_minutes = int(body["reminder_minutes"])
+        except (TypeError, ValueError):
+            pass
+    if isinstance(body.get("notify_channels"), list):
+        m.notify_channels = [str(c) for c in body["notify_channels"]]
 
     # Store ai_summary if provided (or keep old if not in payload)
     ai_summary_input = body.get("ai_summary") or body.get("summary")
