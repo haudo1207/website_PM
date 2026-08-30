@@ -727,7 +727,7 @@ export default function ReportTab() {
                     onClick={() => setOpenFilterDropdown(openFilterDropdown === 'priority' ? null : 'priority')}
                   >
                     <div className="flex items-center justify-center gap-1.5 text-center">
-                      <span className={`font-bold uppercase tracking-wider ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Priority</span>
+                      <span className={`font-bold uppercase tracking-wider whitespace-nowrap ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Priority</span>
                       <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
                     </div>
                     {filterPriority !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center mx-auto">{filterPriority}</span>}
@@ -762,7 +762,7 @@ export default function ReportTab() {
                     onClick={() => setOpenFilterDropdown(openFilterDropdown === 'status' ? null : 'status')}
                   >
                     <div className="flex items-center justify-center gap-1.5 text-center">
-                      <span className={`font-bold uppercase tracking-wider ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Trạng Thái</span>
+                      <span className={`font-bold uppercase tracking-wider whitespace-nowrap ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Trạng Thái</span>
                       <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
                     </div>
                     {filterStatus !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center mx-auto">{filterStatus}</span>}
@@ -788,11 +788,11 @@ export default function ReportTab() {
                     </div>
                   )}
                 </th>
-                <th className="px-4 py-2.5 align-top text-center w-[100px] bg-slate-100">
-                  Manday
+                <th className="px-4 py-2.5 align-top text-center w-[90px] bg-slate-100">
+                  <span className="font-bold uppercase tracking-wider text-[#2e3b52] whitespace-nowrap">Manday</span>
                 </th>
-                <th className="px-4 py-2.5 align-top text-center w-[110px] bg-slate-100">
-                  Start Day
+                <th className="px-4 py-2.5 align-top text-center w-[100px] bg-slate-100">
+                  <span className="font-bold uppercase tracking-wider text-[#2e3b52] whitespace-nowrap">Start Day</span>
                 </th>
                 <th className="px-4 py-2.5 align-top text-center w-[140px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
                   <button
