@@ -10,7 +10,7 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
 import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
-import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonTeam, TeamComparisonResponse } from '@/lib/api';
+import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 export default function SystemAuditTab() {
@@ -641,6 +641,132 @@ export default function SystemAuditTab() {
         </div>
       </div>
 
+      {/* ── SECTION 4: So sánh Member giữa các Team ─────────────────────
+          Read-only member-vs-team comparison for Super Admin monitoring.
+          Re-uses the same `teamsList` already fetched for Section 2/3, so
+          no new API call is required. The eligible Leaders / Members /
+          task metrics are the same ones already aggregated on the backend
+          (which already enforces the rule "drop Leaders with zero managed
+          Members" and "ALL WORKSPACES leaders use only their real managed
+          Members"). The Workspace filter is the same shared
+          `useWorkspaceFilter()` used by Section 2 & 3 — no second filter. */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <SvgIcon name="user" className="w-4 h-4 text-emerald-600" />
+            <div>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">
+                4. So sánh Member giữa các Team
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Đánh giá tải của từng Member theo từng Leader — phát hiện Quá tải, Cân bằng, Còn capacity, Trống task — Workspace hiện tại: <strong className="text-[#0058be]">{currentWsLabel}</strong>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold">
+            {teamComparisonLoading && (
+              <span className="text-blue-600 animate-pulse">Đang tải dữ liệu member…</span>
+            )}
+          </div>
+        </div>
+
+        <div className="p-5">
+          {teamComparisonLoading ? (
+            <p className="text-xs text-slate-400 italic text-center py-6">
+              Đang tải dữ liệu team…
+            </p>
+          ) : teamsList.length === 0 ? (
+            <p className="text-xs text-slate-400 italic text-center py-6">
+              Workspace hiện tại chưa có Leader nào có thành viên được quản lý.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {teamsList.map(t => {
+                const teamMembers = t.members || [];
+                const totalMembers = teamMembers.length;
+                const emptyMembers = teamMembers.filter(m => (m.total || 0) === 0).length;
+                const overloadedMembers = teamMembers.filter(m => memberStatus(m) === 'overload').length;
+                const balancedMembers = teamMembers.filter(m => memberStatus(m) === 'balanced').length;
+                const availableMembers = teamMembers.filter(m => memberStatus(m) === 'available').length;
+                const sortedMembers = [...teamMembers].sort(memberSortComparator);
+                return (
+                  <div key={t.leader_user_id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/30">
+                    {/* Team summary header */}
+                    <div className="px-4 py-3 border-b border-slate-200 bg-white">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider truncate" title={t.team_name}>
+                            {t.team_name}
+                          </h4>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Leader: <strong className="text-slate-700">{t.leader_name}</strong> • {totalMembers} Members • Workspace: {t.workspace}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] font-bold">
+                          <span className="px-2 py-0.5 rounded-full bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20">
+                            Avg Util: <strong className="ml-1">{t.util.toFixed(1)}%</strong>
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full border ${healthBadge(t.health)}`}>
+                            {healthLabel(t.health)}
+                          </span>
+                        </div>
+                      </div>
+                      {/* Workload counters row */}
+                      <div className="grid grid-cols-4 gap-2 mt-3">
+                        <CounterChip label="Members"  value={totalMembers}     tone="slate" />
+                        <CounterChip label="Trống task" value={emptyMembers}     tone="slate" />
+                        <CounterChip label="Còn capacity" value={availableMembers} tone="emerald" />
+                        <CounterChip label="Quá tải" value={overloadedMembers} tone="rose" />
+                      </div>
+                      <div className="mt-2 text-[9px] text-slate-400 font-semibold uppercase tracking-wider">
+                        Cân bằng: <strong className="text-blue-600">{balancedMembers}</strong>
+                      </div>
+                    </div>
+
+                    {/* Member list */}
+                    <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">
+                      {sortedMembers.length === 0 ? (
+                        <p className="text-xs text-slate-400 italic text-center py-4">
+                          Team chưa có thành viên.
+                        </p>
+                      ) : (
+                        sortedMembers.map(m => {
+                          const status = memberStatus(m);
+                          const util = memberUtil(m);
+                          return (
+                            <div key={m.member_id} className="p-3 bg-white border border-slate-200 rounded-lg">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-[#0b1c30] truncate" title={m.name}>
+                                    {m.name}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    {m.position || m.department || '—'}
+                                  </p>
+                                </div>
+                                <WorkloadBadge status={status} />
+                              </div>
+                              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
+                                <SmallStat label="Done"   value={m.done}        color="text-emerald-600" />
+                                <SmallStat label="Doing"  value={m.in_progress} color="text-blue-600" />
+                                <SmallStat label="Trễ"    value={m.overdue}     color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
+                                <SmallStat label="KPI"    value={m.kpi.toFixed(1)} color="text-[#0058be]" />
+                                <SmallStat label="Manday" value={`${m.manday_actual.toFixed(1)}/${m.manday_est.toFixed(1)}`} />
+                                <SmallStat label="Util"   value={`${util.toFixed(1)}%`} color={util >= 100 ? 'text-rose-600' : util >= 80 ? 'text-emerald-600' : 'text-slate-600'} />
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* FULL WIDTH: Tiến độ tất cả dự án (Default 6 projects + Xem thêm toggle) */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden p-5">
         <div className="flex justify-between items-center pb-4 mb-4 border-b border-slate-100">
@@ -1127,6 +1253,74 @@ function SmallStat({ label, value, color }: { label: string; value: any; color?:
     <div>
       <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">{label}</span>
       <span className={`text-[11px] font-extrabold ${color || 'text-slate-700'}`}>{value}</span>
+    </div>
+  );
+}
+
+// ── Section 4 helpers ──────────────────────────────────────────────────
+// Member workload classification (reuses the existing
+// manday_actual / manday_est / util >= 100 / util >= 80 thresholds that
+// already drive the Section 2 table). A member with no plan (manday_est=0)
+// or no tasks at all is treated as "available" (capacity remains unused).
+function memberUtil(m: TeamComparisonMember): number {
+  if (!m || !m.manday_est || m.manday_est <= 0) return 0;
+  return (m.manday_actual / m.manday_est) * 100;
+}
+function memberStatus(m: TeamComparisonMember): 'overload' | 'balanced' | 'available' {
+  const util = memberUtil(m);
+  if (util >= 100) return 'overload';
+  if (util >= 80) return 'balanced';
+  return 'available';
+}
+const STATUS_RANK: Record<'overload' | 'balanced' | 'available', number> = {
+  overload: 0,
+  balanced: 1,
+  available: 2,
+};
+function memberSortComparator(a: TeamComparisonMember, b: TeamComparisonMember): number {
+  const sa = memberStatus(a);
+  const sb = memberStatus(b);
+  if (sa !== sb) return STATUS_RANK[sa] - STATUS_RANK[sb];
+  // Stable secondary sort: most-utilized first within the same status.
+  return memberUtil(b) - memberUtil(a);
+}
+
+function WorkloadBadge({ status }: { status: 'overload' | 'balanced' | 'available' }) {
+  if (status === 'overload') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-800 border-rose-200">
+        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span>
+        Quá tải
+      </span>
+    );
+  }
+  if (status === 'balanced') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-blue-100 text-blue-800 border-blue-200">
+        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block"></span>
+        Cân bằng
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+      Còn capacity
+    </span>
+  );
+}
+
+function CounterChip({ label, value, tone }: { label: string; value: number; tone: 'slate' | 'emerald' | 'rose' }) {
+  const toneCls =
+    tone === 'rose'
+      ? 'bg-rose-50 text-rose-700 border-rose-200'
+      : tone === 'emerald'
+      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+      : 'bg-slate-50 text-slate-700 border-slate-200';
+  return (
+    <div className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-lg border ${toneCls}`}>
+      <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{label}</span>
+      <span className="text-sm font-black leading-tight">{value}</span>
     </div>
   );
 }
