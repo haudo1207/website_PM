@@ -315,23 +315,6 @@ def list_members(
     # keep seeing every member, exactly as before).
     q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
-    # Dashboard Leader Card authorization: when the caller is a Leader, exclude
-    # member records whose linked User account has role='leader'. A Leader must
-    # only see Member/Viewer member-cards on the Dashboard, never other Leader
-    # cards. super_admin callers are unaffected (they take the early-return
-    # path in member_query_for_user and see every member).
-    if getattr(current_user, "role", None) == "leader":
-        other_leader_member_ids = (
-            db.query(User.member_id)
-            .filter(
-                User.member_id.isnot(None),
-                User.role == "leader",
-                User.id != getattr(current_user, "id", -1),
-            )
-            .subquery()
-        )
-        q = q.filter(~Member.id.in_(other_leader_member_ids))
-
     results = q.order_by(Member.display_name.asc()).all()
     
     out = []

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Share2 } from 'lucide-react';
-import { generateMeetingLink, generateAiMeetingContent, getProjects, getAccounts } from '@/lib/api';
+import { generateMeetingLink, generateAiMeetingContent, getProjects, getMembers } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
@@ -41,7 +41,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     member_ids: []
   });
   const [projectsList, setProjectsList] = useState<any[]>([]);
-  const [accountsList, setAccountsList] = useState<any[]>([]);
+  const [membersList, setMembersList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   // Ref, not state: reads/writes happen synchronously so rapid repeated
   // clicks within the same render tick still see the lock (state would be
@@ -64,7 +64,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         project_ids: Array.isArray(initialData.project_ids) && initialData.project_ids.length
           ? initialData.project_ids
           : (initialData.project_id ? [initialData.project_id] : []),
-        member_ids: []
+        // Prefill from the meeting's real MeetingMember rows (member_id, not
+        // the synthesized "Host" entry which has no member_id) so editing
+        // doesn't silently drop everyone already added.
+        member_ids: (initialData.members || [])
+          .map((mm: any) => mm.member_id)
+          .filter((id: any) => id !== undefined && id !== null)
       });
     } else {
       const today = new Date().toISOString().split('T')[0];
@@ -92,9 +97,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       const items = res?.data || res || [];
       if (Array.isArray(items)) setProjectsList(items);
     }).catch(() => {});
-    getAccounts().then((res: any) => {
+    getMembers().then((res: any) => {
       const items = res?.data || res || [];
-      if (Array.isArray(items)) setAccountsList(items);
+      if (Array.isArray(items)) setMembersList(items);
     }).catch(() => {});
   }, [isOpen]);
 
@@ -249,7 +254,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 <SearchableSelect
                   label="thành viên"
                   isMulti
-                  options={accountsList.map((a: any) => ({ id: a.id, name: a.full_name || a.display_name || a.email || `#${a.id}` }))}
+                  options={membersList.map((m: any) => ({ id: m.id, name: m.display_name || m.full_name || `#${m.id}` }))}
                   value={formData.member_ids}
                   onChange={(ids: number[]) => setFormData({ ...formData, member_ids: ids })}
                 />
@@ -284,6 +289,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0 mt-0.5">info</span>
                 <div>
                   <span className="font-bold text-amber-900">Lưu ý khi chọn Zoom:</span> Hệ thống dùng 1 tài khoản Zoom cố định. Tại cùng một khung giờ chỉ khởi tạo được 1 cuộc họp Zoom. Nếu trùng giờ với cuộc họp Zoom khác, sẽ không tạo thêm được link mới (khuyên dùng <b>Google Meet</b>).
+                </div>
+              </div>
+            )}
+
+            {formData.platform === 'Google Meet' && (
+              <div className="p-3 bg-[#eff6ff] border border-[#bfdbfe] rounded-lg text-[11px] text-[#1e40af] leading-relaxed flex items-start gap-2">
+                <span className="material-symbols-outlined text-[#2563eb] text-[16px] shrink-0 mt-0.5">info</span>
+                <div>
+                  <span className="font-bold">Lưu ý host cuộc họp:</span> Link Google Meet dùng tài khoản chung <b>mkt.szone@gmail.com</b>. Người đóng vai trò host (duyệt người tham gia vào phòng chờ) cần đăng nhập Google bằng đúng tài khoản này trước khi bấm vào link, nếu không sẽ không ai duyệt được.
                 </div>
               </div>
             )}

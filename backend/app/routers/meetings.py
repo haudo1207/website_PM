@@ -294,6 +294,7 @@ def list_meetings(
     status: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    mine: bool = False,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -326,7 +327,33 @@ def list_meetings(
     # its scheduled date relative to others). id is monotonic on insert, so
     # this is also immune to clock skew.
     meetings = q.order_by(Meeting.id.desc()).all()
-    return {"success": True, "data": [meeting_to_dict(m) for m in meetings]}
+    result = [meeting_to_dict(m) for m in meetings]
+
+    if mine:
+        member = None
+        if current_user and getattr(current_user, "email", None):
+            member = db.query(Member).filter(Member.email.ilike(current_user.email)).first()
+        if not member:
+            return {"success": True, "data": []}
+
+        own_names = {member.display_name.strip().lower()}
+        if member.full_name:
+            own_names.add(member.full_name.strip().lower())
+
+        def is_mine(md: dict) -> bool:
+            if md.get("created_by") == member.id:
+                return True
+            for mb in md.get("members", []):
+                if mb.get("member_id") == member.id:
+                    return True
+                name = str(mb.get("display_name") or "").strip().lower()
+                if name and name in own_names:
+                    return True
+            return False
+
+        result = [md for md in result if is_mine(md)]
+
+    return {"success": True, "data": result}
 
 # ─── GENERATE LINK (Zoom / Google Meet) ────────────────
 @router.post("/generate-link")
@@ -834,6 +861,23 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
                     m.project_id = proj.id
             else:
                 m.project_id = None
+
+    # Participants — re-selected from the edit form. Mirrors the DONE-status
+    # guard on the dedicated add/remove-member endpoints below.
+    member_ids_input = body.get("member_ids")
+    if isinstance(member_ids_input, list) and m.status != "DONE":
+        wanted_ids = set()
+        for raw in member_ids_input:
+            try:
+                wanted_ids.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        existing = {mm.member_id: mm for mm in m.members}
+        for mid in wanted_ids - existing.keys():
+            if db.query(Member).filter(Member.id == mid).first():
+                db.add(MeetingMember(meeting_id=m.id, member_id=mid, role="PARTICIPANT"))
+        for mid in existing.keys() - wanted_ids:
+            db.delete(existing[mid])
 
     from ..services.meeting_score_engine import recalculate_meeting_score
     recalculate_meeting_score(m, db)
@@ -1449,6 +1493,7 @@ class N8nMeetingSummaryPayload(BaseModel):
     meeting_date: str
     start_time: Optional[str] = "09:00"
     end_time: Optional[str] = None
+    duration_minutes: Optional[float] = None
     platform: Optional[str] = "Google Meet"
     project_id: Optional[int] = None
     project_name: Optional[str] = None
@@ -1505,6 +1550,12 @@ def ingest_n8n_meeting_summary(
             end_time = parse_time(payload.end_time)
         except Exception:
             pass
+    # Recording pipelines often only know the duration (from the transcribed
+    # audio), not a wall-clock end time — derive one so "Thời lượng" on the
+    # web matches the Sheet's duration column instead of staying unset.
+    if not end_time and payload.duration_minutes and start_time:
+        start_dt = datetime.datetime.combine(datetime.date.today(), start_time)
+        end_time = (start_dt + datetime.timedelta(minutes=payload.duration_minutes)).time()
 
     clean_title = (payload.title or "").strip()
     if not clean_title:
@@ -1602,6 +1653,18 @@ def ingest_n8n_meeting_summary(
             matched_meeting.project_id = mapped_project_id
         if matched_meeting.created_by is None and mapped_creator_id is not None:
             matched_meeting.created_by = mapped_creator_id
+
+        # The webhook carries the actual recording's date/time/link — more
+        # authoritative than whatever placeholder was set when the meeting was
+        # first scheduled in the app. Without this, the "Bản Tóm Tắt AI Chi Tiết"
+        # card keeps showing the stale scheduled time/link instead of the real
+        # recording (e.g. "60 phút" default duration, old Meet join link).
+        matched_meeting.meeting_date = meeting_date
+        matched_meeting.start_time = start_time
+        if end_time:
+            matched_meeting.end_time = end_time
+        if payload.meeting_url:
+            matched_meeting.meeting_url = payload.meeting_url
 
         db.commit()
         db.refresh(matched_meeting)

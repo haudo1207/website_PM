@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import Link from 'next/link';
@@ -10,6 +10,8 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
 import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
+import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonTeam, TeamComparisonResponse } from '@/lib/api';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 export default function SystemAuditTab() {
   const [selectedMonth, setSelectedMonth] = useState('08/2026');
@@ -179,6 +181,86 @@ export default function SystemAuditTab() {
   const auditLogs: any[] = auditData?.auditLogs || [];
   const auditTotal = auditData?.auditTotal || 0;
 
+  // ── Section 2 & 3: Team Comparison / Multi-Team Project Comparison ──
+  // Reuse the shared Workspace selector already present in the app — the
+  // WorkspaceFilterProvider is mounted at the app root, so picking a
+  // workspace anywhere in the dashboard narrows these sections too. We do
+  // NOT introduce a second independent workspace filter.
+  const { workspaceCode: sharedWorkspaceCode } = useWorkspaceFilter();
+  // Backend expects lowercase workspace code; null / 'all' = no filter.
+  const teamWsParam = sharedWorkspaceCode && sharedWorkspaceCode !== 'all'
+    ? sharedWorkspaceCode
+    : undefined;
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const currentWsLabel = useMemo(() => {
+    if (!sharedWorkspaceCode || sharedWorkspaceCode === 'all') return 'All Workspaces';
+    const w = (workspacesData || []).find((x: any) => x.code === sharedWorkspaceCode);
+    return w?.name || sharedWorkspaceCode;
+  }, [sharedWorkspaceCode, workspacesData]);
+
+  const {
+    data: teamComparison,
+    isFetching: teamComparisonLoading,
+    refetch: refetchTeamComparison,
+  } = useQuery<TeamComparisonResponse>({
+    queryKey: ['system-audit-team-comparison', teamWsParam || 'all'],
+    queryFn: () => getTeamComparison({ workspace: teamWsParam }),
+    staleTime: 60_000,
+  });
+  const teamComparisonData: TeamComparisonResponse | null = teamComparison || null;
+  const teamsList: TeamComparisonTeam[] = teamComparisonData?.teams || [];
+
+  // Multi-Leader selection (Section 3).
+  const [selectedLeaderIds, setSelectedLeaderIds] = useState<number[]>([]);
+  const [appliedLeaderIds, setAppliedLeaderIds] = useState<number[]>([]);
+  // Reset selection when the underlying eligible-Leader set changes
+  // (workspace switch / fresh data load) so we never keep a Leader that's
+  // no longer eligible.
+  useEffect(() => {
+    const eligible = new Set(teamsList.map(t => t.leader_user_id));
+    setSelectedLeaderIds(prev => prev.filter(id => eligible.has(id)));
+    setAppliedLeaderIds(prev => prev.filter(id => eligible.has(id)));
+  }, [teamsList]);
+
+  // Detail drawer (Section 2 — "Chi tiết")
+  const [detailTeam, setDetailTeam] = useState<TeamComparisonTeam | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const openTeamDetail = useCallback(async (leaderUserId: number) => {
+    setDetailLoading(true);
+    try {
+      const res = await getTeamDetail(leaderUserId);
+      setDetailTeam(res.team);
+    } catch (err) {
+      console.error('Failed to load team detail', err);
+      setDetailTeam(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+  const closeTeamDetail = useCallback(() => setDetailTeam(null), []);
+
+  // Helpers — keep the helpers tiny and the same shape as the existing
+  // badges/badges used elsewhere in the page so the visual language stays
+  // consistent (see getActionBadge / getOutcomeBadge in SystemAuditView).
+  const healthBadge = (h: string) => {
+    const x = (h || '').toLowerCase();
+    if (x === 'critical') return 'bg-rose-100 text-rose-800 border-rose-200';
+    if (x === 'risk') return 'bg-amber-100 text-amber-800 border-amber-200';
+    if (x === 'on track') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    return 'bg-slate-100 text-slate-600 border-slate-200';
+  };
+  const healthLabel = (h: string) => {
+    const x = (h || '').toLowerCase();
+    if (x === 'critical') return '🛑 Critical';
+    if (x === 'risk') return '⚠️ Risk';
+    if (x === 'on track') return '🟢 On Track';
+    return h || '—';
+  };
+
   const superAdminCards = [
     { label: 'Tổng Số Dự Án',      value: activeProjectsProgress.length, icon: 'project',   border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Toàn hệ thống' },
     { label: 'Tổng Task Hệ Thống', value: taskStats.total,              icon: 'tasks',     border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Tất cả dự án' },
@@ -270,6 +352,293 @@ export default function SystemAuditTab() {
 
         {/* OTHER 3 SUPER ADMIN CARDS */}
         {superAdminCards.slice(1).map(c => <KpiCard key={c.label} {...c} />)}
+      </div>
+
+      {/* ── SECTION 2: So sánh Team trong Workspace ──────────────────────
+          Super Admin only (the entire System Audit tab is already gated by
+          dashboard/layout.tsx → isSuperAdmin). Re-uses the existing shared
+          Workspace selector (top-of-page, visible in the screenshot sample
+          for the task). Leaders are filtered by the backend endpoint to
+          those with at least one managed member, so the table can render
+          the API response directly. */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <SvgIcon name="project" className="w-4 h-4 text-[#0058be]" />
+            <div>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">
+                2. So sánh Team trong Workspace
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                So sánh KPI, Manday, Utilization, hiệu suất và sức khỏe team từ các Leader — Workspace hiện tại: <strong className="text-[#0058be]">{currentWsLabel}</strong>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold">
+            {teamComparisonLoading && (
+              <span className="text-blue-600 animate-pulse">Đang tải dữ liệu team…</span>
+            )}
+            <button
+              onClick={() => refetchTeamComparison()}
+              className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-50 rounded-md shadow-sm"
+            >
+              <SvgIcon name="refresh" className={`w-3 h-3 ${teamComparisonLoading ? 'animate-spin text-[#0058be]' : 'text-slate-500'}`} />
+              <span className="font-bold">Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-[#eff4ff]/50 text-slate-500 border-b border-[#c2c6d6]/60 uppercase text-[10px] tracking-wider">
+                <th className="px-4 py-3 text-left font-bold">Leader / Team</th>
+                <th className="px-3 py-3 text-right font-bold">KPI</th>
+                <th className="px-3 py-3 text-right font-bold">Plan MD</th>
+                <th className="px-3 py-3 text-right font-bold">Actual MD</th>
+                <th className="px-3 py-3 text-right font-bold">Util.</th>
+                <th className="px-3 py-3 text-right font-bold">Efficiency</th>
+                <th className="px-3 py-3 text-right font-bold">On-time</th>
+                <th className="px-3 py-3 text-right font-bold">Trễ</th>
+                <th className="px-3 py-3 text-center font-bold">Health</th>
+                <th className="px-3 py-3 text-center font-bold">Chi tiết</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!teamComparisonLoading && teamsList.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="text-center py-8 text-slate-400 font-semibold">
+                    Workspace hiện tại chưa có Leader nào có thành viên được quản lý.
+                  </td>
+                </tr>
+              ) : teamComparisonLoading ? (
+                <tr>
+                  <td colSpan={10} className="text-center py-8 text-slate-400 font-semibold">
+                    Đang tải dữ liệu team…
+                  </td>
+                </tr>
+              ) : (
+                teamsList.map(t => (
+                  <tr key={t.leader_user_id} className="border-b border-slate-100 hover:bg-slate-50/60 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-[#0b1c30]">{t.team_name}</span>
+                        <span className="text-[10px] text-slate-500 mt-0.5">
+                          {t.leader_name} • {t.member_count} thành viên
+                        </span>
+                        <span className="text-[9px] text-slate-400 mt-0.5 uppercase tracking-wider">
+                          Workspace: {t.workspace}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-right font-extrabold text-[#0058be]">{t.kpi.toFixed(1)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-slate-700">{t.plan_md.toFixed(1)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-slate-700">{t.actual_md.toFixed(1)}</td>
+                    <td className="px-3 py-3 text-right">
+                      <span className={`font-bold ${t.util >= 100 ? 'text-rose-600' : t.util >= 80 ? 'text-emerald-600' : 'text-slate-600'}`}>
+                        {t.util.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-right font-bold text-slate-700">{t.efficiency.toFixed(1)}%</td>
+                    <td className="px-3 py-3 text-right font-bold text-emerald-600">{t.on_time}</td>
+                    <td className="px-3 py-3 text-right">
+                      <span className={`font-bold ${t.overdue > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{t.overdue}</span>
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border ${healthBadge(t.health)}`}>
+                        {healthLabel(t.health)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <button
+                        onClick={() => openTeamDetail(t.leader_user_id)}
+                        className="text-[10px] font-bold text-[#0058be] hover:bg-[#eff4ff] px-2.5 py-1 rounded-md transition-colors"
+                      >
+                        Chi tiết
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── SECTION 3: So sánh Project theo nhiều Team ──────────────────
+          Multi-Leader selection using the same eligible Leader set as
+          Section 2 (already filtered by the backend to Leaders with managed
+          members, workspace-scoped). 'Apply Comparison' re-renders the
+          per-team project cards; this is purely client-side — we already
+          have the data from the team-comparison query. */}
+      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <SvgIcon name="chart" className="w-4 h-4 text-purple-600" />
+            <div>
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">
+                3. So sánh Project theo nhiều Team
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Chọn nhiều Leader để so sánh các Project đang được team phụ trách.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-b border-slate-100 bg-[#f8fafc] space-y-3">
+          {teamsList.length === 0 ? (
+            <p className="text-xs text-slate-400 italic text-center py-2">
+              Chưa có Leader đủ điều kiện trong Workspace hiện tại.
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                {teamsList.map(t => {
+                  const checked = selectedLeaderIds.includes(t.leader_user_id);
+                  const projectCount = t.projects?.length || 0;
+                  return (
+                    <button
+                      key={t.leader_user_id}
+                      onClick={() => {
+                        setSelectedLeaderIds(prev => checked
+                          ? prev.filter(id => id !== t.leader_user_id)
+                          : [...prev, t.leader_user_id]);
+                      }}
+                      className={`flex items-center gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                        checked
+                          ? 'bg-[#0058be] text-white border-[#0058be] shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-[#0058be]/40 hover:text-[#0058be]'
+                      }`}
+                    >
+                      <span className={`flex items-center justify-center w-4 h-4 rounded border ${checked ? 'bg-white border-white' : 'bg-white border-slate-300'}`}>
+                        {checked && <span className="material-symbols-outlined text-[12px] text-[#0058be] font-black">check</span>}
+                      </span>
+                      <span className="truncate max-w-[160px]">{t.team_name}</span>
+                      <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${checked ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                        {projectCount} project
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+                  <span>Đã chọn: <strong className="text-[#0058be]">{selectedLeaderIds.length}</strong> / {teamsList.length} team</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSelectedLeaderIds(teamsList.map(t => t.leader_user_id))}
+                    className="text-[11px] font-bold text-[#0058be] hover:bg-[#eff4ff] px-3 py-1.5 rounded-md transition-colors"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={() => { setSelectedLeaderIds([]); setAppliedLeaderIds([]); }}
+                    className="text-[11px] font-bold text-slate-500 hover:bg-slate-100 px-3 py-1.5 rounded-md transition-colors"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => setAppliedLeaderIds([...selectedLeaderIds])}
+                    disabled={selectedLeaderIds.length === 0}
+                    className="text-[11px] font-bold text-white bg-[#0058be] hover:bg-[#004499] disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-1.5 rounded-md shadow-sm transition-all"
+                  >
+                    Apply Comparison
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="p-5 space-y-5">
+          {appliedLeaderIds.length === 0 ? (
+            <p className="text-xs text-slate-400 italic text-center py-6">
+              Chọn ít nhất một Leader rồi bấm "Apply Comparison" để xem so sánh project.
+            </p>
+          ) : (
+            appliedLeaderIds
+              .map(id => teamsList.find(t => t.leader_user_id === id))
+              .filter((t): t is TeamComparisonTeam => Boolean(t))
+              .map(t => (
+                <div key={t.leader_user_id} className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">
+                        {t.team_name}
+                      </h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        Leader: <strong>{t.leader_name}</strong> • {t.member_count} thành viên • Workspace: {t.workspace}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] font-bold">
+                      <span className="px-2 py-0.5 rounded-full bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20">
+                        {t.projects.length} Projects
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-full border ${healthBadge(t.health)}`}>
+                        {healthLabel(t.health)}
+                      </span>
+                    </div>
+                  </div>
+                  {t.projects.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic text-center py-6">
+                      Team này chưa có Project nào được giao.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
+                      {t.projects.map(p => (
+                        <Link
+                          key={p.project_id}
+                          href={`/project/detail/overview?id=${p.project_id}`}
+                          className="block p-3.5 bg-white border border-slate-200 rounded-xl hover:border-[#0058be]/40 hover:shadow-md transition-all"
+                        >
+                          <div className="flex items-center justify-between mb-2 gap-2">
+                            <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</span>
+                            <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
+                              {p.status || '—'}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 mb-2">
+                            Giai đoạn: <strong className="text-slate-700">{p.current_phase || '—'}</strong>
+                          </div>
+                          <ProgressBar value={p.progress_pct} color={projectBarColor[p.status || ''] || 'bg-blue-500'} height="h-2" />
+                          <div className="grid grid-cols-2 gap-2 mt-2.5 text-[10px]">
+                            <div>
+                              <span className="text-slate-400 block">Progress</span>
+                              <span className="font-extrabold text-[#0058be]">{p.progress_pct.toFixed(0)}%</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">Timeline</span>
+                              <span className="font-extrabold text-slate-700">{p.timeline_pct.toFixed(0)}%</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">Task</span>
+                              <span className="font-bold text-slate-700">{p.done}/{p.total}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">Trễ</span>
+                              <span className={`font-bold ${p.overdue > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{p.overdue}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">MD</span>
+                              <span className="font-bold text-slate-700">{p.manday_actual.toFixed(1)}/{p.manday_est.toFixed(1)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">Health</span>
+                              <span className={`font-bold ${p.health === 'Critical' ? 'text-rose-600' : p.health === 'Risk' ? 'text-amber-600' : p.health === 'On Track' ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                {p.health}
+                              </span>
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))
+          )}
+        </div>
       </div>
 
       {/* FULL WIDTH: Tiến độ tất cả dự án (Default 6 projects + Xem thêm toggle) */}
@@ -603,6 +972,161 @@ export default function SystemAuditTab() {
           </div>
         </div>
       </div>
+
+      {/* ── Section 2 detail drawer (Team-level drill-down) ──────────────
+          Re-uses the same slide-in-from-right drawer pattern as the
+          existing SystemAuditView drawer, so the visual language stays
+          consistent with the rest of the page. */}
+      {(detailTeam || detailLoading) && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[999] flex justify-end">
+          <div className="fixed inset-0" onClick={closeTeamDetail} />
+          <div className="relative w-full max-w-xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col z-10 animate-in slide-in-from-right duration-250">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3 text-[#0058be]">
+                <span className="material-symbols-outlined text-[24px]">groups</span>
+                <div>
+                  <h3 className="text-base font-bold text-[#0b1c30]">
+                    {detailTeam ? detailTeam.team_name : 'Đang tải chi tiết team…'}
+                  </h3>
+                  {detailTeam && (
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Leader: <strong className="text-slate-800">{detailTeam.leader_name}</strong> • Workspace: {detailTeam.workspace}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={closeTeamDetail}
+                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-lg transition-colors"
+                title="Đóng Drawer"
+              >
+                <span className="material-symbols-outlined text-[22px]">close</span>
+              </button>
+            </div>
+
+            <div className="flex-1 p-6 space-y-5 overflow-y-auto text-xs">
+              {detailLoading && !detailTeam && (
+                <div className="text-center py-8 text-slate-400 font-semibold">Đang tải chi tiết…</div>
+              )}
+              {detailTeam && (
+                <>
+                  {/* Team summary */}
+                  <div className="bg-[#eff4ff]/60 p-4 rounded-xl border border-[#0058be]/15 space-y-3">
+                    <h4 className="text-[11px] font-extrabold text-[#0058be] uppercase tracking-wider">Team Summary</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <SummaryStat label="Members" value={detailTeam.member_count} />
+                      <SummaryStat label="Total tasks" value={detailTeam.total} />
+                      <SummaryStat label="Done" value={detailTeam.done} color="text-emerald-600" />
+                      <SummaryStat label="In progress" value={detailTeam.in_progress} color="text-blue-600" />
+                      <SummaryStat label="Overdue" value={detailTeam.overdue} color="text-rose-600" />
+                      <SummaryStat label="On-time" value={detailTeam.on_time} color="text-emerald-600" />
+                      <SummaryStat label="Plan MD" value={detailTeam.plan_md.toFixed(1)} />
+                      <SummaryStat label="Actual MD" value={detailTeam.actual_md.toFixed(1)} />
+                      <SummaryStat label="KPI" value={detailTeam.kpi.toFixed(1)} color="text-[#0058be]" />
+                      <SummaryStat label="Efficiency" value={`${detailTeam.efficiency.toFixed(1)}%`} />
+                      <SummaryStat label="Utilization" value={`${detailTeam.util.toFixed(1)}%`} />
+                      <SummaryStat label="Health" value={healthLabel(detailTeam.health)} />
+                    </div>
+                  </div>
+
+                  {/* Member breakdown */}
+                  <div className="space-y-2">
+                    <h4 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">Member Breakdown</h4>
+                    <div className="space-y-2">
+                      {detailTeam.members.length === 0 ? (
+                        <p className="text-slate-400 italic">Team chưa có thành viên.</p>
+                      ) : (
+                        detailTeam.members.map(m => (
+                          <div key={m.member_id} className="p-3 border border-slate-200 rounded-xl bg-slate-50/40">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <span className="font-bold text-[#0b1c30]">{m.name}</span>
+                                <span className="text-[10px] text-slate-500 ml-1.5">{m.position || m.department || ''}</span>
+                              </div>
+                              <span className="text-[10px] font-extrabold text-[#0058be] bg-[#eff4ff] px-2 py-0.5 rounded">
+                                {m.kpi.toFixed(1)} KPI
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-[10px]">
+                              <SmallStat label="Assigned" value={m.assigned} />
+                              <SmallStat label="Done" value={m.done} color="text-emerald-600" />
+                              <SmallStat label="In-prog." value={m.in_progress} color="text-blue-600" />
+                              <SmallStat label="Overdue" value={m.overdue} color="text-rose-600" />
+                              <SmallStat label="MD plan" value={m.manday_est.toFixed(1)} />
+                              <SmallStat label="MD actual" value={m.manday_actual.toFixed(1)} />
+                              <SmallStat label="Progress" value={`${m.progress_pct.toFixed(0)}%`} color="text-[#0058be]" />
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Projects contributing to the team's workload */}
+                  <div className="space-y-2">
+                    <h4 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">Projects / Workload Context</h4>
+                    {detailTeam.projects.length === 0 ? (
+                      <p className="text-slate-400 italic">Team chưa có dự án nào được giao.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {detailTeam.projects.map(p => (
+                          <Link
+                            key={p.project_id}
+                            href={`/project/detail/overview?id=${p.project_id}`}
+                            className="block p-3 border border-slate-200 rounded-xl bg-white hover:border-[#0058be]/40 transition-all"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-[#0b1c30]">{p.name}</span>
+                              <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
+                                {p.status || '—'}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 mt-2 text-[10px]">
+                              <SmallStat label="Progress" value={`${p.progress_pct.toFixed(0)}%`} color="text-[#0058be]" />
+                              <SmallStat label="Tasks" value={`${p.done}/${p.total}`} />
+                              <SmallStat label="Overdue" value={p.overdue} color="text-rose-600" />
+                              <SmallStat label="MD" value={`${p.manday_actual.toFixed(1)}/${p.manday_est.toFixed(1)}`} />
+                              <SmallStat label="Health" value={p.health} />
+                              <SmallStat label="Phase" value={p.current_phase || '—'} />
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50/80 flex justify-end shrink-0">
+              <button
+                onClick={closeTeamDetail}
+                className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 py-2 rounded-lg shadow-sm transition-all"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryStat({ label, value, color }: { label: string; value: any; color?: string }) {
+  return (
+    <div>
+      <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">{label}</span>
+      <span className={`text-base font-black ${color || 'text-slate-700'}`}>{value}</span>
+    </div>
+  );
+}
+
+function SmallStat({ label, value, color }: { label: string; value: any; color?: string }) {
+  return (
+    <div>
+      <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">{label}</span>
+      <span className={`text-[11px] font-extrabold ${color || 'text-slate-700'}`}>{value}</span>
     </div>
   );
 }

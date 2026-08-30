@@ -9,7 +9,7 @@ import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
-import ProjectResourcesTab from '@/components/ProjectResourcesTab';
+import ProjectDocumentsTab from '@/components/ProjectDocumentsTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProjectFormModal from '@/components/ProjectFormModal';
 import {
@@ -27,7 +27,7 @@ import {
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup
 } from '@/lib/api';
-import { isAdmin, isMember } from '@/lib/auth';
+import { isAdmin, isMember, getEmail } from '@/lib/auth';
 import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod } from '@/app/dashboard/constants';
 
 const ROMAN_PAIRS: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
@@ -450,32 +450,34 @@ function ProjectDetailContent() {
       let loadedTasks: any[] = [];
       let allGroups: any[] = [];
       let loadedPhases: any[] = [];
+      let phs: any[] = [];
       try {
-        const phs = await getPhases(Number(id));
+        phs = await getPhases(Number(id));
         loadedPhases = phs || [];
-
-        if (phs && phs.length > 0) {
-          for (const p of phs) {
-            try {
-              const grps = await getTaskGroups(p.id);
-              allGroups.push(...(grps || []));
-            } catch (e) {
-              console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
-            }
-          }
-        }
       } catch (err: any) {
         console.error('Lỗi khi tải danh sách Phase dự án:', err);
         flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
       }
 
-      try {
-        const tsks = await getAllProjectTasks(Number(id));
-        loadedTasks = tsks || [];
-      } catch (err: any) {
-        console.error('Lỗi khi tải danh sách Task dự án:', err);
-        flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
-      }
+      // Every phase's task groups + the project's full task list are independent
+      // of each other — fetch them all concurrently instead of one phase at a
+      // time (was serial, so reloadAll() got slower the more phases a project
+      // had; every write anywhere on this page calls reloadAll() afterward).
+      const [groupResults, tsks] = await Promise.all([
+        Promise.all((phs || []).map(p =>
+          getTaskGroups(p.id).catch(e => {
+            console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
+            return [];
+          })
+        )),
+        getAllProjectTasks(Number(id)).catch(err => {
+          console.error('Lỗi khi tải danh sách Task dự án:', err);
+          flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+          return [];
+        }),
+      ]);
+      allGroups = groupResults.flat();
+      loadedTasks = tsks || [];
 
       return { phases: loadedPhases, groups: allGroups, tasks: loadedTasks };
     },
@@ -7374,9 +7376,14 @@ function ProjectDetailContent() {
               )}
 
               {activeMainTab === 'resources' && (
-                <ProjectResourcesTab
+                <ProjectDocumentsTab
+                  projectId={Number(id)}
+                  phases={phases}
                   tasks={items || []}
                   projectName={project?.name || ''}
+                  isProjectLeader={isAdmin() || projectMembers.some(
+                    (m: any) => m.role === 'Leader' && m.email && m.email.toLowerCase() === (getEmail() || '').toLowerCase()
+                  )}
                   onNavigateToTask={(taskCodeOrId) => {
                     const found = items.find(t => t.task_code === taskCodeOrId || String(t.id) === String(taskCodeOrId));
                     if (found) {

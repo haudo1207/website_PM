@@ -11,5 +11,6 @@ from .project_template import ProjectTemplate, ProjectTemplatePhase, ProjectTemp
 from .meeting import Meeting, MeetingMember
 from .meeting_feedback import MeetingFeedback
 from .meeting_project import MeetingProject
+from .document import ProjectDocument
 
 

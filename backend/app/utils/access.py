@@ -437,6 +437,39 @@ def _is_task_write(request: Request) -> bool:
     return False
 
 
+def _is_document_write(request: Request) -> bool:
+    """Check if the request is a Resources/Documents write (upload, update, delete, star).
+
+    Approve/reject are also matched here (they live under the same
+    `/documents/{id}/...` path) — that's fine, since `is_project_leader()` is
+    checked explicitly inside those two route handlers regardless of whether
+    the generic member-write gate here lets the request through.
+    """
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return False
+    return re.search(r"/projects/\d+/documents(/.*)?", request.url.path) is not None
+
+
+def is_project_leader(db: Session, user, project_id: int) -> bool:
+    """True if *user* may approve/reject Resources for *project_id*:
+    a super_admin, or the project's own Technical Leader
+    (project_members_v2.role == 'Leader' for this project) — not to be
+    confused with the global/workspace `User.role == 'leader'`.
+    """
+    if getattr(user, "role", None) == ROLE_SUPER_ADMIN:
+        return True
+    member_id = getattr(user, "member_id", None)
+    if not member_id:
+        return False
+    return db.execute(
+        project_members.select().where(
+            project_members.c.project_id == project_id,
+            project_members.c.member_id == member_id,
+            project_members.c.role == "Leader",
+        )
+    ).first() is not None
+
+
 def _is_member_of_project(db: Session, user, project_id: int) -> bool:
     """Check if the user's linked member is assigned to the project."""
     if not user.member_id:
@@ -508,9 +541,11 @@ def require_route_project_access(
             # super_admin and leader may write freely within their scope.
             return user
 
-        # member: may perform Task CRUD if assigned to the current project.
+        # member: may perform Task CRUD, or Resources/Documents CRUD, if assigned
+        # to the current project. (Approve/reject are additionally gated by
+        # is_project_leader() inside the route handler itself.)
         if role == ROLE_MEMBER:
-            if is_task_write_result and project_id is not None:
+            if (is_task_write_result or _is_document_write(request)) and project_id is not None:
                 print("--- ACCESS GRANTED FOR MEMBER ---")
                 return user
             print("--- ACCESS DENIED FOR MEMBER ---")

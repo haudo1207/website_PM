@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     CHECK_INTERVAL_SECONDS: int = 3600
     REDIS_URL: str = ""
 
+    # Local disk storage for Resources/Documents file uploads (relative to the
+    # backend process working directory; mounted as a Docker volume in prod/dev
+    # so files survive container rebuilds).
+    UPLOAD_DIR: str = "uploads"
+
     # DB connection pool — was hard-coded pool_size=2/max_overflow=0 in database.py,
     # which exhausts under concurrent Dashboard load and forces requests to queue.
     # Kept conservative: measured on the dev DB (Supabase pooler) max_connections=60

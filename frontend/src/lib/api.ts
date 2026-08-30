@@ -153,6 +153,8 @@ export interface MeProfile {
   avatar_url?: string | null;
   role: string;
   data_scope: string;
+  workspace_ids?: string[];
+  workspaces?: Workspace[];
   member_id?: number | null;
   is_active: boolean;
   login_method: string;
@@ -218,6 +220,57 @@ export const addProjectMember = (pid: number, memberId: number, role?: string) =
   api.post(`/projects/${pid}/members`, { member_id: memberId, role: role || 'Member' }).then(r => r.data);
 export const removeProjectMember = (pid: number, memberId: number) =>
   api.delete(`/projects/${pid}/members/${memberId}`).then(r => r.data);
+
+// Project Documents (Resources tab — "Trung tâm dữ liệu dự án")
+export interface ProjectDocumentItem {
+  id: number;
+  project_id: number;
+  name: string;
+  doc_type: string;
+  ext: string;
+  phase_id: number | null;
+  phase_name: string | null;
+  task_id: number | null;
+  task_label: string | null;
+  source: 'file' | 'link';
+  url: string | null;
+  size_bytes: number | null;
+  owner_member_id: number | null;
+  owner_name: string | null;
+  uploader_user_id: number | null;
+  uploader_name: string;
+  status: 'draft' | 'review' | 'approved';
+  is_starred: boolean;
+  version: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+export interface ProjectDocumentsResponse {
+  items: ProjectDocumentItem[];
+  metrics: { total: number; starred: number; review: number; approved: number; approved_pct: number };
+  can_approve: boolean;
+}
+export const getProjectDocuments = (
+  pid: number,
+  params?: { special?: 'starred' | 'recent' | 'review'; phase_id?: number; q?: string; doc_type?: string; uploader_id?: number }
+): Promise<ProjectDocumentsResponse> => api.get(`/projects/${pid}/documents`, { params }).then(r => r.data);
+export const getProjectDocumentCategories = (pid: number) =>
+  api.get(`/projects/${pid}/documents/categories`).then(r => r.data);
+export const getProjectDocumentHistory = (pid: number, docId: number) =>
+  api.get(`/projects/${pid}/documents/${docId}/history`).then(r => r.data);
+export const createProjectDocument = (pid: number, data: FormData): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents`, data).then(r => r.data);
+export const updateProjectDocument = (pid: number, docId: number, data: FormData): Promise<ProjectDocumentItem> =>
+  api.patch(`/projects/${pid}/documents/${docId}`, data).then(r => r.data);
+export const approveProjectDocument = (pid: number, docId: number): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents/${docId}/approve`).then(r => r.data);
+export const rejectProjectDocument = (pid: number, docId: number): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents/${docId}/reject`).then(r => r.data);
+export const toggleStarProjectDocument = (pid: number, docId: number): Promise<ProjectDocumentItem> =>
+  api.post(`/projects/${pid}/documents/${docId}/star`).then(r => r.data);
+export const deleteProjectDocument = (pid: number, docId: number) =>
+  api.delete(`/projects/${pid}/documents/${docId}`).then(r => r.data);
+export const projectDocumentFileUrl = (pid: number, docId: number) => `${BASE}/projects/${pid}/documents/${docId}/file`;
 
 // Phases
 export const getPhases = (pid: number) => api.get(`/projects/${pid}/phases`).then(r => r.data);
@@ -396,7 +449,7 @@ export const approveLeaveRequest = (id: number, status: 'Approved' | 'Rejected')
   api.patch(`/leave-requests/${id}/approve`, { status }).then(r => r.data);
 
 // Meetings
-export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string }) =>
+export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string; mine?: boolean }) =>
   api.get('/meetings', { params }).then(r => r.data);
 
 // Project Templates
@@ -448,8 +501,8 @@ export const deleteMasterPhase = (id: number) => api.delete(`/system-categories/
 // Accounts Management
 export const getAccounts = () => api.get('/accounts').then(r => r.data);
 export const getAvailableMembers = () => api.get('/accounts/available-members').then(r => r.data);
-export const createAccount = (data: { email: string; password?: string; role: string; data_scope: string; full_name?: string; member_id?: number; outlook_mail?: string }) => api.post('/accounts', data).then(r => r.data);
-export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string; member_id?: number | null; outlook_mail?: string | null }) => api.put(`/accounts/${id}`, data).then(r => r.data);
+export const createAccount = (data: { email: string; password?: string; role: string; data_scope?: string; workspace_ids?: string[]; full_name?: string; member_id?: number; outlook_mail?: string }) => api.post('/accounts', data).then(r => r.data);
+export const updateAccount = (id: number, data: { email?: string; full_name?: string; role?: string; data_scope?: string; workspace_ids?: string[]; member_id?: number | null; outlook_mail?: string | null }) => api.put(`/accounts/${id}`, data).then(r => r.data);
 export const resetAccountPassword = (id: number, password: string) => api.post(`/accounts/${id}/reset-password`, { password }).then(r => r.data);
 export const lockAccount = (id: number) => api.post(`/accounts/${id}/lock`).then(r => r.data);
 export const unlockAccount = (id: number) => api.post(`/accounts/${id}/unlock`).then(r => r.data);
@@ -612,6 +665,77 @@ export const getSessionTimeline = (sessionId: string) =>
 
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);
+
+// ── System Audit → Team Comparison (Section 2 & 3) ─────────────
+// Strictly super_admin — the backend router already enforces this.
+export interface TeamComparisonMember {
+  member_id: number;
+  name: string;
+  position?: string | null;
+  department?: string | null;
+  team?: string | null;
+  assigned: number;
+  support: number;
+  total: number;
+  done: number;
+  in_progress: number;
+  overdue: number;
+  manday_est: number;
+  manday_actual: number;
+  kpi: number;
+  progress_pct: number;
+}
+export interface TeamComparisonProject {
+  project_id: number;
+  name: string;
+  status?: string | null;
+  current_phase?: string | null;
+  data_scope?: string | null;
+  business?: string | null;
+  workspace?: string | null;
+  total: number;
+  done: number;
+  in_progress: number;
+  overdue: number;
+  manday_est: number;
+  manday_actual: number;
+  kpi: number;
+  progress_pct: number;
+  timeline_pct: number;
+  health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
+}
+export interface TeamComparisonTeam {
+  leader_user_id: number;
+  leader_member_id: number;
+  leader_name: string;
+  leader_email: string;
+  team_name: string;
+  workspace: string;
+  data_scope: string;
+  member_count: number;
+  members: TeamComparisonMember[];
+  kpi: number;
+  plan_md: number;
+  actual_md: number;
+  util: number;
+  efficiency: number;
+  on_time: number;
+  overdue: number;
+  total: number;
+  done: number;
+  in_progress: number;
+  health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
+  projects: TeamComparisonProject[];
+}
+export interface TeamComparisonResponse {
+  workspace: string;
+  workspace_filter: string;
+  teams: TeamComparisonTeam[];
+}
+export const getTeamComparison = (params?: { workspace?: string }) =>
+  api.get<TeamComparisonResponse>('/system-audit/team-comparison', { params }).then(r => r.data);
+export const getTeamDetail = (leader_user_id: number) =>
+  api.get<{ team: TeamComparisonTeam }>('/system-audit/team-detail', { params: { leader_user_id } }).then(r => r.data);
 
 // Telegram connection (Leave Request notifications)
 export interface TelegramStatus {
