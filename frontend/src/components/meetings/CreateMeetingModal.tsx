@@ -80,6 +80,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const isSubmittingRef = useRef(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [isGeneratingAiContent, setIsGeneratingAiContent] = useState(false);
+  const [aiContentGenerated, setAiContentGenerated] = useState(false);
   const [isFillingTeam, setIsFillingTeam] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
@@ -132,6 +133,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       });
       setManualTitleEdit(false);
     }
+    setAiContentGenerated(false);
     setError('');
   }, [initialData, isOpen]);
 
@@ -347,6 +349,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       const res = await generateAiMeetingContent({ title: formData.title, project_name: firstProject?.name });
       if (res?.success) {
         setFormData(prev => ({ ...prev, objective: res.goal || prev.objective, agenda: res.agenda || prev.agenda }));
+        setAiContentGenerated(true);
       } else {
         setError('AI không đề xuất được nội dung, hãy nhập trực tiếp');
       }
@@ -446,24 +449,42 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               </div>
             </div>
 
-            {/* AI Meeting Copilot — đặt sau Mục tiêu/Agenda: gõ tay trước, cần thì mới nhờ AI đề xuất/viết lại */}
-            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[#e7e3ff] text-[#6d28d9] flex items-center justify-center shrink-0">
-                <Sparkles size={16} />
+            {/* AI Meeting Copilot — đặt sau Mục tiêu/Agenda: gõ tay trước, cần thì mới nhờ AI đề xuất/viết lại.
+                Thu gọn còn 1 dòng sau khi đã chạy 1 lần, để không chiếm diện tích cố định trong form. */}
+            {aiContentGenerated ? (
+              <div className="flex items-center justify-between px-3.5 py-2 bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl">
+                <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#6d28d9]">
+                  <Sparkles size={13} /> Đã tạo đề xuất bằng AI
+                </span>
+                <button
+                  type="button"
+                  onClick={handleGenerateAiContent}
+                  disabled={isGeneratingAiContent}
+                  className="flex items-center gap-1 text-[11px] font-bold text-[#6d28d9] hover:underline disabled:opacity-60"
+                >
+                  <RefreshCw size={12} className={isGeneratingAiContent ? 'animate-spin' : ''} />
+                  {isGeneratingAiContent ? 'Đang soạn...' : 'Tạo lại'}
+                </button>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-[#6d28d9]">AI Meeting Copilot</p>
-                <p className="text-[11px] text-[#516079] leading-relaxed">Chưa biết viết gì? Để AI soạn hộ mục tiêu & agenda từ tên cuộc họp, rồi bạn chỉnh lại.</p>
+            ) : (
+              <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-[#e7e3ff] text-[#6d28d9] flex items-center justify-center shrink-0">
+                  <Sparkles size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-[#6d28d9]">AI Meeting Copilot</p>
+                  <p className="text-[11px] text-[#516079] leading-relaxed">Chưa biết viết gì? Để AI soạn hộ mục tiêu & agenda từ tên cuộc họp, rồi bạn chỉnh lại.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGenerateAiContent}
+                  disabled={isGeneratingAiContent}
+                  className="px-3 py-2 text-[11px] font-bold text-white bg-[#6d28d9] hover:bg-[#5b21b6] rounded-lg transition-colors disabled:opacity-60 shrink-0"
+                >
+                  {isGeneratingAiContent ? 'Đang soạn...' : '✦ AI đề xuất'}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleGenerateAiContent}
-                disabled={isGeneratingAiContent}
-                className="px-3 py-2 text-[11px] font-bold text-white bg-[#6d28d9] hover:bg-[#5b21b6] rounded-lg transition-colors disabled:opacity-60 shrink-0"
-              >
-                {isGeneratingAiContent ? 'Đang soạn...' : '✦ AI đề xuất'}
-              </button>
-            </div>
+            )}
 
             {/* 3. Người tham gia & thời gian */}
             <SectionLabel n={3} label="Người tham gia & thời gian" />
