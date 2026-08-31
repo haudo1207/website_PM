@@ -1,4 +1,4 @@
-from .system_category import Customer, TaskPriority, TaskStatus
+from .system_category import Customer, TaskPriority, TaskStatus, Department, Team
 from .skill_master import Skill, Group, Category
 from .project import Project, Platform, ProjectLink
 from .phase import Phase
@@ -12,5 +12,10 @@ from .meeting import Meeting, MeetingMember
 from .meeting_feedback import MeetingFeedback
 from .meeting_project import MeetingProject
 from .document import ProjectDocument
+from .project_feature import ProjectFeature, ProjectFeatureLog
+from .ai_skill import (
+    AiSkill, AiSkillAttachment, AiSkillFavorite, AiSkillRecent,
+    AiSession, AiSessionAttachment, AiUsageStat,
+)
 
 

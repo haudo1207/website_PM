@@ -14,11 +14,12 @@ from ..models.project import Project, project_members
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
-from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloDemoRequest
+from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloDemoRequest, ZaloConversationSummary
 from ..utils.auth import get_current_user, require_manager
 from ..config import settings
 from ..services import zalo as zalo_service
 from ..services import zalo_task_parser
+from ..services import zalo_summary
 
 logger = logging.getLogger("zalo")
 
@@ -248,6 +249,31 @@ def zalo_disconnect(
 
 
 # ── Conversations / messages (test panel, phase 1) ─────────────
+@router.get("/groups/available")
+def list_available_groups(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """All Zalo groups the connected account is currently a member of, from
+    the sidecar's in-memory cache (populated on login) — lets the admin pick
+    a group by name instead of hunting for its raw thread id via
+    chat.zalo.me (which also risks bumping the worker's own session, see
+    the "Đổi thiết bị" conflict). Already-tracked groups are flagged so the
+    picker can skip/dim them."""
+    account = _require_active_account(db)
+    snapshot = zalo_service.get_groups()
+    groups = snapshot.get("groups") or {}
+
+    tracked_ids = {
+        c.zalo_thread_id
+        for c in db.query(ZaloConversation).filter(ZaloConversation.account_id == account.id).all()
+    }
+    return [
+        {"thread_id": thread_id, "name": name, "already_tracked": thread_id in tracked_ids}
+        for thread_id, name in groups.items()
+    ]
+
+
 @router.get("/conversations")
 def list_conversations(
     db: Session = Depends(get_db),
@@ -844,6 +870,127 @@ def get_conversation_messages(
     ]
 
 
+def _summary_to_dict(s: ZaloConversationSummary) -> dict:
+    return {
+        "id": s.id,
+        "period_start": s.period_start,
+        "period_end": s.period_end,
+        "message_count": s.message_count,
+        "content": s.content,
+        "decisions": s.decisions or [],
+        "issues": s.issues or [],
+        "next_steps": s.next_steps or [],
+        "recommended_tasks": s.recommended_tasks or [],
+        "created_at": s.created_at,
+    }
+
+
+@router.get("/projects/{project_id:int}/summary")
+def get_project_zalo_summary(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Powers the project detail page's "Tóm tắt nhóm" tab — every Zalo
+    group currently linked to this project (ZaloConversation.project_id),
+    each with its recent AI digests, so a PM can see what a group discussed
+    without leaving the project."""
+    account = _get_active_account(db)
+    if not account:
+        return []
+
+    conversations = (
+        db.query(ZaloConversation)
+        .filter(
+            ZaloConversation.account_id == account.id,
+            ZaloConversation.project_id == project_id,
+            ZaloConversation.is_group.is_(True),
+        )
+        .order_by(ZaloConversation.name.asc())
+        .all()
+    )
+
+    result = []
+    for conv in conversations:
+        summaries = (
+            db.query(ZaloConversationSummary)
+            .filter(ZaloConversationSummary.conversation_id == conv.id)
+            .order_by(ZaloConversationSummary.period_end.desc())
+            .limit(10)
+            .all()
+        )
+        result.append({
+            "conversation_id": conv.id,
+            "name": conv.name,
+            "last_message_at": conv.last_message_at,
+            "summaries": [_summary_to_dict(s) for s in summaries],
+        })
+    return result
+
+
+@router.get("/conversations/{conversation_id}/summaries")
+def get_conversation_summaries(
+    conversation_id: int,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    account = _require_active_account(db)
+    conv = (
+        db.query(ZaloConversation)
+        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
+        .first()
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+
+    rows = (
+        db.query(ZaloConversationSummary)
+        .filter(ZaloConversationSummary.conversation_id == conversation_id)
+        .order_by(ZaloConversationSummary.period_end.desc())
+        .limit(min(limit, 100))
+        .all()
+    )
+    return [_summary_to_dict(s) for s in rows]
+
+
+@router.post("/conversations/{conversation_id}/summarize-now")
+def summarize_conversation_now(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Manual trigger — summarizes messages since the last summary (or since
+    ZALO_SUMMARY_INTERVAL_SECONDS ago if none yet) right now, bypassing the
+    scheduler's wait. Meant for testing/QA, not gated behind the advisory
+    lock since it's an explicit one-off action, not a competing scheduler tick."""
+    account = _require_active_account(db)
+    conv = (
+        db.query(ZaloConversation)
+        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
+        .first()
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    last = (
+        db.query(ZaloConversationSummary)
+        .filter(ZaloConversationSummary.conversation_id == conversation_id)
+        .order_by(ZaloConversationSummary.period_end.desc())
+        .first()
+    )
+    window_start = last.period_end if last else now - datetime.timedelta(seconds=settings.ZALO_SUMMARY_INTERVAL_SECONDS)
+    if window_start >= now:
+        raise HTTPException(status_code=400, detail="Chưa đủ thời gian kể từ lần tóm tắt trước.")
+
+    row = zalo_summary.summarize_conversation_window(db, conv, window_start, now)
+    if not row:
+        raise HTTPException(status_code=400, detail="Không có tin nhắn nào trong khoảng thời gian này để tóm tắt.")
+    db.commit()
+    return _summary_to_dict(row)
+
+
 @router.post("/conversations/{conversation_id}/send")
 def send_to_conversation(
     conversation_id: int,
@@ -912,6 +1059,34 @@ def send_to_new_thread(
     source_message_id = str(result.get("source_message_id") or f"local-{now.timestamp()}")
     _insert_message(db, conv.id, source_message_id, None, "Bạn", payload.text, True)
     return {"ok": True, "conversation_id": conv.id, "source_message_id": source_message_id}
+
+
+# ── Internal: sidecar polls this to know which groups to back-fill ─────────
+@router.get("/internal/tracked-groups")
+def list_tracked_groups(
+    db: Session = Depends(get_db),
+    x_zalo_worker_token: str = Header(default=None),
+):
+    """Poll-fallback support: zca-js's real-time listener occasionally goes
+    silently stale (connected, no errors, but stops firing 'message' events —
+    see server.js's polling loop). The sidecar calls this periodically to
+    know which groups pm-new actually cares about, then pulls each one's
+    recent history via getGroupChatHistory and forwards it through the same
+    /internal/messages endpoint — safe to call repeatedly since messages are
+    deduped there on (conversation_id, source_message_id)."""
+    expected = (settings.ZALO_WORKER_INTERNAL_TOKEN or "").strip()
+    if expected and x_zalo_worker_token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    account = _get_active_account(db)
+    if not account:
+        return []
+    rows = (
+        db.query(ZaloConversation)
+        .filter(ZaloConversation.account_id == account.id, ZaloConversation.is_group.is_(True))
+        .all()
+    )
+    return [{"thread_id": c.zalo_thread_id} for c in rows]
 
 
 # ── Internal: sidecar pushes incoming (real-time) messages here ────────────
