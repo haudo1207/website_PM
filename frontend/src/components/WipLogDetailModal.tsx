@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  X, Minimize2, Download, Info, Sparkles, Loader2, RefreshCw, Rocket, CheckCircle2, FileText,
+  X, Minimize2, Download, Info, Sparkles, Loader2, RefreshCw, CheckCircle2, FileText, ListTodo,
 } from 'lucide-react';
 import {
   getProjectFeatureLogAttachmentBlob, generateFeatureLogAiTasks, pushFeatureLogTasks,
@@ -19,12 +19,6 @@ import {
 // proposed tasks, pushed into the real Project Plan), unlike the reference
 // app's tab of the same name, which turned out to just be a file/version
 // switcher with no actual task data behind it.
-
-function priorityStyle(priority: string) {
-  if (priority === 'Critical') return { dot: 'bg-red-600', badge: 'bg-red-50 text-red-700 border-red-200', label: '🔥 Critical' };
-  if (priority === 'High') return { dot: 'bg-orange-500', badge: 'bg-orange-50 text-orange-700 border-orange-200', label: 'High' };
-  return { dot: 'bg-slate-400', badge: 'bg-slate-50 text-slate-600 border-slate-200', label: 'Normal' };
-}
 
 export default function WipLogDetailModal({
   projectId,
@@ -51,7 +45,11 @@ export default function WipLogDetailModal({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Mirrors MeetingDetailModal's "Task Đề Xuất Từ AI" tab: every task starts
+  // checked (uncheck to exclude), and every field is editable before push —
+  // not just a read-only proposal.
+  const [checkedMap, setCheckedMap] = useState<Record<number, boolean>>({});
+  const [editMap, setEditMap] = useState<Record<number, Partial<AiTask>>>({});
   const [pushing, setPushing] = useState(false);
 
   const activeFile: AttachedFile | undefined = attachments[activeAttachmentIdx];
@@ -95,7 +93,8 @@ export default function WipLogDetailModal({
     try {
       const updated = await generateFeatureLogAiTasks(projectId, log.id);
       onLogUpdated(updated);
-      setSelected(new Set());
+      setCheckedMap({});
+      setEditMap({});
     } catch (e: any) {
       setGenError(e?.response?.data?.detail || 'Tạo tóm tắt AI thất bại');
     } finally {
@@ -103,24 +102,22 @@ export default function WipLogDetailModal({
     }
   }
 
-  function toggleSelected(idx: number) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
+  function updateEdit(idx: number, patch: Partial<AiTask>) {
+    setEditMap((prev) => ({ ...prev, [idx]: { ...prev[idx], ...patch } }));
   }
 
   async function handlePushSelected() {
     const tasks = log.ai_tasks || [];
-    const toPush = tasks.filter((t, i) => selected.has(i) && !t.imported_task_id);
+    const toPush = tasks
+      .map((t, i) => ({ ...t, ...editMap[i] }))
+      .filter((t, i) => checkedMap[i] !== false && !tasks[i].imported_task_id);
     if (!toPush.length) return;
     setPushing(true);
     try {
       const result = await pushFeatureLogTasks(projectId, log.id, toPush);
       onLogUpdated(result.log);
-      setSelected(new Set());
+      setCheckedMap({});
+      setEditMap({});
     } catch (e: any) {
       setGenError(e?.response?.data?.detail || 'Đẩy task vào dự án thất bại');
     } finally {
@@ -129,6 +126,10 @@ export default function WipLogDetailModal({
   }
 
   const aiTasks = log.ai_tasks || [];
+  const selectedCount = useMemo(
+    () => aiTasks.filter((t, i) => checkedMap[i] !== false && !t.imported_task_id).length,
+    [aiTasks, checkedMap],
+  );
   const pendingCount = useMemo(() => aiTasks.filter((t) => !t.imported_task_id).length, [aiTasks]);
 
   return (
@@ -218,7 +219,7 @@ export default function WipLogDetailModal({
               type="button"
               onClick={() => setActiveTab('description')}
               className={`flex-1 py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                activeTab === 'description' ? 'bg-purple-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                activeTab === 'description' ? 'bg-[#6366f1] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
               <Info className="w-3.5 h-3.5" /> Mô tả
@@ -227,10 +228,10 @@ export default function WipLogDetailModal({
               type="button"
               onClick={() => setActiveTab('tasks')}
               className={`flex-1 py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                activeTab === 'tasks' ? 'bg-purple-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                activeTab === 'tasks' ? 'bg-[#6366f1] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              <Sparkles className="w-3.5 h-3.5" /> AI Tasks {aiTasks.length > 0 && `(${aiTasks.length})`}
+              <ListTodo className="w-3.5 h-3.5" /> Task AI {aiTasks.length > 0 && `(${aiTasks.length})`}
             </button>
           </div>
 
@@ -249,7 +250,7 @@ export default function WipLogDetailModal({
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                   {!log.ai_summary ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-                      <Sparkles className="w-8 h-8 text-purple-400" />
+                      <Sparkles className="w-8 h-8 text-[#a5b4fc]" />
                       <p className="text-[12px] text-slate-500">
                         Log mới thường được AI tự động tóm tắt và đề xuất task ngay khi lưu. Nếu chưa có
                         (lần lưu trước gặp lỗi tạm thời), bấm nút bên dưới để thử lại.
@@ -258,7 +259,7 @@ export default function WipLogDetailModal({
                       <button
                         onClick={handleGenerate}
                         disabled={generating}
-                        className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 px-4 py-2 rounded-lg transition-colors"
+                        className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] disabled:opacity-50 px-4 py-2 rounded-lg transition-colors"
                       >
                         {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                         {generating ? 'Đang tạo...' : 'Tạo tóm tắt & đề xuất task'}
@@ -271,13 +272,13 @@ export default function WipLogDetailModal({
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <h5 className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-                          Task đề xuất ({aiTasks.length})
+                        <h5 className="text-[11px] font-bold text-[#6366f1] uppercase tracking-wide flex items-center gap-1.5">
+                          <ListTodo className="w-3.5 h-3.5" /> Task Đề Xuất Từ AI ({aiTasks.length})
                         </h5>
                         <button
                           onClick={handleGenerate}
                           disabled={generating}
-                          className="flex items-center gap-1 text-[11px] font-semibold text-purple-600 hover:underline disabled:opacity-50"
+                          className="flex items-center gap-1 text-[11px] font-semibold text-[#6366f1] hover:underline disabled:opacity-50"
                         >
                           {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Tạo lại
                         </button>
@@ -285,38 +286,80 @@ export default function WipLogDetailModal({
 
                       {genError && <p className="text-[11.5px] text-red-600">{genError}</p>}
 
-                      <div className="space-y-2">
+                      <div className="space-y-2.5">
                         {aiTasks.map((t, i) => {
-                          const style = priorityStyle(t.priority);
                           const isPushed = !!t.imported_task_id;
+                          const isChecked = checkedMap[i] !== false;
+                          const edit = editMap[i] || {};
+                          const fieldLabelCls = 'block text-[9.5px] font-bold text-slate-500 uppercase tracking-wider mb-0.5';
+
+                          if (isPushed) {
+                            return (
+                              <div key={i} className="p-3 border rounded-xl text-xs space-y-1 bg-emerald-50/40 border-emerald-200">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                  <span className="text-[10px] font-bold text-emerald-700">Đã đẩy — {t.task_code}</span>
+                                </div>
+                                <p className="font-bold text-[#0b1c30]">{t.detail_task}</p>
+                              </div>
+                            );
+                          }
+
                           return (
-                            <div key={i} className={`p-3 border rounded-xl text-xs space-y-1.5 ${isPushed ? 'bg-emerald-50/40 border-emerald-200' : 'bg-[#f8fafc] border-[#e2e8f0]'}`}>
-                              <div className="flex items-start gap-2">
-                                {!isPushed && (
+                            <div
+                              key={i}
+                              className={`border rounded-2xl p-3 transition-all ${isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-50 bg-slate-50'}`}
+                            >
+                              <div className="flex items-start gap-2 mb-2.5">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => setCheckedMap((prev) => ({ ...prev, [i]: e.target.checked }))}
+                                  className="w-3.5 h-3.5 mt-1 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer shrink-0"
+                                  title="Chọn task để đẩy vào dự án"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <label className={fieldLabelCls}>Detail Task</label>
                                   <input
-                                    type="checkbox"
-                                    checked={selected.has(i)}
-                                    onChange={() => toggleSelected(i)}
-                                    className="mt-0.5 shrink-0"
+                                    type="text"
+                                    value={edit.detail_task ?? t.detail_task}
+                                    onChange={(e) => updateEdit(i, { detail_task: e.target.value })}
+                                    className="w-full px-2 py-1.5 text-xs font-bold text-[#0b1c30] border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
                                   />
-                                )}
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className={`w-2 h-2 rounded-full shrink-0 ${style.dot}`} />
-                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${style.badge}`}>{style.label}</span>
-                                    {isPushed && (
-                                      <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-0.5">
-                                        <CheckCircle2 className="w-3 h-3" /> Đã đẩy — {t.task_code}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="font-bold text-[#0b1c30] mt-1">{t.detail_task}</p>
-                                  {(t.assigned_name || t.deadline) && (
-                                    <div className="flex items-center gap-3 text-[10.5px] text-[#64748b] font-medium mt-1">
-                                      {t.assigned_name && <span>👤 {t.assigned_name}</span>}
-                                      {t.deadline && <span>📅 {t.deadline}</span>}
-                                    </div>
-                                  )}
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className={fieldLabelCls}>Priority</label>
+                                  <select
+                                    value={edit.priority ?? t.priority}
+                                    onChange={(e) => updateEdit(i, { priority: e.target.value })}
+                                    className="w-full text-[11px] border border-[#cbd5e1] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[#6366f1]"
+                                  >
+                                    <option value="Critical">🔥 Critical</option>
+                                    <option value="High">High</option>
+                                    <option value="Normal">Normal</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className={fieldLabelCls}>Deadline</label>
+                                  <input
+                                    type="date"
+                                    value={edit.deadline ?? t.deadline ?? ''}
+                                    onChange={(e) => updateEdit(i, { deadline: e.target.value })}
+                                    className="w-full text-[11px] border border-[#cbd5e1] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6366f1]"
+                                  />
+                                </div>
+                                <div className="col-span-2">
+                                  <label className={fieldLabelCls}>Người phụ trách</label>
+                                  <input
+                                    type="text"
+                                    value={edit.assigned_name ?? t.assigned_name ?? ''}
+                                    onChange={(e) => updateEdit(i, { assigned_name: e.target.value })}
+                                    placeholder="Để trống sẽ tự gán cho bạn"
+                                    className="w-full text-[11px] border border-[#cbd5e1] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6366f1]"
+                                  />
                                 </div>
                               </div>
                             </div>
@@ -331,11 +374,11 @@ export default function WipLogDetailModal({
                   <div className="p-3 border-t border-slate-200 shrink-0">
                     <button
                       onClick={handlePushSelected}
-                      disabled={pushing || selected.size === 0}
-                      className="w-full flex items-center justify-center gap-1.5 text-[12.5px] font-bold text-white bg-[#0058be] hover:bg-[#0058be]/90 disabled:opacity-40 px-4 py-2.5 rounded-lg transition-colors"
+                      disabled={pushing || selectedCount === 0}
+                      className="w-full flex items-center justify-center gap-1.5 text-[12.5px] font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] disabled:bg-slate-300 disabled:opacity-100 px-4 py-2.5 rounded-xl transition-all shadow-sm"
                     >
-                      {pushing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />}
-                      {pushing ? 'Đang đẩy...' : `Đẩy ${selected.size} task vào dự án`}
+                      {pushing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '📥'}
+                      {pushing ? 'Đang đẩy...' : `Đẩy ${selectedCount} task đã chọn vào Dự án`}
                     </button>
                   </div>
                 )}

@@ -190,13 +190,14 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
   // the "✨ AI Tasks (N)" badge appears on its own once ready, no manual
   // refresh needed.
   function pollForAiSummary(logId: number, featureId: number, attempt = 0) {
-    if (attempt >= 8) return; // ~40s ceiling
+    if (attempt >= 15) return; // ~90s ceiling — AI_TIMEOUT_SECONDS is 60s server-side
     setTimeout(async () => {
       try {
         const freshLogs = await getProjectFeatureLogs(projectId, featureId);
         const fresh = freshLogs.find((l: FeatureLog) => l.id === logId);
         if (fresh && fresh.ai_summary) {
           setLogs((prev) => prev.map((l) => (l.id === logId ? fresh : l)));
+          setDetailModal((prev) => (prev && prev.log.id === logId ? { ...prev, log: fresh } : prev));
         } else {
           pollForAiSummary(logId, featureId, attempt + 1);
         }
@@ -489,11 +490,10 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
                     )}
 
                     <button
-                      onClick={() => setDetailModal({ log, attachmentIdx: log.attached_files?.length ? 0 : undefined, tab: 'tasks' })}
-                      className="mt-2.5 flex items-center gap-1.5 text-[11.5px] font-bold text-purple-600 hover:bg-purple-50 px-2.5 py-1.5 rounded-lg transition-colors"
+                      onClick={() => setDetailModal({ log, attachmentIdx: log.attached_files?.length ? 0 : undefined, tab: 'description' })}
+                      className="mt-2.5 flex items-center gap-1.5 text-[11.5px] font-bold text-slate-500 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg transition-colors"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      {log.ai_tasks && log.ai_tasks.length > 0 ? `AI Tasks (${log.ai_tasks.length})` : 'Tạo tóm tắt & đề xuất task AI'}
+                      <Eye className="w-3.5 h-3.5" /> Xem chi tiết
                     </button>
                   </div>
                 );
