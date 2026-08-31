@@ -242,7 +242,10 @@
       </div>
 
       <form id="login-form">
-        <p class="hint">Đang mở sẵn KPI Portal và đã đăng nhập trên trình duyệt này? Chỉ cần đợi vài giây, hệ thống sẽ tự đăng nhập — không cần nhập lại bên dưới.</p>
+        <p class="hint">Chưa tự đăng nhập được — có thể do bạn chưa đăng nhập KPI Portal trên trình duyệt này, hoặc tài khoản của bạn dùng đăng nhập Google/Outlook (không có mật khẩu). Bấm nút dưới để mở KPI Portal, đăng nhập xong quay lại đây bấm "Thử lại".</p>
+        <button type="button" class="secondary" id="open-web-login-btn">Mở KPI Portal để đăng nhập</button>
+        <button type="button" class="secondary" id="retry-auto-login-btn">Thử lại</button>
+        <p class="hint">Nếu tài khoản của bạn dùng mật khẩu thường (không phải Google/Outlook), có thể nhập trực tiếp bên dưới:</p>
         <label for="login-email-input">Email KPI Portal</label>
         <input id="login-email-input" name="email" type="email" autocomplete="username" placeholder="ban@congty.com" />
         <label for="login-password-input">Mật khẩu</label>

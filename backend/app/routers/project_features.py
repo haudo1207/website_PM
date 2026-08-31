@@ -218,6 +218,37 @@ def create_log(pid: int, fid: int, body: dict, background_tasks: BackgroundTasks
     return _log_to_dict(log)
 
 
+@router.post("/projects/{pid:int}/feature-logs/{lid:int}/attachments")
+def add_log_attachment(pid: int, lid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Appends one more file to an existing log's attachments — for saving a
+    later result (e.g. more ChatGPT output) into the same WIP entry instead
+    of creating a whole new log."""
+    require_project(db, current_user, pid)
+    log = db.query(ProjectFeatureLog).filter(ProjectFeatureLog.id == lid, ProjectFeatureLog.project_id == pid).first()
+    if not log:
+        raise HTTPException(404, "Không tìm thấy log")
+
+    file_name = body.get("file_name") or body.get("fileName") or "file"
+    b64 = body.get("base64")
+    if not b64:
+        raise HTTPException(400, "Thiếu nội dung file")
+
+    from ..services.document_storage import save_base64_upload
+    try:
+        relative_path, size = save_base64_upload(pid, file_name, b64)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    meta = {
+        "file_name": file_name, "file_path": relative_path,
+        "mime_type": body.get("mime_type") or body.get("mimeType"), "size_bytes": size,
+    }
+    log.attached_files = [*(log.attached_files or []), meta]
+    db.commit()
+    db.refresh(log)
+    return _log_to_dict(log)
+
+
 @router.get("/projects/{pid:int}/feature-logs/{lid:int}/attachments/{idx:int}")
 def download_log_attachment(pid: int, lid: int, idx: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     from fastapi.responses import FileResponse

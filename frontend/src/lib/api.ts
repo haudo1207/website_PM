@@ -502,6 +502,19 @@ export const generateFeatureLogAiTasks = (projectId: number, logId: number) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/ai-tasks`).then(r => r.data);
 export const pushFeatureLogTasks = (projectId: number, logId: number, tasks: any[]) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/push-tasks`, { tasks }).then(r => r.data);
+export const uploadFeatureLogAttachment = (projectId: number, logId: number, file: File) =>
+  new Promise<any>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      api.post(`/projects/${projectId}/feature-logs/${logId}/attachments`, {
+        file_name: file.name,
+        mime_type: file.type,
+        base64: reader.result,
+      }).then(r => resolve(r.data)).catch(reject);
+    };
+    reader.readAsDataURL(file);
+  });
 
 
 

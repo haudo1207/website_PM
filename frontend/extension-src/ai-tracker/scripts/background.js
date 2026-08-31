@@ -48,7 +48,7 @@ const VERSION_CHECK_PERIOD_MINUTES = 30;
 function getAuthState() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["kpi_prototype_access_token", "kpi_prototype_refresh_token", "kpi_prototype_token_expires_at", "kpi_prototype_email"],
+      ["kpi_prototype_access_token", "kpi_prototype_refresh_token", "kpi_prototype_token_expires_at", "kpi_prototype_email", "kpi_prototype_full_name"],
       (r) => resolve(r),
     );
   });
@@ -73,11 +73,12 @@ async function doLogin(email, password) {
         kpi_prototype_refresh_token: data.refresh_token,
         kpi_prototype_token_expires_at: expiresAt,
         kpi_prototype_email: email,
+        kpi_prototype_full_name: data.full_name || "",
       },
       resolve,
     ),
   );
-  return { email };
+  return { email, fullName: data.full_name || "" };
 }
 
 // Passwordless path: if the user is already logged into the pm-new WEB APP
@@ -116,17 +117,18 @@ async function tryAutoLoginFromCookie() {
         kpi_prototype_refresh_token: cookie.value,
         kpi_prototype_token_expires_at: expiresAt,
         kpi_prototype_email: data.email,
+        kpi_prototype_full_name: data.full_name || "",
       },
       resolve,
     ),
   );
-  return { success: true, email: data.email };
+  return { success: true, email: data.email, fullName: data.full_name || "" };
 }
 
 async function doLogout() {
   await new Promise((resolve) =>
     chrome.storage.local.remove(
-      ["kpi_prototype_access_token", "kpi_prototype_refresh_token", "kpi_prototype_token_expires_at", "kpi_prototype_email"],
+      ["kpi_prototype_access_token", "kpi_prototype_refresh_token", "kpi_prototype_token_expires_at", "kpi_prototype_email", "kpi_prototype_full_name"],
       resolve,
     ),
   );
@@ -388,7 +390,7 @@ chrome.action.onClicked.addListener((tab) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "LOGIN") {
     doLogin(message.email, message.password)
-      .then((r) => sendResponse({ success: true, email: r.email }))
+      .then((r) => sendResponse({ success: true, email: r.email, fullName: r.fullName }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
@@ -410,6 +412,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({
         loggedIn: !!s.kpi_prototype_access_token,
         email: s.kpi_prototype_email || null,
+        fullName: s.kpi_prototype_full_name || null,
         projectId: project.id,
         projectName: project.name,
       }),
