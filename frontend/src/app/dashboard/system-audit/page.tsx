@@ -422,7 +422,7 @@ export default function SystemAuditTab() {
                   <tr key={t.leader_user_id} className="border-b border-slate-100 hover:bg-slate-50/60 transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex flex-col">
-                        <span className="font-bold text-[#0b1c30]">{t.team_name}</span>
+                        <span className="font-bold text-[#0b1c30]">{t.leader_name}</span>
                         <span className="text-[10px] text-slate-500 mt-0.5">
                           {t.leader_name} • {t.member_count} thành viên
                         </span>
@@ -514,7 +514,7 @@ export default function SystemAuditTab() {
                       <span className={`flex items-center justify-center w-4 h-4 rounded border ${checked ? 'bg-white border-white' : 'bg-white border-slate-300'}`}>
                         {checked && <span className="material-symbols-outlined text-[12px] text-[#0058be] font-black">check</span>}
                       </span>
-                      <span className="truncate max-w-[160px]">{t.team_name}</span>
+                      <span className="truncate max-w-[160px]">{t.leader_name}</span>
                       <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${checked ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
                         {projectCount} project
                       </span>
@@ -566,7 +566,7 @@ export default function SystemAuditTab() {
                   <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
                     <div>
                       <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">
-                        {t.team_name}
+                        {t.leader_name}
                       </h4>
                       <p className="text-[10px] text-slate-500 mt-0.5">
                         Leader: <strong>{t.leader_name}</strong> • {t.member_count} thành viên • Workspace: {t.workspace}
@@ -695,8 +695,8 @@ export default function SystemAuditTab() {
                     <div className="px-4 py-3 border-b border-slate-200 bg-white">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="min-w-0">
-                          <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider truncate" title={t.team_name}>
-                            {t.team_name}
+                          <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider truncate" title={t.leader_name}>
+                            {t.leader_name}
                           </h4>
                           <p className="text-[10px] text-slate-500 mt-0.5">
                             Leader: <strong className="text-slate-700">{t.leader_name}</strong> • {totalMembers} Members • Workspace: {t.workspace}
@@ -1112,7 +1112,7 @@ export default function SystemAuditTab() {
                 <span className="material-symbols-outlined text-[24px]">groups</span>
                 <div>
                   <h3 className="text-base font-bold text-[#0b1c30]">
-                    {detailTeam ? detailTeam.team_name : 'Đang tải chi tiết team…'}
+                    {detailTeam ? detailTeam.leader_name : 'Đang tải chi tiết team…'}
                   </h3>
                   {detailTeam && (
                     <p className="text-xs text-slate-500 mt-0.5">
