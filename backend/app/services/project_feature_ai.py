@@ -17,20 +17,21 @@ from ..models.project_feature import ProjectFeatureLog
 
 logger = logging.getLogger("project_feature_ai")
 
-SYSTEM_PROMPT = """Bạn là trợ lý phân tích nhật ký công việc (WIP log) của một dự án phần mềm.
+SYSTEM_PROMPT_TEMPLATE = """Bạn là trợ lý phân tích nhật ký công việc (WIP log) của một dự án phần mềm.
 Đọc nội dung WIP log bên dưới và trả về JSON THUẦN TÚY (JSON Object), KHÔNG bọc trong markdown
 block, KHÔNG thêm câu dẫn:
-{
+{{
   "summary": "Tóm tắt 2-4 câu ngắn gọn, chính xác tuyệt đối từ nội dung — WIP này đang làm gì, đã xong tới đâu.",
   "tasks": [
-    {
+    {{
       "detail_task": "Một đầu việc/next step CỤ THỂ được nhắc tới trong nội dung",
       "priority": "Critical | High | Normal",
       "assigned_name": "Tên người phụ trách nếu nội dung nói rõ, ngược lại để rỗng \\"\\"",
-      "deadline": "YYYY-MM-DD nếu nội dung nói rõ, ngược lại để rỗng \\"\\""
-    }
+      "deadline": "YYYY-MM-DD nếu nội dung nói rõ, ngược lại để rỗng \\"\\"",
+      "skill_group_name": "Tên Skill Solution phù hợp nhất với đầu việc này, PHẢI chọn nguyên văn một tên trong danh sách sau đây — nếu không cái nào phù hợp rõ ràng thì để rỗng \\"\\": {skill_group_names}"
+    }}
   ]
-}
+}}
 
 QUY TẮC TRÍCH XUẤT TASK (BẮT BUỘC TUÂN THỦ):
 1. Nội dung WIP log thường có các phần liệt kê nhiều đầu việc (ví dụ "NEXT STEPS", "OPEN ISSUES",
@@ -46,7 +47,9 @@ QUY TẮC TRÍCH XUẤT TASK (BẮT BUỘC TUÂN THỦ):
    hiện trong nội dung. Nếu nội dung không có tín hiệu khẩn cấp/rủi ro nào rõ ràng, không bắt
    buộc phải có task Critical — ưu tiên phản ánh đúng thực tế hơn là ép buộc.
 4. KHÔNG bịa người phụ trách hay deadline không có căn cứ trong nội dung — để rỗng "" nếu không
-   có."""
+   có.
+5. skill_group_name CHỈ được lấy nguyên văn từ danh sách cung cấp — TUYỆT ĐỐI KHÔNG tự bịa ra tên
+   Skill Solution không có trong danh sách đó."""
 
 
 def summarize_feature_log(db: Session, log: ProjectFeatureLog) -> None:
@@ -56,7 +59,17 @@ def summarize_feature_log(db: Session, log: ProjectFeatureLog) -> None:
     if not content:
         raise AiClientError("Log không có nội dung để tóm tắt")
 
-    result = chat_completion_json(SYSTEM_PROMPT, content, max_tokens=1500, temperature=0.3)
+    from ..models.skill_master import Group
+
+    # Feed the AI the real Skill Solution vocabulary instead of letting it
+    # guess a name that doesn't exist in this project's Skill Master — the
+    # frontend matches skill_group_name back against this same list to
+    # pre-select the field, so a hallucinated name would just fail to match
+    # and silently do nothing.
+    group_names = [g.name for g in db.query(Group).order_by(Group.name).all()]
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(skill_group_names=", ".join(group_names))
+
+    result = chat_completion_json(system_prompt, content, max_tokens=1500, temperature=0.3)
 
     summary = (result.get("summary") or "").strip()
     if not summary:
@@ -68,6 +81,7 @@ def summarize_feature_log(db: Session, log: ProjectFeatureLog) -> None:
             "priority": (t.get("priority") or "Normal").strip() or "Normal",
             "assigned_name": (t.get("assigned_name") or "").strip(),
             "deadline": (t.get("deadline") or "").strip(),
+            "skill_group_name": (t.get("skill_group_name") or "").strip(),
         }
         for t in (result.get("tasks") or [])
         if isinstance(t, dict) and str(t.get("detail_task") or "").strip()
