@@ -10,6 +10,8 @@ import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
 import ProjectDocumentsTab from '@/components/ProjectDocumentsTab';
+import ProjectPrototypeTab from '@/components/ProjectPrototypeTab';
+import ProjectZaloSummaryTab from '@/components/ProjectZaloSummaryTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProjectFormModal from '@/components/ProjectFormModal';
 import {
@@ -59,7 +61,7 @@ const getRowPhase = (tabName: string): string => {
   return 'A';
 };
 
-type TabKey = 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs' | 'resources';
+type TabKey = 'overview' | 'tasks' | 'meetings' | 'chats' | 'members' | 'audit_logs' | 'resources' | 'prototype';
 const SLUG_TO_TAB: Record<string, TabKey> = {
   overview: 'overview',
   tasks: 'tasks',
@@ -68,6 +70,7 @@ const SLUG_TO_TAB: Record<string, TabKey> = {
   members: 'members',
   'audit-logs': 'audit_logs',
   resources: 'resources',
+  prototype: 'prototype',
 };
 const TAB_TO_SLUG: Record<TabKey, string> = {
   overview: 'overview',
@@ -77,6 +80,7 @@ const TAB_TO_SLUG: Record<TabKey, string> = {
   members: 'members',
   audit_logs: 'audit-logs',
   resources: 'resources',
+  prototype: 'prototype',
 };
 
 function ProjectDetailContent() {
@@ -564,7 +568,7 @@ function ProjectDetailContent() {
   const [newGroupDesc, setNewGroupDesc] = useState('');
 
   // AI Task Inbox States
-  const [activeChatSubTab, setActiveChatSubTab] = useState<'inbox' | 'sources' | 'mapping' | 'logs'>('inbox');
+  const [activeChatSubTab, setActiveChatSubTab] = useState<'inbox' | 'sources' | 'mapping' | 'logs' | 'zalo_summary'>('inbox');
   const [inboxTasks, setInboxTasks] = useState<any[]>([]);
   const [inboxStats, setInboxStats] = useState<any>({ pending_count: 0, ready_count: 0, imported_count: 0, accuracy: 91 });
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
@@ -4313,6 +4317,14 @@ function ProjectDetailContent() {
               <span className="material-symbols-outlined mr-2 text-[18px]">folder_open</span>
               Resources
             </button>
+            <button
+              onClick={() => router.push(`/project/detail/prototype?id=${id}`)}
+              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'prototype' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                }`}
+            >
+              <span className="material-symbols-outlined mr-2 text-[18px]">science</span>
+              Prototype
+            </button>
           </div>
 
           {/* MAIN TABS CONTENT AREA */}
@@ -5511,6 +5523,16 @@ function ProjectDetailContent() {
                           ☷ Nhật ký đồng bộ
                         </span>
                       </button>
+
+                      <button
+                        onClick={() => setActiveChatSubTab('zalo_summary')}
+                        className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${activeChatSubTab === 'zalo_summary' ? 'bg-[#eff4ff] text-[#0058be]' : 'text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">smart_toy</span>
+                          🧠 Tóm tắt Zalo
+                        </span>
+                      </button>
                     </div>
 
                     {/* RIGHT CONTENT PANEL */}
@@ -6493,6 +6515,11 @@ function ProjectDetailContent() {
                           </div>
                         </div>
                       )}
+
+                      {/* SUB-TAB 5: ZALO GROUP AI SUMMARY */}
+                      {activeChatSubTab === 'zalo_summary' && id && (
+                        <ProjectZaloSummaryTab projectId={Number(id)} />
+                      )}
                     </div>
                   </div>
 
@@ -7392,6 +7419,11 @@ function ProjectDetailContent() {
                     router.push(`/project/detail/tasks?id=${id}`);
                   }}
                 />
+              )}
+
+              {/* TAB: PROTOTYPE — Tính năng & WIP Log, ported from markee-dashboard's concept */}
+              {activeMainTab === 'prototype' && id && (
+                <ProjectPrototypeTab projectId={Number(id)} projectName={project?.name} />
               )}
             </div>
 

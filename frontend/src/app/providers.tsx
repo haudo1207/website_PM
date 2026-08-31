@@ -12,7 +12,8 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        if (window.location.pathname !== '/login') {
+        const isPublicPath = window.location.pathname === '/login' || window.location.pathname.startsWith('/share/project/');
+        if (!isPublicPath) {
           await restoreSession();
         }
       } catch {

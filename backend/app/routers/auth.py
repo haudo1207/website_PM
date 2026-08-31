@@ -108,11 +108,15 @@ def token_response(user: User) -> dict:
 
 # ── Portal refresh session (Phase 1, non-rotating) ──────────────────────────
 
-def _create_refresh_session(db: Session, user: User, response: Response) -> None:
+def _create_refresh_session(db: Session, user: User, response: Response) -> str:
     """Create a Portal refresh session and set the HttpOnly cookie.
 
     Only the SHA-256 hash of the token is persisted; the raw token lives
-    exclusively in the browser cookie and is never exposed to JavaScript.
+    exclusively in the browser cookie (never exposed to page JavaScript) —
+    except it's also returned here so callers serving non-cookie clients
+    (the "KPI Prototype" extension, which can't rely on a SameSite=Lax
+    cookie surviving its cross-context fetches) can hand it back in the
+    response body instead. See login()'s `X-Client: extension` handling.
     """
     from datetime import datetime, timedelta, timezone
     from ..models.refresh_token import RefreshToken
@@ -134,6 +138,7 @@ def _create_refresh_session(db: Session, user: User, response: Response) -> None
         samesite="lax",
         path="/",
     )
+    return raw_token
 
 
 def _clear_refresh_cookie(response: Response) -> None:
@@ -152,12 +157,17 @@ def _refresh_session_error(response: Response, detail: str, code: str):
     raise HTTPException(401, detail, headers={"X-Error-Code": code})
 
 
-def _refresh_session_from_cookie(db: Session, request: Request, response: Response):
-    """Resolve the refresh session from the cookie, returning (session, user)."""
+def _refresh_session_from_cookie(db: Session, request: Request, response: Response, body_refresh_token: str = None):
+    """Resolve the refresh session from the cookie, returning (session, user).
+
+    Falls back to `body_refresh_token` when no cookie is present — the "KPI
+    Prototype" extension presents its refresh token via a JSON body instead,
+    since SameSite=Lax cookies aren't sent on its cross-context fetches.
+    """
     from datetime import datetime, timezone
     from ..models.refresh_token import RefreshToken
 
-    raw_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    raw_token = request.cookies.get(settings.REFRESH_COOKIE_NAME) or body_refresh_token
     if not raw_token:
         _refresh_session_error(response, "No refresh session", "NO_REFRESH_SESSION")
     session = (
@@ -229,9 +239,12 @@ def login(request: Request, response: Response, form: OAuth2PasswordRequestForm 
         description=f"Đăng nhập thành công bằng mật khẩu ({user.email})",
         request=request
     )
-    _create_refresh_session(db, user, response)
+    raw_refresh_token = _create_refresh_session(db, user, response)
     db.commit()
-    return token_response(user)
+    result = token_response(user)
+    if request.headers.get("x-client") == "extension":
+        result["refresh_token"] = raw_refresh_token
+    return result
 
 @router.post("/google")
 def google_login(body: dict, request: Request, response: Response, db: Session = Depends(get_db)):
@@ -411,15 +424,18 @@ def outlook_login(body: dict, request: Request, response: Response, db: Session 
     return token_response(user)
 
 @router.post("/refresh")
-def refresh_session(request: Request, response: Response, db: Session = Depends(get_db)):
+def refresh_session(request: Request, response: Response, body: dict = None, db: Session = Depends(get_db)):
     """Issue a new Portal Access JWT from the HttpOnly refresh cookie.
 
     Deliberately does NOT depend on a valid Access JWT — the refresh session
-    alone is sufficient. The refresh token is NOT rotated in Phase 1.
+    alone is sufficient. The refresh token is NOT rotated in Phase 1. `body`
+    is only used as a fallback when there's no cookie (the "KPI Prototype"
+    extension calls this with `{"refresh_token": "..."}` in the JSON body).
     """
     from datetime import datetime, timezone
 
-    session, user = _refresh_session_from_cookie(db, request, response)
+    body_refresh_token = (body or {}).get("refresh_token") if isinstance(body, dict) else None
+    session, user = _refresh_session_from_cookie(db, request, response, body_refresh_token)
     session.last_used_at = datetime.now(timezone.utc)
     db.commit()
     return token_response(user)

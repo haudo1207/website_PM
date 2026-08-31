@@ -704,7 +704,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   onChange={(vals: string[]) => setFormData({ ...formData, notify_channels: vals })}
                 />
               </div>
-              <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Lựa chọn được lưu cùng cuộc họp. Việc gửi thực tế qua Telegram/Zalo/Email theo mốc thời gian này sẽ được nối dây ở một đợt riêng.</p>
+              <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Hệ thống sẽ tự động nhắc qua các kênh đã chọn đúng vào mốc thời gian này (Email chỉ gửi được nếu SMTP đã được cấu hình).</p>
             </div>
 
             <div className="border border-[#e2e8f0] rounded-xl p-3 bg-[#fafbfc] space-y-1.5">

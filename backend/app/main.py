@@ -6,12 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit, notifications as notifications_router
 from .routers import projects as projects_router
+from .routers import project_features as project_features_router
 from .routers import task_groups as task_groups_router
 from .routers import leave_requests as leave_requests_router
 from .routers import project_templates as project_templates_router
 from .routers import telegram as telegram_router
 from .routers import zalo as zalo_router
 from .routers import project_documents as project_documents_router
+from .routers import ai_skills as ai_skills_router
+from .routers import ai_sessions as ai_sessions_router
+from .routers import public_share as public_share_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -590,6 +594,45 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS "
             "synced_from_task_link BOOLEAN NOT NULL DEFAULT false"
+        ))
+
+        # Zalo group summary: split into the same 3-part shape as Meeting
+        # Intelligence (executive summary / decisions / recommended_tasks)
+        # instead of one flat text blob, so the UI can render them with the
+        # same decision-row / priority-card treatment.
+        conn.execute(text(
+            "ALTER TABLE zalo_conversation_summaries ADD COLUMN IF NOT EXISTS decisions JSON"
+        ))
+        conn.execute(text(
+            "ALTER TABLE zalo_conversation_summaries ADD COLUMN IF NOT EXISTS recommended_tasks JSON"
+        ))
+        # Full parity with Meeting Intelligence's ai_summary shape — adds the
+        # "Vấn đề & rủi ro" / "Bước tiếp theo" sections to the Zalo digest.
+        conn.execute(text(
+            "ALTER TABLE zalo_conversation_summaries ADD COLUMN IF NOT EXISTS issues JSON"
+        ))
+        conn.execute(text(
+            "ALTER TABLE zalo_conversation_summaries ADD COLUMN IF NOT EXISTS next_steps JSON"
+        ))
+        # "KPI Prototype" extension port — project share-link + WIP-log attachments.
+        conn.execute(text(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS share_token VARCHAR(64)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_projects_share_token_unique "
+            "ON projects (share_token) WHERE share_token IS NOT NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS attached_files JSON"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS author_display_name VARCHAR(255)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS ai_summary TEXT"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS ai_tasks JSON"
         ))
 
 def init_db_defaults():
@@ -1203,6 +1246,7 @@ app.include_router(auth.router,                prefix="/api/auth")
 app.include_router(users.router,               prefix="/api/users")
 app.include_router(projects_router.router,     prefix="/api")
 app.include_router(project_documents_router.router, prefix="/api")
+app.include_router(project_features_router.router, prefix="/api")
 app.include_router(task_groups_router.router,   prefix="/api")
 app.include_router(settings_router.router,     prefix="/api/settings")
 app.include_router(skills.router,              prefix="/api/skills")
@@ -1229,6 +1273,16 @@ app.include_router(system_audit.router,         prefix="/api")
 app.include_router(notifications_router.router, prefix="/api/notifications")
 app.include_router(telegram_router.router,      prefix="/api/telegram")
 app.include_router(zalo_router.router,          prefix="/api/zalo")
+app.include_router(ai_skills_router.router,     prefix="/api")
+app.include_router(ai_sessions_router.router,   prefix="/api")
+app.include_router(public_share_router.router,  prefix="/api")
+
+@app.get("/api/extension/ai-tracker/version")
+def extension_ai_tracker_version():
+    """Public — the extension's checkExtensionVersion() polls this to show an
+    update nudge; no auth so it works even for an expired-token install."""
+    from .config import settings
+    return {"version_number": settings.CURRENT_EXTENSION_VERSION, "download_url": ""}
 
 @app.get("/health")
 @app.get("/api/health")
@@ -1356,6 +1410,55 @@ async def start_auto_sync_loop():
             finally:
                 db.close()
             await asyncio.sleep(30)
+
+    asyncio.create_task(_loop())
+
+
+def _seconds_until_next_daily_run(daily_at: str) -> int:
+    """Seconds until the next occurrence of HH:MM in Vietnam time (no DST,
+    so a fixed UTC+7 offset via zoneinfo is exact). Used instead of a plain
+    fixed-interval sleep so "once a day" actually lands at the same
+    wall-clock time (e.g. midnight) instead of drifting to whatever time the
+    process happened to start at."""
+    import datetime
+    from zoneinfo import ZoneInfo
+    vn_tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    hour, minute = (int(p) for p in daily_at.split(":"))
+    now = datetime.datetime.now(vn_tz)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += datetime.timedelta(days=1)
+    return max(int((target - now).total_seconds()), 1)
+
+
+@app.on_event("startup")
+async def start_zalo_summary_loop():
+    from .config import settings
+    if not settings.ZALO_SUMMARY_ENABLED:
+        return
+
+    async def _loop():
+        await asyncio.sleep(10)  # Allow FastAPI to complete startup first
+        import logging
+        from .database import BackgroundSessionLocal
+        from .services.zalo_summary import run_summary_tick
+        logger = logging.getLogger("zalo_summary_loop")
+        interval = max(settings.ZALO_SUMMARY_INTERVAL_SECONDS, 30)
+        daily_at = settings.ZALO_SUMMARY_DAILY_AT.strip()
+        if daily_at:
+            logger.info(f"Zalo summary loop: daily mode, running at {daily_at} (Asia/Ho_Chi_Minh)")
+            await asyncio.sleep(_seconds_until_next_daily_run(daily_at))
+        while True:
+            db = BackgroundSessionLocal()
+            try:
+                created = await asyncio.to_thread(run_summary_tick, db, interval)
+                if created:
+                    logger.info(f"Zalo summary tick: created {created} summaries")
+            except Exception as e:
+                logger.error(f"Zalo summary tick failed: {e}")
+            finally:
+                db.close()
+            await asyncio.sleep(_seconds_until_next_daily_run(daily_at) if daily_at else interval)
 
     asyncio.create_task(_loop())
 

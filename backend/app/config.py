@@ -53,6 +53,24 @@ class Settings(BaseSettings):
     CHECK_INTERVAL_SECONDS: int = 3600
     REDIS_URL: str = ""
 
+    # Zalo group daily digest — periodically summarizes each group's messages
+    # since the last run into a ZaloConversationSummary row.
+    ZALO_SUMMARY_ENABLED: bool = True
+    # Plain fixed-interval mode (used while ZALO_SUMMARY_DAILY_AT is unset) —
+    # set to a few minutes while testing, 86400 (1 day) for a rough "once a
+    # day" cadence that isn't pinned to a specific clock time.
+    ZALO_SUMMARY_INTERVAL_SECONDS: int = 86400
+    # Real-use mode: run once a day at this exact wall-clock time, Vietnam
+    # time (Asia/Ho_Chi_Minh, no DST) — e.g. "00:00" for midnight. Overrides
+    # ZALO_SUMMARY_INTERVAL_SECONDS's role as the tick cadence when set;
+    # leave blank ("") to stay in plain-interval mode.
+    ZALO_SUMMARY_DAILY_AT: str = ""
+
+    # "KPI Prototype" browser extension (frontend/extension-src/ai-tracker/) —
+    # bump this whenever a new zip is published so already-installed extensions
+    # show an update nudge via GET /api/extension/ai-tracker/version.
+    CURRENT_EXTENSION_VERSION: str = "3.0.0"
+
     # Local disk storage for Resources/Documents file uploads (relative to the
     # backend process working directory; mounted as a Docker volume in prod/dev
     # so files survive container rebuilds).
@@ -109,6 +127,17 @@ class Settings(BaseSettings):
     ZALO_WORKER_URL: str = "http://zalo-worker:8090"
     ZALO_WORKER_INTERNAL_TOKEN: str = ""
 
+    # Email notifications (meeting-created → project members) via Gmail SMTP
+    # with an App Password (https://myaccount.google.com/apppasswords) —
+    # SMTP_USER is both the login and the "From" address unless SMTP_FROM_EMAIL
+    # is set separately.
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_FROM_NAME: str = "Markee AI"
+
     @property
     def telegram_base_url(self) -> str:
         return (self.APP_BASE_URL or self.FRONTEND_URL or "").rstrip("/")
@@ -116,6 +145,10 @@ class Settings(BaseSettings):
     @property
     def is_telegram_enabled(self) -> bool:
         return bool(self.TELEGRAM_BOT_TOKEN)
+
+    @property
+    def is_smtp_enabled(self) -> bool:
+        return bool(self.SMTP_HOST and self.SMTP_USER and self.SMTP_PASSWORD)
 
     @property
     def superadmin_emails(self) -> set[str]:
