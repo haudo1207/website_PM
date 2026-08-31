@@ -46,6 +46,31 @@ def save_upload(project_id: int, upload: UploadFile) -> tuple[str, int]:
     return relative_path, size
 
 
+def save_base64_upload(bucket, file_name: str, base64_data: str) -> tuple[str, int]:
+    """Same on-disk layout as save_upload(), but from an in-memory base64
+    string (the "KPI Prototype" extension stages attachments as base64, not
+    multipart). `bucket` is a project_id for project-scoped attachments, or a
+    fixed string (e.g. "ai-skills") for company-wide ones — either way it's
+    only ever used as a directory name."""
+    import base64
+
+    bucket_dir = _upload_root() / str(bucket)
+    bucket_dir.mkdir(parents=True, exist_ok=True)
+
+    raw = base64_data.split(",")[-1] if "," in base64_data else base64_data
+    data = base64.b64decode(raw)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise ValueError("File vượt quá giới hạn 100 MB.")
+
+    safe_name = os.path.basename(file_name or "file")
+    stored_name = f"{uuid.uuid4().hex}_{safe_name}"
+    dest = bucket_dir / stored_name
+    dest.write_bytes(data)
+
+    relative_path = f"{bucket}/{stored_name}"
+    return relative_path, len(data)
+
+
 def resolve_path(relative_path: str) -> Path:
     return _upload_root() / relative_path
 

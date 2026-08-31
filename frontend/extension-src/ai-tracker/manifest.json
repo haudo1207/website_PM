@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "KPI Prototype",
+  "version": "3.0.0",
+  "description": "Ghi lại tiến độ, tóm tắt hội thoại AI thành WIP log và thư viện kỹ năng dùng chung — gắn liền với dự án của bạn trong KPI Portal (pm-new).",
+  "icons": {
+    "16": "icons/icon.png",
+    "32": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
+  },
+
+  "permissions": [
+    "storage",
+    "alarms",
+    "downloads",
+    "cookies"
+  ],
+  "host_permissions": [
+    "*://*.claude.ai/*",
+    "*://chatgpt.com/*",
+    "*://gemini.google.com/*",
+    "*://*.oaiusercontent.com/*",
+    "%%API_HOST_PERMISSION%%"
+  ],
+  "action": {
+    "default_title": "KPI Prototype",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "scripts/background.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["scripts/interceptor.js"],
+      "matches": ["*://*.claude.ai/*", "*://chatgpt.com/*", "*://gemini.google.com/*"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.claude.ai/*",
+        "*://chatgpt.com/*",
+        "*://gemini.google.com/*",
+        "*://*.oaiusercontent.com/*"
+      ],
+      "js": [
+        "scripts/config.js",
+        "scripts/auth.js",
+        "scripts/attachment_service.js",
+        "scripts/tracker.js",
+        "scripts/ui.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

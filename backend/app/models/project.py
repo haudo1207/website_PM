@@ -63,6 +63,10 @@ class Project(Base):
     last_ai_score         = Column(Integer, nullable=True)
     last_review_id        = Column(Integer, nullable=True)
 
+    # Lazily generated, non-rotating public share token for the "KPI Prototype"
+    # extension's project share-link feature (see routers/public_share.py).
+    share_token           = Column(String(64), unique=True, nullable=True, index=True)
+
     # Relationships
     pm_member             = relationship("Member", foreign_keys=[pm_id], lazy="select")
     technical_leader      = relationship("Member", foreign_keys=[technical_leader_id], lazy="select")

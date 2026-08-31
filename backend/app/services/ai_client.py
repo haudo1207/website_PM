@@ -24,23 +24,31 @@ def chat_completion_json(system_prompt: str, user_content: str, *, max_tokens: i
     if not settings.AI_API_KEY:
         raise AiClientError("AI_API_KEY is not configured")
 
-    resp = requests.post(
-        f"{settings.AI_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {settings.AI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": settings.AI_MODEL,
-            "max_tokens": max_tokens,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "temperature": temperature,
-        },
-        timeout=settings.AI_TIMEOUT_SECONDS,
-    )
+    try:
+        resp = requests.post(
+            f"{settings.AI_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.AI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.AI_MODEL,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                "temperature": temperature,
+            },
+            timeout=settings.AI_TIMEOUT_SECONDS,
+        )
+    except requests.exceptions.RequestException as e:
+        # Network-level failure (connection reset, timeout, DNS, ...) — the
+        # docstring already promises this raises AiClientError on "transport
+        # failure", but only response-parsing errors were actually wrapped;
+        # a raw socket error here used to crash the caller with an unhandled
+        # 500 instead of the clean error message callers expect.
+        raise AiClientError(f"AI API request failed: {e}")
 
     if resp.status_code != 200:
         raise AiClientError(f"AI API error: {resp.text}")

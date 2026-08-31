@@ -195,10 +195,49 @@ async function resolveConversationName(zaloApi, threadId, isGroup, fallbackSende
 }
 
 // ── Listener wiring ──────────────────────────────────────────────
+// Backfill request — safe to call repeatedly (backend dedupes on
+// conversation_id+source_message_id): asks Zalo (over the live WebSocket,
+// NOT the broken HTTP getGroupChatHistory endpoint) for the most recent
+// batch of group messages. Used both right after a fresh connect AND on an
+// ongoing timer below, because keepAlive() mostly keeping the session from
+// going stale means reconnects (and the on-connect backfill) now happen
+// rarely — a message can still slip through a brief unnoticed gap even
+// while `listener_connected` stays true throughout.
+function requestGroupBackfill(zaloApi) {
+  try {
+    zaloApi.listener.requestOldMessages(ThreadType.Group, null);
+  } catch (err) {
+    console.warn("[listener] requestOldMessages failed:", err.message);
+  }
+}
+
+const BACKFILL_INTERVAL_MS = 15000;
+
 function attachListener(zaloApi) {
   zaloApi.listener.on("connected", () => {
     listenerConnected = true;
     console.log("[listener] connected");
+    // 2s delay gives the cipher key exchange (needed to decode the
+    // response) time to land right after a fresh connect.
+    setTimeout(() => requestGroupBackfill(zaloApi), 2000);
+  });
+
+  zaloApi.listener.on("old_messages", async (messages, threadType) => {
+    console.log(`[listener] old_messages backfill — ${messages?.length ?? 0} message(s), type=${threadType}`);
+    for (const message of messages || []) {
+      await forwardMessage(message);
+    }
+  });
+
+  // zca-js fires "disconnected" on EVERY raw WebSocket close, before deciding
+  // whether to retry — for many close codes it silently reopens the socket
+  // itself (internal backoff, no "closed" event, no visibility for us at
+  // all) and only escalates to "closed" once it gives up retrying that code.
+  // We don't force our own reconnect here (zca-js is already handling it),
+  // but log it — a message arriving during one of these internal gaps is
+  // silently lost, and this is the only trace we'd have of that happening.
+  zaloApi.listener.on("disconnected", (code, reason) => {
+    console.warn("[listener] disconnected (zca-js internal retry, may self-heal)", code, reason);
   });
 
   zaloApi.listener.on("closed", (code, reason) => {
@@ -216,61 +255,118 @@ function attachListener(zaloApi) {
   });
 
   zaloApi.listener.on("message", async (message) => {
-    try {
-      // NOTE: `message.isSelf` means "sent by the currently-logged-in
-      // account", from ANY client — not just this app. A message we send
-      // via our own /conversations/:id/send is already recorded
-      // synchronously with the real msgId; when the listener echoes it back
-      // here, the backend's unique-constraint dedupe (conversation_id,
-      // source_message_id) turns this into a harmless no-op insert. But a
-      // message the account owner sends from their *phone* (same account,
-      // different client) is genuinely new and must NOT be dropped — that
-      // was silently happening here before (`if (message.isSelf) return`),
-      // which is why messages sent directly from a phone never showed up.
-      const isPlainText = typeof message.data?.content === "string";
-      if (!isPlainText) return; // phase 1: text only, matches existing services/zalo-crawler precedent
-
-      const isGroup = message.type === ThreadType.Group;
-      const senderName = message.data.dName || "Người dùng Zalo";
-      const name = await resolveConversationName(api, message.threadId, isGroup, isGroup ? null : senderName);
-
-      // Real Zalo @mentions carry {uid, pos, len} — pos/len point at the
-      // exact tagged substring inside content, which is far more reliable
-      // than regex-guessing where a Vietnamese multi-word name ends
-      // (especially with trailing text after the mention, e.g.
-      // "@Nguyễn Minh Hoàng, nhớ làm gấp" — no second "@" to stop at).
-      const rawMentions = Array.isArray(message.data?.mentions) ? message.data.mentions : [];
-      const mentions = rawMentions
-        .map((m) => ({
-          uid: m.uid,
-          text: String(message.data.content || "").substring(m.pos, m.pos + m.len).replace(/^@/, "").trim(),
-        }))
-        .filter((m) => m.text);
-
-      await axios.post(
-        `${FASTAPI_URL}/api/zalo/internal/messages`,
-        {
-          thread_id: message.threadId,
-          is_group: isGroup,
-          name,
-          source_message_id: String(message.data.msgId),
-          sender_zalo_id: message.data.uidFrom,
-          sender_name: senderName,
-          content: message.data.content,
-          is_outgoing: !!message.isSelf,
-          mentions,
-        },
-        {
-          headers: { "X-Zalo-Worker-Token": INTERNAL_TOKEN },
-          timeout: 10000,
-        }
-      );
-    } catch (err) {
-      console.error("Failed to forward Zalo message to backend:", err.response?.data || err.message);
-    }
+    console.log(
+      `[listener] raw message event — threadId=${message?.threadId} type=${message?.type} isSelf=${message?.isSelf} contentType=${typeof message?.data?.content}`
+    );
+    await forwardMessage(message);
   });
 
   zaloApi.listener.start({ retryOnClose: true });
+}
+
+// Shared by the real-time listener AND the poll-fallback below — both
+// produce the same {threadId, type, isSelf, data} shape (zca-js's
+// GroupMessage/UserMessage classes, whether delivered via WebSocket push or
+// fetched via getGroupChatHistory, wrap the identical raw `data` fields).
+// Safe to call for a message we've already forwarded: the backend dedupes
+// on (conversation_id, source_message_id) and no-ops the repeat.
+async function forwardMessage(message) {
+  try {
+    // NOTE: `message.isSelf` means "sent by the currently-logged-in
+    // account", from ANY client — not just this app. A message we send
+    // via our own /conversations/:id/send is already recorded
+    // synchronously with the real msgId; when the listener echoes it back
+    // here, the backend's unique-constraint dedupe (conversation_id,
+    // source_message_id) turns this into a harmless no-op insert. But a
+    // message the account owner sends from their *phone* (same account,
+    // different client) is genuinely new and must NOT be dropped — that
+    // was silently happening here before (`if (message.isSelf) return`),
+    // which is why messages sent directly from a phone never showed up.
+    const isPlainText = typeof message.data?.content === "string";
+    if (!isPlainText) return; // phase 1: text only, matches existing services/zalo-crawler precedent
+
+    const isGroup = message.type === ThreadType.Group;
+    const senderName = message.data.dName || "Người dùng Zalo";
+    const name = await resolveConversationName(api, message.threadId, isGroup, isGroup ? null : senderName);
+
+    // Real Zalo @mentions carry {uid, pos, len} — pos/len point at the
+    // exact tagged substring inside content, which is far more reliable
+    // than regex-guessing where a Vietnamese multi-word name ends
+    // (especially with trailing text after the mention, e.g.
+    // "@Nguyễn Minh Hoàng, nhớ làm gấp" — no second "@" to stop at).
+    const rawMentions = Array.isArray(message.data?.mentions) ? message.data.mentions : [];
+    const mentions = rawMentions
+      .map((m) => ({
+        uid: m.uid,
+        text: String(message.data.content || "").substring(m.pos, m.pos + m.len).replace(/^@/, "").trim(),
+      }))
+      .filter((m) => m.text);
+
+    await axios.post(
+      `${FASTAPI_URL}/api/zalo/internal/messages`,
+      {
+        thread_id: message.threadId,
+        is_group: isGroup,
+        name,
+        source_message_id: String(message.data.msgId),
+        sender_zalo_id: message.data.uidFrom,
+        sender_name: senderName,
+        content: message.data.content,
+        is_outgoing: !!message.isSelf,
+        mentions,
+      },
+      {
+        headers: { "X-Zalo-Worker-Token": INTERNAL_TOKEN },
+        timeout: 10000,
+      }
+    );
+  } catch (err) {
+    console.error("Failed to forward Zalo message to backend:", err.response?.data || err.message);
+  }
+}
+
+// ── Poll-fallback ────────────────────────────────────────────────
+// zca-js's real-time listener has been observed going silently stale:
+// `listener_connected` stays true, no "closed"/"error"/"disconnected" event
+// ever fires, yet the "message" event stops arriving for real incoming
+// messages (confirmed by the absence of even the raw-event log above).
+// This periodically pulls each tracked group's recent history directly —
+// a completely different code path in zca-js (a plain HTTP request, not the
+// WebSocket push) — so it keeps working even while the listener is stuck.
+const POLL_INTERVAL_MS = Number(process.env.ZALO_POLL_INTERVAL_MS || 20000);
+const POLL_HISTORY_COUNT = 20;
+
+async function pollGroupHistory() {
+  if (!api) return;
+  let groups;
+  try {
+    const resp = await axios.get(`${FASTAPI_URL}/api/zalo/internal/tracked-groups`, {
+      headers: { "X-Zalo-Worker-Token": INTERNAL_TOKEN },
+      timeout: 10000,
+    });
+    groups = resp.data || [];
+  } catch (err) {
+    console.error("[poll] failed to fetch tracked groups:", err.response?.data || err.message);
+    return;
+  }
+
+  for (const { thread_id } of groups) {
+    try {
+      const history = await api.getGroupChatHistory(thread_id, POLL_HISTORY_COUNT);
+      for (const msg of history.groupMsgs || []) {
+        await forwardMessage(msg);
+      }
+    } catch (err) {
+      console.error(`[poll] getGroupChatHistory failed for ${thread_id}:`, err.message, err.response?.data || "");
+    }
+  }
+}
+
+function startPolling() {
+  setInterval(() => {
+    pollGroupHistory().catch((err) => console.error("[poll] unexpected error:", err.message));
+  }, POLL_INTERVAL_MS);
+  console.log(`[poll] fallback polling started — every ${POLL_INTERVAL_MS}ms`);
 }
 
 // zca-js swallows the real reason for a login failure: `getLoginInfo()`
@@ -571,3 +667,33 @@ setInterval(() => {
     scheduleReconnect();
   }
 }, 120000);
+
+// Suspected root cause of the listener going silently stale (connected, no
+// errors, but stops delivering real messages after roughly 15-20 minutes):
+// zca-js's WS-level ping (every ctx.settings...ping_interval, ~3 min) keeps
+// the raw socket alive, but Zalo's server appears to separately require
+// this explicit app-level "I'm actively using this session" call — without
+// it, it seems to quietly stop pushing real-time events to this session
+// while the socket itself stays technically open. 90s keeps us comfortably
+// under that ~180s idle_time seen in the login response.
+const KEEPALIVE_INTERVAL_MS = 90000;
+setInterval(() => {
+  if (!api) return;
+  api.keepAlive().catch((err) => console.warn("[keepalive] failed:", err.message));
+}, KEEPALIVE_INTERVAL_MS);
+
+// Ongoing safety net, not just on-connect (see requestGroupBackfill above):
+// a real message ("lên ngon rồi" sent from a second device) was confirmed
+// lost even while listener_connected stayed true throughout and no
+// reconnect happened — keepAlive alone doesn't guarantee zero gaps.
+setInterval(() => {
+  if (!api || !listenerConnected) return;
+  requestGroupBackfill(api);
+}, BACKFILL_INTERVAL_MS);
+
+// Disabled: confirmed via [zca-http] logs that Zalo's own server now 404s
+// api/group/history (https://tt-group-wpa.chat.zalo.me/api/group/history)
+// for a well-formed request built exactly per zca-js's own implementation —
+// this is Zalo having removed/changed the endpoint server-side, not
+// something fixable here. Re-enable if a future zca-js version restores it.
+// startPolling();

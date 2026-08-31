@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..database import Base
@@ -81,6 +81,35 @@ class ZaloMessage(Base):
         # echoes back a message we just sent ourselves.
         UniqueConstraint("conversation_id", "source_message_id", name="uq_zalo_messages_conversation_source"),
     )
+
+
+class ZaloConversationSummary(Base):
+    """One AI-generated digest of a conversation's messages over a time
+    window (period_start, period_end]. Produced periodically by
+    services/zalo_summary.py — the window is "since the last summary" (or
+    since `ZALO_SUMMARY_INTERVAL_SECONDS` ago if there is none yet), not a
+    fixed calendar day, so the same job works whether the configured
+    interval is 5 minutes (testing) or 1 day (real use)."""
+    __tablename__ = "zalo_conversation_summaries"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    conversation_id   = Column(Integer, ForeignKey("zalo_conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_start      = Column(DateTime(timezone=True), nullable=False)
+    period_end        = Column(DateTime(timezone=True), nullable=False)
+    message_count     = Column(Integer, nullable=False, default=0)
+    # `content` holds just the executive-summary text now (kept as a plain
+    # column, not folded into structured JSON, so old rows and simple text
+    # search both keep working). `decisions`/`recommended_tasks` are the
+    # same 3-part shape as Meeting Intelligence's ai_summary, so the UI can
+    # render them with the identical decision-row / priority-card treatment.
+    content           = Column(Text, nullable=False)
+    decisions         = Column(JSON, nullable=True)
+    recommended_tasks = Column(JSON, nullable=True)
+    issues            = Column(JSON, nullable=True)
+    next_steps        = Column(JSON, nullable=True)
+    created_at        = Column(DateTime(timezone=True), server_default=func.now())
+
+    conversation = relationship("ZaloConversation", lazy="select")
 
 
 class ZaloDemoRequest(Base):

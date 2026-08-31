@@ -752,6 +752,20 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     except Exception as e:
         logger.warning(f"Failed to send Telegram notification for meeting {m.id}: {e}")
 
+    # Push the join link to any Zalo group(s) linked to the meeting's project(s)
+    try:
+        from ..services.meeting_notify import notify_zalo_groups_meeting_created
+        notify_zalo_groups_meeting_created(db, m)
+    except Exception as e:
+        logger.warning(f"Failed to send Zalo notification for meeting {m.id}: {e}")
+
+    # Email the join link to the meeting's project member(s)
+    try:
+        from ..services.meeting_notify import notify_project_members_email_meeting_created
+        notify_project_members_email_meeting_created(db, m)
+    except Exception as e:
+        logger.warning(f"Failed to send email notification for meeting {m.id}: {e}")
+
     return {"success": True, "data": meeting_to_dict(m)}
 
 # ─── UPDATE ──────────────────────────────────────────────

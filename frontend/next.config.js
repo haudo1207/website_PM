@@ -19,7 +19,7 @@ const nextConfig = {
           destination: `${backendUrl}/api/:path*`,
         },
         {
-          source: '/project/detail/:tab(overview|tasks|meetings|chats|members|audit-logs|resources)',
+          source: '/project/detail/:tab(overview|tasks|meetings|chats|members|audit-logs|resources|prototype)',
           destination: '/project/detail?tab=:tab',
         },
       ],
