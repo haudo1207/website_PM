@@ -4206,10 +4206,10 @@ function initLoginPopup() {
     loginForm.hidden = false;
   }
 
-  function showLoggedIn(email) {
+  function showLoggedIn(email, fullName) {
     if (loggedInView) {
       loggedInView.hidden = false;
-      if (loggedInEmail) loggedInEmail.textContent = email || "";
+      if (loggedInEmail) loggedInEmail.textContent = fullName || email || "";
     }
     loginForm.hidden = true;
   }
@@ -4217,7 +4217,7 @@ function initLoginPopup() {
   function refreshAuthState() {
     chrome.runtime.sendMessage({ action: "GET_AUTH_STATE" }, (state) => {
       if (state && state.loggedIn) {
-        showLoggedIn(state.email);
+        showLoggedIn(state.email, state.fullName);
         return;
       }
       // Not logged into the extension yet — try borrowing the pm-new WEB
@@ -4228,7 +4228,7 @@ function initLoginPopup() {
       chrome.runtime.sendMessage({ action: "TRY_AUTO_LOGIN" }, (res) => {
         loginStatus.textContent = "";
         if (res && res.success) {
-          showLoggedIn(res.email);
+          showLoggedIn(res.email, res.fullName);
           wireProjectSearch(
             document.getElementById("project-search-input"),
             document.getElementById("project-search-results"),
@@ -4246,6 +4246,18 @@ function initLoginPopup() {
     document.getElementById("project-search-results"),
     document.getElementById("project-current-name"),
   );
+
+  const openWebLoginBtn = document.getElementById("open-web-login-btn");
+  if (openWebLoginBtn) {
+    openWebLoginBtn.onclick = () => {
+      const base = (typeof AI_TRACKER_CONFIG !== "undefined" && AI_TRACKER_CONFIG.API_BASE) || "";
+      if (base) chrome.tabs.create({ url: base });
+    };
+  }
+  const retryAutoLoginBtn = document.getElementById("retry-auto-login-btn");
+  if (retryAutoLoginBtn) {
+    retryAutoLoginBtn.onclick = () => refreshAuthState();
+  }
 
   loginForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -4265,7 +4277,7 @@ function initLoginPopup() {
         loginStatus.textContent = "Đăng nhập thành công!";
         loginStatus.classList.remove("error");
         passwordInput.value = "";
-        showLoggedIn(res.email);
+        showLoggedIn(res.email, res.fullName);
         // The project list can only be fetched once authenticated — the
         // initial wireProjectSearch() call at popup-load time (before login)
         // always came back empty, so reload it now that we have a token.

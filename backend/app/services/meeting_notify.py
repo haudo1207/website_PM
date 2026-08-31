@@ -119,6 +119,10 @@ def notify_project_members_email_meeting_created(db: Session, meeting) -> int:
     )
     emails = [r.email for r in rows if r.email and r.email.strip()]
     if not emails:
+        logger.info(
+            "No member email on file for meeting %s (project(s) %s) — skipping email notice",
+            meeting.id, project_ids,
+        )
         return 0
 
     lines = _meeting_message_lines(meeting)

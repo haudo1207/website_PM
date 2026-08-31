@@ -6,7 +6,6 @@ import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr
 
 from ..config import settings
 
@@ -29,7 +28,10 @@ def send_email(to_emails: list[str], subject: str, html_body: str) -> int:
     from_email = settings.SMTP_FROM_EMAIL or settings.SMTP_USER
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = formataddr((settings.SMTP_FROM_NAME, from_email))
+    # No display-name override — Gmail rewrites the From header to the
+    # account's own profile name regardless, so send the bare address and
+    # let it show whatever the sending account is actually named.
+    msg["From"] = from_email
     msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
@@ -38,6 +40,7 @@ def send_email(to_emails: list[str], subject: str, html_body: str) -> int:
             server.starttls()
             server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.sendmail(from_email, recipients, msg.as_string())
+        logger.info("Sent email '%s' to %s", subject, recipients)
         return len(recipients)
     except Exception as e:
         logger.error("Failed to send email '%s' to %s: %s", subject, recipients, e)

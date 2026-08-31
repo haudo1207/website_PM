@@ -4,10 +4,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  X, Minimize2, Download, Info, Sparkles, Loader2, RefreshCw, CheckCircle2, FileText, ListTodo,
+  X, Minimize2, Download, Info, Sparkles, Loader2, RefreshCw, CheckCircle2, FileText, ListTodo, Upload,
 } from 'lucide-react';
 import {
-  getProjectFeatureLogAttachmentBlob, generateFeatureLogAiTasks, pushFeatureLogTasks,
+  getProjectFeatureLogAttachmentBlob, generateFeatureLogAiTasks, pushFeatureLogTasks, uploadFeatureLogAttachment,
 } from '@/lib/api';
 import {
   FeatureLog, AttachedFile, AiTask, formatBytes, isPreviewableMime,
@@ -87,6 +87,19 @@ export default function WipLogDetailModal({
     URL.revokeObjectURL(url);
   }
 
+  const [uploading, setUploading] = useState(false);
+
+  async function handleUpload(file: File) {
+    setUploading(true);
+    try {
+      const updated = await uploadFeatureLogAttachment(projectId, log.id, file);
+      onLogUpdated(updated);
+      setActiveAttachmentIdx((updated.attached_files || []).length - 1);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function handleGenerate() {
     setGenerating(true);
     setGenError(null);
@@ -155,6 +168,20 @@ export default function WipLogDetailModal({
             <Download className="w-3.5 h-3.5" /> Tải về
           </button>
         )}
+        <label className="flex items-center gap-1.5 text-[12px] font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
+          {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+          Upload
+          <input
+            type="file"
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) handleUpload(f);
+            }}
+          />
+        </label>
         <button
           onClick={onClose}
           className="flex items-center gap-1.5 text-[12px] font-semibold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors"

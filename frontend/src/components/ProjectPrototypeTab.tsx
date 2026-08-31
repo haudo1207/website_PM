@@ -2,11 +2,12 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  Target, Paperclip, Plus, Clock, Brain, Info, Trash2, Loader2, Download, Pencil, Check, X, Eye, FileText, Sparkles,
+  Target, Paperclip, Plus, Clock, Brain, Info, Trash2, Loader2, Download, Pencil, Check, X, Eye, FileText, Sparkles, Upload,
 } from 'lucide-react';
 import {
   getProjectFeatures, createProjectFeature, renameProjectFeature, deleteProjectFeature,
   getProjectFeatureLogs, createProjectFeatureLog, deleteProjectFeatureLog, getProjectFeatureLogAttachmentBlob,
+  uploadFeatureLogAttachment,
 } from '@/lib/api';
 import WipLogDetailModal from './WipLogDetailModal';
 
@@ -232,6 +233,20 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
       URL.revokeObjectURL(url);
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'Không tải được file');
+    }
+  }
+
+  const [uploadingLogId, setUploadingLogId] = useState<number | null>(null);
+
+  async function handleUploadAttachment(log: FeatureLog, file: File) {
+    setUploadingLogId(log.id);
+    try {
+      const updated = await uploadFeatureLogAttachment(projectId, log.id, file);
+      handleLogUpdated(updated);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Không upload được file');
+    } finally {
+      setUploadingLogId(null);
     }
   }
 
@@ -483,6 +498,24 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
                               >
                                 <Download className="w-3 h-3" /> Tải về
                               </button>
+                              <label className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600 hover:bg-emerald-50 px-2 py-1 rounded shrink-0 cursor-pointer">
+                                {uploadingLogId === log.id ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Upload className="w-3 h-3" />
+                                )}
+                                Upload
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  disabled={uploadingLogId === log.id}
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = '';
+                                    if (f) handleUploadAttachment(log, f);
+                                  }}
+                                />
+                              </label>
                             </div>
                           </div>
                         ))}

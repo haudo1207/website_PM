@@ -773,7 +773,8 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # Email the join link to the meeting's project member(s)
     try:
         from ..services.meeting_notify import notify_project_members_email_meeting_created
-        notify_project_members_email_meeting_created(db, m)
+        email_count = notify_project_members_email_meeting_created(db, m)
+        logger.info(f"Email notification for meeting {m.id} sent to {email_count} recipient(s)")
     except Exception as e:
         logger.warning(f"Failed to send email notification for meeting {m.id}: {e}")
 
