@@ -481,6 +481,41 @@ export const generateAiMeetingContent = (data: { title: string; project_name?: s
 export const getMeetingInsights = (params?: { from_date?: string; to_date?: string }) =>
   api.get('/meetings/insights', { params }).then(r => r.data);
 
+// Project Features — "Tính năng" + WIP log timeline
+export const getProjectFeatures = (projectId: number) =>
+  api.get(`/projects/${projectId}/features`).then(r => r.data);
+export const createProjectFeature = (projectId: number, name: string) =>
+  api.post(`/projects/${projectId}/features`, { name }).then(r => r.data);
+export const renameProjectFeature = (projectId: number, featureId: number, name: string) =>
+  api.patch(`/projects/${projectId}/features/${featureId}`, { name }).then(r => r.data);
+export const deleteProjectFeature = (projectId: number, featureId: number) =>
+  api.delete(`/projects/${projectId}/features/${featureId}`).then(r => r.data);
+export const getProjectFeatureLogs = (projectId: number, featureId?: number) =>
+  api.get(`/projects/${projectId}/feature-logs`, { params: featureId ? { feature_id: featureId } : {} }).then(r => r.data);
+export const createProjectFeatureLog = (projectId: number, featureId: number, content: string, status?: string) =>
+  api.post(`/projects/${projectId}/features/${featureId}/logs`, { content, status }).then(r => r.data);
+export const deleteProjectFeatureLog = (projectId: number, logId: number) =>
+  api.delete(`/projects/${projectId}/feature-logs/${logId}`).then(r => r.data);
+export const getProjectFeatureLogAttachmentBlob = (projectId: number, logId: number, idx: number) =>
+  api.get(`/projects/${projectId}/feature-logs/${logId}/attachments/${idx}`, { responseType: 'blob' }).then(r => r.data as Blob);
+export const generateFeatureLogAiTasks = (projectId: number, logId: number) =>
+  api.post(`/projects/${projectId}/feature-logs/${logId}/ai-tasks`).then(r => r.data);
+export const pushFeatureLogTasks = (projectId: number, logId: number, tasks: any[]) =>
+  api.post(`/projects/${projectId}/feature-logs/${logId}/push-tasks`, { tasks }).then(r => r.data);
+export const uploadFeatureLogAttachment = (projectId: number, logId: number, file: File) =>
+  new Promise<any>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      api.post(`/projects/${projectId}/feature-logs/${logId}/attachments`, {
+        file_name: file.name,
+        mime_type: file.type,
+        base64: reader.result,
+      }).then(r => resolve(r.data)).catch(reject);
+    };
+    reader.readAsDataURL(file);
+  });
+
 
 
 // Performance Settings CRUD
@@ -666,6 +701,77 @@ export const getSessionTimeline = (sessionId: string) =>
 export const getSystemAuditAnalytics = () =>
   api.get('/system-audit/analytics').then(r => r.data);
 
+// ── System Audit → Team Comparison (Section 2 & 3) ─────────────
+// Strictly super_admin — the backend router already enforces this.
+export interface TeamComparisonMember {
+  member_id: number;
+  name: string;
+  position?: string | null;
+  department?: string | null;
+  team?: string | null;
+  assigned: number;
+  support: number;
+  total: number;
+  done: number;
+  in_progress: number;
+  overdue: number;
+  manday_est: number;
+  manday_actual: number;
+  kpi: number;
+  progress_pct: number;
+}
+export interface TeamComparisonProject {
+  project_id: number;
+  name: string;
+  status?: string | null;
+  current_phase?: string | null;
+  data_scope?: string | null;
+  business?: string | null;
+  workspace?: string | null;
+  total: number;
+  done: number;
+  in_progress: number;
+  overdue: number;
+  manday_est: number;
+  manday_actual: number;
+  kpi: number;
+  progress_pct: number;
+  timeline_pct: number;
+  health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
+}
+export interface TeamComparisonTeam {
+  leader_user_id: number;
+  leader_member_id: number;
+  leader_name: string;
+  leader_email: string;
+  team_name: string;
+  workspace: string;
+  data_scope: string;
+  member_count: number;
+  members: TeamComparisonMember[];
+  kpi: number;
+  plan_md: number;
+  actual_md: number;
+  util: number;
+  efficiency: number;
+  on_time: number;
+  overdue: number;
+  total: number;
+  done: number;
+  in_progress: number;
+  health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
+  projects: TeamComparisonProject[];
+}
+export interface TeamComparisonResponse {
+  workspace: string;
+  workspace_filter: string;
+  teams: TeamComparisonTeam[];
+}
+export const getTeamComparison = (params?: { workspace?: string }) =>
+  api.get<TeamComparisonResponse>('/system-audit/team-comparison', { params }).then(r => r.data);
+export const getTeamDetail = (leader_user_id: number) =>
+  api.get<{ team: TeamComparisonTeam }>('/system-audit/team-detail', { params: { leader_user_id } }).then(r => r.data);
+
 // Telegram connection (Leave Request notifications)
 export interface TelegramStatus {
   connected: boolean;
@@ -711,8 +817,41 @@ export const disconnectZalo = () =>
   api.post<{ connected: boolean }>('/zalo/disconnect').then(r => r.data);
 export const getZaloConversations = () =>
   api.get<ZaloConversation[]>('/zalo/conversations').then(r => r.data);
+export interface ZaloAvailableGroup { thread_id: string; name: string; already_tracked: boolean }
+export const getZaloAvailableGroups = () =>
+  api.get<ZaloAvailableGroup[]>('/zalo/groups/available').then(r => r.data);
 export const getZaloConversationMessages = (conversationId: number, afterId?: number) =>
   api.get<ZaloMessage[]>(`/zalo/conversations/${conversationId}/messages`, { params: { after_id: afterId } }).then(r => r.data);
+export interface ZaloRecommendedTask {
+  detail_task: string;
+  priority: string;
+  assigned_name: string;
+  deadline: string;
+}
+export interface ZaloConversationSummary {
+  id: number;
+  period_start: string;
+  period_end: string;
+  message_count: number;
+  content: string;
+  decisions: string[];
+  issues: string[];
+  next_steps: string[];
+  recommended_tasks: ZaloRecommendedTask[];
+  created_at: string;
+}
+export const getZaloConversationSummaries = (conversationId: number) =>
+  api.get<ZaloConversationSummary[]>(`/zalo/conversations/${conversationId}/summaries`).then(r => r.data);
+export const summarizeZaloConversationNow = (conversationId: number) =>
+  api.post<ZaloConversationSummary>(`/zalo/conversations/${conversationId}/summarize-now`).then(r => r.data);
+export interface ZaloProjectGroupSummary {
+  conversation_id: number;
+  name: string;
+  last_message_at: string | null;
+  summaries: ZaloConversationSummary[];
+}
+export const getProjectZaloSummary = (projectId: number) =>
+  api.get<ZaloProjectGroupSummary[]>(`/zalo/projects/${projectId}/summary`).then(r => r.data);
 export interface ZaloOutgoingMention { uid: string; pos: number; len: number }
 export const sendZaloMessage = (conversationId: number, text: string, mentions?: ZaloOutgoingMention[]) =>
   api.post<{ ok: boolean; source_message_id: string }>(`/zalo/conversations/${conversationId}/send`, { text, mentions }).then(r => r.data);

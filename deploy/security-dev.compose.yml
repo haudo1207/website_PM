@@ -11,6 +11,7 @@ services:
       RUN_DB_STARTUP_ON_IMPORT: "false"
     volumes:
       - ./secrets:/app/secrets:ro
+      - backend-uploads:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
       interval: 10s
@@ -68,3 +69,4 @@ services:
 
 volumes:
   zalo-worker-artifacts:
+  backend-uploads:

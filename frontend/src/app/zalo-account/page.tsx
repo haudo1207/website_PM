@@ -4,12 +4,14 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
 import { isAdmin } from '@/lib/auth';
 import {
   getZaloStatus,
   importZaloSession,
   disconnectZalo,
   getZaloConversations,
+  getZaloAvailableGroups,
   getZaloConversationMessages,
   sendZaloMessage,
   sendZaloMessageToThread,
@@ -22,6 +24,8 @@ import {
   requestZaloDemo,
   setZaloDemoSkip,
   getProjects,
+  getZaloConversationSummaries,
+  summarizeZaloConversationNow,
   ZaloConversation,
   ZaloMessage,
   ZaloSuggestedMember,
@@ -30,6 +34,8 @@ import {
   ZaloProjectTask,
   ZaloTaskStatusFilter,
   ZaloTaskRangeFilter,
+  ZaloConversationSummary,
+  ZaloAvailableGroup,
 } from '@/lib/api';
 import { requestZaloSessionCookies, isZaloExtensionInstalled, ZaloExtensionError } from '@/lib/zaloExtension';
 
@@ -108,6 +114,12 @@ export default function ZaloAccountPage() {
     queryFn: getZaloConversations,
     enabled: authorized && !!status?.connected,
     refetchInterval: 5000,
+  });
+
+  const { data: availableGroups = [] } = useQuery({
+    queryKey: ['zalo-available-groups'],
+    queryFn: getZaloAvailableGroups,
+    enabled: authorized && !!status?.connected,
   });
 
   const [refreshingNames, setRefreshingNames] = useState(false);
@@ -205,6 +217,31 @@ export default function ZaloAccountPage() {
     queryFn: () => getZaloProjectTasks(selectedConversationId as number, taskStatusFilter, taskRangeFilter),
     enabled: authorized && selectedConversationId !== null && !!selectedConversation?.project_id && tasksModalOpen,
   });
+
+  // "Tóm tắt" modal — same lazy-fetch-only-when-open shape as Tasks above.
+  const [summaryModalOpen, setSummaryModalOpen] = useState(false);
+  const [summarizingNow, setSummarizingNow] = useState(false);
+  const [summarizeError, setSummarizeError] = useState('');
+
+  const { data: conversationSummaries = [], isFetching: summariesLoading, refetch: refetchSummaries } = useQuery({
+    queryKey: ['zalo-conversation-summaries', selectedConversationId],
+    queryFn: () => getZaloConversationSummaries(selectedConversationId as number),
+    enabled: authorized && selectedConversationId !== null && summaryModalOpen,
+  });
+
+  const handleSummarizeNow = async () => {
+    if (selectedConversationId === null) return;
+    setSummarizingNow(true);
+    setSummarizeError('');
+    try {
+      await summarizeZaloConversationNow(selectedConversationId);
+      await refetchSummaries();
+    } catch (e: any) {
+      setSummarizeError(e?.response?.data?.detail || 'Lỗi khi tóm tắt.');
+    } finally {
+      setSummarizingNow(false);
+    }
+  };
 
   const [demoTask, setDemoTask] = useState<ZaloProjectTask | null>(null);
   const [demoDate, setDemoDate] = useState('');
@@ -530,9 +567,29 @@ export default function ZaloAccountPage() {
             </summary>
             <div className="px-5 pb-5">
               <p className="text-xs text-slate-500 mb-3">
-                Chưa có danh sách hội thoại đầy đủ (Zalo không cung cấp API duyệt hết hội thoại) — nhập Zalo user/group id
-                để gửi tin đầu tiên, sau đó hội thoại sẽ xuất hiện ở danh sách bên dưới.
+                Chưa có danh sách hội thoại đầy đủ (Zalo không cung cấp API duyệt hết hội thoại) — chọn nhanh 1 group bên
+                dưới (lấy từ cache của zalo-worker, không cần mở lại chat.zalo.me), hoặc tự nhập Zalo user/group id.
               </p>
+              {availableGroups.length > 0 && (
+                <div className="mb-2">
+                  <SearchableSelect
+                    label="group"
+                    icon="👥"
+                    className="w-full"
+                    options={availableGroups.map(g => ({
+                      id: g.thread_id,
+                      name: g.name,
+                      badge: g.already_tracked ? 'Đã có' : undefined,
+                    }))}
+                    value=""
+                    onChange={(id: string) => {
+                      const g = availableGroups.find(g => g.thread_id === id);
+                      if (g) { setNewThreadId(g.thread_id); setNewThreadIsGroup(true); }
+                    }}
+                    placeholder="Gõ tên group để tìm nhanh…"
+                  />
+                </div>
+              )}
               <div className="flex flex-wrap gap-2 items-center">
                 <input value={newThreadId} onChange={e => setNewThreadId(e.target.value)} placeholder="Zalo user/group id"
                   className="px-3 py-2 text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal border-2 border-slate-300 rounded-lg w-56 focus:border-[#0058be] focus:outline-none" />
@@ -606,12 +663,20 @@ export default function ZaloAccountPage() {
                     <div className="min-w-0">
                       <div className="text-sm font-extrabold text-slate-900 truncate">{selectedConversation?.name}</div>
                     </div>
-                    {selectedConversation?.project_id && (
-                      <button onClick={() => setTasksModalOpen(true)} type="button"
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-50 text-emerald-700 border-2 border-emerald-200 hover:bg-emerald-100 whitespace-nowrap">
-                        📋 Task trong dự án
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {selectedConversation?.is_group && (
+                        <button onClick={() => setSummaryModalOpen(true)} type="button"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-50 text-indigo-700 border-2 border-indigo-200 hover:bg-indigo-100 whitespace-nowrap">
+                          🧠 Tóm tắt
+                        </button>
+                      )}
+                      {selectedConversation?.project_id && (
+                        <button onClick={() => setTasksModalOpen(true)} type="button"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-50 text-emerald-700 border-2 border-emerald-200 hover:bg-emerald-100 whitespace-nowrap">
+                          📋 Task trong dự án
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {selectedConversation?.is_group && suggestedMentions && suggestedMentions.members.length > 0 && (
                     <div className="border-b border-slate-200 px-4 py-2.5 bg-slate-50 max-h-40 overflow-y-auto shrink-0">
@@ -846,6 +911,45 @@ export default function ZaloAccountPage() {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {summaryModalOpen && selectedConversation && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setSummaryModalOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Tóm tắt hội thoại (AI)</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{selectedConversation.name}</p>
+              </div>
+              <button onClick={() => setSummaryModalOpen(false)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+              <p className="text-[11px] text-slate-500">Tự động chạy định kỳ theo <code>ZALO_SUMMARY_INTERVAL_SECONDS</code>. Bấm nút bên phải để chạy tóm tắt ngay (test).</p>
+              <button onClick={handleSummarizeNow} disabled={summarizingNow} type="button"
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-[#0058be] text-white hover:bg-[#00499e] disabled:opacity-60 whitespace-nowrap">
+                {summarizingNow ? 'Đang tóm tắt…' : '🧠 Tóm tắt ngay'}
+              </button>
+            </div>
+
+            {summarizeError && (
+              <div className="mx-5 mt-3 px-3 py-2 text-xs font-semibold text-red-700 bg-red-50 border-2 border-red-200 rounded-lg shrink-0">
+                {summarizeError}
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
+              {summariesLoading ? (
+                <div className="text-sm text-slate-400 text-center py-10">Đang tải…</div>
+              ) : conversationSummaries.length === 0 ? (
+                <div className="text-sm text-slate-400 text-center py-10">Chưa có bản tóm tắt nào.</div>
+              ) : (
+                conversationSummaries.map((s: ZaloConversationSummary) => <ZaloSummaryCard key={s.id} s={s} />)
               )}
             </div>
           </div>

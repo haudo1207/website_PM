@@ -29,6 +29,16 @@ const formatVNDate = (dStr: string) => {
   return `${day}/${month}/${d.getFullYear()}`;
 };
 
+function getTaskMandayDisplay(t: any): number {
+  const isDone = t.status === 'Done' || t.status === 'done';
+  const v = isDone ? (t.manday_actual ?? t.manday_est ?? 0) : (t.manday_est ?? 0);
+  return Math.round(Number(v || 0) * 10) / 10;
+}
+
+function getTaskStartDay(t: any): string {
+  return t.start_date || t.created_at;
+}
+
 export default function ReportTab() {
   // Quick Filter Highlight state
   const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>(null);
@@ -145,10 +155,7 @@ export default function ReportTab() {
     return (t.manday_actual || t.manday_est || 0);
   }, []);
 
-  const getMyTaskKpi = useCallback((t: any) => {
-    const isDone = t.status === 'Done' || t.status === 'done';
-    if (!isDone) return 0;
-
+  const getTaskKpiWeighted = useCallback((t: any) => {
     const memberId = realMemberData?.id;
     const memberDisplayName = (realMemberData?.display_name || '').toLowerCase().trim();
     const memberFullName = (realMemberData?.full_name || '').toLowerCase().trim();
@@ -189,6 +196,11 @@ export default function ReportTab() {
     }
     return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
   }, [realMemberData]);
+
+  const getMyTaskKpi = useCallback((t: any) => {
+    const isDone = t.status === 'Done' || t.status === 'done';
+    return isDone ? getTaskKpiWeighted(t) : 0;
+  }, [getTaskKpiWeighted]);
 
   const { chartStats, chartWeeklyProgress, chartMonthlyProgress } = useMemo(() => {
     let dCount = 0, iCount = 0, oCount = 0, cKpi = 0;
@@ -322,21 +334,32 @@ export default function ReportTab() {
       const pName = t.projectName || 'Không có';
       const cName = t.customerName || t.customer_name || 'Không có';
       if (!myProjectsMap.has(pName)) {
-        myProjectsMap.set(pName, { id: t.project_id, name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0 });
+        myProjectsMap.set(pName, { id: t.project_id, name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0, kpiTarget: 0, mandayActual: 0, mandayPlanned: 0 });
       }
       const p = myProjectsMap.get(pName);
       p.tasks++;
+      p.mandayPlanned += Number(t.manday_est || 0);
+      p.kpiTarget += getTaskKpiWeighted(t);
       if (t.status === 'Done' || t.status === 'done') {
         p.done++;
         p.kpi += getMyTaskKpi(t);
+        p.mandayActual += getMyTaskManday(t);
       }
     });
     const topProjects = Array.from(myProjectsMap.values())
       .sort((a, b) => b.kpi - a.kpi)
       .map(p => ({
         ...p,
+        kpi: Math.round(p.kpi * 10) / 10,
+        kpiTarget: Math.round(p.kpiTarget * 10) / 10,
+        mandayActual: Math.round(p.mandayActual * 10) / 10,
+        mandayPlanned: Math.round(p.mandayPlanned * 10) / 10,
         progress: p.tasks > 0 ? Math.round((p.done / p.tasks) * 100) : 0
       }));
+
+    const mandayPlannedTotal = Math.round(topProjects.reduce((s, p) => s + p.mandayPlanned, 0) * 10) / 10;
+    const kpiTargetTotal = Math.round(topProjects.reduce((s, p) => s + p.kpiTarget, 0) * 10) / 10;
+    const avgProgress = topProjects.length ? Math.round(topProjects.reduce((s, p) => s + p.progress, 0) / topProjects.length) : 0;
 
     const finalManday = typeof realMemberData?.manday_total === 'number' ? Math.round(realMemberData.manday_total * 10) / 10 : Math.round(mandayTotal * 10) / 10;
     const finalKpi = typeof realMemberData?.kpi_total === 'number' ? Math.round(realMemberData.kpi_total * 10) / 10 : Math.round(dynamicKpi * 10) / 10;
@@ -345,6 +368,9 @@ export default function ReportTab() {
       total: filteredTasks.length,
       done: doneCount,
       inProgress: inProgressCount,
+      mandayPlanned: mandayPlannedTotal,
+      kpiTarget: kpiTargetTotal,
+      avgProgress,
       overdue: overdueCount,
       manday: finalManday,
       kpi: finalKpi
@@ -371,7 +397,7 @@ export default function ReportTab() {
       monthlyProgress: mProg,
       topRealProjects: topProjects
     };
-  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, realMemberData]);
+  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, realMemberData, getMyTaskManday, getMyTaskKpi, getTaskKpiWeighted]);
 
   const reportKpiCards = [
     { label: 'Tasks Được Giao', value: realTaskStats.total, icon: 'tasks',     border: 'border-l-[#0058be]', text: 'text-[#0058be]', trend: selectedWeek === 'all' ? 'Trong tháng' : 'Trong tuần' },
@@ -527,6 +553,28 @@ export default function ReportTab() {
           </div>
           <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full border border-emerald-100">{topRealProjects.length} dự án</span>
         </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 border-b border-slate-100 bg-slate-50/50">
+          <div className="p-4 border-r border-slate-100 last:border-r-0">
+            <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Tổng Task</span>
+            <strong className="block text-base font-extrabold text-[#0b1c30] mt-1.5">{realTaskStats.done} / {realTaskStats.total}</strong>
+            <span className="block text-[10px] text-slate-400 mt-1">Hoàn thành / Tổng task được giao</span>
+          </div>
+          <div className="p-4 border-r border-slate-100 last:border-r-0">
+            <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Tổng Manday</span>
+            <strong className="block text-base font-extrabold text-[#0b1c30] mt-1.5">{realTaskStats.manday} / {realTaskStats.mandayPlanned} MD</strong>
+            <span className="block text-[10px] text-slate-400 mt-1">Actual / Planned</span>
+          </div>
+          <div className="p-4 border-r border-slate-100 last:border-r-0">
+            <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Tổng KPI</span>
+            <strong className="block text-base font-extrabold text-[#0b1c30] mt-1.5">{realTaskStats.kpi} / {realTaskStats.kpiTarget}</strong>
+            <span className="block text-[10px] text-slate-400 mt-1">KPI hoàn thành / KPI được giao</span>
+          </div>
+          <div className="p-4 border-r border-slate-100 last:border-r-0">
+            <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Tiến Độ Cá Nhân</span>
+            <strong className="block text-base font-extrabold text-[#0b1c30] mt-1.5">{realTaskStats.avgProgress}%</strong>
+            <span className="block text-[10px] text-slate-400 mt-1">Trung bình tiến độ theo project assignment</span>
+          </div>
+        </div>
         <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar">
           <table className="w-full text-xs text-left">
             <thead>
@@ -534,9 +582,9 @@ export default function ReportTab() {
                 <th className="px-4 py-3 font-bold w-12 text-center">STT</th>
                 <th className="px-4 py-3 font-bold">Tên Dự Án</th>
                 <th className="px-4 py-3 font-bold">Khách Hàng</th>
-                <th className="px-4 py-3 font-bold text-center">Số Task</th>
-                <th className="px-4 py-3 font-bold text-center">Hoàn Thành</th>
-                <th className="px-4 py-3 font-bold text-center text-[#0058be]">Tổng KPI</th>
+                <th className="px-4 py-3 font-bold text-center">Task HT / Tổng</th>
+                <th className="px-4 py-3 font-bold text-center">Manday HT / Giao</th>
+                <th className="px-4 py-3 font-bold text-center text-[#0058be]">KPI HT / Giao</th>
                 <th className="px-4 py-3 font-bold min-w-[120px]">Tiến Độ Của Tôi</th>
               </tr>
             </thead>
@@ -545,19 +593,25 @@ export default function ReportTab() {
                 <tr><td colSpan={7} className="text-center py-6 text-slate-400 font-semibold">Chưa tham gia dự án nào.</td></tr>
               ) : (
                 topRealProjects.map((p, idx) => (
-                  <tr 
-                    key={p.name} 
+                  <tr
+                    key={p.name}
                     onClick={() => { if (p.id) router.push(`/project/detail?id=${p.id}`); }}
                     className="border-b border-slate-50 hover:bg-slate-50/80 cursor-pointer transition-colors"
                   >
                     <td className="px-4 py-3 text-center">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${idx < 3 ? 'bg-amber-100 text-amber-700' : 'text-slate-400'}`}>#{idx + 1}</span>
+                      <span className="inline-flex items-center justify-center min-w-[30px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 text-[10px] font-black">#{idx + 1}</span>
                     </td>
                     <td className="px-4 py-3 font-semibold text-[#0b1c30]">{p.name}</td>
                     <td className="px-4 py-3 text-slate-500 font-semibold">{p.customerName || 'Không có'}</td>
-                    <td className="px-4 py-3 text-center text-slate-500 font-semibold">{p.tasks}</td>
-                    <td className="px-4 py-3 text-center text-emerald-600 font-bold">{p.done}</td>
-                    <td className="px-4 py-3 text-center text-[#0058be] font-extrabold">{p.kpi}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex items-center justify-center min-w-[64px] px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-extrabold text-[#18304d]">{p.done}/{p.tasks}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex items-center justify-center min-w-[80px] px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-extrabold text-amber-600 whitespace-nowrap">{p.mandayActual}/{p.mandayPlanned}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex items-center justify-center min-w-[80px] px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-extrabold text-[#0058be] whitespace-nowrap">{p.kpi}/{p.kpiTarget}</span>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden flex items-center">
                         <div className={`h-full rounded-full ${p.progress >= 80 ? 'bg-emerald-500' : p.progress >= 50 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${p.progress}%` }} />
@@ -673,7 +727,7 @@ export default function ReportTab() {
                     onClick={() => setOpenFilterDropdown(openFilterDropdown === 'priority' ? null : 'priority')}
                   >
                     <div className="flex items-center justify-center gap-1.5 text-center">
-                      <span className={`font-bold uppercase tracking-wider ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Priority</span>
+                      <span className={`font-bold uppercase tracking-wider whitespace-nowrap ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Priority</span>
                       <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterPriority !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
                     </div>
                     {filterPriority !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center mx-auto">{filterPriority}</span>}
@@ -708,7 +762,7 @@ export default function ReportTab() {
                     onClick={() => setOpenFilterDropdown(openFilterDropdown === 'status' ? null : 'status')}
                   >
                     <div className="flex items-center justify-center gap-1.5 text-center">
-                      <span className={`font-bold uppercase tracking-wider ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Trạng Thái</span>
+                      <span className={`font-bold uppercase tracking-wider whitespace-nowrap ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-[#2e3b52]'}`}>Trạng Thái</span>
                       <SvgIcon name="filter" className={`w-3.5 h-3.5 shrink-0 transition-colors ${filterStatus !== 'all' ? 'text-[#0058be]' : 'text-slate-500 group-hover:text-slate-700'}`} />
                     </div>
                     {filterStatus !== 'all' && <span className="text-[10px] font-bold text-[#0058be] truncate max-w-[100px] text-center mx-auto">{filterStatus}</span>}
@@ -734,8 +788,14 @@ export default function ReportTab() {
                     </div>
                   )}
                 </th>
+                <th className="px-4 py-2.5 align-top text-center w-[90px] bg-slate-100">
+                  <span className="font-bold uppercase tracking-wider text-[#2e3b52] whitespace-nowrap">Manday</span>
+                </th>
+                <th className="px-4 py-2.5 align-top text-center w-[100px] bg-slate-100">
+                  <span className="font-bold uppercase tracking-wider text-[#2e3b52] whitespace-nowrap">Start Day</span>
+                </th>
                 <th className="px-4 py-2.5 align-top text-center w-[140px] bg-slate-100 hover:bg-slate-200/50 transition-colors">
-                  <button 
+                  <button
                     onClick={() => {
                       if (sortDeadline === 'default') { setSortDeadline('asc'); setSortKPI('default'); }
                       else if (sortDeadline === 'asc') setSortDeadline('desc');
@@ -769,7 +829,7 @@ export default function ReportTab() {
             <tbody>
               {tableTasks.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-6 text-slate-400 font-semibold">Chưa có task nào phù hợp bộ lọc.</td>
+                  <td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có task nào phù hợp bộ lọc.</td>
                 </tr>
               ) : (
                 tableTasks.map((t: any, i: number) => (
@@ -797,6 +857,8 @@ export default function ReportTab() {
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${statusStyle[t.status] || ''}`}>{t.status}</span>
                     </td>
+                    <td className="px-4 py-3 text-center text-cyan-600 font-bold tabular-nums">{getTaskMandayDisplay(t)}</td>
+                    <td className="px-4 py-3 text-center text-slate-500 tabular-nums">{formatVNDate(getTaskStartDay(t))}</td>
                     <td className="px-4 py-3 text-center text-slate-500 tabular-nums">{formatVNDate(t.end_date_est)}</td>
                     <td className="px-4 py-3 text-center font-extrabold text-[#0058be]">
                       {(t.status === 'Done' || t.status === 'done') ? getMyTaskKpi(t) : <span className="text-slate-300 font-semibold">—</span>}

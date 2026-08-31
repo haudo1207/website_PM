@@ -27,6 +27,17 @@ class Meeting(Base):
     agenda           = Column(Text, nullable=True)
     no_action_reason = Column(Text, nullable=True)
 
+    # Reminder — minutes before start_time to notify participants, and which
+    # channels to notify through. See services/meeting_reminders.py for the
+    # actual dispatch (App/Telegram/Zalo now wired up; Email still pending
+    # SMTP provider config).
+    reminder_minutes = Column(Integer, nullable=False, default=15, server_default="15")
+    notify_channels  = Column(JSON, nullable=True)
+    # Set once a reminder has been dispatched for this meeting — the claim
+    # guard that keeps two uvicorn workers from both sending it (see
+    # meeting_reminders._claim_due_meetings).
+    reminder_sent_at = Column(DateTime, nullable=True)
+
     # Effectiveness score — deterministic, computed from real data (not AI-judged).
     # See backend/app/services/meeting_score_engine.py for the formula.
     score_total              = Column(Integer, nullable=True)

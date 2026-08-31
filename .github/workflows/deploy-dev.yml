@@ -90,7 +90,20 @@ jobs:
           FRONTEND_PORT: "3100"
         run: |
           set -euo pipefail
-          docker compose --env-file .env -f compose.yml build backend frontend zalo-worker
+          # Retry the build a few times — transient DNS/registry blips pulling
+          # base images (python:3.11-slim, node:20-alpine) shouldn't fail the
+          # whole deploy on their own.
+          attempt=1
+          max_attempts=3
+          until docker compose --env-file .env -f compose.yml build backend frontend zalo-worker; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Docker build failed after $max_attempts attempts" >&2
+              exit 1
+            fi
+            echo "Docker build failed (attempt $attempt/$max_attempts) — retrying in 15s..."
+            attempt=$((attempt + 1))
+            sleep 15
+          done
           docker compose --env-file .env -f compose.yml run --rm --no-deps \
             backend python -c "from app.main import run_startup_once; run_startup_once()"
           docker compose --env-file .env -f compose.yml up -d --no-build --remove-orphans

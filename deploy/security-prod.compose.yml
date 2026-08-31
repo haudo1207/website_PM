@@ -11,6 +11,7 @@ services:
       RUN_DB_STARTUP_ON_IMPORT: "false"
     volumes:
       - ./secrets:/app/secrets:ro
+      - backend-uploads:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
       interval: 10s
@@ -50,6 +51,26 @@ services:
       backend:
         condition: service_healthy
 
+  # Persistent Node.js sidecar holding the zca-js session for the "Zalo
+  # account for task assignment" feature (cookie login, send, real-time
+  # listener) — same role as the dev stack's zalo-worker. Without this,
+  # backend's ZALO_WORKER_URL (http://zalo-worker:8090) doesn't resolve at
+  # all, so neither sending nor receiving Zalo messages works in prod.
+  zalo-worker:
+    image: portal-prod-zalo-worker:${APP_COMMIT}
+    container_name: task_zalo_worker
+    restart: unless-stopped
+    build: ${SOURCE_DIR}/services/zalo-worker
+    env_file: ./.env
+    environment:
+      FASTAPI_URL: http://backend:8000
+      PORT: "8090"
+    volumes:
+      - zalo-worker-artifacts:/app/artifacts
+    depends_on:
+      backend:
+        condition: service_healthy
+
   frontend_markee:
     image: portal-markee-prod-frontend:${APP_COMMIT}
     container_name: markee_prod_frontend
@@ -72,3 +93,7 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+volumes:
+  backend-uploads:
+  zalo-worker-artifacts:
