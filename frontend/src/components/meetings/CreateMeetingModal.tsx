@@ -87,9 +87,17 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const [manualTitleEdit, setManualTitleEdit] = useState(false);
   const [checkingConflicts, setCheckingConflicts] = useState(false);
   const [scheduleConflicts, setScheduleConflicts] = useState<{ member_id: number; name: string; meetingTitle: string }[]>([]);
+  // Tracks project_ids across renders so the member-cascade effect below can
+  // tell which project was just REMOVED (vs. this being the modal's initial
+  // open/reset, where "removing" everything would be wrong).
+  const prevProjectIdsRef = useRef<number[]>([]);
 
   useEffect(() => {
+    let openedProjectIds: number[] = [];
     if (initialData) {
+      openedProjectIds = Array.isArray(initialData.project_ids) && initialData.project_ids.length
+        ? initialData.project_ids
+        : (initialData.project_id ? [initialData.project_id] : []);
       setFormData({
         ...initialData,
         platform: initialData.platform || 'Google Meet',
@@ -97,9 +105,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         auto_summarize: true,
         objective: initialData.objective || '',
         agenda: initialData.agenda || '',
-        project_ids: Array.isArray(initialData.project_ids) && initialData.project_ids.length
-          ? initialData.project_ids
-          : (initialData.project_id ? [initialData.project_id] : []),
+        project_ids: openedProjectIds,
         // Prefill from the meeting's real MeetingMember rows (member_id, not
         // the synthesized "Host" entry which has no member_id) so editing
         // doesn't silently drop everyone already added.
@@ -133,6 +139,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       });
       setManualTitleEdit(false);
     }
+    prevProjectIdsRef.current = openedProjectIds;
     setAiContentGenerated(false);
     setError('');
   }, [initialData, isOpen]);
@@ -148,6 +155,43 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       if (Array.isArray(items)) setMembersList(items);
     }).catch(() => {});
   }, [isOpen]);
+
+  // Bỏ chọn 1 dự án -> tự bỏ luôn các thành viên CHỈ thuộc dự án đó (thành
+  // viên nào vẫn còn thuộc 1 dự án khác đang được chọn thì giữ nguyên).
+  useEffect(() => {
+    const prevIds = prevProjectIdsRef.current;
+    const currentIds = formData.project_ids;
+    const removedIds = prevIds.filter(id => !currentIds.includes(id));
+    prevProjectIdsRef.current = currentIds;
+    if (removedIds.length === 0 || formData.member_ids.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const [remainingRosters, removedRosters] = await Promise.all([
+        Promise.all(currentIds.map(pid => getProjectMembers(pid).catch(() => []))),
+        Promise.all(removedIds.map(pid => getProjectMembers(pid).catch(() => []))),
+      ]);
+      if (cancelled) return;
+
+      const toIdSet = (rosters: any[]) => {
+        const ids = new Set<number>();
+        rosters.forEach((res: any) => {
+          const arr = Array.isArray(res) ? res : (res?.data || []);
+          arr.forEach((m: any) => { if (m && m.id) ids.add(m.id); });
+        });
+        return ids;
+      };
+      const stillCoveredIds = toIdSet(remainingRosters);
+      const droppedProjectMemberIds = toIdSet(removedRosters);
+
+      setFormData(prev => {
+        const kept = prev.member_ids.filter(mid => !droppedProjectMemberIds.has(mid) || stillCoveredIds.has(mid));
+        return kept.length === prev.member_ids.length ? prev : { ...prev, member_ids: kept };
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.project_ids.join(',')]);
 
   // Tên cuộc họp tự gợi ý từ dự án đã chọn + mục tiêu — chỉ khi người dùng
   // chưa tự sửa tay, để không đè lên nội dung họ đang gõ.
@@ -398,6 +442,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Dự án liên quan *</label>
               <SearchableSelect
                 label="dự án"
+                icon="📁"
                 isMulti
                 className="w-full"
                 options={projectsList.map((p: any) => ({ id: p.id, name: p.name }))}
@@ -503,6 +548,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 </div>
                 <SearchableSelect
                   label="thành viên"
+                  icon="👥"
+                  showAvatar
                   isMulti
                   className="w-full"
                   options={membersList.map((m: any) => ({ id: m.id, name: m.display_name || m.full_name || `#${m.id}` }))}

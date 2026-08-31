@@ -24,9 +24,22 @@ export interface SearchableSelectProps {
   required?: boolean;
   align?: 'left' | 'right';
   className?: string;
+  // Opt-in initials avatar next to each dropdown row — for people lists
+  // (members/assignees), not generic option lists (channels, skills...).
+  showAvatar?: boolean;
 }
 
 export const DEFAULT_SEARCH_THRESHOLD = 8;
+
+const AVATAR_COLORS = ['#0058be', '#E3000F', '#059669', '#d97706', '#7c3aed'];
+function avatarColorFor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+function avatarInitialsFor(name: string): string {
+  return name.split(' ').map(p => p[0]).filter(Boolean).slice(-2).join('').toUpperCase() || '?';
+}
 
 // Remove Vietnamese diacritics for smart matching
 function removeDiacritics(str: string): string {
@@ -91,7 +104,8 @@ export default function SearchableSelect({
   searchThreshold = DEFAULT_SEARCH_THRESHOLD,
   disabled = false,
   align = 'left',
-  className = ''
+  className = '',
+  showAvatar = false
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -168,6 +182,34 @@ export default function SearchableSelect({
     });
   }, [parsedOptions, debouncedSearch]);
 
+  // Multi-select: selected items float to the top of the dropdown (grouped
+  // under "ĐÃ CHỌN", unselected under "TẤT CẢ ...") instead of staying
+  // scattered wherever they sit in the source list — otherwise a handful of
+  // picks get lost among dozens of unpicked options. Within the selected
+  // group, most-recently-picked sits first (selectedValues is kept in that
+  // order by handleSelect below), so whatever the user just touched is
+  // immediately visible without scrolling.
+  const selectedCountInView = useMemo(() => {
+    if (!isMulti) return 0;
+    return filteredOptions.filter(opt => selectedValues.some(v => String(v) === String(opt.id))).length;
+  }, [isMulti, filteredOptions, selectedValues]);
+
+  const orderedOptions = useMemo(() => {
+    if (!isMulti) return filteredOptions;
+    const selected: SelectOptionItem[] = [];
+    const unselected: SelectOptionItem[] = [];
+    filteredOptions.forEach(opt => {
+      if (selectedValues.some(v => String(v) === String(opt.id))) selected.push(opt);
+      else unselected.push(opt);
+    });
+    selected.sort((a, b) => {
+      const ai = selectedValues.findIndex(v => String(v) === String(a.id));
+      const bi = selectedValues.findIndex(v => String(v) === String(b.id));
+      return ai - bi;
+    });
+    return [...selected, ...unselected];
+  }, [isMulti, filteredOptions, selectedValues]);
+
   // Always show search bar for 100% consistent Enterprise UX
   const showSearchBar = true;
 
@@ -188,7 +230,7 @@ export default function SearchableSelect({
       if (idx > -1) {
         current.splice(idx, 1);
       } else {
-        current.push(optionId);
+        current.unshift(optionId); // newest pick first — see orderedOptions above
       }
       onChange(current);
     } else {
@@ -209,7 +251,7 @@ export default function SearchableSelect({
       return;
     }
 
-    const totalItems = filteredOptions.length + (!isMulti && !debouncedSearch.trim() ? 1 : 0);
+    const totalItems = orderedOptions.length + (!isMulti && !debouncedSearch.trim() ? 1 : 0);
 
     switch (e.key) {
       case 'ArrowDown':
@@ -230,8 +272,8 @@ export default function SearchableSelect({
             handleSelect('all');
           } else {
             const actualIdx = hasResetOpt ? focusedIndex - 1 : focusedIndex;
-            if (filteredOptions[actualIdx]) {
-              handleSelect(filteredOptions[actualIdx].id);
+            if (orderedOptions[actualIdx]) {
+              handleSelect(orderedOptions[actualIdx].id);
             }
           }
         }
@@ -357,50 +399,74 @@ export default function SearchableSelect({
               </div>
             )}
 
-            {filteredOptions.length === 0 ? (
+            {orderedOptions.length === 0 ? (
               <div className="py-4 text-center text-slate-400 italic text-xs">
                 Không tìm thấy {label.toLowerCase()}.
               </div>
             ) : (
-              filteredOptions.map((opt, idx) => {
+              orderedOptions.map((opt, idx) => {
                 const itemIdx = !isMulti && !debouncedSearch.trim() ? idx + 1 : idx;
                 const isSelected = selectedValues.some(v => String(v) === String(opt.id));
                 const isFocused = focusedIndex === itemIdx;
+                // Group dividers for multi-select: selected items are always
+                // first in orderedOptions, so the "ĐÃ CHỌN" header goes above
+                // idx 0 and "TẤT CẢ ..." goes right where the group flips.
+                const showSelectedHeader = isMulti && idx === 0 && selectedCountInView > 0;
+                const showAllHeader = isMulti && idx === selectedCountInView && orderedOptions.length > selectedCountInView;
 
                 return (
-                  <div
-                    key={opt.id}
-                    onClick={() => handleSelect(opt.id)}
-                    className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer font-medium transition-all ${
-                      isFocused ? 'bg-[#0058be]/10 text-[#0058be]' : ''
-                    } ${
-                      isSelected
-                        ? 'bg-[#eff4ff] text-[#0058be] font-bold'
-                        : 'hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      {isMulti && (
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => {}}
-                          className="rounded border-slate-300 text-[#0058be] focus:ring-[#0058be]"
-                        />
-                      )}
-                      {opt.icon && <span>{opt.icon}</span>}
-                      <span className="truncate">{highlightMatch(opt.name, debouncedSearch)}</span>
-                      {opt.subtext && <span className="text-[10px] text-slate-400">({opt.subtext})</span>}
-                    </div>
-
-                    {opt.badge && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">
-                        {opt.badge}
-                      </span>
+                  <React.Fragment key={opt.id}>
+                    {showSelectedHeader && (
+                      <div className="px-2.5 pt-1 pb-1 text-[10px] font-bold text-[#0058be] uppercase tracking-wider">
+                        Đã chọn · {selectedCountInView}
+                      </div>
                     )}
+                    {showAllHeader && (
+                      <div className={`px-2.5 pb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider ${selectedCountInView > 0 ? 'pt-2 mt-1 border-t border-slate-100' : 'pt-1'}`}>
+                        Tất cả {label} · {orderedOptions.length - selectedCountInView}
+                      </div>
+                    )}
+                    <div
+                      onClick={() => handleSelect(opt.id)}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer font-medium transition-all ${
+                        isFocused ? 'bg-[#0058be]/10 text-[#0058be]' : ''
+                      } ${
+                        isSelected
+                          ? 'bg-[#eff4ff] text-[#0058be] font-bold'
+                          : 'hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        {isMulti && (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}}
+                            className="rounded border-slate-300 text-[#0058be] focus:ring-[#0058be]"
+                          />
+                        )}
+                        {showAvatar && (
+                          <span
+                            className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                            style={{ background: avatarColorFor(opt.name) }}
+                          >
+                            {avatarInitialsFor(opt.name)}
+                          </span>
+                        )}
+                        {opt.icon && <span>{opt.icon}</span>}
+                        <span className="truncate">{highlightMatch(opt.name, debouncedSearch)}</span>
+                        {opt.subtext && <span className="text-[10px] text-slate-400">({opt.subtext})</span>}
+                      </div>
 
-                    {!isMulti && isSelected && <span>✓</span>}
-                  </div>
+                      {opt.badge && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">
+                          {opt.badge}
+                        </span>
+                      )}
+
+                      {!isMulti && isSelected && <span>✓</span>}
+                    </div>
+                  </React.Fragment>
                 );
               })
             )}
