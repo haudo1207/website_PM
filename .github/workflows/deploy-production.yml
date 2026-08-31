@@ -80,7 +80,7 @@ jobs:
           # whole deploy on their own.
           attempt=1
           max_attempts=3
-          until docker compose --env-file .env -f docker-compose.yml build backend frontend frontend_markee; do
+          until docker compose --env-file .env -f docker-compose.yml build backend frontend frontend_markee zalo-worker; do
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "Docker build failed after $max_attempts attempts" >&2
               exit 1
