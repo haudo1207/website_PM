@@ -17,6 +17,7 @@ Delivery per channel:
 """
 import datetime
 import logging
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import update
 
@@ -127,7 +128,12 @@ def _claim_due_meetings(db):
     UPDATE (only succeeds if reminder_sent_at is still NULL), so at most one
     worker wins per meeting.
     """
-    now = datetime.datetime.now()
+    # meeting_date/start_time are stored exactly as the user typed them —
+    # Vietnam wall-clock time, no UTC conversion on input (see
+    # meetings.py::create_meeting). The container's own clock is UTC (Docker
+    # default), so a bare datetime.now() compared against that naive value
+    # was off by 7 hours — reminders fired ~7h late instead of on time.
+    now = datetime.datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
     candidates = (
         db.query(Meeting)
         .filter(Meeting.status == "UPCOMING", Meeting.reminder_sent_at.is_(None))
