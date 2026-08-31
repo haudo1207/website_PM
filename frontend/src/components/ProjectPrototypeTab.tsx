@@ -35,6 +35,14 @@ export interface AiTask {
   priority: string;
   assigned_name: string;
   deadline: string;
+  manday_est?: string | number;
+  start_date?: string;
+  // Best-effort AI guess at the matching Skill Solution (Group) name, picked
+  // from this project's real Skill Master list — a hint the UI pre-selects
+  // from, not an authoritative id (the id fields below are what get pushed).
+  skill_group_name?: string;
+  skill_solution_id?: number;
+  skill_vendor_id?: number;
   ai_task_inbox_id?: number;
   imported_task_id?: number | null;
   task_code?: string;

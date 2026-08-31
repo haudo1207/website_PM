@@ -37,7 +37,15 @@ def _auto_summarize_log_background(log_id: int) -> None:
         summarize_feature_log(db, log)
         db.commit()
     except AiClientError as e:
-        logger.warning("Auto-summarize sau khi tạo log %s thất bại: %s", log_id, e)
+        logger.warning("Auto-summarize log %s thất bại: %s", log_id, e)
+        db.rollback()
+    except Exception:
+        # Anything besides AiClientError (malformed AI JSON shape, etc.) used
+        # to propagate unhandled out of this background task — silently
+        # dropped by the framework, session left uncommitted, no log line
+        # anyone would see. Log it so a real bug doesn't look identical to a
+        # transient AI failure.
+        logger.exception("Auto-summarize log %s thất bại (lỗi không mong đợi)", log_id)
         db.rollback()
     finally:
         db.close()
@@ -219,7 +227,7 @@ def create_log(pid: int, fid: int, body: dict, background_tasks: BackgroundTasks
 
 
 @router.post("/projects/{pid:int}/feature-logs/{lid:int}/attachments")
-def add_log_attachment(pid: int, lid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def add_log_attachment(pid: int, lid: int, body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Appends one more file to an existing log's attachments — for saving a
     later result (e.g. more ChatGPT output) into the same WIP entry instead
     of creating a whole new log."""
@@ -246,6 +254,17 @@ def add_log_attachment(pid: int, lid: int, body: dict, db: Session = Depends(get
     log.attached_files = [*(log.attached_files or []), meta]
     db.commit()
     db.refresh(log)
+
+    # The create-log auto-summarize is a single, un-retried attempt (see
+    # _auto_summarize_log_background). If it never produced a summary yet,
+    # an attachment upload is a natural second chance to run it — without
+    # this, a log whose first attempt failed stayed stuck forever showing
+    # the "not generated yet" fallback no matter what got uploaded to it.
+    # Skip when a summary already exists so we don't clobber ai_tasks that
+    # may already have imported_task_id links from a previous push.
+    if not log.ai_summary:
+        background_tasks.add_task(_auto_summarize_log_background, log.id)
+
     return _log_to_dict(log)
 
 
@@ -397,19 +416,36 @@ def push_log_tasks(pid: int, lid: int, body: dict, db: Session = Depends(get_db)
                 if mb2:
                     support_id = mb2.id
 
+        # Phase / "Task cha" (TaskGroup) chosen by the user in the drawer —
+        # the log's project is always pid (unlike meetings, which sometimes
+        # span an unknown project), so only these two need picking. Re-validate
+        # against the DB rather than trusting the client, same as
+        # meetings.py::push_meeting_tasks.
+        phase_id = item.get("phase_id")
+        if phase_id:
+            ph = db.query(Phase).filter(Phase.id == phase_id, Phase.project_id == pid).first()
+            phase_id = ph.id if ph else None
+
+        task_group_id = item.get("task_group_id")
+        if task_group_id:
+            tg = db.query(TaskGroup).filter(TaskGroup.id == task_group_id, TaskGroup.phase_id == phase_id).first()
+            task_group_id = tg.id if tg else None
+
         inbox_task = AITaskInbox(
             project_id=pid,
             source_platform="WIP Log",
             source_group_name=feature.name if feature else "WIP Log",
             source_message=f"[WIP: {feature.name if feature else ''}] {detail_task}",
             detail_task=detail_task,
+            phase_id=phase_id,
+            task_group_id=task_group_id,
             priority=item.get("priority", "Normal"),
             assigned_id=assigned_id,
             assigned_name=assigned_name,
             support_id=support_id,
             acceptance_criteria=f"Hạn hoàn thành: {item.get('deadline') or 'Chưa xác định'}",
             status="PENDING",
-            manday_est=1.0,
+            manday_est=float(item.get("manday_est") or 1.0),
         )
         db.add(inbox_task)
         db.flush()
@@ -424,25 +460,43 @@ def push_log_tasks(pid: int, lid: int, body: dict, db: Session = Depends(get_db)
             # already-succeeded items this request) stays intact for the
             # final commit below.
             with db.begin_nested():
-                import_phase = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order).first()
+                import_phase = None
+                if phase_id:
+                    import_phase = db.query(Phase).filter(Phase.id == phase_id).first()
                 if not import_phase:
-                    import_phase = Phase(project_id=pid, name="Master", sort_order=1)
-                    db.add(import_phase)
-                    db.flush()
-                inbox_task.phase_id = import_phase.id
+                    import_phase = db.query(Phase).filter(Phase.project_id == pid).order_by(Phase.sort_order).first()
+                    if not import_phase:
+                        import_phase = Phase(project_id=pid, name="Master", sort_order=1)
+                        db.add(import_phase)
+                        db.flush()
+                    inbox_task.phase_id = import_phase.id
 
-                import_tg = db.query(TaskGroup).filter(TaskGroup.phase_id == import_phase.id).order_by(TaskGroup.sort_order).first()
+                import_tg = None
+                if task_group_id:
+                    import_tg = db.query(TaskGroup).filter(TaskGroup.id == task_group_id, TaskGroup.phase_id == import_phase.id).first()
                 if not import_tg:
-                    import_tg = TaskGroup(phase_id=import_phase.id, name="General Tasks", status="Waiting")
-                    db.add(import_tg)
-                    db.flush()
-                inbox_task.task_group_id = import_tg.id
+                    import_tg = db.query(TaskGroup).filter(TaskGroup.phase_id == import_phase.id).order_by(TaskGroup.sort_order).first()
+                    if not import_tg:
+                        import_tg = TaskGroup(phase_id=import_phase.id, name="General Tasks", status="Waiting")
+                        db.add(import_tg)
+                        db.flush()
+                    inbox_task.task_group_id = import_tg.id
 
                 existing_count = db.query(Task).filter(Task.task_group_id == inbox_task.task_group_id).count()
                 task_code = f"T{inbox_task.task_group_id}.{existing_count + 1}"
 
-                fallback_group = db.query(Group).order_by(Group.id.asc()).first()
-                fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
+                # Skill Solution/Vendor chosen by the user in the drawer —
+                # Task.skill_solution_id/skill_vendor_id are NOT NULL, so fall
+                # back to the first Group/Skill in the DB when not picked,
+                # same as meetings.py::push_meeting_tasks.
+                skill_solution_id = item.get("skill_solution_id")
+                skill_vendor_id = item.get("skill_vendor_id")
+                if not skill_solution_id:
+                    fallback_group = db.query(Group).order_by(Group.id.asc()).first()
+                    skill_solution_id = fallback_group.id if fallback_group else None
+                if not skill_vendor_id:
+                    fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
+                    skill_vendor_id = fallback_skill.id if fallback_skill else None
 
                 # AI-proposed tasks rarely include a start_date (the prompt
                 # doesn't ask for one) — Task.start_date is NOT NULL, so
@@ -471,8 +525,8 @@ def push_log_tasks(pid: int, lid: int, body: dict, db: Session = Depends(get_db)
                     support_id=final_support_id,
                     kpi_ratio_assign=100,
                     kpi_ratio_support=0,
-                    skill_solution_id=fallback_group.id if fallback_group else None,
-                    skill_vendor_id=fallback_skill.id if fallback_skill else None,
+                    skill_solution_id=skill_solution_id,
+                    skill_vendor_id=skill_vendor_id,
                     remark=inbox_task.acceptance_criteria,
                     start_date=parsed_start_date,
                     end_date_est=end_date_est_val,

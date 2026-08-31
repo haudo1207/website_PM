@@ -8,8 +8,10 @@ import {
 } from 'lucide-react';
 import {
   getProjectFeatureLogAttachmentBlob, generateFeatureLogAiTasks, pushFeatureLogTasks, uploadFeatureLogAttachment,
-  getProjectFeatureLogs,
+  getProjectFeatureLogs, getCategories,
 } from '@/lib/api';
+import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import {
   FeatureLog, AttachedFile, AiTask, formatBytes, isPreviewableMime,
 } from './ProjectPrototypeTab';
@@ -52,6 +54,54 @@ export default function WipLogDetailModal({
   const [checkedMap, setCheckedMap] = useState<Record<number, boolean>>({});
   const [editMap, setEditMap] = useState<Record<number, Partial<AiTask>>>({});
   const [pushing, setPushing] = useState(false);
+  // Project is already fixed (this log belongs to `projectId`) — unlike
+  // meeting's per-task project picker, we only need Phase + "Task cha" so
+  // the pushed task lands in the right spot in this project's plan instead
+  // of always falling back to the project's first Phase/TaskGroup.
+  const [taskPhaseMap, setTaskPhaseMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskGroupMap, setTaskGroupMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSkillSolutionMap, setTaskSkillSolutionMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [taskSkillVendorMap, setTaskSkillVendorMap] = useState<Record<number, PickedRef | undefined>>({});
+  const [categoriesList, setCategoriesList] = useState<any[]>([]);
+
+  // Skill Solution = Group, Skill Vendor = Skill nested under it — same shape
+  // as MeetingDetailModal's task table.
+  const allSkillGroups: any[] = categoriesList.flatMap((c: any) => c.groups || []);
+  const getSkillVendorsForGroup = (groupId?: number) => {
+    if (!groupId) return [];
+    const group = allSkillGroups.find((g: any) => g.id === groupId);
+    return group?.skills || [];
+  };
+
+  useEffect(() => {
+    getCategories().then((res: any) => {
+      const items = Array.isArray(res) ? res : (res?.data || []);
+      if (Array.isArray(items)) setCategoriesList(items);
+    }).catch(() => setCategoriesList([]));
+  }, []);
+
+  // Pre-select Skill Solution from the AI's best-effort guess (skill_group_name,
+  // matched by name against the real Skill Master list) — quick suggestion the
+  // user can still override, never re-applied once they've picked one manually.
+  useEffect(() => {
+    if (!allSkillGroups.length) return;
+    setTaskSkillSolutionMap((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      (log.ai_tasks || []).forEach((t, i) => {
+        if (next[i] || !t.skill_group_name) return;
+        const match = allSkillGroups.find(
+          (g: any) => g.name.trim().toLowerCase() === t.skill_group_name!.trim().toLowerCase()
+        );
+        if (match) {
+          next[i] = { id: match.id, name: match.name };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allSkillGroups.length, log.ai_tasks]);
 
   const activeFile: AttachedFile | undefined = attachments[activeAttachmentIdx];
 
@@ -166,16 +216,34 @@ export default function WipLogDetailModal({
 
   async function handlePushSelected() {
     const tasks = log.ai_tasks || [];
-    const toPush = tasks
-      .map((t, i) => ({ ...t, ...editMap[i] }))
-      .filter((t, i) => checkedMap[i] !== false && !tasks[i].imported_task_id);
-    if (!toPush.length) return;
+    const indices = tasks.map((_, i) => i).filter((i) => checkedMap[i] !== false && !tasks[i].imported_task_id);
+    if (!indices.length) return;
+
+    const missingPlacement = indices.some((i) => !taskPhaseMap[i]?.id || !taskGroupMap[i]?.id);
+    if (missingPlacement && !window.confirm(
+      'Có task chưa chọn đủ Phase / Task cha. Task đó sẽ được đẩy vào Inbox nhưng chưa gắn đúng vị trí trong kế hoạch dự án — bạn vẫn muốn tiếp tục?'
+    )) {
+      return;
+    }
+
+    const toPush = indices.map((i) => ({
+      ...tasks[i],
+      ...editMap[i],
+      phase_id: taskPhaseMap[i]?.id,
+      task_group_id: taskGroupMap[i]?.id,
+      skill_solution_id: taskSkillSolutionMap[i]?.id,
+      skill_vendor_id: taskSkillVendorMap[i]?.id,
+    }));
     setPushing(true);
     try {
       const result = await pushFeatureLogTasks(projectId, log.id, toPush);
       onLogUpdated(result.log);
       setCheckedMap({});
       setEditMap({});
+      setTaskPhaseMap({});
+      setTaskGroupMap({});
+      setTaskSkillSolutionMap({});
+      setTaskSkillVendorMap({});
     } catch (e: any) {
       setGenError(e?.response?.data?.detail || 'Đẩy task vào dự án thất bại');
     } finally {
@@ -432,6 +500,27 @@ export default function WipLogDetailModal({
                                     className="w-full text-[11px] border border-[#cbd5e1] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6366f1]"
                                   />
                                 </div>
+                                <div>
+                                  <label className={fieldLabelCls}>Manday Est</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={0.25}
+                                    value={edit.manday_est ?? t.manday_est ?? ''}
+                                    onChange={(e) => updateEdit(i, { manday_est: e.target.value })}
+                                    placeholder="1"
+                                    className="w-full text-[11px] border border-[#cbd5e1] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6366f1]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className={fieldLabelCls}>Start Date</label>
+                                  <input
+                                    type="date"
+                                    value={edit.start_date ?? t.start_date ?? ''}
+                                    onChange={(e) => updateEdit(i, { start_date: e.target.value })}
+                                    className="w-full text-[11px] border border-[#cbd5e1] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6366f1]"
+                                  />
+                                </div>
                                 <div className="col-span-2">
                                   <label className={fieldLabelCls}>Người phụ trách</label>
                                   <input
@@ -440,6 +529,65 @@ export default function WipLogDetailModal({
                                     onChange={(e) => updateEdit(i, { assigned_name: e.target.value })}
                                     placeholder="Để trống sẽ tự gán cho bạn"
                                     className="w-full text-[11px] border border-[#cbd5e1] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6366f1]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className={fieldLabelCls}>Phase</label>
+                                  <PhaseSelectCell
+                                    projectId={projectId}
+                                    phase={taskPhaseMap[i]}
+                                    onPhaseChange={(p) => setTaskPhaseMap((prev) => ({ ...prev, [i]: p }))}
+                                    onTaskGroupChange={(g) => setTaskGroupMap((prev) => ({ ...prev, [i]: g }))}
+                                  />
+                                </div>
+                                <div>
+                                  <label className={fieldLabelCls}>Task cha</label>
+                                  {taskPhaseMap[i] ? (
+                                    <TaskGroupSelectCell
+                                      phase={taskPhaseMap[i]}
+                                      taskGroup={taskGroupMap[i]}
+                                      onTaskGroupChange={(g) => setTaskGroupMap((prev) => ({ ...prev, [i]: g }))}
+                                    />
+                                  ) : (
+                                    <p className="text-[11px] text-slate-400 py-1.5">Chọn phase trước</p>
+                                  )}
+                                </div>
+                                <div>
+                                  <label className={fieldLabelCls}>
+                                    Skill Solution{t.skill_group_name && !taskSkillSolutionMap[i] && (
+                                      <span className="text-[#6366f1] normal-case font-semibold"> · AI gợi ý: {t.skill_group_name}</span>
+                                    )}
+                                  </label>
+                                  <SearchableSelect
+                                    label="skill solution"
+                                    options={allSkillGroups.map((g: any) => ({ id: g.id, name: g.name }))}
+                                    value={taskSkillSolutionMap[i]?.id || ''}
+                                    onChange={(val: any) => {
+                                      const gid = Number(val);
+                                      const found = allSkillGroups.find((g: any) => g.id === gid);
+                                      setTaskSkillSolutionMap((prev) => ({ ...prev, [i]: found ? { id: found.id, name: found.name } : undefined }));
+                                      setTaskSkillVendorMap((prev) => ({ ...prev, [i]: undefined }));
+                                    }}
+                                    placeholder="Gõ tìm..."
+                                    searchThreshold={0}
+                                    className="w-full"
+                                  />
+                                </div>
+                                <div>
+                                  <label className={fieldLabelCls}>Skill Vendor</label>
+                                  <SearchableSelect
+                                    label="skill vendor"
+                                    options={getSkillVendorsForGroup(taskSkillSolutionMap[i]?.id).map((s: any) => ({ id: s.id, name: s.name }))}
+                                    value={taskSkillVendorMap[i]?.id || ''}
+                                    onChange={(val: any) => {
+                                      const sid = Number(val);
+                                      const found = getSkillVendorsForGroup(taskSkillSolutionMap[i]?.id).find((s: any) => s.id === sid);
+                                      setTaskSkillVendorMap((prev) => ({ ...prev, [i]: found ? { id: found.id, name: found.name } : undefined }));
+                                    }}
+                                    disabled={!taskSkillSolutionMap[i]}
+                                    placeholder={taskSkillSolutionMap[i] ? 'Gõ tìm...' : 'Chọn Skill Solution trước'}
+                                    searchThreshold={0}
+                                    className="w-full"
                                   />
                                 </div>
                               </div>
