@@ -1462,12 +1462,20 @@ def generate_ai_meeting_content(body: dict, db: Session = Depends(get_db), curre
     system_prompt = (
         "Bạn là trợ lý soạn thảo cuộc họp cho một công ty công nghệ Việt Nam.\n"
         "Dựa trên tên cuộc họp và dự án liên quan, hãy đề xuất mục tiêu & kết quả mong đợi, "
-        "và agenda/vấn đề cần xử lý.\n"
+        "và agenda/vấn đề cần xử lý — NGẮN GỌN, mỗi mục là MỘT DÒNG duy nhất, TUYỆT ĐỐI KHÔNG viết "
+        "đoạn văn dài hay giải thích thêm sau mỗi mục.\n"
         "BẮT BUỘC: Trả về JSON duy nhất, đúng cấu trúc:\n"
         "{\n"
-        '  "goal": "<mục tiêu & kết quả mong đợi, 1-3 câu tiếng Việt>",\n'
-        '  "agenda": "<agenda dạng danh sách đánh số, mỗi mục 1 dòng, tiếng Việt>"\n'
+        '  "goal": "<danh sách đánh số dạng \'1. ...\\n2. ...\', TỐI ĐA 3 mục, mỗi mục khoảng 8-12 từ>",\n'
+        '  "agenda": "<danh sách đánh số dạng \'1. ...\\n2. ...\', TỐI ĐA 5-6 mục, mỗi mục khoảng 8-15 từ>"\n'
         "}\n"
+        "Ví dụ goal ĐÚNG (ngắn gọn, mỗi mục 1 ý cụ thể):\n"
+        "1. Cập nhật tiến độ dự án\n"
+        "2. Xác định vấn đề còn tồn đọng\n"
+        "3. Thống nhất kế hoạch tiếp theo\n"
+        "Ví dụ goal SAI (câu dài, giải thích lan man) — KHÔNG được viết kiểu này:\n"
+        "\"Mục tiêu của cuộc họp là tiến hành đánh giá một cách toàn diện tình hình triển khai dự án "
+        "trong thời gian vừa qua, đồng thời xác định những khó khăn...\"\n"
         "Không bọc trong ```json hay ``` ở kết quả."
     )
     user_content = f"Tên cuộc họp: {title}\nDự án liên quan: {project_name or 'Chưa xác định'}"

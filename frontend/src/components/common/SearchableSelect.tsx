@@ -266,11 +266,16 @@ export default function SearchableSelect({
       const found = parsedOptions.find(o => String(o.id) === String(selectedValues[0]));
       return found ? found.name : `Tất cả ${label}`;
     }
-    if (selectedValues.length === 1) {
-      const found = parsedOptions.find(o => String(o.id) === String(selectedValues[0]));
-      return found ? found.name : `1 ${label}`;
-    }
-    return `${selectedValues.length} ${label}`;
+    // Multi-select: name the first couple of picks instead of just a bare
+    // count, so the collapsed trigger tells the user WHO/WHAT is selected
+    // without opening the dropdown — 1 name shown in full, 2 names shown in
+    // full, 3+ shown as "first two · +N".
+    const names = selectedValues
+      .map(v => parsedOptions.find(o => String(o.id) === String(v))?.name)
+      .filter(Boolean) as string[];
+    if (names.length === 0) return `${selectedValues.length} ${label}`;
+    if (names.length <= 2) return names.join(' · ');
+    return `${names.slice(0, 2).join(' · ')} · +${names.length - 2}`;
   }, [selectedValues, parsedOptions, label, isMulti, isDefaultValue]);
 
   return (
@@ -292,9 +297,9 @@ export default function SearchableSelect({
             : 'border-[#c2c6d6]/60'
         }`}
       >
-        <span className="truncate flex items-center gap-1.5">
-          {icon && <span>{icon}</span>}
-          <span className="truncate max-w-[140px] text-left">{buttonText}</span>
+        <span className="flex-1 min-w-0 flex items-center gap-1.5">
+          {icon && <span className="shrink-0">{icon}</span>}
+          <span className="truncate text-left">{buttonText}</span>
         </span>
 
         <div className="flex items-center gap-1 shrink-0">
