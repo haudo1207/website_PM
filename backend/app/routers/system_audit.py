@@ -168,7 +168,16 @@ def get_system_audit_logs(
     # Fetch logs ordered newest first
     all_matching_logs = q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).all()
 
-    # Event Grouping: Group logs by event_id
+    # Event Grouping: Group logs by event_id in one O(n) pass — this used to
+    # re-scan the entire result set per log (O(n^2)) to find same-event rows,
+    # which is fine for a handful of rows but gets slow as audit_logs grows
+    # unbounded, since this endpoint has no SQL-level pagination (grouping
+    # needs to see every matching row before it can page).
+    logs_by_event: dict[str, list] = {}
+    for log in all_matching_logs:
+        evt_key = log.event_id or f"single-{log.id}"
+        logs_by_event.setdefault(evt_key, []).append(log)
+
     grouped_events = []
     seen_event_ids = set()
 
@@ -178,9 +187,9 @@ def get_system_audit_logs(
             continue
         seen_event_ids.add(evt_key)
 
-        # Collect all diff rows belonging to this same event_id
-        same_event_logs = [l for l in all_matching_logs if (l.event_id or f"single-{l.id}") == evt_key]
-        
+        # All diff rows belonging to this same event_id
+        same_event_logs = logs_by_event[evt_key]
+
         base_dict = log.to_dict()
         changes = []
         for l in same_event_logs:
@@ -710,6 +719,7 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
     pm_index: dict[int, list[dict]] = {}
     for pid, mid, role in project_member_rows:
         pm_index.setdefault(pid, []).append({"member_id": mid, "role": role})
+    proj_row_by_id = {r.project_id: r for r in proj_rows}
 
     # 10. Assemble per-member, per-team metrics.
     per_member: dict[int, dict] = {mid: {
@@ -752,9 +762,31 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
         mids = {m["member_id"] for m in members if m["member_id"] is not None}
         for mid in mids:
             proj_member_to_proj.setdefault(mid, []).append(pid)
-        # We only fill the row after we have the project's task aggregate.
+        # Seed every numeric/text field with a safe default up front — a
+        # project with team members but zero tasks never gets touched by
+        # step 12's per-project aggregate below (that query only produces a
+        # row per project that HAS tasks), and used to leave this dict
+        # missing manday_est/manday_actual/progress_pct/timeline_pct/etc.,
+        # which crashed the frontend's `.toFixed()` calls on `undefined`.
+        pr = proj_row_by_id.get(pid)
         project_summary[pid] = {
             "project_id": pid,
+            "name": pr.name if pr else f"Project #{pid}",
+            "status": pr.status if pr else None,
+            "current_phase": pr.current_phase if pr else None,
+            "data_scope": pr.data_scope if pr else None,
+            "business": pr.business if pr else None,
+            "total": 0,
+            "done": 0,
+            "overdue": 0,
+            "in_progress": 0,
+            "manday_est": 0.0,
+            "manday_actual": 0.0,
+            "kpi": 0.0,
+            "progress_pct": 0,
+            "timeline_pct": 0,
+            "health": "N/A",
+            "workspace": (pr.business or pr.data_scope or "") if pr else "",
             "members": [{"member_id": mid, "role": m["role"]} for mid in mids for m in members if m["member_id"] == mid],
         }
 
