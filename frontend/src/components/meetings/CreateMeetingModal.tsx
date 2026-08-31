@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Share2 } from 'lucide-react';
-import { generateMeetingLink, generateAiMeetingContent, getProjects, getMembers } from '@/lib/api';
+import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check } from 'lucide-react';
+import { generateMeetingLink, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getMeetings } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
@@ -23,6 +23,35 @@ interface MeetingFormData {
   agenda?: string;
   project_ids: number[];
   member_ids: number[];
+  reminder_minutes: number;
+  notify_channels: string[];
+}
+
+const NOTIFY_CHANNEL_OPTIONS = ['App', 'Telegram', 'Zalo', 'Nhóm dự án', 'Email'];
+
+// Numbered-list UX for Mục tiêu / Agenda — Enter continues "1. / 2. / 3. ..."
+// so leaders don't have to type the numbers by hand.
+function seedNumberedIfEmpty(value: string): string {
+  return value.trim() ? value : '1. ';
+}
+function continueNumberedList(el: HTMLTextAreaElement): { value: string; caret: number } {
+  const value = el.value;
+  const pos = el.selectionStart;
+  const before = value.slice(0, pos);
+  const after = value.slice(pos);
+  const lineCount = before.split('\n').filter(x => x.trim() !== '').length;
+  const insert = `\n${lineCount + 1}. `;
+  return { value: before + insert + after, caret: pos + insert.length };
+}
+
+function SectionLabel({ n, label }: { n: number; label: string }) {
+  return (
+    <div className="flex items-center gap-2.5 pt-1">
+      <span className="w-5 h-5 rounded-full bg-[#ede9fe] text-[#5b4ff6] text-[10px] font-black flex items-center justify-center shrink-0">{n}</span>
+      <span className="text-[11px] font-black text-[#8b93a7] uppercase tracking-wider">{label}</span>
+      <span className="flex-1 h-px bg-[#e6ebf3]" />
+    </div>
+  );
 }
 
 export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData }: CreateMeetingModalProps) {
@@ -38,7 +67,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     objective: '',
     agenda: '',
     project_ids: [],
-    member_ids: []
+    member_ids: [],
+    reminder_minutes: 15,
+    notify_channels: ['App']
   });
   const [projectsList, setProjectsList] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
@@ -49,8 +80,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const isSubmittingRef = useRef(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [isGeneratingAiContent, setIsGeneratingAiContent] = useState(false);
+  const [isFillingTeam, setIsFillingTeam] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
+  const [manualTitleEdit, setManualTitleEdit] = useState(false);
+  const [checkingConflicts, setCheckingConflicts] = useState(false);
+  const [scheduleConflicts, setScheduleConflicts] = useState<{ member_id: number; name: string; meetingTitle: string }[]>([]);
 
   useEffect(() => {
     if (initialData) {
@@ -69,8 +104,14 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         // doesn't silently drop everyone already added.
         member_ids: (initialData.members || [])
           .map((mm: any) => mm.member_id)
-          .filter((id: any) => id !== undefined && id !== null)
+          .filter((id: any) => id !== undefined && id !== null),
+        reminder_minutes: initialData.reminder_minutes ?? 15,
+        notify_channels: Array.isArray(initialData.notify_channels) && initialData.notify_channels.length
+          ? initialData.notify_channels
+          : ['App']
       });
+      // Editing an existing meeting: keep its title as-is, don't auto-overwrite.
+      setManualTitleEdit(true);
     } else {
       const today = new Date().toISOString().split('T')[0];
       setFormData({
@@ -85,8 +126,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         objective: '',
         agenda: '',
         project_ids: [],
-        member_ids: []
+        member_ids: [],
+        reminder_minutes: 15,
+        notify_channels: ['App']
       });
+      setManualTitleEdit(false);
     }
     setError('');
   }, [initialData, isOpen]);
@@ -102,6 +146,88 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       if (Array.isArray(items)) setMembersList(items);
     }).catch(() => {});
   }, [isOpen]);
+
+  // Tên cuộc họp tự gợi ý từ dự án đã chọn + mục tiêu — chỉ khi người dùng
+  // chưa tự sửa tay, để không đè lên nội dung họ đang gõ.
+  const buildTitleSuggestion = () => {
+    const objectiveText = (formData.objective || '').replace(/^\d+\.\s*/gm, '').trim();
+    const projectNames = formData.project_ids
+      .map(pid => projectsList.find((p: any) => p.id === pid)?.name)
+      .filter(Boolean) as string[];
+    const projectText = projectNames.length === 0
+      ? ''
+      : projectNames.length === 1
+      ? projectNames[0]
+      : `${projectNames.slice(0, 2).join(' + ')}${projectNames.length > 2 ? ` +${projectNames.length - 2}` : ''}`;
+    if (!projectText && !objectiveText) return '';
+    let goalHint = 'review tiến độ';
+    if (objectiveText) {
+      const t = objectiveText.toLowerCase();
+      if (t.includes('blocker')) goalHint = 'xử lý blocker';
+      else if (t.includes('chốt')) goalHint = 'chốt action items';
+      else if (!t.includes('tiến độ') && !t.includes('progress')) goalHint = 'review mục tiêu';
+    }
+    return projectText
+      ? `${goalHint.charAt(0).toUpperCase() + goalHint.slice(1)} ${projectText}`
+      : `Meeting ${projectText || 'dự án'}`;
+  };
+  useEffect(() => {
+    if (manualTitleEdit) return;
+    const suggestion = buildTitleSuggestion();
+    if (suggestion) setFormData(prev => ({ ...prev, title: suggestion }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.project_ids.join(','), formData.objective, manualTitleEdit, projectsList.length]);
+  const regenerateTitle = () => {
+    setManualTitleEdit(false);
+    const suggestion = buildTitleSuggestion();
+    if (suggestion) setFormData(prev => ({ ...prev, title: suggestion }));
+  };
+
+  // Real trùng-lịch check: pull meetings already scheduled on the same date
+  // and see whether any selected participant is already booked in an
+  // overlapping time window. No fabricated/demo data — if the API has
+  // nothing for that day, nothing is reported.
+  useEffect(() => {
+    if (!isOpen || !formData.date || !formData.time || formData.member_ids.length === 0) {
+      setScheduleConflicts([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setCheckingConflicts(true);
+      try {
+        const res: any = await getMeetings({ from_date: formData.date, to_date: formData.date });
+        const items: any[] = res?.data || res || [];
+        const [sh, sm] = formData.time.split(':').map(Number);
+        const startMin = sh * 60 + (sm || 0);
+        const dur = parseInt(formData.duration || '60', 10) || 60;
+        const endMin = startMin + dur;
+        const found: { member_id: number; name: string; meetingTitle: string }[] = [];
+        (Array.isArray(items) ? items : []).forEach((mt: any) => {
+          if (!mt || mt.id === initialData?.id || !mt.time) return;
+          const [oh, om] = String(mt.time).split(':').map(Number);
+          const oStart = oh * 60 + (om || 0);
+          let oEnd = oStart + 60;
+          if (mt.end_time) {
+            const [eh, em] = String(mt.end_time).split(':').map(Number);
+            oEnd = eh * 60 + (em || 0);
+          }
+          if (startMin >= oEnd || oStart >= endMin) return;
+          (mt.members || []).forEach((mm: any) => {
+            if (mm.member_id && formData.member_ids.includes(mm.member_id)) {
+              found.push({ member_id: mm.member_id, name: mm.display_name || `#${mm.member_id}`, meetingTitle: mt.title });
+            }
+          });
+        });
+        if (!cancelled) setScheduleConflicts(found);
+      } catch {
+        if (!cancelled) setScheduleConflicts([]);
+      } finally {
+        if (!cancelled) setCheckingConflicts(false);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [isOpen, formData.date, formData.time, formData.duration, formData.member_ids.join(','), initialData?.id]);
 
   if (!isOpen) return null;
 
@@ -121,6 +247,28 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     }
     const formattedHour = String(newH24).padStart(2, '0');
     setFormData({ ...formData, time: `${formattedHour}:${mVal}` });
+  };
+
+  const handleFillTeam = async () => {
+    if (formData.project_ids.length === 0) {
+      setError('Vui lòng chọn dự án trước khi bấm "Cả team"');
+      return;
+    }
+    setIsFillingTeam(true);
+    setError('');
+    try {
+      const results = await Promise.all(formData.project_ids.map((pid) => getProjectMembers(pid).catch(() => [])));
+      const union = new Set(formData.member_ids);
+      results.forEach((res: any) => {
+        const arr = Array.isArray(res) ? res : (res?.data || []);
+        arr.forEach((m: any) => { if (m && m.id) union.add(m.id); });
+      });
+      setFormData(prev => ({ ...prev, member_ids: Array.from(union) }));
+    } catch {
+      setError('Không thể lấy danh sách thành viên của dự án đã chọn');
+    } finally {
+      setIsFillingTeam(false);
+    }
   };
 
   const handleGenerateLink = async () => {
@@ -158,7 +306,17 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     setError('');
 
     if (!formData.title || !formData.date || !formData.time) {
-      setError('Vui lòng điền đầy đủ thông tin bắt buộc');
+      setError('Vui lòng điền đầy đủ thông tin bắt buộc (Tên, Ngày, Giờ)');
+      isSubmittingRef.current = false;
+      return;
+    }
+    if (formData.project_ids.length === 0) {
+      setError('Vui lòng chọn ít nhất một dự án cho cuộc họp');
+      isSubmittingRef.current = false;
+      return;
+    }
+    if (!formData.objective || !formData.objective.replace(/^\d+\.\s*/gm, '').trim()) {
+      setError('Vui lòng nhập Mục tiêu / Kết quả mong đợi của cuộc họp');
       isSubmittingRef.current = false;
       return;
     }
@@ -206,11 +364,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const readinessScore = hasObjective && hasAgenda ? rawReadiness : Math.min(rawReadiness, 5);
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-[70] flex justify-end">
+      {/* Backdrop */}
+      <div onClick={onClose} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300" />
+
+      {/* Drawer Body */}
+      <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
 
         {/* Header */}
-        <div className="px-6 py-4 border-b border-[#c2c6d6]/40 flex items-center justify-between bg-[#f8f9fe] shrink-0">
+        <div className="px-6 py-5 border-b border-[#c2c6d6]/40 flex items-center justify-between bg-[#f8f9fe] shrink-0">
           <div className="flex items-center gap-2 text-[#0058be]">
             <CalendarIcon size={18} />
             <h2 className="text-[14px] font-bold text-[#0b1c30]">
@@ -224,87 +386,134 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
         {/* Body & Form */}
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-          <div className="p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
-            {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg font-semibold border border-red-200">{error}</div>}
-            
+          <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
+            {error && <div className="mb-1 p-3 bg-red-50 text-red-600 text-xs rounded-lg font-semibold border border-red-200">{error}</div>}
+
+            {/* 1. Phạm vi cuộc họp */}
+            <SectionLabel n={1} label="Phạm vi cuộc họp" />
             <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Tên cuộc họp *</label>
-              <input
-                type="text"
-                value={formData.title}
-                onChange={e => setFormData({...formData, title: e.target.value})}
-                placeholder="VD: Review tiến độ tuần 26"
-                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Dự án liên quan *</label>
+              <SearchableSelect
+                label="dự án"
+                isMulti
+                className="w-full"
+                options={projectsList.map((p: any) => ({ id: p.id, name: p.name }))}
+                value={formData.project_ids}
+                onChange={(ids: number[]) => setFormData({ ...formData, project_ids: ids })}
               />
             </div>
 
+            {/* 2. Nội dung cuộc họp */}
+            <SectionLabel n={2} label="Nội dung cuộc họp" />
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Dự án liên quan</label>
-                <SearchableSelect
-                  label="dự án"
-                  isMulti
-                  options={projectsList.map((p: any) => ({ id: p.id, name: p.name }))}
-                  value={formData.project_ids}
-                  onChange={(ids: number[]) => setFormData({ ...formData, project_ids: ids })}
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Mục tiêu & kết quả mong đợi *</label>
+                <textarea
+                  value={formData.objective}
+                  onFocus={() => setFormData(prev => ({ ...prev, objective: seedNumberedIfEmpty(prev.objective || '') }))}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    const el = e.currentTarget;
+                    const { value, caret } = continueNumberedList(el);
+                    setFormData(prev => ({ ...prev, objective: value }));
+                    requestAnimationFrame(() => el.setSelectionRange(caret, caret));
+                  }}
+                  onChange={e => setFormData({ ...formData, objective: e.target.value })}
+                  placeholder="1. Nhập mục tiêu — Enter để tự thêm số tiếp theo..."
+                  rows={4}
+                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thành viên tham gia</label>
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Agenda / vấn đề cần xử lý</label>
+                <textarea
+                  value={formData.agenda}
+                  onFocus={() => setFormData(prev => ({ ...prev, agenda: seedNumberedIfEmpty(prev.agenda || '') }))}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    const el = e.currentTarget;
+                    const { value, caret } = continueNumberedList(el);
+                    setFormData(prev => ({ ...prev, agenda: value }));
+                    requestAnimationFrame(() => el.setSelectionRange(caret, caret));
+                  }}
+                  onChange={e => setFormData({ ...formData, agenda: e.target.value })}
+                  placeholder={'1. Nội dung cần cập nhật\n2. Vấn đề cần thảo luận\n3. Quyết định cần chốt'}
+                  rows={4}
+                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
+                />
+              </div>
+            </div>
+
+            {/* AI Meeting Copilot — đặt sau Mục tiêu/Agenda: gõ tay trước, cần thì mới nhờ AI đề xuất/viết lại */}
+            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-[#e7e3ff] text-[#6d28d9] flex items-center justify-center shrink-0">
+                <Sparkles size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-[#6d28d9]">AI Meeting Copilot</p>
+                <p className="text-[11px] text-[#516079] leading-relaxed">Chưa biết viết gì? Để AI soạn hộ mục tiêu & agenda từ tên cuộc họp, rồi bạn chỉnh lại.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateAiContent}
+                disabled={isGeneratingAiContent}
+                className="px-3 py-2 text-[11px] font-bold text-white bg-[#6d28d9] hover:bg-[#5b21b6] rounded-lg transition-colors disabled:opacity-60 shrink-0"
+              >
+                {isGeneratingAiContent ? 'Đang soạn...' : '✦ AI đề xuất'}
+              </button>
+            </div>
+
+            {/* 3. Người tham gia & thời gian */}
+            <SectionLabel n={3} label="Người tham gia & thời gian" />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Thành viên tham gia</label>
+                  <button
+                    type="button"
+                    onClick={handleFillTeam}
+                    disabled={isFillingTeam}
+                    className="text-[11px] font-bold text-[#0058be] hover:underline disabled:opacity-50"
+                  >
+                    {isFillingTeam ? 'Đang tải...' : '+ Cả team'}
+                  </button>
+                </div>
                 <SearchableSelect
                   label="thành viên"
                   isMulti
+                  className="w-full"
                   options={membersList.map((m: any) => ({ id: m.id, name: m.display_name || m.full_name || `#${m.id}` }))}
                   value={formData.member_ids}
                   onChange={(ids: number[]) => setFormData({ ...formData, member_ids: ids })}
                 />
+                <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bấm <b>“+ Cả team”</b> để nạp toàn bộ thành viên của (các) dự án đã chọn, rồi bỏ bớt người không cần.</p>
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Nền tảng</label>
-                <select 
-                  value={formData.platform}
-                  onChange={e => setFormData({...formData, platform: e.target.value})}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
-                >
-                  <option value="Google Meet">💻 Google Meet</option>
-                  <option value="Zoom">🎥 Zoom</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Ngày họp *</label>
-                <input 
-                  type="date" 
-                  value={formData.date}
-                  onChange={e => setFormData({...formData, date: e.target.value})}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                />
-              </div>
-            </div>
-
-            {formData.platform === 'Zoom' && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 leading-relaxed flex items-start gap-2">
-                <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0 mt-0.5">info</span>
-                <div>
-                  <span className="font-bold text-amber-900">Lưu ý khi chọn Zoom:</span> Hệ thống dùng 1 tài khoản Zoom cố định. Tại cùng một khung giờ chỉ khởi tạo được 1 cuộc họp Zoom. Nếu trùng giờ với cuộc họp Zoom khác, sẽ không tạo thêm được link mới (khuyên dùng <b>Google Meet</b>).
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời gian họp *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={formData.date}
+                    onChange={e => setFormData({ ...formData, date: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  />
+                  <select
+                    value={formData.duration}
+                    onChange={e => setFormData({ ...formData, duration: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                  >
+                    <option value="15">15 phút</option>
+                    <option value="30">30 phút</option>
+                    <option value="45">45 phút</option>
+                    <option value="60">1 giờ</option>
+                    <option value="90">1.5 giờ</option>
+                  </select>
                 </div>
-              </div>
-            )}
 
-            {formData.platform === 'Google Meet' && (
-              <div className="p-3 bg-[#eff6ff] border border-[#bfdbfe] rounded-lg text-[11px] text-[#1e40af] leading-relaxed flex items-start gap-2">
-                <span className="material-symbols-outlined text-[#2563eb] text-[16px] shrink-0 mt-0.5">info</span>
-                <div>
-                  <span className="font-bold">Lưu ý host cuộc họp:</span> Link Google Meet dùng tài khoản chung <b>mkt.szone@gmail.com</b>. Người đóng vai trò host (duyệt người tham gia vào phòng chờ) cần đăng nhập Google bằng đúng tài khoản này trước khi bấm vào link, nếu không sẽ không ai duyệt được.
-                </div>
-              </div>
-            )}
-
-            <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Giờ bắt đầu (AM/PM)</label>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 mt-2">
                   <select
                     value={hour12}
                     onChange={e => handleTimeChange(parseInt(e.target.value, 10), minuteStr, period)}
@@ -345,11 +554,34 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     </button>
                   </div>
                 </div>
+
+                {checkingConflicts && (
+                  <p className="text-[11px] text-[#94a3b8] mt-2">Đang kiểm tra trùng lịch...</p>
+                )}
+                {!checkingConflicts && formData.member_ids.length > 0 && (
+                  scheduleConflicts.length > 0 ? (
+                    <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800">
+                      <p className="font-bold mb-1">⚠ {scheduleConflicts.length} người có thể trùng lịch:</p>
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        {scheduleConflicts.map((c, i) => (
+                          <li key={i}><b>{c.name}</b> đang có meeting khác: {c.meetingTitle}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] text-emerald-700 font-semibold">
+                      ✓ Người tham gia hiện tại đang rảnh trong khung giờ này
+                    </div>
+                  )
+                )}
+              </div>
             </div>
 
+            {/* 4. Kết nối & thông báo */}
+            <SectionLabel n={4} label="Kết nối & thông báo" />
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Link meeting (tùy chọn)</label>
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Nền tảng họp + Link họp</label>
                 <div className="flex items-center gap-3">
                   {formData.link && (
                     <button
@@ -378,13 +610,40 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   )}
                 </div>
               </div>
-              <input 
-                type="text" 
-                value={formData.link}
-                onChange={e => setFormData({...formData, link: e.target.value})}
-                placeholder={formData.platform === 'Zoom' ? 'https://zoom.us/j/...' : formData.platform === 'Google Meet' ? 'https://meet.google.com/...' : 'https://...'} 
-                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors placeholder:text-[#c2c6d6]"
-              />
+              <div className="grid grid-cols-2 gap-3">
+                <select
+                  value={formData.platform}
+                  onChange={e => setFormData({ ...formData, platform: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                >
+                  <option value="Google Meet">💻 Google Meet</option>
+                  <option value="Zoom">🎥 Zoom</option>
+                </select>
+                <input
+                  type="text"
+                  value={formData.link}
+                  onChange={e => setFormData({ ...formData, link: e.target.value })}
+                  placeholder={formData.platform === 'Zoom' ? 'https://zoom.us/j/...' : formData.platform === 'Google Meet' ? 'https://meet.google.com/...' : 'https://...'}
+                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors placeholder:text-[#c2c6d6]"
+                />
+              </div>
+
+              {formData.platform === 'Zoom' && (
+                <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 leading-relaxed flex items-start gap-2">
+                  <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0 mt-0.5">info</span>
+                  <div>
+                    <span className="font-bold text-amber-900">Lưu ý khi chọn Zoom:</span> Hệ thống dùng 1 tài khoản Zoom cố định. Tại cùng một khung giờ chỉ khởi tạo được 1 cuộc họp Zoom. Nếu trùng giờ với cuộc họp Zoom khác, sẽ không tạo thêm được link mới (khuyên dùng <b>Google Meet</b>).
+                  </div>
+                </div>
+              )}
+              {formData.platform === 'Google Meet' && (
+                <div className="mt-2 p-3 bg-[#eff6ff] border border-[#bfdbfe] rounded-lg text-[11px] text-[#1e40af] leading-relaxed flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[#2563eb] text-[16px] shrink-0 mt-0.5">info</span>
+                  <div>
+                    <span className="font-bold">Lưu ý host cuộc họp:</span> Link Google Meet dùng tài khoản chung <b>mkt.szone@gmail.com</b>. Người đóng vai trò host (duyệt người tham gia vào phòng chờ) cần đăng nhập Google bằng đúng tài khoản này trước khi bấm vào link, nếu không sẽ không ai duyệt được.
+                  </div>
+                </div>
+              )}
               {!initialData && !formData.link && (
                 <>
                   {formData.platform === 'Zoom' && (
@@ -404,44 +663,48 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Mục tiêu & kết quả mong đợi</label>
-              <textarea
-                value={formData.objective}
-                onChange={e => setFormData({ ...formData, objective: e.target.value })}
-                placeholder="Nhập mục tiêu và kết quả mong đợi của cuộc họp — hoặc để trống rồi dùng AI đề xuất bên dưới..."
-                rows={2}
-                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Tên cuộc họp *</label>
+                <button
+                  type="button"
+                  onClick={regenerateTitle}
+                  className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline"
+                >
+                  <RefreshCw size={12} /> Hệ thống gợi ý lại
+                </button>
+              </div>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={e => { setFormData({ ...formData, title: e.target.value }); setManualTitleEdit(true); }}
+                placeholder="Hệ thống sẽ gợi ý tên cuộc họp dựa trên dự án + mục tiêu"
+                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] font-semibold focus:outline-none focus:border-[#0058be] transition-colors"
               />
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Agenda / vấn đề cần xử lý</label>
-              <textarea
-                value={formData.agenda}
-                onChange={e => setFormData({ ...formData, agenda: e.target.value })}
-                placeholder={'1. Nội dung cần cập nhật\n2. Vấn đề cần thảo luận\n3. Quyết định cần chốt'}
-                rows={3}
-                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
-              />
-            </div>
-
-            {/* AI Meeting Copilot — đặt sau Mục tiêu/Agenda: gõ tay trước, cần thì mới nhờ AI đề xuất/viết lại */}
-            <div className="bg-[#f6f3ff] border border-[#ddd6fe] rounded-xl p-3.5 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[#e7e3ff] text-[#6d28d9] flex items-center justify-center shrink-0">
-                <Sparkles size={16} />
+              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Nhắc lịch & kênh thông báo</label>
+              <div className="grid grid-cols-[140px_1fr] gap-3">
+                <select
+                  value={formData.reminder_minutes}
+                  onChange={e => setFormData({ ...formData, reminder_minutes: parseInt(e.target.value, 10) })}
+                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                >
+                  <option value={5}>Trước 5 phút</option>
+                  <option value={10}>Trước 10 phút</option>
+                  <option value={15}>Trước 15 phút</option>
+                  <option value={30}>Trước 30 phút</option>
+                </select>
+                <SearchableSelect
+                  label="kênh thông báo"
+                  isMulti
+                  className="w-full"
+                  options={NOTIFY_CHANNEL_OPTIONS}
+                  value={formData.notify_channels}
+                  onChange={(vals: string[]) => setFormData({ ...formData, notify_channels: vals })}
+                />
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-[#6d28d9]">AI Meeting Copilot</p>
-                <p className="text-[11px] text-[#516079] leading-relaxed">Chưa biết viết gì? Để AI soạn hộ mục tiêu & agenda từ tên cuộc họp, rồi bạn chỉnh lại.</p>
-              </div>
-              <button
-                type="button"
-                onClick={handleGenerateAiContent}
-                disabled={isGeneratingAiContent}
-                className="px-3 py-2 text-[11px] font-bold text-white bg-[#6d28d9] hover:bg-[#5b21b6] rounded-lg transition-colors disabled:opacity-60 shrink-0"
-              >
-                {isGeneratingAiContent ? 'Đang soạn...' : '✦ AI đề xuất'}
-              </button>
+              <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Lựa chọn được lưu cùng cuộc họp. Việc gửi thực tế qua Telegram/Zalo/Email theo mốc thời gian này sẽ được nối dây ở một đợt riêng.</p>
             </div>
 
             <div className="border border-[#e2e8f0] rounded-xl p-3 bg-[#fafbfc] space-y-1.5">
@@ -482,8 +745,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             >
               Hủy
             </button>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={isLoading}
               className="px-4 py-2 flex items-center gap-2 text-xs font-bold text-white bg-[#0058be] rounded-lg hover:bg-[#0058be]/90 transition-colors disabled:opacity-70 shadow-sm"
             >

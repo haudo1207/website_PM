@@ -180,6 +180,17 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS leader_member_id INTEGER"
         ))
+        # Meeting reminder preferences (Create Meeting drawer) — delivery is not
+        # wired up yet, this just persists the user's choice.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_minutes INTEGER NOT NULL DEFAULT 15"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS notify_channels JSON"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
+        ))
         conn.execute(text("""
             DO $$
             BEGIN
@@ -1448,6 +1459,25 @@ async def start_zalo_summary_loop():
             finally:
                 db.close()
             await asyncio.sleep(_seconds_until_next_daily_run(daily_at) if daily_at else interval)
+
+    asyncio.create_task(_loop())
+
+
+@app.on_event("startup")
+async def start_meeting_reminder_loop():
+    async def _loop():
+        await asyncio.sleep(10)  # stagger from the auto-sync loop above
+        from .database import BackgroundSessionLocal
+        from .services.meeting_reminders import dispatch_due_reminders
+        while True:
+            db = BackgroundSessionLocal()
+            try:
+                await asyncio.to_thread(dispatch_due_reminders, db)
+            except Exception:
+                pass
+            finally:
+                db.close()
+            await asyncio.sleep(60)
 
     asyncio.create_task(_loop())
 
