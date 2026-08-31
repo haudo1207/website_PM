@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import {
   getProjectFeatureLogAttachmentBlob, generateFeatureLogAiTasks, pushFeatureLogTasks, uploadFeatureLogAttachment,
+  getProjectFeatureLogs,
 } from '@/lib/api';
 import {
   FeatureLog, AttachedFile, AiTask, formatBytes, isPreviewableMime,
@@ -99,6 +100,50 @@ export default function WipLogDetailModal({
       setUploading(false);
     }
   }
+
+  // A log created via the extension never goes through ProjectPrototypeTab's
+  // own pollForAiSummary() (that only fires after the web UI's own "add log"
+  // form submits) — so opening "Xem chi tiết" right after an extension save
+  // used to show the manual "Tạo tóm tắt" button even though the backend's
+  // BackgroundTask was already about to finish. Poll here too, independent
+  // of how the log was created, so the summary/tasks just appear on their
+  // own once ready — same ~90s ceiling as ProjectPrototypeTab's poll.
+  const [autoChecking, setAutoChecking] = useState(!log.ai_summary);
+  useEffect(() => {
+    if (log.ai_summary) {
+      setAutoChecking(false);
+      return;
+    }
+    setAutoChecking(true);
+    let cancelled = false;
+    let attempt = 0;
+    async function tick() {
+      if (cancelled || attempt >= 15) {
+        if (!cancelled) setAutoChecking(false);
+        return;
+      }
+      attempt += 1;
+      try {
+        const freshLogs = await getProjectFeatureLogs(projectId, log.feature_id);
+        const fresh = freshLogs.find((l: FeatureLog) => l.id === log.id);
+        if (cancelled) return;
+        if (fresh && fresh.ai_summary) {
+          onLogUpdated(fresh);
+          setAutoChecking(false);
+          return;
+        }
+      } catch {
+        // best-effort background refresh — ignore and retry
+      }
+      if (!cancelled) setTimeout(tick, 5000);
+    }
+    const timer = setTimeout(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log.id, log.ai_summary]);
 
   async function handleGenerate() {
     setGenerating(true);
@@ -276,22 +321,31 @@ export default function WipLogDetailModal({
               <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                   {!log.ai_summary ? (
-                    <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-                      <Sparkles className="w-8 h-8 text-[#a5b4fc]" />
-                      <p className="text-[12px] text-slate-500">
-                        Log mới thường được AI tự động tóm tắt và đề xuất task ngay khi lưu. Nếu chưa có
-                        (lần lưu trước gặp lỗi tạm thời), bấm nút bên dưới để thử lại.
-                      </p>
-                      {genError && <p className="text-[11.5px] text-red-600">{genError}</p>}
-                      <button
-                        onClick={handleGenerate}
-                        disabled={generating}
-                        className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] disabled:opacity-50 px-4 py-2 rounded-lg transition-colors"
-                      >
-                        {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                        {generating ? 'Đang tạo...' : 'Tạo tóm tắt & đề xuất task'}
-                      </button>
-                    </div>
+                    autoChecking ? (
+                      <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+                        <Loader2 className="w-8 h-8 text-[#a5b4fc] animate-spin" />
+                        <p className="text-[12px] text-slate-500">
+                          AI đang tự động tóm tắt và đề xuất task cho log này — sẽ hiện ra ngay khi xong,
+                          không cần bấm gì cả.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+                        <Sparkles className="w-8 h-8 text-[#a5b4fc]" />
+                        <p className="text-[12px] text-slate-500">
+                          Lần tự động tóm tắt vừa rồi gặp lỗi tạm thời. Bấm nút bên dưới để thử lại.
+                        </p>
+                        {genError && <p className="text-[11.5px] text-red-600">{genError}</p>}
+                        <button
+                          onClick={handleGenerate}
+                          disabled={generating}
+                          className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] disabled:opacity-50 px-4 py-2 rounded-lg transition-colors"
+                        >
+                          {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                          {generating ? 'Đang tạo...' : 'Tạo tóm tắt & đề xuất task'}
+                        </button>
+                      </div>
+                    )
                   ) : (
                     <>
                       <div className="p-3 bg-[#f8f6ff] border border-[#eee9fe] rounded-xl text-[12px] text-[#334155] leading-relaxed">
