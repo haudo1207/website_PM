@@ -75,7 +75,20 @@ jobs:
                   output.append(f"{key}={value}")
           path.write_text("\n".join(output) + "\n")
           PY
-          docker compose --env-file .env -f docker-compose.yml build backend frontend frontend_markee
+          # Retry the build a few times — transient DNS/registry blips pulling
+          # base images (python:3.11-slim, node:20-alpine) shouldn't fail the
+          # whole deploy on their own.
+          attempt=1
+          max_attempts=3
+          until docker compose --env-file .env -f docker-compose.yml build backend frontend frontend_markee; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Docker build failed after $max_attempts attempts" >&2
+              exit 1
+            fi
+            echo "Docker build failed (attempt $attempt/$max_attempts) — retrying in 15s..."
+            attempt=$((attempt + 1))
+            sleep 15
+          done
           docker compose --env-file .env -f docker-compose.yml run --rm --no-deps \
             backend python -c "from app.main import run_startup_once; run_startup_once()"
           docker compose --env-file .env -f docker-compose.yml up -d --no-build --remove-orphans
