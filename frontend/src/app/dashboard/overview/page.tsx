@@ -639,12 +639,18 @@ export default function OverviewTab() {
   }, []);
 
   // Unified Date Filter
-  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
-  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
-  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
+  // Default to "This Week" on initial mount (Requirement 1). Existing
+  // Overview filtering logic (checkTaskInPeriod) already understands the
+  // `activeQuickFilter='Tuần này'` shortcut and computes Monday→Sunday from
+  // `new Date()`, so we simply seed the same shape that `applyQuickFilter`
+  // produces — no new filtering mechanism is introduced.
+  const initialNow = new Date();
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(initialNow.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>(initialNow.getMonth() + 1);
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>(getWeekOfMonth(initialNow));
 
   // Quick Filter Highlight state
-  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>(null);
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>('Tuần này');
 
   // Alerts for current member
   const [myAlerts, setMyAlerts] = useState<{ overdue_count: number; pending_approval_count: number; total: number } | null>(null);

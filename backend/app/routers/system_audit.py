@@ -472,6 +472,23 @@ def get_team_comparison(
             "their data_scope matches the requested workspace."
         ),
     ),
+    start_date: Optional[str] = Query(
+        None,
+        description=(
+            "Optional inclusive start date (YYYY-MM-DD). When provided, "
+            "task-level aggregations (kpi / manday / overdue / progress / "
+            "timeline) are restricted to tasks whose deadline (or created_at) "
+            "falls within [start_date, end_date]. Omit = no time filter "
+            "(preserves the existing behaviour)."
+        ),
+    ),
+    end_date: Optional[str] = Query(
+        None,
+        description=(
+            "Optional inclusive end date (YYYY-MM-DD). Pairs with start_date; "
+            "omit = no time filter (preserves the existing behaviour)."
+        ),
+    ),
     db: Session = Depends(get_db),
 ):
     """Per-Leader team aggregates for the System Audit "So sánh Team" section.
@@ -481,13 +498,30 @@ def get_team_comparison(
     aggregation, no per-task row shipping) so the dashboard behaviour stays
     consistent with Overview / KPI pages. Only the data source has been
     re-grouped by `leader_member_id`.
+
+    Time-range filter: when `start_date` / `end_date` are provided, the
+    task-level aggregations are scoped to that window so the System Audit
+    page can synchronise Section 2 / 3 / 4 with the selected time range.
+    Existing callers that omit these parameters get the original
+    (unfiltered) behaviour unchanged.
     """
-    return _aggregate_team_comparison(db=db, workspace=workspace)
+    return _aggregate_team_comparison(
+        db=db, workspace=workspace,
+        start_date=start_date, end_date=end_date,
+    )
 
 
 @router.get("/team-detail")
 def get_team_detail(
     leader_user_id: int = Query(..., description="Canonical User.id of the Leader"),
+    start_date: Optional[str] = Query(
+        None,
+        description="Optional inclusive start date (YYYY-MM-DD) — see /team-comparison.",
+    ),
+    end_date: Optional[str] = Query(
+        None,
+        description="Optional inclusive end date (YYYY-MM-DD) — see /team-comparison.",
+    ),
     db: Session = Depends(get_db),
 ):
     """Drill-down view for a single team — the same data shape used by the
@@ -496,14 +530,22 @@ def get_team_detail(
     the frontend can render the existing detail-drawer pattern without
     issuing any extra requests.
     """
-    payload = _aggregate_team_comparison(db=db, workspace=None)
+    payload = _aggregate_team_comparison(
+        db=db, workspace=None,
+        start_date=start_date, end_date=end_date,
+    )
     for team in payload.get("teams", []):
         if team.get("leader_user_id") == leader_user_id:
             return {"team": team}
     raise HTTPException(404, "Không tìm thấy team cho Leader này (hoặc Leader không có thành viên được quản lý).")
 
 
-def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
+def _aggregate_team_comparison(
+    db: Session,
+    workspace: Optional[str],
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
     """Shared team-comparison aggregator used by both `team-comparison` and
     `team-detail`. Eligibility (matches the rules specified for the System
     Audit extension):
@@ -514,11 +556,35 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
       - The Leader's `data_scope` is either 'all' or matches the requested
         workspace filter.
 
+    Optional time-range filter (Requirement 2 — System Audit global sync):
+      When `start_date` / `end_date` are provided, every per-task aggregate
+      below (assigned, support, project rollup) is restricted to tasks
+      whose `end_date_est` falls inside the window (falling back to
+      `start_date` / `created_at` when no deadline is set). Omitting the
+      parameters preserves the original behaviour.
+
     Returns a flat team list with team identity, KPI / Manday / Efficiency
     / On-time / Health, plus a per-member breakdown and the projects that
     touch the team.
     """
     today = datetime.now().date()
+
+    # Parse optional time window. Both inclusive.
+    parsed_start: Optional[datetime] = None
+    parsed_end: Optional[datetime] = None
+    if start_date:
+        try:
+            parsed_start = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            parsed_start = None
+    if end_date:
+        try:
+            # inclusive end-of-day so callers can pass the same calendar day
+            parsed_end = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
+        except ValueError:
+            parsed_end = None
 
     # 1. Canonical Leaders (active portal users with role=leader).
     leaders = (
@@ -662,6 +728,22 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
     )
     done_expr = case((Task.status.in_(["Done", "done"]), 1), else_=0)
 
+    # Time-range window clause: a task belongs to the window if its
+    # `end_date_est` (preferred), else its `start_date`, else its
+    # `created_at`, falls inside [parsed_start, parsed_end]. When no window
+    # is provided we skip the clause entirely (preserves existing
+    # behaviour).
+    time_filters = []
+    if parsed_start is not None or parsed_end is not None:
+        # Coalesce to the most informative date the task has.
+        task_date_expr = sql_func.coalesce(
+            Task.end_date_est, Task.start_date, Task.created_at
+        )
+        if parsed_start is not None:
+            time_filters.append(task_date_expr >= parsed_start)
+        if parsed_end is not None:
+            time_filters.append(task_date_expr <= parsed_end)
+
     member_rows = (
         db.query(
             Task.assigned_id.label("member_id"),
@@ -674,8 +756,11 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
         )
         .filter(Task.assigned_id.in_(team_member_ids))
         .group_by(Task.assigned_id)
-        .all()
     )
+    if time_filters:
+        member_rows = member_rows.filter(*time_filters)
+    member_rows = member_rows.all()
+
     support_rows = (
         db.query(
             Task.support_id.label("member_id"),
@@ -688,8 +773,10 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
         )
         .filter(Task.support_id.in_(team_member_ids))
         .group_by(Task.support_id)
-        .all()
     )
+    if time_filters:
+        support_rows = support_rows.filter(*time_filters)
+    support_rows = support_rows.all()
 
     # 9. Project rollup: which projects touch this team? We need this both
     #    for the team-level KPI/manday context AND for Section 3's
@@ -796,7 +883,7 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
     #     numbers are exactly the same numbers used elsewhere).
     if project_summary:
         project_ids = list(project_summary.keys())
-        proj_task_rows = (
+        proj_task_rows_q = (
             db.query(
                 Phase.project_id.label("project_id"),
                 sql_func.count(Task.id).label("total"),
@@ -811,8 +898,13 @@ def _aggregate_team_comparison(db: Session, workspace: Optional[str]):
             .join(Phase, TaskGroup.phase_id == Phase.id)
             .filter(Phase.project_id.in_(project_ids))
             .group_by(Phase.project_id)
-            .all()
         )
+        # Apply the same time-window filter so Section 3's per-project
+        # progress / timeline / KPI numbers reflect the selected time range
+        # — not the lifetime totals.
+        if time_filters:
+            proj_task_rows_q = proj_task_rows_q.filter(*time_filters)
+        proj_task_rows = proj_task_rows_q.all()
         proj_by_id = {p.id: p for p in db.query(Project).filter(Project.id.in_(project_ids)).all()}
         for pid, total, done, overdue, md_est, md_actual, kpi in proj_task_rows:
             p = proj_by_id.get(pid)
