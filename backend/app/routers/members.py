@@ -11,7 +11,7 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
-from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE
+from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE, ROLE_LEADER
 from ..utils.audit_service import AuditService
 from sqlalchemy import func, extract, false, or_
 
@@ -309,11 +309,16 @@ def list_members(
 
     # Workspace data scope: members are limited to the caller's Workspace
     # (linked account scope + members assigned to projects within scope).
-    # Applies to Leader, Member and Viewer — the effective Workspace always
-    # comes from the authenticated user, so the workspace query parameter can
-    # never bypass the caller's assigned Workspace (super_admin / scope=all
-    # keep seeing every member, exactly as before).
-    q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
+    #
+    # Accounts → "Quản lý thành viên" tab is the Leader's Member directory —
+    # it intentionally bypasses the Workspace filter so a Leader can still
+    # see every Member in the database. The Workspace-scoped view lives on
+    # the "Quản lý tài khoản" tab (GET /api/accounts), which already filters
+    # via `_leader_scope_guard`. Super Admin keeps seeing every member;
+    # Member / Viewer continue to be scoped to their assigned Workspace
+    # because the helper already short-circuits for them.
+    if current_user.role != ROLE_LEADER:
+        q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()
     

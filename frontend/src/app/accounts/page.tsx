@@ -223,8 +223,12 @@ export default function AccountsPage() {
   }, [availableMembers, editAccount]);
 
   // Create
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateError(null);
     try {
       const payload: any = {
         email: createForm.email,
@@ -260,7 +264,9 @@ export default function AccountsPage() {
       setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), workspace_ids: (workspaces?.[0]?.code ? [workspaces[0].code] : []), full_name: '', member_id: 0, outlook_mail: '' });
       reload();
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
+      const msg = err.response?.data?.detail || 'Lỗi tạo tài khoản';
+      setCreateError(msg);
+      flash(msg);
     }
   };
 
@@ -284,9 +290,26 @@ export default function AccountsPage() {
   const openEdit = (acc: Account) => {
     if (!canLeaderManageAccount(acc)) return;
     setEditAccount(acc);
-    const initialWorkspaces = (acc.workspace_ids && acc.workspace_ids.length)
-      ? acc.workspace_ids.filter(code => code !== 'all')
-      : (acc.data_scope ? [acc.data_scope] : (workspaces?.[0]?.code ? [workspaces[0].code] : []));
+    setEditError(null);
+    // Recover the full grant set for the Edit form:
+    //   1. Prefer the explicit `workspace_ids` list (filters the Super-Admin
+    //      `all` sentinel).
+    //   2. Defensive fallback: if the response still collapses to ['all']
+    //      (legacy / migration data), use the `workspaces` array (which
+    //      always carries the full code list per `account_to_dict`).
+    //   3. Final fallback: legacy single `data_scope`, then first master
+    //      workspace — never silently drop the entire grant set.
+    let initialWorkspaces: string[] = [];
+    const realIds = (acc.workspace_ids || []).filter(code => code !== 'all');
+    if (realIds.length > 0) {
+      initialWorkspaces = realIds;
+    } else if (acc.workspaces && acc.workspaces.length > 0) {
+      initialWorkspaces = acc.workspaces.map(w => w.code);
+    } else if (acc.data_scope && acc.data_scope !== 'all') {
+      initialWorkspaces = [acc.data_scope];
+    } else if (workspaces?.[0]?.code) {
+      initialWorkspaces = [workspaces[0].code];
+    }
     setEditForm({
       email: acc.email,
       full_name: acc.full_name || '',
@@ -301,6 +324,7 @@ export default function AccountsPage() {
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editAccount) return;
+    setEditError(null);
     try {
       const payload: any = {
         email: editForm.email,
@@ -326,7 +350,9 @@ export default function AccountsPage() {
       setEditAccount(null);
       reload();
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi cập nhật tài khoản');
+      const msg = err.response?.data?.detail || 'Lỗi cập nhật tài khoản';
+      setEditError(msg);
+      flash(msg);
     }
   };
 
@@ -405,11 +431,15 @@ export default function AccountsPage() {
         {/* Content */}
         <div className="p-4 md:p-8 max-w-7xl w-full mx-auto space-y-6 min-w-0">
           {saved && (
-            <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-3 text-xs flex items-center gap-2 font-semibold shadow-sm">
+            // Toast positioned above the modal backdrop (modal is z-50, so
+            // this sits at z-[60]) — ensures the user sees the success/error
+            // feedback even when the modal is open. The in-modal error
+            // banner above still keeps the form open and visible.
+            <div className="fixed top-[120px] left-1/2 -translate-x-1/2 z-[60] bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-3 text-xs flex items-center gap-2 font-semibold shadow-lg max-w-md">
               <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
-              {saved}
+              <span className="flex-1">{saved}</span>
             </div>
           )}
 
@@ -530,24 +560,36 @@ export default function AccountsPage() {
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
                               ALL Workspaces
                             </span>
-                          ) : acc.workspace_ids && acc.workspace_ids.length === 1 && acc.workspace_ids[0] === 'all' ? (
-                            // ALL WORKSPACES normalization — every Workspace
-                            // in the master is granted (covers non-Super-Admin
-                            // Leader/Member with full grant).
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
-                              ALL Workspaces
-                            </span>
-                          ) : acc.workspace_ids && acc.workspace_ids.length > 1 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {acc.workspace_ids.filter(code => code !== 'all').map(code => (
-                                <span key={code} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase tracking-wider">
-                                  {scopeLabels[code] || code}
+                          ) : (() => {
+                            // ALL WORKSPACES — every Workspace in the master
+                            // is granted. Driven entirely by the master data
+                            // (no hard-coded Workspace names). The Edit form
+                            // must keep every individual code so the user
+                            // can re-save without losing any grant.
+                            const allCodes = new Set(workspaces.map(w => w.code));
+                            const grantedReal = (acc.workspace_ids || []).filter(c => c !== 'all');
+                            const isAll = allCodes.size > 0 && grantedReal.length >= allCodes.size
+                              && allCodes.size === grantedReal.length;
+                            if (isAll) {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
+                                  ALL Workspaces
                                 </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <span>{scopeLabels[acc.data_scope] || acc.data_scope}</span>
-                          )}
+                              );
+                            }
+                            if (acc.workspace_ids && acc.workspace_ids.length > 1) {
+                              return (
+                                <div className="flex flex-wrap gap-1">
+                                  {acc.workspace_ids.filter(code => code !== 'all').map(code => (
+                                    <span key={code} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase tracking-wider">
+                                      {scopeLabels[code] || code}
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            }
+                            return <span>{scopeLabels[acc.data_scope] || acc.data_scope}</span>;
+                          })()}
                         </td>
                         <td className="px-4 py-3">
                           {acc.member ? (
@@ -608,6 +650,18 @@ export default function AccountsPage() {
               </button>
             </div>
             <form onSubmit={handleCreate} className="p-6 space-y-4 overflow-y-auto flex-1">
+              {createError && (
+                // Error banner — visible INSIDE the modal so the user does
+                // not have to close the form to read it. Stays open so the
+                // user can correct the data and resubmit.
+                <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-xs flex items-start gap-2 font-semibold shadow-sm">
+                  <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                  </svg>
+                  <span className="flex-1">{createError}</span>
+                  <button type="button" onClick={() => setCreateError(null)} className="text-red-400 hover:text-red-700 transition-colors" title="Đóng thông báo">✕</button>
+                </div>
+              )}
               {/* Member Selection */}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên (tùy chọn)</label>
@@ -769,6 +823,18 @@ export default function AccountsPage() {
               </button>
             </div>
             <form onSubmit={handleEdit} className="p-6 space-y-4 overflow-y-auto flex-1">
+              {editError && (
+                // Error banner — visible INSIDE the modal so the user does
+                // not have to close the form to read it. Stays open so the
+                // user can correct the data and resubmit.
+                <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-xs flex items-start gap-2 font-semibold shadow-sm">
+                  <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                  </svg>
+                  <span className="flex-1">{editError}</span>
+                  <button type="button" onClick={() => setEditError(null)} className="text-red-400 hover:text-red-700 transition-colors" title="Đóng thông báo">✕</button>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email</label>
                 <input

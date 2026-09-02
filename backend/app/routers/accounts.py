@@ -142,7 +142,22 @@ def _apply_user_workspace_access(db: Session, user: User, workspace_ids: list, *
                     raise HTTPException(403, f"Leader không có quyền gán Workspace '{code}' ngoài phạm vi của mình.")
 
     # Replace junction rows.
+    #
+    # The delete-then-insert sequence below is the entire fix for the
+    # "Cannot update because data already exists/duplicate data" error that
+    # surfaced when a Leader/Super Admin edited a Member's Workspace
+    # selection: without an explicit flush between DELETE and INSERT,
+    # SQLAlchemy's unit-of-work flushes both in the same transaction and
+    # the INSERT can run *before* the DELETE in some adapter orderings.
+    # That trips the `(user_id, workspace_id)` UNIQUE constraint on
+    # `user_workspace_access` and raises an `IntegrityError` that the
+    # caller saw as the misleading "data already exists" message.
+    #
+    # Flushing after the DELETE forces the database to remove the old rows
+    # synchronously so the subsequent INSERTs see a clean slate and the
+    # constraint is satisfied.
     db.query(UserWorkspaceAccess).filter(UserWorkspaceAccess.user_id == user.id).delete(synchronize_session=False)
+    db.flush()
     for code in normalized:
         ws = resolve_workspace_by_code(db, code)
         if ws:
@@ -212,21 +227,15 @@ def account_to_dict(u: User, db: Session | None = None) -> dict:
                 # as a single-Workspace grant so the UI doesn't drop them.
                 workspace_ids = [(u.data_scope or "").strip().lower()]
 
-    # ALL WORKSPACES normalization — when the user has every currently
-    # available Workspace assigned (regardless of role), collapse the list
-    # to a single `ALL_SCOPE` sentinel so both the UI and downstream
-    # authorization layers see a consistent "full access" signal. Driven
-    # entirely by the Workspace master data (no hard-coded names).
-    if (
-        db is not None
-        and workspace_ids
-        and ALL_SCOPE not in workspace_ids
-        and getattr(u, "role", None) != ROLE_SUPER_ADMIN
-    ):
-        all_codes = {w.code for w in db.query(Workspace).all()}
-        granted = {c for c in workspace_ids if c in all_codes}
-        if all_codes and granted and granted >= all_codes:
-            workspace_ids = [ALL_SCOPE]
+    # NOTE: We deliberately do NOT collapse the list to a single `[ALL_SCOPE]`
+    # sentinel for non-Super-Admin accounts, even when every Workspace in
+    # the master is granted. Returning the actual junction codes preserves the
+    # full grant set, which is required for the Edit Account form to
+    # re-populate correctly (the UI detects "ALL WORKSPACES" itself by
+    # comparing `workspace_ids` length with the Workspace master length).
+    # The previous destructive normalization lost information on reopen and
+    # silently downgraded multi-Workspace accounts back to a single
+    # Workspace on the next save.
 
     workspace_scope = ALL_SCOPE if getattr(u, "role", None) == ROLE_SUPER_ADMIN else (
         workspace_ids[0] if workspace_ids else (u.data_scope or "")
