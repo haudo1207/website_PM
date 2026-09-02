@@ -15,7 +15,6 @@ import {
   activityColor,
   MONTH_WEEKS_COUNT,
   getWeekOfMonth,
-  getMondayToSundayRange,
   checkTaskInPeriod,
   CYCLE_TEMPLATE,
   calculateDaysLate
@@ -50,16 +49,11 @@ export default function ReportTab() {
   // monthlyProgress, chartMonthlyProgress) computes against the same window
   // without a second filter mechanism.
   const initialNow = new Date();
-  const initialWeekRange = getMondayToSundayRange(initialNow);
   const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>('Tuần này');
   const router = useRouter();
   const [selectedYear, setSelectedYear] = useState<number | 'all'>(initialNow.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>(initialNow.getMonth() + 1);
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>(getWeekOfMonth(initialNow));
-
-  // Reference (currently unused but kept for clarity — bounds the default window).
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _initialThisWeek = initialWeekRange;
 
   const [searchTaskName, setSearchTaskName] = useState<string>('');
   const [filterCustomer, setFilterCustomer] = useState<string>('all');
