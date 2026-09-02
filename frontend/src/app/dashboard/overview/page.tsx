@@ -680,7 +680,7 @@ export default function OverviewTab() {
     // Fetch my-alerts in parallel — not part of the cached bundle below.
     getMyAlerts().then(data => setMyAlerts(data)).catch(() => { });
 
-    let memberApiUrl = `/api/members?_t=${ts}`;
+    let memberApiUrl = `/api/members?_t=${ts}&scope=true`;
     if (selectedWorkspaceCode) memberApiUrl += `&workspace=${encodeURIComponent(selectedWorkspaceCode)}`;
     if (selectedMonth !== 'all' && typeof selectedMonth === 'number') memberApiUrl += `&month=${selectedMonth}`;
     if (selectedYear !== 'all' && typeof selectedYear === 'number') memberApiUrl += `&year=${selectedYear}`;
