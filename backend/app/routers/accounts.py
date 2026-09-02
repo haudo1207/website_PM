@@ -539,11 +539,22 @@ def update_account(
         # `data_scope` is supplied we keep the junction in sync so existing
         # single-Workspace Leaders continue to behave as before.
         if account.role in {ROLE_MEMBER, ROLE_VIEWER}:
+            # IMPORTANT: when the body carries both `data_scope` and
+            # `workspace_ids`, the `workspace_ids` branch below is the
+            # single source of truth for the junction — calling
+            # `_apply_user_workspace_access` here would queue a second set
+            # of INSERT objects in the same unit-of-work. The flush at
+            # commit time batches all INSERTs together, and because the
+            # two calls share codes (e.g. `data_scope='infra'` plus
+            # `workspace_ids=['infra','dev']`) the batched INSERT includes
+            # the duplicate `(user_id, workspace_id)=(X, 1)` twice and
+            # trips `uq_user_workspace` — caught by the generic
+            # IntegrityError handler as the misleading
+            # "Không thể cập nhật do dữ liệu bị trùng." message.
+            # Defer to the `workspace_ids` branch when both fields are set.
             account.data_scope = data_scope
-            # Drop any extra junction rows the account may have accumulated
-            # from a previous Leader role, keeping only the single assigned
-            # code. Defensive — normally none exist.
-            _apply_user_workspace_access(db, account, [data_scope], caller=caller)
+            if "workspace_ids" not in body:
+                _apply_user_workspace_access(db, account, [data_scope], caller=caller)
         else:
             account.data_scope = data_scope
 

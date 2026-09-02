@@ -17,7 +17,11 @@ import {
   getWorkspaces,
   Workspace
 } from '@/lib/api';
-import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+// (removed the useWorkspaceFilter binding for the Accounts page — see the
+// filteredAccounts useMemo below for the rationale. The shared Navbar
+// workspace switcher continues to drive Project / Members / Dashboard
+// pages, but the Accounts authorization scope is backend-authoritative
+// and must not be narrowed by the global switcher.)
 
 interface MemberInfo {
   id: number;
@@ -157,14 +161,17 @@ export default function AccountsPage() {
     return labels;
   }, [workspaces]);
 
-  // Company selection is shared app-wide via WorkspaceFilterProvider (see
-  // Navbar's Workspace switcher) — defaults this list's Data Scope filter to
-  // match, so switching Workspace at the top also filters the Accounts tab.
-  const { workspaceCode } = useWorkspaceFilter();
-  useEffect(() => {
-    setFilterScope(workspaceCode || '');
-  }, [workspaceCode]);
-
+  // Accounts page Data-Scope filter is intentionally NOT bound to the
+  // shared Navbar `useWorkspaceFilter()` switcher. The Navbar switcher is a
+  // per-User *view-narrowing* control (drives Dashboard charts, Project
+  // list, Members list, etc.). Accounts management is *authorization-scoped*
+  // — the backend already returns only the accounts the caller is allowed
+  // to manage (`/api/accounts` filters by `user_allowed_scopes(caller)`),
+  // so coupling this page's filter to the global switcher would silently
+  // hide accounts the caller is authorized to see whenever the switcher
+  // happened to be parked on a different Workspace (Bug B).
+  // The Data Scope dropdown therefore defaults to "Tất cả" (no extra
+  // filter) and the user may still narrow manually when desired.
   const filteredAccounts = useMemo(() => {
     const nameQuery = searchName.trim().toLowerCase();
 
@@ -179,7 +186,7 @@ export default function AccountsPage() {
 
       const roleMatch = !filterRole || acc.role === filterRole;
       // An "all"-scope account belongs to every Workspace. For multi-Workspace
-      // Leaders, the account matches a Workspace filter when *any* of its
+      // accounts, the row matches the Workspace filter when *any* of its
       // granted Workspaces matches the filter (or its primary data_scope is
       // 'all'). Same escape-hatch semantics as the Projects/Members tabs.
       const accWs = (acc.workspace_ids && acc.workspace_ids.length) ? acc.workspace_ids : [acc.data_scope];
@@ -259,6 +266,11 @@ export default function AccountsPage() {
         payload.data_scope = createForm.data_scope;
       }
       await createAccount(payload);
+      // Success: clear error state, close modal, reset form, refresh. Order
+      // matters — clear the error BEFORE closing the modal so reopening the
+      // modal (which unmounts the form) never re-surfaces the previous
+      // failure message (Bug C).
+      setCreateError(null);
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
       setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), workspace_ids: (workspaces?.[0]?.code ? [workspaces[0].code] : []), full_name: '', member_id: 0, outlook_mail: '' });
@@ -346,7 +358,11 @@ export default function AccountsPage() {
         payload.data_scope = editForm.data_scope;
       }
       await updateAccount(editAccount.id, payload);
-      flash('Đã cập nhật tài khoản');
+      // Success: clear error state, close modal, refresh. Mirrors
+      // handleCreate's success path so the previous error message never
+      // re-surfaces on the next modal open (Bug C).
+      setEditError(null);
+      flash('Đã cập nhận tài khoản');
       setEditAccount(null);
       reload();
     } catch (err: any) {
@@ -395,7 +411,7 @@ export default function AccountsPage() {
           <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Quản lý tài khoản</h2>
           {activeTab === 'accounts' && (
             <button
-              onClick={() => setShowCreate(true)}
+              onClick={() => { setCreateError(null); setShowCreate(true); }}
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
