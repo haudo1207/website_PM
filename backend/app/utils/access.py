@@ -214,7 +214,11 @@ def member_query_for_user(db: Session, user):
     - super_admin / scope=all: every member (unchanged).
     - leader / member / viewer: members belonging to one of the caller's
       Workspace(s) — i.e. members whose linked account data_scope matches one
-      of them, or members assigned to a project within the caller's scope(s).
+      of them, OR whose linked account has a `user_workspace_access` row in
+      one of them, OR members assigned to a project within the caller's
+      scope(s). Reading the junction table is required so multi-Workspace
+      Member accounts (granted via Requirement 2 of the permission extension)
+      are seen across all their assigned Workspaces.
     """
     query = db.query(Member)
     scopes = user_allowed_scopes(db, user)
@@ -225,11 +229,44 @@ def member_query_for_user(db: Session, user):
     if role not in WORKSPACE_SCOPED_ROLES:
         return query
 
+    # Match Members whose linked User has *any* Workspace grant in the
+    # caller's scope, via either:
+    #   (a) the legacy `User.data_scope` column (the historical source of
+    #       truth, kept in sync with `user_workspace_access[0]` by
+    #       `_apply_user_workspace_access`), OR
+    #   (b) an explicit `user_workspace_access` row pointing at a Workspace
+    #       whose code is in the caller's scopes.
+    #
+    # Previously this was expressed as a UNION of two subqueries; that
+    # implementation called `Subquery.union(...)` which is not a method on
+    # SQLAlchemy's `Subquery` object (it is on `Query`). The resulting
+    # `AttributeError: 'Subquery' object has no attribute 'union'` broke
+    # every non-super-admin caller of this helper, including Dashboard
+    # Leader cards (`workspace_leader_names`) and the Create Account
+    # Member-link dropdown (`accounts.available_members`).
+    #
+    # The fix is the logically equivalent `or_(...data_scope...,
+    # ...data_scope == 'all', exists(junction_query))`, which avoids the
+    # broken method entirely and matches the same set of Members in a
+    # single SELECT — smaller SQL footprint and no behavioural change.
+    junction_in_scope_exists = (
+        db.query(UserWorkspaceAccess.user_id)
+        .join(Workspace, Workspace.id == UserWorkspaceAccess.workspace_id)
+        .filter(
+            Workspace.code.in_(scopes),
+            UserWorkspaceAccess.user_id == User.id,
+        )
+        .exists()
+    )
     scoped_user_member_ids = (
         db.query(User.member_id)
         .filter(
             User.member_id.isnot(None),
-            or_(User.data_scope.in_(scopes), User.data_scope == ALL_SCOPE),
+            or_(
+                User.data_scope.in_(scopes),
+                User.data_scope == ALL_SCOPE,
+                junction_in_scope_exists,
+            ),
         )
         .subquery()
     )

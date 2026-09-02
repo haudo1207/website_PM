@@ -767,10 +767,15 @@ export interface TeamComparisonResponse {
   workspace_filter: string;
   teams: TeamComparisonTeam[];
 }
-export const getTeamComparison = (params?: { workspace?: string }) =>
+export const getTeamComparison = (params?: { workspace?: string; start_date?: string; end_date?: string }) =>
   api.get<TeamComparisonResponse>('/system-audit/team-comparison', { params }).then(r => r.data);
-export const getTeamDetail = (leader_user_id: number) =>
-  api.get<{ team: TeamComparisonTeam }>('/system-audit/team-detail', { params: { leader_user_id } }).then(r => r.data);
+export const getTeamDetail = (
+  leader_user_id: number,
+  params?: { start_date?: string; end_date?: string },
+) =>
+  api.get<{ team: TeamComparisonTeam }>('/system-audit/team-detail', {
+    params: { leader_user_id, ...(params || {}) },
+  }).then(r => r.data);
 
 // Telegram connection (Leave Request notifications)
 export interface TelegramStatus {
