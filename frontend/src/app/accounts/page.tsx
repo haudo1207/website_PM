@@ -243,9 +243,15 @@ export default function AccountsPage() {
         // No Workspace assignment needed for Super Admin — backend coerces
         // data_scope='all'. Don't send `workspace_ids` so the backend treats
         // it as the global-all scope rather than a literal Workspace list.
+      } else if (createForm.role === 'member') {
+        // Multi-Workspace Member (permission extension). Backend writes one
+        // junction row per code; permission level (MEMBER) is unchanged.
+        payload.workspace_ids = createForm.workspace_ids;
+        payload.data_scope = createForm.data_scope;
       } else {
-        // Member/Viewer — exactly one Workspace. Always send a single string
-        // `data_scope` (the backend ignores `workspace_ids` for these roles).
+        // Viewer — NO CHANGE. Exactly one Workspace; backend ignores
+        // `workspace_ids` for Viewer and the single `data_scope` row
+        // continues to drive scoping.
         payload.data_scope = createForm.data_scope;
       }
       await createAccount(payload);
@@ -307,7 +313,12 @@ export default function AccountsPage() {
         payload.workspace_ids = editForm.workspace_ids;
       } else if (editForm.role === 'super_admin') {
         // No Workspace selector — backend handles 'all' globally.
+      } else if (editForm.role === 'member') {
+        // Multi-Workspace Member — backend writes one junction row per code.
+        payload.workspace_ids = editForm.workspace_ids;
+        payload.data_scope = editForm.data_scope;
       } else {
+        // Viewer — existing single-Workspace behavior, NO CHANGE.
         payload.data_scope = editForm.data_scope;
       }
       await updateAccount(editAccount.id, payload);
@@ -519,6 +530,13 @@ export default function AccountsPage() {
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
                               ALL Workspaces
                             </span>
+                          ) : acc.workspace_ids && acc.workspace_ids.length === 1 && acc.workspace_ids[0] === 'all' ? (
+                            // ALL WORKSPACES normalization — every Workspace
+                            // in the master is granted (covers non-Super-Admin
+                            // Leader/Member with full grant).
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
+                              ALL Workspaces
+                            </span>
                           ) : acc.workspace_ids && acc.workspace_ids.length > 1 ? (
                             <div className="flex flex-wrap gap-1">
                               {acc.workspace_ids.filter(code => code !== 'all').map(code => (
@@ -527,10 +545,6 @@ export default function AccountsPage() {
                                 </span>
                               ))}
                             </div>
-                          ) : acc.workspace_ids && acc.workspace_ids[0] === 'all' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
-                              ALL Workspaces
-                            </span>
                           ) : (
                             <span>{scopeLabels[acc.data_scope] || acc.data_scope}</span>
                           )}
@@ -677,7 +691,26 @@ export default function AccountsPage() {
                     placeholder="Chọn Workspace cho Team Leader..."
                     className="w-full"
                   />
+                ) : createForm.role === 'member' ? (
+                  // Multi-Workspace Member — same multi-select UX as Leader,
+                  // but the backend enforces Member permission level (no
+                  // Leader/Admin capability).
+                  <SearchableSelect
+                    label="Workspace"
+                    icon="🗂️"
+                    options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
+                    value={createForm.workspace_ids}
+                    onChange={(vals: string[]) => setCreateForm(f => ({
+                      ...f,
+                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
+                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
+                    }))}
+                    isMulti={true}
+                    placeholder="Chọn một hoặc nhiều Workspace cho Member..."
+                    className="w-full"
+                  />
                 ) : (
+                  // Viewer — single-Workspace dropdown (NO CHANGE per spec).
                   <select
                     value={createForm.data_scope}
                     onChange={e => setCreateForm(f => ({ ...f, data_scope: e.target.value }))}
@@ -693,7 +726,9 @@ export default function AccountsPage() {
                     ? 'Super Admin truy cập tất cả Workspace — không cần chọn.'
                     : createForm.role === 'leader'
                       ? 'Chọn một hoặc nhiều Workspace. Chỉ Super Admin mới có thể thay đổi phạm vi này sau khi tạo.'
-                      : 'Member/Viewer chỉ thuộc một Workspace duy nhất.'}
+                      : createForm.role === 'member'
+                        ? 'Member có thể thuộc nhiều Workspace — quyền MEMBER vẫn được giữ nguyên.'
+                        : 'Viewer chỉ thuộc một Workspace duy nhất.'}
                 </p>
               </div>
 
@@ -807,7 +842,24 @@ export default function AccountsPage() {
                     placeholder="Chọn Workspace cho Team Leader..."
                     className="w-full"
                   />
+                ) : editForm.role === 'member' ? (
+                  // Multi-Workspace Member — same multi-select UX as Leader.
+                  <SearchableSelect
+                    label="Workspace"
+                    icon="🗂️"
+                    options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
+                    value={editForm.workspace_ids}
+                    onChange={(vals: string[]) => setEditForm(f => ({
+                      ...f,
+                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
+                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
+                    }))}
+                    isMulti={true}
+                    placeholder="Chọn một hoặc nhiều Workspace cho Member..."
+                    className="w-full"
+                  />
                 ) : (
+                  // Viewer — single-Workspace dropdown (NO CHANGE per spec).
                   <select
                     value={editForm.data_scope}
                     onChange={e => setEditForm(f => ({ ...f, data_scope: e.target.value }))}
@@ -823,7 +875,9 @@ export default function AccountsPage() {
                     ? 'Super Admin truy cập tất cả Workspace — không cần chọn.'
                     : editForm.role === 'leader'
                       ? 'Chỉ Super Admin mới có thể thay đổi phạm vi Workspace của Leader.'
-                      : 'Member/Viewer chỉ thuộc một Workspace duy nhất.'}
+                      : editForm.role === 'member'
+                        ? 'Member có thể thuộc nhiều Workspace — quyền MEMBER vẫn được giữ nguyên.'
+                        : 'Viewer chỉ thuộc một Workspace duy nhất.'}
                 </p>
               </div>
             </form>

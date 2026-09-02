@@ -214,7 +214,11 @@ def member_query_for_user(db: Session, user):
     - super_admin / scope=all: every member (unchanged).
     - leader / member / viewer: members belonging to one of the caller's
       Workspace(s) — i.e. members whose linked account data_scope matches one
-      of them, or members assigned to a project within the caller's scope(s).
+      of them, OR whose linked account has a `user_workspace_access` row in
+      one of them, OR members assigned to a project within the caller's
+      scope(s). Reading the junction table is required so multi-Workspace
+      Member accounts (granted via Requirement 2 of the permission extension)
+      are seen across all their assigned Workspaces.
     """
     query = db.query(Member)
     scopes = user_allowed_scopes(db, user)
@@ -225,7 +229,9 @@ def member_query_for_user(db: Session, user):
     if role not in WORKSPACE_SCOPED_ROLES:
         return query
 
-    scoped_user_member_ids = (
+    # Primary: member_id linked to a User whose `data_scope` matches one of
+    # the caller's scopes (or 'all').
+    scoped_user_member_ids_by_data_scope = (
         db.query(User.member_id)
         .filter(
             User.member_id.isnot(None),
@@ -233,6 +239,23 @@ def member_query_for_user(db: Session, user):
         )
         .subquery()
     )
+    # Secondary: member_id linked to a User with an explicit
+    # `user_workspace_access` row in one of the caller's scopes (defensive —
+    # catches accounts whose `data_scope` column is stale but the junction
+    # has already been backfilled to multi-Workspace).
+    scoped_user_member_ids_by_access = (
+        db.query(User.member_id)
+        .join(UserWorkspaceAccess, UserWorkspaceAccess.user_id == User.id)
+        .join(Workspace, Workspace.id == UserWorkspaceAccess.workspace_id)
+        .filter(
+            User.member_id.isnot(None),
+            Workspace.code.in_(scopes),
+        )
+        .subquery()
+    )
+    scoped_user_member_ids = scoped_user_member_ids_by_data_scope.union(
+        scoped_user_member_ids_by_access
+    ).subquery()
     scoped_project_ids = (
         project_query_for_user(db, user).with_entities(Project.id).subquery()
     )
