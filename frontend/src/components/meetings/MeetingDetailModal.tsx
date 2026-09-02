@@ -238,6 +238,10 @@ export default function MeetingDetailModal({
     return !pid || !assignee || !taskPhaseMap[idx] || !taskGroupMap[idx]
       || !edit.start_date || !taskSkillSolutionMap[idx] || !taskSkillVendorMap[idx];
   }).length;
+  // Drive recording playback link — distinct from meeting.meeting_url (the
+  // meet.google.com JOIN link, already shown separately in the Overview
+  // tab). Only n8n's post-meeting sync populates this.
+  const summaryVideoLink: string = meeting.ai_summary?.video_link || '';
   const summaryTeamName: string = meeting.team_name || meeting.ai_summary?.team_name || '';
   const summaryOrganizerName: string = meeting.organizer_name || meeting.ai_summary?.organizer_name || '';
   const summaryParticipantCount = meeting.participant_count ?? meeting.ai_summary?.participant_count ?? null;
@@ -1072,12 +1076,12 @@ export default function MeetingDetailModal({
                     </div>
                     <div className="col-span-2">
                       <p className="text-[#94a3b8] font-semibold">Link record</p>
-                      {meeting.meeting_url || meeting.link ? (
-                        <a href={meeting.meeting_url || meeting.link} target="_blank" rel="noreferrer" className="text-[#6366f1] font-bold mt-0.5 hover:underline break-all block">
-                          {meeting.meeting_url || meeting.link}
+                      {summaryVideoLink ? (
+                        <a href={summaryVideoLink} target="_blank" rel="noreferrer" className="text-[#6366f1] font-bold mt-0.5 hover:underline break-all block">
+                          {summaryVideoLink}
                         </a>
                       ) : (
-                        <p className="text-[#0b1c30] font-bold mt-0.5">Không đề cập</p>
+                        <p className="text-[#0b1c30] font-bold mt-0.5">Chưa có bản ghi</p>
                       )}
                     </div>
                     <div>

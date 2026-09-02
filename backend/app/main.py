@@ -1322,6 +1322,7 @@ def google_auth_direct_public():
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/meetings.space.readonly",
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
@@ -1353,6 +1354,7 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/meetings.space.readonly",
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
