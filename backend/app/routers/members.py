@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 import datetime
@@ -11,7 +11,7 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
-from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE
+from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE, ROLE_LEADER
 from ..utils.audit_service import AuditService
 from sqlalchemy import func, extract, false, or_
 
@@ -163,6 +163,35 @@ def member_to_dict(m: Member) -> dict:
     }
 
 
+@router.get("/workspace-roles")
+def list_member_workspace_roles(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Chính/Phụ Workspace membership per Member, keyed by member_id — a
+    lightweight, separate lookup (rather than folding into the large
+    list_members() KPI query above) so the Dashboard/Project UIs can merge
+    it in client-side without touching that query's risk surface.
+    Only Members with a linked User account (role Leader/Member) have
+    entries; a Member with no login, or whose User is super_admin/viewer,
+    is simply absent from the response."""
+    from ..models.workspace_access import UserWorkspaceAccess
+    from ..models.system_category import Workspace
+    from ..utils.access import ROLE_LEADER, ROLE_MEMBER as _ROLE_MEMBER
+
+    rows = (
+        db.query(Member.id, Workspace.code, Workspace.name, UserWorkspaceAccess.is_primary)
+        .join(User, User.member_id == Member.id)
+        .join(UserWorkspaceAccess, UserWorkspaceAccess.user_id == User.id)
+        .join(Workspace, Workspace.id == UserWorkspaceAccess.workspace_id)
+        .filter(User.role.in_([ROLE_LEADER, _ROLE_MEMBER]))
+        .all()
+    )
+    result: dict[int, list[dict]] = {}
+    for member_id, code, name, is_primary in rows:
+        result.setdefault(member_id, []).append({"code": code, "name": name, "is_primary": bool(is_primary)})
+    for entries in result.values():
+        entries.sort(key=lambda e: (not e["is_primary"], e["code"]))
+    return result
+
+
 # ─── LIST ───────────────────────────────────────────────
 @router.get("")
 def list_members(
@@ -177,6 +206,17 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     leader_name: Optional[str] = None,
+    scope: Optional[bool] = Query(
+        False,
+        description=(
+            "When true, restrict the result to the caller's authorized "
+            "Workspace(s) — i.e. the same filter that applies to Member / "
+            "Viewer by default. Used by Dashboard → Overview (KPI Matrix) "
+            "for Leader callers so the KPI Matrix shows only members inside "
+            "the Leader's authorized Workspace(s). Default false preserves "
+            "the Members-tab behavior where Leaders see every member."
+        ),
+    ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -309,11 +349,25 @@ def list_members(
 
     # Workspace data scope: members are limited to the caller's Workspace
     # (linked account scope + members assigned to projects within scope).
-    # Applies to Leader, Member and Viewer — the effective Workspace always
-    # comes from the authenticated user, so the workspace query parameter can
-    # never bypass the caller's assigned Workspace (super_admin / scope=all
-    # keep seeing every member, exactly as before).
-    q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
+    #
+    # Three scopes coexist for the same endpoint:
+    #   1. Default (no `scope` param) — used by Accounts → "Quản lý thành
+    #      viên" tab, which intentionally bypasses the Workspace filter for
+    #      Leader callers (they need to manage every Member in the system).
+    #      Member / Viewer continue to be scoped to their assigned Workspaces
+    #      because `member_query_for_user` already short-circuits for them.
+    #   2. `?scope=true` — used by Dashboard → Overview KPI Matrix so a
+    #      Leader's KPI columns are restricted to their authorized
+    #      Workspace(s) only. Same backend filter as Member / Viewer.
+    #   3. Super Admin (`role == ROLE_SUPER_ADMIN` or `scopes == ALL_SCOPE`) —
+    #      always returns every Member regardless of `scope`.
+    if current_user.role == ROLE_LEADER and not scope:
+        # Path 1: Leader sees every Member (Members-tab behavior).
+        pass
+    else:
+        # Path 2 + 3: Super Admin short-circuits inside
+        # `member_query_for_user`; everyone else is scoped.
+        q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()
     

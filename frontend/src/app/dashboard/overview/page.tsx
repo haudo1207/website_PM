@@ -114,6 +114,34 @@ const getTaskKpiForMember = (t: any, memberId: any) => {
   return 0;
 };
 
+// Same role-split as getTaskKpiForMember, but ignores the "Done" gate — the
+// KPI a task is WORTH for a member regardless of completion, i.e. their
+// "Giao" (target) side of the KPI HT/Giao ratio in the ranking table.
+const getTaskKpiPotentialForMember = (t: any, memberId: any) => {
+  const isAssigned = t.assigned_id != null && String(t.assigned_id) === String(memberId);
+  const isSupport = t.support_id != null && String(t.support_id) === String(memberId);
+
+  if (isAssigned && isSupport) {
+    if (typeof t.kpi_assigned === 'number' && typeof t.kpi_support === 'number') {
+      return t.kpi_assigned + t.kpi_support;
+    }
+    return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+  }
+  if (isAssigned) {
+    if (typeof t.kpi_assigned === 'number') return t.kpi_assigned;
+    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    const ratio = t.kpi_ratio_assign != null ? t.kpi_ratio_assign : (t.support_id != null ? 90 : 100);
+    return kpiVal * (ratio / 100);
+  }
+  if (isSupport) {
+    if (typeof t.kpi_support === 'number') return t.kpi_support;
+    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    const ratio = t.kpi_ratio_support != null ? t.kpi_ratio_support : 10;
+    return kpiVal * (ratio / 100);
+  }
+  return 0;
+};
+
 const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number) => void }) => {
   const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
 
@@ -623,6 +651,9 @@ export default function OverviewTab() {
 
   // Workspace/Leader Filter
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
+  const [projectFilterMode, setProjectFilterMode] = useState<'all' | 'owned' | 'external'>('all');
+  const [externalProjectsCollapsed, setExternalProjectsCollapsed] = useState(false);
+  const [contributionModalProject, setContributionModalProject] = useState<any>(null);
   const [selectedWorkspaceCode, setSelectedWorkspaceCode] = useState<string>('');
   const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
 
@@ -639,12 +670,18 @@ export default function OverviewTab() {
   }, []);
 
   // Unified Date Filter
-  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
-  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
-  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
+  // Default to "This Week" on initial mount (Requirement 1). Existing
+  // Overview filtering logic (checkTaskInPeriod) already understands the
+  // `activeQuickFilter='Tuần này'` shortcut and computes Monday→Sunday from
+  // `new Date()`, so we simply seed the same shape that `applyQuickFilter`
+  // produces — no new filtering mechanism is introduced.
+  const initialNow = new Date();
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(initialNow.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>(initialNow.getMonth() + 1);
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>(getWeekOfMonth(initialNow));
 
   // Quick Filter Highlight state
-  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>(null);
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>('Tuần này');
 
   // Alerts for current member
   const [myAlerts, setMyAlerts] = useState<{ overdue_count: number; pending_approval_count: number; total: number } | null>(null);
@@ -674,7 +711,7 @@ export default function OverviewTab() {
     // Fetch my-alerts in parallel — not part of the cached bundle below.
     getMyAlerts().then(data => setMyAlerts(data)).catch(() => { });
 
-    let memberApiUrl = `/api/members?_t=${ts}`;
+    let memberApiUrl = `/api/members?_t=${ts}&scope=true`;
     if (selectedWorkspaceCode) memberApiUrl += `&workspace=${encodeURIComponent(selectedWorkspaceCode)}`;
     if (selectedMonth !== 'all' && typeof selectedMonth === 'number') memberApiUrl += `&month=${selectedMonth}`;
     if (selectedYear !== 'all' && typeof selectedYear === 'number') memberApiUrl += `&year=${selectedYear}`;
@@ -688,7 +725,7 @@ export default function OverviewTab() {
     let wsLeadersUrl = `/api/members/workspace-leaders?_t=${ts}`;
     if (selectedWorkspaceCode) wsLeadersUrl += `&workspace=${encodeURIComponent(selectedWorkspaceCode)}`;
 
-    const [membersRes, projRes, tasksRes, activityRes, leadersRes, leadersScopeRes, meRes] = await Promise.all([
+    const [membersRes, projRes, tasksRes, activityRes, leadersRes, leadersScopeRes, meRes, workspaceRolesRes] = await Promise.all([
       axios.get(memberApiUrl, config).catch(() => ({ data: [] })),
       axios.get(projApiUrl, config).catch(() => ({ data: [] })),
       axios.get(tasksApiUrl, config).catch(() => ({ data: [] })),
@@ -696,6 +733,9 @@ export default function OverviewTab() {
       axios.get(`/api/members/meta/leaders?_t=${ts}`, config).catch(() => ({ data: [] })),
       axios.get(wsLeadersUrl, config).catch(() => ({ data: { leaders: null } })),
       axios.get(`/api/users/me?_t=${ts}`, config).catch(() => ({ data: null })),
+      // Chính/Phụ Workspace membership per member — keyed by member_id, used
+      // to badge the Team card pills below when a member holds >1 Workspace.
+      axios.get(`/api/members/workspace-roles?_t=${ts}`, config).catch(() => ({ data: {} })),
     ]);
 
     return {
@@ -707,6 +747,7 @@ export default function OverviewTab() {
       // Backend-authoritative Leader identities the current user may see.
       allowedLeaders: Array.isArray(leadersScopeRes.data?.leaders) ? leadersScopeRes.data.leaders : null,
       currentUser: meRes.data || null,
+      workspaceRoles: workspaceRolesRes.data || {},
     };
   }, [selectedMonth, selectedYear, selectedWorkspaceCode]);
 
@@ -723,6 +764,39 @@ export default function OverviewTab() {
   const rawMembersAll: any[] = overviewData?.rawMembers || [];
   const rawProjectsAll: any[] = overviewData?.rawProjects || [];
   const rawTasksAll: any[] = overviewData?.rawTasks || [];
+  // Chính/Phụ Workspace membership, keyed by member_id — { code, name,
+  // is_primary }[]. Every Leader/Member has at least one entry (their home
+  // Workspace) — a Phụ one only adds a second entry on top of that.
+  const workspaceRolesByMember: Record<number, { code: string; name: string; is_primary: boolean }[]> =
+    overviewData?.workspaceRoles || {};
+
+  // Always shows the person's Workspace (mandatory — every Leader/Member card
+  // must carry a "which Workspace" sign, not just multi-Workspace ones; a
+  // single-Workspace person still needs to visibly show that one Workspace,
+  // otherwise a card like "LeaderInfra" would show no tag at all). Relative
+  // to whichever Workspace is currently being viewed (effectiveWsCode below);
+  // when no specific Workspace is selected (viewing "Tất cả"), falls back to
+  // showing the person's own home Workspace instead.
+  function workspaceBadgeFor(memberId: any, wsCode: string | null): { label: string; primary: boolean } | null {
+    const entries = workspaceRolesByMember[Number(memberId)];
+    if (!entries || entries.length < 1) return null;
+    if (wsCode) {
+      const match = entries.find((e) => e.code === wsCode);
+      if (!match) return null;
+      // A Leader viewing their own team always has wsCode forced to their own
+      // Chính code (no switcher) — still show "+N phụ" on a Member who holds
+      // extra Workspaces beyond this matched one, same as the aggregate
+      // branch below does for Admin's "Toàn bộ Leader" view.
+      const otherCount = entries.length - 1;
+      return match.is_primary
+        ? { label: `🏠 ${match.name}${otherCount > 0 ? ` +${otherCount} phụ` : ''}`, primary: true }
+        : { label: `${match.name} · Phụ`, primary: false };
+    }
+    const home = entries.find((e) => e.is_primary);
+    if (!home) return null;
+    const secondaryCount = entries.length - 1;
+    return { label: `🏠 ${home.name}${secondaryCount > 0 ? ` +${secondaryCount} phụ` : ''}`, primary: true };
+  }
 
   // Company selection is shared app-wide via WorkspaceFilterProvider (see
   // Navbar's Workspace switcher). Filtering here — right where the raw
@@ -831,6 +905,8 @@ export default function OverviewTab() {
     activeTeamMembers,
     filteredTasks,
     pmStats,
+    crossWsManday,
+    crossWsMemberCount,
     priorityStats,
     overdueTasksList,
     memberRanking,
@@ -841,7 +917,8 @@ export default function OverviewTab() {
     lowestPerformer,
     summaryMatrix,
     averageMatrix,
-    bonusMatrix
+    bonusMatrix,
+    drilledMemberId
   } = useMemo(() => {
     const isSameId = (a: any, b: any) => a != null && b != null && String(a) === String(b);
     const isIdInList = (idList: any[], targetId: any) => targetId != null && idList.some(id => String(id) === String(targetId));
@@ -972,11 +1049,16 @@ export default function OverviewTab() {
 
     // 2. Filter Members by selected Leader, except Leader accounts use member cards.
     // Canonical: prefer leader_member_id, fallback to leader_name/email for legacy records.
+    // Tracks whichever single person is currently drilled into (Leader or
+    // Member card), so the render can offer the Chính/Phụ toggle only when
+    // that specific person actually holds more than one Workspace.
+    let drilledMemberId: any = null;
     let activeTeamList = rawMembers;
     if (showsLeaderCards && selectedLeader && selectedLeader !== 'all') {
       const selTrim = selectedLeader.trim().toLowerCase();
       const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
       const selMid = selLeader?.member_id != null ? String(selLeader.member_id) : null;
+      drilledMemberId = selMid;
       if (selMid) {
         activeTeamList = rawMembers.filter(m => {
           const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
@@ -1002,21 +1084,35 @@ export default function OverviewTab() {
       activeTeamList = memberCardSource;
       if (selectedMemberId !== 'all') {
         activeTeamList = activeTeamList.filter(m => isSameId(m.id, selectedMemberId));
+        drilledMemberId = selectedMemberId;
       }
     }
     const teamMemberIds = activeTeamList.map(m => m.id);
 
     // 3. Filter Tasks by Team & Date
-    let fTasks = rawTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
+    // `rawTasks` is narrowed to a single Workspace by the page-wide scope
+    // (effectiveWsCode). For Super Admin that's an explicit, deliberate
+    // choice via the Navbar switcher — keep respecting it. But a Leader has
+    // no switcher at all: effectiveWsCode is silently forced to their own
+    // Chính Workspace, which would make "Toàn bộ Team" quietly drop a
+    // teammate's Phụ-Workspace tasks with no way to know it happened. A
+    // Leader always sees their team's full picture across every Workspace —
+    // no toggle needed; per-item Chính/Phụ Workspace badges (elsewhere on
+    // this page) are how each item's Workspace is communicated instead.
+    const taskSourceForDrill = currentUserRole === 'leader' ? rawTasksAll : rawTasks;
+    let fTasks = taskSourceForDrill.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
 
     // 4. Calculate Stats (PM)
     let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = fTasks.length, pmManday = 0, pmKpi = 0;
+    let pmMandayPlanned = 0, pmKpiPlanned = 0;
     const pStats = { critical: 0, high: 0, normal: 0, interrupt: 0 };
     const overdueList: any[] = [];
 
     fTasks.forEach(t => {
       pmManday += (t.manday_actual || t.manday_est || 0);
+      pmMandayPlanned += (t.manday_est || 0);
+      pmKpiPlanned += (t.kpi_base || 0); // "Giao" side of the KPI ratio — counted regardless of completion
       const isDone = t.status === 'Done' || t.status === 'done';
       if (isDone) pmKpi += (t.kpi_base || 0); // Only count KPI for completed tasks
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
@@ -1035,7 +1131,8 @@ export default function OverviewTab() {
             daysLate: daysLateNum,
             deadline: t.end_date_est || 'N/A',
             customerName: t.customerName || t.customer_name || 'Không có',
-            projectName: t.projectName || t.project_name || 'Không có'
+            projectName: t.projectName || t.project_name || 'Không có',
+            projectDataScope: t.projectDataScope || null,
           });
         }
       }
@@ -1050,9 +1147,18 @@ export default function OverviewTab() {
     // 5. Ranking
     const initialRanking = activeTeamList.map(m => {
       const myTasks = fTasks.filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
-      let d = 0, i = 0, o = 0, md = 0, k = 0;
+      let d = 0, i = 0, o = 0, md = 0, k = 0, mdPlanned = 0, kpiPlanned = 0;
+      // Per-Workspace Manday allocation — powers the split-allocation bar in
+      // the ranking table (e.g. "Dev 6.0 · Infra 2.0"), so a Chính/Phụ
+      // Manday breakdown is visible per member without a separate toggle.
+      const mandayByWs: Record<string, number> = {};
       myTasks.forEach(t => {
-        md += (t.manday_actual || t.manday_est || 0);
+        const taskManday = (t.manday_actual || t.manday_est || 0);
+        md += taskManday;
+        mdPlanned += (t.manday_est || 0);
+        kpiPlanned += getTaskKpiPotentialForMember(t, m.id);
+        const wsCode = (t.projectDataScope || '').toLowerCase();
+        if (wsCode) mandayByWs[wsCode] = (mandayByWs[wsCode] || 0) + taskManday;
         const done = (t.status === 'Done' || t.status === 'done') && Boolean(t.end_date_actual);
         if (done) { d++; k += getTaskKpiForMember(t, m.id); }
         else {
@@ -1072,7 +1178,10 @@ export default function OverviewTab() {
         inProgress: i,
         overdue: o,
         manday: Math.round(mandayVal * 10) / 10,
+        mandayPlanned: Math.round(mdPlanned * 10) / 10,
         kpi: Math.round(kpiVal * 10) / 10,
+        kpiPlanned: Math.round(kpiPlanned * 10) / 10,
+        mandayByWs,
         rawMember: m
       };
     });
@@ -1080,33 +1189,113 @@ export default function OverviewTab() {
     const topPerf = finalRanking.length > 0 && finalRanking[0].kpi > 0 ? finalRanking[0] : null;
     const lowestPerf = finalRanking.length > 1 ? finalRanking[finalRanking.length - 1] : null;
 
+    // Cross-workspace Manday — how much of the team's total Manday was
+    // logged on projects OUTSIDE the current "home" Workspace (Leader's
+    // Chính, or the Workspace the switcher/drill is currently on), powering
+    // the "Cross-workspace" summary card above the ranking table AND the
+    // Phụ trách/Tham gia ngoài project-tab split below.
+    //
+    // For Admin drilled into a specific Leader, "home" must be THAT Leader's
+    // own Chính Workspace — not the Admin's own switcher selection — so the
+    // owned/external split reflects the drilled Leader's team, not whatever
+    // Workspace the Admin happens to have the page-wide switcher on.
+    const drilledLeaderHomeWs = (() => {
+      if (currentUserRole === 'leader' || !showsLeaderCards || selectedLeader === 'all') return null;
+      const ld = visibleLeaders.find((l: any) => l.name === selectedLeader);
+      const mid = ld?.member_id;
+      if (mid == null) return null;
+      const entries = workspaceRolesByMember[Number(mid)] || [];
+      const primary = entries.find((e: any) => e.is_primary);
+      return (primary?.code || '').toLowerCase() || null;
+    })();
+    const homeWsCodeForSummary = (currentUserRole === 'leader'
+      ? (currentUser?.data_scope || '')
+      : (drilledLeaderHomeWs || effectiveWsCode || '')).toLowerCase();
+    let crossWsManday = 0;
+    let crossWsMemberCount = 0;
+    finalRanking.forEach(m => {
+      const wsEntries = Object.entries(m.mandayByWs || {}).filter(([code, v]) => (v as number) > 0 && code !== homeWsCodeForSummary);
+      if (wsEntries.length > 0) {
+        crossWsMemberCount++;
+        crossWsManday += wsEntries.reduce((s, [, v]) => s + (v as number), 0);
+      }
+    });
+
     // 6. Active Projects (Filtered by BOTH Leader and Time Period)
-    const allMappedProjects = rawProjects.map((p: any) => {
-      const pAllTasks = rawTasks.filter(t => isSameId(t.project_id, p.id));
+    // Same reasoning as taskSourceForDrill above: a Leader has no Workspace
+    // switcher, so `rawProjects` is silently narrowed to their Chính
+    // Workspace by effectiveWsCode — which would make every Phụ-Workspace
+    // project (their "Tham gia ngoài" contributions) invisible to the
+    // Dashboard's own project section. Use the unscoped list for Leader.
+    const projectSourceForDrill = currentUserRole === 'leader' ? rawProjectsAll : rawProjects;
+    const allMappedProjects = projectSourceForDrill.map((p: any) => {
+      const pAllTasks = taskSourceForDrill.filter(t => isSameId(t.project_id, p.id));
       const pLeaderTasks = pAllTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
 
+      // Drilled in either as Admin picking one Leader, or as a Leader picking
+      // one Member of their own team — either way, narrow the project list
+      // the same way the KPI cards/ranking table already do.
+      const isDrilledIn = selectedLeader !== 'all' || selectedMemberId !== 'all';
+
       const pmName = (p.pm_name || p.pm || p.leader_name || p.manager || p.project_manager || p.owner || '').toLowerCase();
-      const isLeaderPM = selectedLeader === 'all' || activeTeamList.some(m => {
+      const isLeaderPM = !isDrilledIn || activeTeamList.some(m => {
         const mName = (m.display_name || m.full_name || m.name || '').trim().toLowerCase();
         return pmName.includes(mName);
       });
 
-      const pTasksToUse = (selectedLeader !== 'all' && teamMemberIds.length > 0) ? pLeaderTasks : pAllTasks;
+      const pTasksToUse = (isDrilledIn && teamMemberIds.length > 0) ? pLeaderTasks : pAllTasks;
       const done = pTasksToUse.filter(t => t.status === 'Done' || t.status === 'done').length;
+      const open = pTasksToUse.length - done;
+      const late = pTasksToUse.filter(t => calculateDaysLate(t) > 0).length;
+      let pManday = 0, pMandayPlanned = 0, pKpi = 0, pKpiPlanned = 0;
+      pTasksToUse.forEach(t => {
+        pManday += (t.manday_actual || t.manday_est || 0);
+        pMandayPlanned += (t.manday_est || 0);
+        pKpiPlanned += (t.kpi_base || 0);
+        if (t.status === 'Done' || t.status === 'done') {
+          pKpi += getTaskKpiForMember(t, t.assigned_id);
+          if (t.support_id != null && String(t.support_id) !== String(t.assigned_id)) {
+            pKpi += getTaskKpiForMember(t, t.support_id);
+          }
+        }
+      });
 
       // Check if any task in this project falls within the selected time period
       const hasTaskInPeriod = (selectedYear === 'all' && selectedMonth === 'all' && selectedWeek === 'all' && (activeQuickFilter === 'all' || !activeQuickFilter))
         ? true
         : pTasksToUse.some(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
 
-      // Leader scope filter: project must belong to selected Leader's team or PM
-      const belongsToLeaderScope = selectedLeader === 'all' || pLeaderTasks.length > 0 || isLeaderPM;
+      // Leader/Member scope filter: project must belong to the drilled-in
+      // Leader's team, or the drilled-in Member specifically, or be a project
+      // they themselves PM.
+      const belongsToLeaderScope = !isDrilledIn || pLeaderTasks.length > 0 || isLeaderPM;
+
+      const dataScope = (p.data_scope || p.business || '').toLowerCase() || null;
+
+      // Who on the current team actually shows up on this project — powers
+      // the "Member ... liên quan" line in the Limited-access contribution
+      // modal (a Phụ/external project only ever exposes THIS, never the
+      // project's full internal member/backlog list).
+      const contributingNames = Array.from(new Set(
+        pLeaderTasks.flatMap((t: any) => [t.assigned_name, t.support_name]).filter(Boolean)
+      ));
 
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
         progress: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
-        totalTasks: pTasksToUse.length, doneTasks: done,
+        totalTasks: pTasksToUse.length, doneTasks: done, openTasks: open, lateTasks: late,
+        manday: Math.round(pManday * 10) / 10, mandayPlanned: Math.round(pMandayPlanned * 10) / 10,
+        kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
         hasPM: Boolean(pmName), hasTasks: pTasksToUse.length > 0,
+        business: p.business || null,
+        dataScope,
+        contributingNames,
+        // "Owned" = the project sits in the current home Workspace (Leader's
+        // Chính, or whichever Workspace is currently selected/drilled) — same
+        // Full-vs-Limited-Access distinction the backend already enforces via
+        // project_query_for_user(); an empty homeWsCode (Admin viewing "Tất
+        // cả") treats every project as owned since there's no single home ws.
+        isOwned: !homeWsCodeForSummary || !dataScope || dataScope === homeWsCodeForSummary,
         isDisplayable: belongsToLeaderScope && hasTaskInPeriod
       };
     });
@@ -1158,7 +1347,9 @@ export default function OverviewTab() {
       totalAllDoneTasks: totDone,
       activeTeamMembers: activeTeamList,
       filteredTasks: fTasks,
-      pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday * 10) / 10, kpi: Math.round(pmKpi) },
+      pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday * 10) / 10, kpi: Math.round(pmKpi), mandayPlanned: Math.round(pmMandayPlanned * 10) / 10, kpiPlanned: Math.round(pmKpiPlanned * 10) / 10 },
+      crossWsManday: Math.round(crossWsManday * 10) / 10,
+      crossWsMemberCount,
       priorityStats: pStats,
       overdueTasksList: overdueList.sort((a, b) => b.daysLate - a.daysLate),
       memberRanking: finalRanking,
@@ -1169,9 +1360,10 @@ export default function OverviewTab() {
       lowestPerformer: lowestPerf,
       summaryMatrix: sumM,
       averageMatrix: avgM,
-      bonusMatrix: bonM
+      bonusMatrix: bonM,
+      drilledMemberId,
     };
-  }, [rawMembers, rawTasks, rawProjects, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
+  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always
@@ -1214,6 +1406,26 @@ export default function OverviewTab() {
           <div>
             <h2 className="text-lg font-extrabold text-[#0b1c30]">Dashboard Tổng Quan</h2>
             <p className="text-xs text-slate-500 mt-1">Theo dõi tiến độ, hiệu suất và phân bổ KPI của Team</p>
+            {(() => {
+              const myWs: { code: string; name: string; is_primary: boolean }[] = overviewData?.currentUser?.workspaces || [];
+              const role = overviewData?.currentUser?.role;
+              if (role === 'super_admin' || myWs.length < 1) return null;
+              const primary = myWs.find((w) => w.is_primary) || myWs[0];
+              const secondaries = myWs.filter((w) => w !== primary);
+              if (!primary) return null;
+              return (
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-indigo-600 text-white">
+                    🏠 Chính: {primary.name}
+                  </span>
+                  {secondaries.map((w) => (
+                    <span key={w.code} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-amber-50 text-amber-700 border border-amber-300">
+                      {w.name} · Phụ
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {/* TIME FILTER & REFRESH */}
@@ -1300,19 +1512,29 @@ export default function OverviewTab() {
               </div>
               <CircularProgress value={totalAllDoneTasks} total={totalAllTasks} />
             </button>
-            {leaders.map(ld => (
+            {leaders.map(ld => {
+              const badge = workspaceBadgeFor(ld.member_id, effectiveWsCode);
+              return (
               <button
                 key={ld.name}
                 onClick={() => setSelectedLeader(ld.name)}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
-                  <div className="text-xs font-bold truncate">{ld.name}</div>
+                  <div className="text-xs font-bold truncate flex items-center gap-1">
+                    {ld.name}
+                    {badge && (
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
+                        {badge.label}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
                 </div>
                 <CircularProgress value={ld.doneTasks} total={ld.totalTasks} />
               </button>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
@@ -1326,19 +1548,29 @@ export default function OverviewTab() {
               </div>
               <CircularProgress value={teamCardStats.doneTasks} total={teamCardStats.totalTasks} />
             </button>
-            {memberCards.map(m => (
+            {memberCards.map(m => {
+              const badge = workspaceBadgeFor(m.id, effectiveWsCode);
+              return (
               <button
                 key={m.id}
                 onClick={() => setSelectedMemberId(String(m.id))}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedMemberId === String(m.id) ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
-                  <div className="text-xs font-bold truncate">{m.name}</div>
+                  <div className="text-xs font-bold truncate flex items-center gap-1">
+                    {m.name}
+                    {badge && (
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
+                        {badge.label}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[10px] font-normal opacity-80 truncate">{m.team} · {m.totalTasks} task</div>
                 </div>
                 <CircularProgress value={m.doneTasks} total={m.totalTasks} />
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1566,6 +1798,11 @@ export default function OverviewTab() {
                   <div className="flex flex-wrap gap-1 mb-1.5">
                     <span className="text-[9px] font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 truncate max-w-[140px]" title={t.projectName}>Dự án: {t.projectName}</span>
                     <span className="text-[9px] font-extrabold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 truncate max-w-[140px]" title={t.customerName}>KH: {t.customerName}</span>
+                    {t.projectDataScope && (
+                      <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 uppercase">
+                        {(workspacesData || []).find((w: any) => w.code === t.projectDataScope)?.name || t.projectDataScope}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs font-bold text-[#0b1c30] leading-snug">{t.name}</p>
                   <div className="flex justify-between items-center mt-2">
@@ -1587,26 +1824,50 @@ export default function OverviewTab() {
               <SvgIcon name="crown" className="w-4 h-4 text-indigo-600" />
               <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Bảng Xếp Hạng KPI Thành Viên</h3>
             </div>
-            <span className="text-[10px] font-semibold text-slate-400">💡 Bấm vào tên thành viên để xem chi tiết KPI, Dự án & Task</span>
+            <span className="text-[10px] font-semibold text-slate-400">Click tên thành viên hoặc click trực tiếp vào chỉ số để xem chi tiết</span>
           </div>
+
+          {/* Summary strip — matches the reference prototype's 4-card .summary-grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 border-b border-slate-100 bg-slate-50/60">
+            <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
+              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">KPI Team</span>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.kpi.toFixed(1)} / {pmStats.kpiPlanned.toFixed(1)}</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Chỉ tính KPI phát sinh tại team, không double-count KPI ngoài team</small>
+            </div>
+            <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
+              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">Manday Team</span>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.manday.toFixed(1)} / {pmStats.mandayPlanned.toFixed(1)} MD</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Actual / Planned trong kỳ đang chọn</small>
+            </div>
+            <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
+              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">Cross-workspace</span>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{crossWsManday.toFixed(1)} MD</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug"><span className="text-indigo-600 font-black">{crossWsMemberCount} member</span> đang tham gia workspace khác</small>
+            </div>
+            <div className="px-4 py-3">
+              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">Task Team</span>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.done} / {pmStats.total}</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug"><b className="text-slate-600">{pmStats.inProgress}</b> task đang làm · <b className="text-red-500">{pmStats.overdue}</b> task trễ</small>
+            </div>
+          </div>
+
           <div className="max-h-[400px] overflow-y-auto overflow-x-auto custom-scrollbar">
             <table className="w-full text-xs relative border-collapse">
               <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm">
                 <tr className="bg-slate-100 text-slate-500 border-b border-slate-200 uppercase text-[10px] tracking-wider font-extrabold">
                   <th className="px-4 py-3 text-center font-bold w-14 bg-slate-100">Hạng</th>
                   <th className="px-4 py-3 text-left font-bold bg-slate-100">Thành Viên</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Giao</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Xong</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Đang Làm</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Trễ</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Manday</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">KPI</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Xong / Giao</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Trễ / Đang Làm</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Manday HT / Giao</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">KPI HT / Giao</th>
+                  <th className="px-4 py-3 text-left font-bold bg-slate-100 min-w-[170px]">Phân Bổ Workspace</th>
                   <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">Tiến Độ</th>
                 </tr>
               </thead>
               <tbody>
                 {memberRanking.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
+                  <tr><td colSpan={8} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
                 ) : (
                   memberRanking.map((m, i) => {
                     const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
@@ -1639,14 +1900,65 @@ export default function OverviewTab() {
                                 👑 LEADER
                               </span>
                             )}
+                            {(() => {
+                              const badge = workspaceBadgeFor(m.id, effectiveWsCode);
+                              if (!badge) return null;
+                              return (
+                                <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
+                                  {badge.label}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 text-center font-semibold text-slate-600">{m.assigned}</td>
-                        <td className="px-4 py-3.5 text-center"><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{m.done}</span></td>
-                        <td className="px-4 py-3.5 text-center font-semibold text-blue-600">{m.inProgress}</td>
-                        <td className="px-4 py-3.5 text-center">{m.overdue > 0 ? <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">{m.overdue}</span> : <span className="text-slate-300 font-bold">—</span>}</td>
-                        <td className="px-4 py-3.5 text-center text-slate-500 tabular-nums">{m.manday.toFixed(1)}</td>
-                        <td className="px-4 py-3.5 text-center font-extrabold text-[#0058be] text-[13px]">{m.kpi.toFixed(1)}</td>
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
+                            <span className="text-sm font-black leading-none text-slate-700 tabular-nums">{m.done}/{m.assigned}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
+                            <span className={`text-sm font-black leading-none tabular-nums ${m.overdue > 0 ? 'text-red-600' : 'text-slate-700'}`}>{m.overdue}/{m.inProgress}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-amber-300 hover:bg-amber-50/30 transition-colors">
+                            <span className="text-sm font-black leading-none text-amber-600 tabular-nums">{m.manday.toFixed(1)}/{m.mandayPlanned.toFixed(1)}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
+                            <span className="text-sm font-black leading-none text-[#0058be] tabular-nums">{m.kpi.toFixed(1)}/{m.kpiPlanned.toFixed(1)}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-left">
+                          {(() => {
+                            const entries = Object.entries(m.mandayByWs || {}).filter(([, v]) => (v as number) > 0);
+                            if (!entries.length) return <span className="text-[10px] text-slate-300">—</span>;
+                            const total = entries.reduce((s, [, v]) => s + (v as number), 0);
+                            const palette: Record<string, string> = { dev: 'bg-[#1f6fe5]', infra: 'bg-[#6c57e8]', marketing: 'bg-amber-500' };
+                            const wsName = (code: string) => (workspacesData || []).find((w: any) => w.code === code)?.name || code.toUpperCase();
+                            return (
+                              <div className="min-w-[170px]">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex h-2 flex-1 rounded-full overflow-hidden bg-slate-100">
+                                    {entries.map(([code, v]) => (
+                                      <div key={code} className={palette[code] || 'bg-slate-400'} style={{ width: `${((v as number) / total) * 100}%` }} title={`${wsName(code)}: ${(v as number).toFixed(1)} MD`} />
+                                    ))}
+                                  </div>
+                                  <span className="text-[10px] font-black text-slate-400 whitespace-nowrap tabular-nums">
+                                    {entries.map(([, v]) => Math.round((v as number) / total * 100)).join('/')}
+                                  </span>
+                                </div>
+                                <div className="text-[9px] font-bold text-slate-400 mt-1">
+                                  {entries.map(([code, v], idx) => (
+                                    <span key={code}>{idx > 0 && ' · '}{wsName(code)} {(v as number).toFixed(1)}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td className="px-4 py-3.5">
                           <ProgressBar value={rate} color={rate >= 80 ? 'bg-emerald-500' : rate >= 60 ? 'bg-amber-500' : 'bg-red-500'} height="h-1.5" />
                         </td>
@@ -1722,17 +2034,37 @@ export default function OverviewTab() {
 
       {/* 2. DỰ ÁN ĐANG TRIỂN KHAI (ONGOING PROJECTS) */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <SvgIcon name="folders" className="w-4 h-4 text-slate-700" />
-            <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự án đang triển khai</h3>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-wrap gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <SvgIcon name="folders" className="w-4 h-4 text-slate-700 shrink-0" />
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Dự án đang triển khai</h3>
+              <p className="text-[10px] text-slate-400 mt-0.5 truncate">Phân biệt rõ dự án thuộc workspace chính và dự án ngoài workspace chỉ tham gia đóng góp</p>
+            </div>
           </div>
-          <button
-            onClick={handleAiCheck}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-sm text-[11px] font-bold transition-all cursor-pointer active:scale-95"
-          >
-            <span className="text-sm">✨</span> AI Check
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1 p-1 bg-slate-100 border border-slate-200 rounded-xl">
+              {([
+                ['all', 'Tất cả'],
+                ['owned', 'Phụ trách'],
+                ['external', 'Tham gia ngoài'],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  onClick={() => setProjectFilterMode(mode)}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${projectFilterMode === mode ? 'bg-white text-[#0058be] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={handleAiCheck}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-sm text-[11px] font-bold transition-all cursor-pointer active:scale-95"
+            >
+              <span className="text-sm">✨</span> AI Check
+            </button>
+          </div>
         </div>
         {aiCheckStatus && (
           <div className="bg-blue-50 px-5 py-2 text-xs font-bold text-blue-700 border-b border-blue-100 flex items-center justify-between animate-fadeIn">
@@ -1740,40 +2072,123 @@ export default function OverviewTab() {
             <button onClick={() => setAiCheckStatus(null)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
           </div>
         )}
-        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[360px] overflow-y-auto custom-scrollbar">
-          {activeProjects.length === 0 ? (
-            <p className="text-xs text-slate-400 font-semibold py-4 text-center col-span-full">Chưa có dự án nào đang hoạt động.</p>
-          ) : (
-            activeProjects.map((p: any) => (
-              <div
-                key={p.id}
-                onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
-                className="p-4 rounded-xl border border-slate-200 shadow-sm bg-slate-50/50 hover:bg-white hover:border-[#0058be] hover:shadow-md transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99]"
-              >
-                <div>
-                  <div className="flex justify-between items-start mb-2 gap-2">
-                    <h4 className="text-xs font-bold text-[#0b1c30] truncate hover:text-[#0058be]" title={p.name}>{p.name}</h4>
-                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
-                      {p.status || 'Developing'}
+
+        {(() => {
+          const ownedProjects = activeProjects.filter((p: any) => p.isOwned);
+          const externalProjects = activeProjects.filter((p: any) => !p.isOwned);
+          const wsName = (code: string | null) => (code && (workspacesData || []).find((w: any) => w.code === code)?.name) || (code ? code.toUpperCase() : null);
+
+          const renderCard = (p: any, isOwnedCard: boolean) => (
+            <div
+              key={p.id}
+              onClick={() => isOwnedCard ? router.push(`/project/detail/overview?id=${p.id}`) : setContributionModalProject(p)}
+              className={`p-4 rounded-2xl border shadow-sm transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99] ${isOwnedCard
+                  ? 'border-slate-200 bg-white hover:border-[#0058be] hover:shadow-md'
+                  : 'border-purple-200/70 bg-[#fdfcff] hover:border-purple-400 hover:shadow-md'
+                }`}
+            >
+              <div>
+                <div className="flex justify-between items-start mb-2 gap-2">
+                  <h4 className="text-sm font-black text-[#0b1c30] truncate hover:text-[#0058be]" title={p.name}>{p.name}</h4>
+                  <div className="flex flex-wrap gap-1 justify-end shrink-0">
+                    {p.dataScope && (
+                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 whitespace-nowrap">
+                        {wsName(p.dataScope)} Workspace
+                      </span>
+                    )}
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full whitespace-nowrap ${isOwnedCard ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'}`}>
+                      {isOwnedCard ? 'Full access' : 'Limited access'}
                     </span>
                   </div>
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-3">{p.current_phase || '1. Tư vấn'}</span>
                 </div>
-                <div>
-                  <div className="flex justify-between text-[11px] mb-1.5 font-bold">
-                    <span className="text-slate-500">Tiến độ</span>
-                    <span className="text-[#0058be]">{p.progress}%</span>
+                <div className="flex items-center gap-1.5 mb-3">
+                  <span className="text-[10px] text-slate-400 font-semibold">{p.current_phase || '1. Tư vấn'}</span>
+                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
+                    {p.status || 'Developing'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-5 gap-1.5 mt-3.5">
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                    <span className="block text-[7px] uppercase font-black text-slate-400">Tiến độ</span>
+                    <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
                   </div>
-                  <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-blue-600'} height="h-2" />
-                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold mt-2">
-                    <span>Task: {p.doneTasks}/{p.totalTasks}</span>
-                    <span className="text-[#0058be] font-extrabold hover:underline">Xem chi tiết ➔</span>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                    <span className="block text-[7px] uppercase font-black text-slate-400">Task</span>
+                    <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                    <span className="block text-[7px] uppercase font-black text-slate-400">Mở/Trễ</span>
+                    <strong className={`block text-[11px] font-black mt-1 ${p.lateTasks > 0 ? 'text-red-600' : 'text-[#0b1c30]'}`}>{p.openTasks}/{p.lateTasks}</strong>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                    <span className="block text-[7px] uppercase font-black text-slate-400">Manday</span>
+                    <strong className="block text-[11px] font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                    <span className="block text-[7px] uppercase font-black text-slate-400">KPI</span>
+                    <strong className="block text-[11px] font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
                   </div>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+              <div className="flex items-center justify-between gap-3 mt-3.5">
+                <p className="text-[10px] text-slate-400 leading-snug">
+                  {isOwnedCard
+                    ? 'Dự án thuộc workspace chính — xem đầy đủ chi tiết task, KPI và timeline.'
+                    : 'Dự án ngoài workspace — chỉ xem contribution, tiến độ & risk được chia sẻ.'}
+                </p>
+                <span className="text-[#0058be] text-[10px] font-black whitespace-nowrap hover:underline shrink-0">
+                  {isOwnedCard ? 'Xem chi tiết →' : 'Xem contribution →'}
+                </span>
+              </div>
+            </div>
+          );
+
+          if (activeProjects.length === 0) {
+            return <p className="text-xs text-slate-400 font-semibold py-8 text-center">Chưa có dự án nào đang hoạt động.</p>;
+          }
+
+          return (
+            <div className="p-5 max-h-[520px] overflow-y-auto custom-scrollbar space-y-5">
+              {projectFilterMode !== 'external' && ownedProjects.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-3 gap-3">
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-500">Dự án Workspace Chính phụ trách</h4>
+                    <p className="text-[10px] text-slate-400">Được xem đầy đủ chi tiết dự án và task.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {ownedProjects.map((p: any) => renderCard(p, true))}
+                  </div>
+                </div>
+              )}
+
+              {projectFilterMode !== 'owned' && externalProjects.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between gap-3 mb-3 p-3 bg-purple-50/60 border border-purple-100 rounded-xl text-[11px] font-semibold text-purple-800">
+                    <span>↗ <strong>Dự án liên workspace:</strong> chỉ hiển thị contribution, deadline chung và tiến độ/risk được chia sẻ — không mở toàn bộ chi tiết dự án.</span>
+                    <button
+                      onClick={() => setExternalProjectsCollapsed(v => !v)}
+                      className="shrink-0 px-2.5 py-1 rounded-lg border border-purple-200 bg-white text-purple-700 text-[10px] font-black hover:bg-purple-50"
+                    >
+                      {externalProjectsCollapsed ? 'Hiện' : 'Ẩn'}
+                    </button>
+                  </div>
+                  {!externalProjectsCollapsed && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {externalProjects.map((p: any) => renderCard(p, false))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {projectFilterMode === 'owned' && ownedProjects.length === 0 && (
+                <p className="text-xs text-slate-400 font-semibold py-8 text-center">Không có dự án nào thuộc workspace chính trong kỳ này.</p>
+              )}
+              {projectFilterMode === 'external' && externalProjects.length === 0 && (
+                <p className="text-xs text-slate-400 font-semibold py-8 text-center">Không tham gia dự án ngoài workspace nào trong kỳ này.</p>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
 
@@ -1970,6 +2385,91 @@ export default function OverviewTab() {
           onNavigate={(projectId) => router.push(`/project/detail?id=${projectId}`)}
         />
       )}
+
+      {/* LIMITED-ACCESS CONTRIBUTION MODAL — for "Tham gia ngoài" (Phụ Workspace)
+          project cards. Clicking one of these never navigates into the real
+          project/detail page (that would require Full access) — it only ever
+          shows the shared/contribution-scoped summary a Phụ Workspace grants:
+          overall progress, the team's own Manday/KPI/Task contribution, and
+          which of the team's own members are on it. Everything else about the
+          project (backlog, docs, other members, budget) stays hidden. */}
+      {contributionModalProject && (() => {
+        const p = contributionModalProject;
+        const wsLabel = (workspacesData || []).find((w: any) => w.code === p.dataScope)?.name || (p.dataScope || '').toUpperCase();
+        return (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setContributionModalProject(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-black text-[#0b1c30] truncate">{p.name}</h3>
+                  <p className="text-xs text-slate-400 font-semibold mt-1">{wsLabel} Workspace · Team bạn chỉ tham gia đóng góp</p>
+                </div>
+                <button onClick={() => setContributionModalProject(null)} className="shrink-0 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 font-bold">✕</button>
+              </div>
+
+              <div className="mx-6 mt-5 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] font-bold text-amber-800 flex items-center gap-2">
+                <span>🔒</span>
+                <span>Dự án thuộc {wsLabel} Workspace. Team bạn chỉ xem phần đóng góp của member team mình và các chỉ số tổng quan được chia sẻ.</span>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mt-4">
+                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                  <span className="block text-[9px] uppercase font-black text-slate-400">Tiến độ phần giao</span>
+                  <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                  <span className="block text-[9px] uppercase font-black text-slate-400">Task</span>
+                  <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                  <span className="block text-[9px] uppercase font-black text-slate-400">MD đóng góp</span>
+                  <strong className="block text-base font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                  <span className="block text-[9px] uppercase font-black text-slate-400">KPI đóng góp</span>
+                  <strong className="block text-base font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-6 py-5 mt-1">
+                <div className="border border-slate-200 rounded-xl p-4">
+                  <h4 className="text-xs font-black text-slate-700 mb-3">Thông tin team bạn được phép xem</h4>
+                  <dl className="space-y-2.5 text-xs">
+                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Workspace sở hữu</dt><dd className="font-black text-slate-700">{wsLabel}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Giai đoạn chung</dt><dd className="font-black text-slate-700 text-right">{p.current_phase}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Tiến độ được chia sẻ</dt><dd className="font-black text-slate-700">{p.progress}%</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Trạng thái</dt><dd className="font-black text-slate-700">{p.status}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold shrink-0">Member liên quan</dt><dd className="font-black text-slate-700 text-right">{p.contributingNames.length ? p.contributingNames.join(', ') : '—'}</dd></div>
+                  </dl>
+                </div>
+                <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50/60 flex flex-col items-center justify-center text-center">
+                  <span className="text-2xl">🔒</span>
+                  <h4 className="text-xs font-black text-slate-700 mt-2">Không có quyền xem chi tiết nội bộ {wsLabel}</h4>
+                  <p className="text-[10px] text-slate-400 font-semibold mt-1.5 leading-snug">Không xem toàn bộ backlog, task của member {wsLabel}, tài liệu nội bộ, budget, comment hoặc milestone nội bộ.</p>
+                </div>
+              </div>
+
+              <div className="px-6 pb-5 -mt-1">
+                <p className="text-[10px] text-slate-400 font-semibold leading-snug">
+                  Nguyên tắc: chỉ xem đủ dữ liệu để quản lý workload, KPI đóng góp, deadline và risk của member mình — không xem cấu trúc vận hành nội bộ của Workspace khác.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 px-6 pb-6 pt-2 border-t border-slate-100">
+                <p className="text-[10px] text-slate-400 font-semibold leading-snug max-w-[60%]">
+                  Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.
+                </p>
+                <button
+                  onClick={() => { setContributionModalProject(null); router.push(`/project/detail/overview?id=${p.id}`); }}
+                  className="shrink-0 px-4 py-2 rounded-lg bg-[#0058be] hover:bg-[#004a9e] text-white text-xs font-bold"
+                >
+                  Mở dự án →
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* MEMBER DETAIL MODAL */}
       {selectedMemberModal && (

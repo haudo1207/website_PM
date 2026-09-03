@@ -28,6 +28,12 @@ WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER}
 # (same Workspace-based data-scope mechanism shared by Leader, Member and Viewer).
 WORKSPACE_SCOPED_ROLES = {ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}
 
+# project_members_v2.role values that grant Leader-equivalent write access,
+# scoped to that one project, to an otherwise-restricted `member`/`viewer`.
+PROJECT_FULL_ACCESS_ROLES = {"PM", "Leader"}
+# Global roles eligible for the project-role escalation in has_full_project_access.
+PROJECT_ROLE_ESCALATABLE = {ROLE_MEMBER, ROLE_VIEWER}
+
 
 # ── Workspace Master (Single Source of Truth) ───────────────
 def get_workspaces(db: Session):
@@ -170,9 +176,16 @@ def project_query_for_user(db: Session, user):
     """Return a Project query filtered by the caller's role and Workspace(s).
 
     - super_admin (scope=all): every project.
-    - leader: projects matching any allowed Workspace, business==All, or explicitly assigned.
-    - member / viewer: projects where the user's linked member_id is in project_members
-      AND the project belongs to one of the user's assigned Workspace(s).
+    - leader: full access to every project in their Chính (home, `data_scope`)
+      Workspace; in any Phụ (secondary) Workspace they only see projects
+      they're explicitly assigned to via project_members — same restriction
+      as Member. Holding a Phụ Workspace grants awareness of that team's
+      Dashboard stats, not blanket access to every one of that Workspace's
+      projects.
+    - member / viewer: every project the user's linked member_id is
+      explicitly assigned to via project_members, regardless of Workspace —
+      membership alone is sufficient, same membership-overrides-Workspace
+      rule as Leader's Phụ Workspace case above.
     """
     query = db.query(Project)
     scopes = user_allowed_scopes(db, user)
@@ -183,7 +196,10 @@ def project_query_for_user(db: Session, user):
 
     if role == ROLE_LEADER:
         member_id = getattr(user, "member_id", None)
-        filters = list(project_belongs_to_workspace(db, scopes))
+        primary_code = (getattr(user, "data_scope", None) or "").strip().lower()
+        filters = []
+        if primary_code and primary_code != ALL_SCOPE:
+            filters.extend(project_belongs_to_workspace(db, {primary_code}))
         if member_id:
             assigned_project_ids = (
                 db.query(project_members.c.project_id)
@@ -191,9 +207,12 @@ def project_query_for_user(db: Session, user):
                 .subquery()
             )
             filters.append(Project.id.in_(assigned_project_ids))
+        if not filters:
+            return query.filter(Project.id == -1)
         return query.filter(or_(*filters))
 
-    # member / viewer — assigned projects, restricted to the user's Workspace(s).
+    # member / viewer — every project they're explicitly assigned to,
+    # regardless of Workspace (mirrors the Leader membership-override rule).
     member_id = getattr(user, "member_id", None)
     if not member_id:
         # User has no linked member → they can see nothing.
@@ -204,8 +223,40 @@ def project_query_for_user(db: Session, user):
         .filter(project_members.c.member_id == member_id)
         .subquery()
     )
-    base = query.filter(Project.id.in_(assigned_project_ids))
-    return base.filter(or_(*project_belongs_to_workspace(db, scopes)))
+    return query.filter(Project.id.in_(assigned_project_ids))
+
+
+def project_query_for_user_broad(db: Session, user):
+    """Same as project_query_for_user(), but for Leader every granted
+    Workspace (Chính AND Phụ) gets blanket access — not just their Chính one.
+
+    Use this ONLY for aggregate/awareness views (Dashboard team-wide KPI
+    totals) where a Leader needs the FULL picture of their team's workload
+    across every Workspace they're associated with, even projects they
+    personally aren't a member of. Never use it to gate opening a specific
+    project's page/detail — that must stay on the strict
+    project_query_for_user()/can_access_project() (Phụ = assignment-only),
+    so a Leader can see THAT a teammate has work on a project without being
+    able to click into that project's internals themselves.
+    """
+    role = getattr(user, "role", ROLE_MEMBER)
+    if role != ROLE_LEADER:
+        return project_query_for_user(db, user)
+
+    scopes = user_allowed_scopes(db, user)
+    if scopes == ALL_SCOPE:
+        return db.query(Project)
+
+    member_id = getattr(user, "member_id", None)
+    filters = list(project_belongs_to_workspace(db, scopes))
+    if member_id:
+        assigned_project_ids = (
+            db.query(project_members.c.project_id)
+            .filter(project_members.c.member_id == member_id)
+            .subquery()
+        )
+        filters.append(Project.id.in_(assigned_project_ids))
+    return db.query(Project).filter(or_(*filters))
 
 
 def member_query_for_user(db: Session, user):
@@ -214,7 +265,11 @@ def member_query_for_user(db: Session, user):
     - super_admin / scope=all: every member (unchanged).
     - leader / member / viewer: members belonging to one of the caller's
       Workspace(s) — i.e. members whose linked account data_scope matches one
-      of them, or members assigned to a project within the caller's scope(s).
+      of them, OR whose linked account has a `user_workspace_access` row in
+      one of them, OR members assigned to a project within the caller's
+      scope(s). Reading the junction table is required so multi-Workspace
+      Member accounts (granted via Requirement 2 of the permission extension)
+      are seen across all their assigned Workspaces.
     """
     query = db.query(Member)
     scopes = user_allowed_scopes(db, user)
@@ -225,11 +280,44 @@ def member_query_for_user(db: Session, user):
     if role not in WORKSPACE_SCOPED_ROLES:
         return query
 
+    # Match Members whose linked User has *any* Workspace grant in the
+    # caller's scope, via either:
+    #   (a) the legacy `User.data_scope` column (the historical source of
+    #       truth, kept in sync with `user_workspace_access[0]` by
+    #       `_apply_user_workspace_access`), OR
+    #   (b) an explicit `user_workspace_access` row pointing at a Workspace
+    #       whose code is in the caller's scopes.
+    #
+    # Previously this was expressed as a UNION of two subqueries; that
+    # implementation called `Subquery.union(...)` which is not a method on
+    # SQLAlchemy's `Subquery` object (it is on `Query`). The resulting
+    # `AttributeError: 'Subquery' object has no attribute 'union'` broke
+    # every non-super-admin caller of this helper, including Dashboard
+    # Leader cards (`workspace_leader_names`) and the Create Account
+    # Member-link dropdown (`accounts.available_members`).
+    #
+    # The fix is the logically equivalent `or_(...data_scope...,
+    # ...data_scope == 'all', exists(junction_query))`, which avoids the
+    # broken method entirely and matches the same set of Members in a
+    # single SELECT — smaller SQL footprint and no behavioural change.
+    junction_in_scope_exists = (
+        db.query(UserWorkspaceAccess.user_id)
+        .join(Workspace, Workspace.id == UserWorkspaceAccess.workspace_id)
+        .filter(
+            Workspace.code.in_(scopes),
+            UserWorkspaceAccess.user_id == User.id,
+        )
+        .exists()
+    )
     scoped_user_member_ids = (
         db.query(User.member_id)
         .filter(
             User.member_id.isnot(None),
-            or_(User.data_scope.in_(scopes), User.data_scope == ALL_SCOPE),
+            or_(
+                User.data_scope.in_(scopes),
+                User.data_scope == ALL_SCOPE,
+                junction_in_scope_exists,
+            ),
         )
         .subquery()
     )
@@ -358,29 +446,28 @@ def can_access_project(db: Session, user, project: Project) -> bool:
         return True
 
     if role == ROLE_LEADER:
+        # Full access only within their Chính (home) Workspace — a Phụ
+        # (secondary) Workspace only grants access to projects they're
+        # explicitly assigned to, matching project_query_for_user() above.
+        primary_code = (getattr(user, "data_scope", None) or "").strip().lower()
         return (
-            (project.data_scope in scopes)
+            (project.data_scope == primary_code)
             or (project.data_scope == ALL_SCOPE)
             or (project.business == "All")
             or _is_member_of_project(db, user, project.id)
         )
 
-    # member / viewer — must be an explicit project member whose project
-    # belongs to one of the user's assigned Workspace(s).
+    # member / viewer — explicit project membership overrides Workspace,
+    # same as Leader: an assigned member/viewer sees the project regardless
+    # of which Workspace it belongs to.
     member_id = getattr(user, "member_id", None)
     if not member_id:
         return False
-    if not _is_member_of_project(db, user, project.id):
-        return False
-    if (
+    return (
         (project.data_scope in scopes)
         or (project.data_scope == ALL_SCOPE)
         or (project.business == "All")
-    ):
-        return True
-    return any(
-        (ws := resolve_workspace(db, scope)) is not None and project.business == ws.name
-        for scope in scopes
+        or _is_member_of_project(db, user, project.id)
     )
 
 
@@ -450,10 +537,40 @@ def _is_document_write(request: Request) -> bool:
     return re.search(r"/projects/\d+/documents(/.*)?", request.url.path) is not None
 
 
+def has_full_project_access(db: Session, user, project_id) -> bool:
+    """True if *user* has Leader-equivalent write access to *project_id*:
+    a super_admin, a global Leader, or a `member`/`viewer` whose
+    project_members_v2.role for this specific project is 'PM' or 'Leader'
+    (PROJECT_FULL_ACCESS_ROLES).
+
+    Scoped to the one project — it does not elevate the user's global role or
+    grant access to any other project.
+
+    Callers that also need a Workspace-scope check for the global-Leader case
+    (e.g. can_access_project) should keep doing that separately — this helper
+    only covers the project-role escalation path.
+    """
+    role = getattr(user, "role", None) or ROLE_MEMBER
+    if role in WRITE_ROLES:
+        return True
+    if role not in PROJECT_ROLE_ESCALATABLE or project_id is None:
+        return False
+    member_id = getattr(user, "member_id", None)
+    if not member_id:
+        return False
+    return db.execute(
+        project_members.select().where(
+            project_members.c.project_id == project_id,
+            project_members.c.member_id == member_id,
+            project_members.c.role.in_(PROJECT_FULL_ACCESS_ROLES),
+        )
+    ).first() is not None
+
+
 def is_project_leader(db: Session, user, project_id: int) -> bool:
     """True if *user* may approve/reject Resources for *project_id*:
-    a super_admin, or the project's own Technical Leader
-    (project_members_v2.role == 'Leader' for this project) — not to be
+    a super_admin, or the project's own PM/Technical Leader
+    (project_members_v2.role in {'PM', 'Leader'} for this project) — not to be
     confused with the global/workspace `User.role == 'leader'`.
     """
     if getattr(user, "role", None) == ROLE_SUPER_ADMIN:
@@ -465,7 +582,7 @@ def is_project_leader(db: Session, user, project_id: int) -> bool:
         project_members.select().where(
             project_members.c.project_id == project_id,
             project_members.c.member_id == member_id,
-            project_members.c.role == "Leader",
+            project_members.c.role.in_(PROJECT_FULL_ACCESS_ROLES),
         )
     ).first() is not None
 
@@ -529,8 +646,12 @@ def require_route_project_access(
     role = getattr(user, "role", ROLE_MEMBER)
     print(f"Role: {role}")
 
-    # ── Viewer: read-only — block every non-GET request unconditionally. ──
+    # ── Viewer: read-only, UNLESS their project-role for this project is
+    #    PM/Leader — that grants full write access scoped to this project. ──
     if role == ROLE_VIEWER and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        if project_id is not None and has_full_project_access(db, user, int(project_id)):
+            print("--- ACCESS GRANTED FOR VIEWER (project PM/Leader) ---")
+            return user
         raise HTTPException(403, "Viewer không có quyền thực hiện thao tác này!")
 
     # ── Role-based write authorization. ──
@@ -541,10 +662,15 @@ def require_route_project_access(
             # super_admin and leader may write freely within their scope.
             return user
 
-        # member: may perform Task CRUD, or Resources/Documents CRUD, if assigned
-        # to the current project. (Approve/reject are additionally gated by
-        # is_project_leader() inside the route handler itself.)
+        # member: full write access if their project-role for this project is
+        # PM/Leader (has_full_project_access); otherwise only Task CRUD or
+        # Resources/Documents CRUD, if assigned to the current project.
+        # (Approve/reject are additionally gated by is_project_leader() inside
+        # the route handler itself.)
         if role == ROLE_MEMBER:
+            if project_id is not None and has_full_project_access(db, user, int(project_id)):
+                print("--- ACCESS GRANTED FOR MEMBER (project PM/Leader) ---")
+                return user
             if (is_task_write_result or _is_document_write(request)) and project_id is not None:
                 print("--- ACCESS GRANTED FOR MEMBER ---")
                 return user

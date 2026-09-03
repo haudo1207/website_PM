@@ -17,7 +17,11 @@ import {
   getWorkspaces,
   Workspace
 } from '@/lib/api';
-import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+// (removed the useWorkspaceFilter binding for the Accounts page — see the
+// filteredAccounts useMemo below for the rationale. The shared Navbar
+// workspace switcher continues to drive Project / Members / Dashboard
+// pages, but the Accounts authorization scope is backend-authoritative
+// and must not be narrowed by the global switcher.)
 
 interface MemberInfo {
   id: number;
@@ -40,7 +44,7 @@ interface Account {
   role: string;
   data_scope: string;
   workspace_ids?: string[];
-  workspaces?: { id: number; code: string; name: string }[];
+  workspaces?: { id: number; code: string; name: string; is_primary: boolean }[];
   workspace_scope?: string;
   is_active: boolean;
   member_id: number | null;
@@ -157,14 +161,17 @@ export default function AccountsPage() {
     return labels;
   }, [workspaces]);
 
-  // Company selection is shared app-wide via WorkspaceFilterProvider (see
-  // Navbar's Workspace switcher) — defaults this list's Data Scope filter to
-  // match, so switching Workspace at the top also filters the Accounts tab.
-  const { workspaceCode } = useWorkspaceFilter();
-  useEffect(() => {
-    setFilterScope(workspaceCode || '');
-  }, [workspaceCode]);
-
+  // Accounts page Data-Scope filter is intentionally NOT bound to the
+  // shared Navbar `useWorkspaceFilter()` switcher. The Navbar switcher is a
+  // per-User *view-narrowing* control (drives Dashboard charts, Project
+  // list, Members list, etc.). Accounts management is *authorization-scoped*
+  // — the backend already returns only the accounts the caller is allowed
+  // to manage (`/api/accounts` filters by `user_allowed_scopes(caller)`),
+  // so coupling this page's filter to the global switcher would silently
+  // hide accounts the caller is authorized to see whenever the switcher
+  // happened to be parked on a different Workspace (Bug B).
+  // The Data Scope dropdown therefore defaults to "Tất cả" (no extra
+  // filter) and the user may still narrow manually when desired.
   const filteredAccounts = useMemo(() => {
     const nameQuery = searchName.trim().toLowerCase();
 
@@ -179,7 +186,7 @@ export default function AccountsPage() {
 
       const roleMatch = !filterRole || acc.role === filterRole;
       // An "all"-scope account belongs to every Workspace. For multi-Workspace
-      // Leaders, the account matches a Workspace filter when *any* of its
+      // accounts, the row matches the Workspace filter when *any* of its
       // granted Workspaces matches the filter (or its primary data_scope is
       // 'all'). Same escape-hatch semantics as the Projects/Members tabs.
       const accWs = (acc.workspace_ids && acc.workspace_ids.length) ? acc.workspace_ids : [acc.data_scope];
@@ -223,8 +230,12 @@ export default function AccountsPage() {
   }, [availableMembers, editAccount]);
 
   // Create
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateError(null);
     try {
       const payload: any = {
         email: createForm.email,
@@ -239,22 +250,37 @@ export default function AccountsPage() {
         // is also accepted for backwards compatibility, but the backend now
         // derives it from the first code in `workspace_ids`.
         payload.workspace_ids = createForm.workspace_ids;
+        payload.primary_workspace_code = createForm.data_scope;
       } else if (createForm.role === 'super_admin') {
         // No Workspace assignment needed for Super Admin — backend coerces
         // data_scope='all'. Don't send `workspace_ids` so the backend treats
         // it as the global-all scope rather than a literal Workspace list.
+      } else if (createForm.role === 'member') {
+        // Multi-Workspace Member (permission extension). Backend writes one
+        // junction row per code; permission level (MEMBER) is unchanged.
+        payload.workspace_ids = createForm.workspace_ids;
+        payload.data_scope = createForm.data_scope;
+        payload.primary_workspace_code = createForm.data_scope;
       } else {
-        // Member/Viewer — exactly one Workspace. Always send a single string
-        // `data_scope` (the backend ignores `workspace_ids` for these roles).
+        // Viewer — NO CHANGE. Exactly one Workspace; backend ignores
+        // `workspace_ids` for Viewer and the single `data_scope` row
+        // continues to drive scoping.
         payload.data_scope = createForm.data_scope;
       }
       await createAccount(payload);
+      // Success: clear error state, close modal, reset form, refresh. Order
+      // matters — clear the error BEFORE closing the modal so reopening the
+      // modal (which unmounts the form) never re-surfaces the previous
+      // failure message (Bug C).
+      setCreateError(null);
       flash('Đã tạo tài khoản thành công');
       setShowCreate(false);
       setCreateForm({ email: '', role: 'member', data_scope: (workspaces?.[0]?.code || ''), workspace_ids: (workspaces?.[0]?.code ? [workspaces[0].code] : []), full_name: '', member_id: 0, outlook_mail: '' });
       reload();
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi tạo tài khoản');
+      const msg = err.response?.data?.detail || 'Lỗi tạo tài khoản';
+      setCreateError(msg);
+      flash(msg);
     }
   };
 
@@ -278,9 +304,26 @@ export default function AccountsPage() {
   const openEdit = (acc: Account) => {
     if (!canLeaderManageAccount(acc)) return;
     setEditAccount(acc);
-    const initialWorkspaces = (acc.workspace_ids && acc.workspace_ids.length)
-      ? acc.workspace_ids.filter(code => code !== 'all')
-      : (acc.data_scope ? [acc.data_scope] : (workspaces?.[0]?.code ? [workspaces[0].code] : []));
+    setEditError(null);
+    // Recover the full grant set for the Edit form:
+    //   1. Prefer the explicit `workspace_ids` list (filters the Super-Admin
+    //      `all` sentinel).
+    //   2. Defensive fallback: if the response still collapses to ['all']
+    //      (legacy / migration data), use the `workspaces` array (which
+    //      always carries the full code list per `account_to_dict`).
+    //   3. Final fallback: legacy single `data_scope`, then first master
+    //      workspace — never silently drop the entire grant set.
+    let initialWorkspaces: string[] = [];
+    const realIds = (acc.workspace_ids || []).filter(code => code !== 'all');
+    if (realIds.length > 0) {
+      initialWorkspaces = realIds;
+    } else if (acc.workspaces && acc.workspaces.length > 0) {
+      initialWorkspaces = acc.workspaces.map(w => w.code);
+    } else if (acc.data_scope && acc.data_scope !== 'all') {
+      initialWorkspaces = [acc.data_scope];
+    } else if (workspaces?.[0]?.code) {
+      initialWorkspaces = [workspaces[0].code];
+    }
     setEditForm({
       email: acc.email,
       full_name: acc.full_name || '',
@@ -295,6 +338,11 @@ export default function AccountsPage() {
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editAccount) return;
+    setEditError(null);
+    if ((editForm.role === 'leader' || editForm.role === 'member') && editForm.workspace_ids.length > 1 && !editForm.data_scope) {
+      setEditError('Chưa chọn Workspace chính — bấm vào 1 trong các Workspace bên dưới để đặt làm chính.');
+      return;
+    }
     try {
       const payload: any = {
         email: editForm.email,
@@ -305,17 +353,33 @@ export default function AccountsPage() {
       };
       if (editForm.role === 'leader') {
         payload.workspace_ids = editForm.workspace_ids;
+        // Which granted Workspace is "Chính" (home) — defaults to the first
+        // code when unset, but the Chính/Phụ picker below lets the admin
+        // explicitly override that.
+        payload.primary_workspace_code = editForm.data_scope;
       } else if (editForm.role === 'super_admin') {
         // No Workspace selector — backend handles 'all' globally.
+      } else if (editForm.role === 'member') {
+        // Multi-Workspace Member — backend writes one junction row per code.
+        payload.workspace_ids = editForm.workspace_ids;
+        payload.data_scope = editForm.data_scope;
+        payload.primary_workspace_code = editForm.data_scope;
       } else {
+        // Viewer — existing single-Workspace behavior, NO CHANGE.
         payload.data_scope = editForm.data_scope;
       }
       await updateAccount(editAccount.id, payload);
-      flash('Đã cập nhật tài khoản');
+      // Success: clear error state, close modal, refresh. Mirrors
+      // handleCreate's success path so the previous error message never
+      // re-surfaces on the next modal open (Bug C).
+      setEditError(null);
+      flash('Đã cập nhận tài khoản');
       setEditAccount(null);
       reload();
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi cập nhật tài khoản');
+      const msg = err.response?.data?.detail || 'Lỗi cập nhật tài khoản';
+      setEditError(msg);
+      flash(msg);
     }
   };
 
@@ -358,7 +422,7 @@ export default function AccountsPage() {
           <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Quản lý tài khoản</h2>
           {activeTab === 'accounts' && (
             <button
-              onClick={() => setShowCreate(true)}
+              onClick={() => { setCreateError(null); setShowCreate(true); }}
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -394,11 +458,15 @@ export default function AccountsPage() {
         {/* Content */}
         <div className="p-4 md:p-8 max-w-7xl w-full mx-auto space-y-6 min-w-0">
           {saved && (
-            <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-3 text-xs flex items-center gap-2 font-semibold shadow-sm">
+            // Toast positioned above the modal backdrop (modal is z-50, so
+            // this sits at z-[60]) — ensures the user sees the success/error
+            // feedback even when the modal is open. The in-modal error
+            // banner above still keeps the form open and visible.
+            <div className="fixed top-[120px] left-1/2 -translate-x-1/2 z-[60] bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-3 text-xs flex items-center gap-2 font-semibold shadow-lg max-w-md">
               <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
-              {saved}
+              <span className="flex-1">{saved}</span>
             </div>
           )}
 
@@ -519,21 +587,46 @@ export default function AccountsPage() {
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
                               ALL Workspaces
                             </span>
-                          ) : acc.workspace_ids && acc.workspace_ids.length > 1 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {acc.workspace_ids.filter(code => code !== 'all').map(code => (
-                                <span key={code} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase tracking-wider">
-                                  {scopeLabels[code] || code}
+                          ) : (() => {
+                            // ALL WORKSPACES — every Workspace in the master
+                            // is granted. Driven entirely by the master data
+                            // (no hard-coded Workspace names). The Edit form
+                            // must keep every individual code so the user
+                            // can re-save without losing any grant.
+                            const allCodes = new Set(workspaces.map(w => w.code));
+                            const grantedReal = (acc.workspace_ids || []).filter(c => c !== 'all');
+                            const isAll = allCodes.size > 0 && grantedReal.length >= allCodes.size
+                              && allCodes.size === grantedReal.length;
+                            if (isAll) {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
+                                  ALL Workspaces
                                 </span>
-                              ))}
-                            </div>
-                          ) : acc.workspace_ids && acc.workspace_ids[0] === 'all' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
-                              ALL Workspaces
-                            </span>
-                          ) : (
-                            <span>{scopeLabels[acc.data_scope] || acc.data_scope}</span>
-                          )}
+                              );
+                            }
+                            if (acc.workspace_ids && acc.workspace_ids.length > 1) {
+                              // List stays clean — only the Chính (home)
+                              // Workspace shows here as a badge, with a small
+                              // "+N phụ" hint. Full Chính/Phụ management
+                              // (viewing/switching which one is primary)
+                              // lives in the Edit panel, not cluttering the
+                              // list row with every granted Workspace.
+                              const primaryEntry = acc.workspaces?.find(w => w.is_primary);
+                              const primaryCode = primaryEntry?.code || acc.workspace_ids[0];
+                              const secondaryCount = acc.workspace_ids.filter(c => c !== 'all').length - 1;
+                              return (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-600 text-white text-[10px] font-bold uppercase tracking-wider">
+                                    🏠 {scopeLabels[primaryCode] || primaryCode}
+                                  </span>
+                                  {secondaryCount > 0 && (
+                                    <span className="text-[10px] text-amber-600 font-semibold">+{secondaryCount} phụ</span>
+                                  )}
+                                </span>
+                              );
+                            }
+                            return <span>{scopeLabels[acc.data_scope] || acc.data_scope}</span>;
+                          })()}
                         </td>
                         <td className="px-4 py-3">
                           {acc.member ? (
@@ -594,6 +687,18 @@ export default function AccountsPage() {
               </button>
             </div>
             <form onSubmit={handleCreate} className="p-6 space-y-4 overflow-y-auto flex-1">
+              {createError && (
+                // Error banner — visible INSIDE the modal so the user does
+                // not have to close the form to read it. Stays open so the
+                // user can correct the data and resubmit.
+                <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-xs flex items-start gap-2 font-semibold shadow-sm">
+                  <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                  </svg>
+                  <span className="flex-1">{createError}</span>
+                  <button type="button" onClick={() => setCreateError(null)} className="text-red-400 hover:text-red-700 transition-colors" title="Đóng thông báo">✕</button>
+                </div>
+              )}
               {/* Member Selection */}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Liên kết thành viên (tùy chọn)</label>
@@ -677,7 +782,26 @@ export default function AccountsPage() {
                     placeholder="Chọn Workspace cho Team Leader..."
                     className="w-full"
                   />
+                ) : createForm.role === 'member' ? (
+                  // Multi-Workspace Member — same multi-select UX as Leader,
+                  // but the backend enforces Member permission level (no
+                  // Leader/Admin capability).
+                  <SearchableSelect
+                    label="Workspace"
+                    icon="🗂️"
+                    options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
+                    value={createForm.workspace_ids}
+                    onChange={(vals: string[]) => setCreateForm(f => ({
+                      ...f,
+                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
+                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
+                    }))}
+                    isMulti={true}
+                    placeholder="Chọn một hoặc nhiều Workspace cho Member..."
+                    className="w-full"
+                  />
                 ) : (
+                  // Viewer — single-Workspace dropdown (NO CHANGE per spec).
                   <select
                     value={createForm.data_scope}
                     onChange={e => setCreateForm(f => ({ ...f, data_scope: e.target.value }))}
@@ -688,12 +812,36 @@ export default function AccountsPage() {
                     ))}
                   </select>
                 )}
+                {(createForm.role === 'leader' || createForm.role === 'member') && createForm.workspace_ids.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Workspace chính:</span>
+                    {createForm.workspace_ids.map(code => {
+                      const ws = workspaces.find(w => w.code === code);
+                      const isPrimary = createForm.data_scope === code;
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          onClick={() => setCreateForm(f => ({ ...f, data_scope: code }))}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold transition-colors ${
+                            isPrimary ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-500 hover:border-indigo-300'
+                          }`}
+                          title={isPrimary ? `${ws?.name || code} đang là Workspace chính` : `Đặt ${ws?.name || code} làm Workspace chính`}
+                        >
+                          {isPrimary && '🏠 '}{ws?.name || code}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <p className="text-[10px] text-slate-400 italic">
                   {createForm.role === 'super_admin'
                     ? 'Super Admin truy cập tất cả Workspace — không cần chọn.'
                     : createForm.role === 'leader'
                       ? 'Chọn một hoặc nhiều Workspace. Chỉ Super Admin mới có thể thay đổi phạm vi này sau khi tạo.'
-                      : 'Member/Viewer chỉ thuộc một Workspace duy nhất.'}
+                      : createForm.role === 'member'
+                        ? 'Member có thể thuộc nhiều Workspace — quyền MEMBER vẫn được giữ nguyên.'
+                        : 'Viewer chỉ thuộc một Workspace duy nhất.'}
                 </p>
               </div>
 
@@ -734,6 +882,18 @@ export default function AccountsPage() {
               </button>
             </div>
             <form onSubmit={handleEdit} className="p-6 space-y-4 overflow-y-auto flex-1">
+              {editError && (
+                // Error banner — visible INSIDE the modal so the user does
+                // not have to close the form to read it. Stays open so the
+                // user can correct the data and resubmit.
+                <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-xs flex items-start gap-2 font-semibold shadow-sm">
+                  <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                  </svg>
+                  <span className="flex-1">{editError}</span>
+                  <button type="button" onClick={() => setEditError(null)} className="text-red-400 hover:text-red-700 transition-colors" title="Đóng thông báo">✕</button>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email</label>
                 <input
@@ -798,16 +958,41 @@ export default function AccountsPage() {
                     icon="🗂️"
                     options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
                     value={editForm.workspace_ids}
-                    onChange={(vals: string[]) => setEditForm(f => ({
-                      ...f,
-                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
-                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
-                    }))}
+                    onChange={(vals: string[]) => setEditForm(f => {
+                      const ids = Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean);
+                      // Adding/removing a Workspace never silently reassigns
+                      // Chính — new ones just join as Phụ. Only fall back to
+                      // the first code when there was no Chính chosen yet, or
+                      // the previous Chính got removed from the list.
+                      const dataScope = (f.data_scope && ids.includes(f.data_scope)) ? f.data_scope : (ids[0] || '');
+                      return { ...f, workspace_ids: ids, data_scope: dataScope };
+                    })}
                     isMulti={true}
                     placeholder="Chọn Workspace cho Team Leader..."
                     className="w-full"
                   />
+                ) : editForm.role === 'member' ? (
+                  // Multi-Workspace Member — same multi-select UX as Leader.
+                  <SearchableSelect
+                    label="Workspace"
+                    icon="🗂️"
+                    options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
+                    value={editForm.workspace_ids}
+                    onChange={(vals: string[]) => setEditForm(f => {
+                      const ids = Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean);
+                      // Adding/removing a Workspace never silently reassigns
+                      // Chính — new ones just join as Phụ. Only fall back to
+                      // the first code when there was no Chính chosen yet, or
+                      // the previous Chính got removed from the list.
+                      const dataScope = (f.data_scope && ids.includes(f.data_scope)) ? f.data_scope : (ids[0] || '');
+                      return { ...f, workspace_ids: ids, data_scope: dataScope };
+                    })}
+                    isMulti={true}
+                    placeholder="Chọn một hoặc nhiều Workspace cho Member..."
+                    className="w-full"
+                  />
                 ) : (
+                  // Viewer — single-Workspace dropdown (NO CHANGE per spec).
                   <select
                     value={editForm.data_scope}
                     onChange={e => setEditForm(f => ({ ...f, data_scope: e.target.value }))}
@@ -818,12 +1003,59 @@ export default function AccountsPage() {
                     ))}
                   </select>
                 )}
+                {(editForm.role === 'leader' || editForm.role === 'member') && editForm.workspace_ids.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Workspace chính:</span>
+                    {editForm.workspace_ids.map(code => {
+                      const ws = workspaces.find(w => w.code === code);
+                      const isPrimary = editForm.data_scope === code;
+                      const primaryIsCleared = !editForm.data_scope;
+                      if (isPrimary) {
+                        // Currently Chính — click removes it (must be cleared
+                        // before another Workspace can be picked, so this is
+                        // never an accidental one-click reassignment).
+                        return (
+                          <button
+                            key={code}
+                            type="button"
+                            onClick={() => setEditForm(f => ({ ...f, data_scope: '' }))}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold bg-indigo-600 text-white transition-colors"
+                            title={`Bỏ ${ws?.name || code} khỏi vị trí Workspace chính`}
+                          >
+                            🏠 {ws?.name || code} · ✕ Bỏ chính
+                          </button>
+                        );
+                      }
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          disabled={!primaryIsCleared}
+                          onClick={() => setEditForm(f => ({ ...f, data_scope: code }))}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold transition-colors ${
+                            primaryIsCleared
+                              ? 'bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-50'
+                              : 'bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed'
+                          }`}
+                          title={primaryIsCleared ? `Đặt ${ws?.name || code} làm Workspace chính` : 'Bỏ Workspace chính hiện tại trước'}
+                        >
+                          {ws?.name || code}
+                        </button>
+                      );
+                    })}
+                    {!editForm.data_scope && (
+                      <span className="text-[10px] text-amber-600 font-semibold">← chọn 1 cái để làm Chính</span>
+                    )}
+                  </div>
+                )}
                 <p className="text-[10px] text-slate-400 italic">
                   {editForm.role === 'super_admin'
                     ? 'Super Admin truy cập tất cả Workspace — không cần chọn.'
                     : editForm.role === 'leader'
                       ? 'Chỉ Super Admin mới có thể thay đổi phạm vi Workspace của Leader.'
-                      : 'Member/Viewer chỉ thuộc một Workspace duy nhất.'}
+                      : editForm.role === 'member'
+                        ? 'Member có thể thuộc nhiều Workspace — quyền MEMBER vẫn được giữ nguyên.'
+                        : 'Viewer chỉ thuộc một Workspace duy nhất.'}
                 </p>
               </div>
             </form>

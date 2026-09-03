@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, getEmail } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SearchableSelect from './common/SearchableSelect';
 import ProjectFormModal from './ProjectFormModal';
@@ -278,12 +278,18 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   }, [workspaces]);
 
   // Filter memoized
+  const myEmail = (getEmail() || '').toLowerCase();
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
       const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
-      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all');
+      // A project I'm explicitly assigned to always stays visible under the
+      // current Workspace tab, even if it belongs to a different Workspace
+      // (mirrors the membership-overrides-Workspace rule on the backend).
+      const isAssignedToMe = !!myEmail && Array.isArray(p.members) &&
+        p.members.some((m: any) => (m?.email || '').toLowerCase() === myEmail);
+      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all') || isAssignedToMe;
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
@@ -305,7 +311,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
       return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode, myEmail]);
 
   // Sort memoized
   const sorted = useMemo(() => {
@@ -525,7 +531,14 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                         )}
                       </div>
                     </div>
-                    <h3 className="text-base font-bold text-slate-800 mb-0.5 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <h3 className="text-base font-bold text-slate-800 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
+                      {p.business && (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded text-[9.5px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200" title={`Dự án thuộc Workspace ${p.business}`}>
+                          {p.business}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic flex items-center gap-1.5"><span className="not-italic text-sm">🏢</span> {p.customer_name || 'Chưa có khách hàng'}</p>
                     
                     <div className="grid grid-cols-2 gap-y-4 mb-3">

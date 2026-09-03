@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     CHECK_INTERVAL_SECONDS: int = 3600
     REDIS_URL: str = ""
 
+    # Google Sheet the n8n meeting-summary pipeline writes each meeting's parsed
+    # summary to (1 tab per meeting, tab name == ai_summary.n8n_metadata.sheet_row_id).
+    # Acts as a durable backup of that summary — "Đồng bộ" reads it back here
+    # before falling back to regenerating via the app's own AI call.
+    MEETING_SUMMARY_SHEET_ID: str = "12lhXE87vYPpYwXjT63f0GqBLJKSF49f5hwN5iJ0w4IY"
+
     # Zalo group daily digest — periodically summarizes each group's messages
     # since the last run into a ZaloConversationSummary row.
     ZALO_SUMMARY_ENABLED: bool = True

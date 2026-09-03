@@ -9,12 +9,27 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
-import { projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
-import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse } from '@/lib/api';
+import { projectStatusBadge, projectBarColor, getMondayToSundayRange, getWeekOfMonth, checkTaskInPeriod, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
+import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse, TeamComparisonProject } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
+function formatYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function SystemAuditTab() {
-  const [selectedMonth, setSelectedMonth] = useState('08/2026');
+  // ── Time-range filter (Requirement 2 — System Audit default = "This Week",
+  //    every section synchronises with it) ──
+  // Default seed matches Overview's `applyQuickFilter('Tuần này')` so both
+  // dashboards open to the exact same week context.
+  const initialNow = new Date();
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(initialNow.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>(initialNow.getMonth() + 1);
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>(getWeekOfMonth(initialNow));
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>('Tuần này');
   const [showAllProjects, setShowAllProjects] = useState(false);
 
   // System Audit Logs State
@@ -40,15 +55,36 @@ export default function SystemAuditTab() {
       const allTasksCombined = tasksRes.data || [];
       const masterPhases = masterPhasesRes.data || [];
 
+      // Apply the System Audit time filter at the data layer so the summary
+      // cards, project progress, phase distribution, projects-at-risk and
+      // member KPI distribution all reflect the selected week — same helper
+      // Overview already uses (Requirement 2 — "selected time range is
+      // applied at the correct data/query/calculation layer").
+      const isNoTimeFilter =
+        selectedYear === 'all' && selectedMonth === 'all' &&
+        selectedWeek === 'all' && !activeQuickFilter;
+      const tasksInPeriod = isNoTimeFilter
+        ? allTasksCombined
+        : allTasksCombined.filter((t: any) =>
+            checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)
+          );
+      const projectIdsInPeriod = new Set<string | number>(
+        tasksInPeriod.map((t: any) => t.project_id).filter((v: any) => v != null)
+      );
+
       // Calculate Dynamic Phase Distribution using Master Phases from Settings
       const phaseCounts: Record<string, number> = {};
-      
+
       // Initialize counts for all master phases defined in Settings
       masterPhases.forEach((mp: any) => {
         if (mp.name) phaseCounts[mp.name] = 0;
       });
 
       projects.forEach((p: any) => {
+        // Only count phases of projects that actually have tasks in the
+        // selected period (otherwise the chart would silently mix "all
+        // time" project lists with "this week" task numbers).
+        if (!isNoTimeFilter && !projectIdsInPeriod.has(p.id)) return;
         const ph = p.current_phase || (masterPhases[0]?.name || '1. Tư vấn');
         if (phaseCounts[ph] !== undefined) {
           phaseCounts[ph]++;
@@ -71,22 +107,28 @@ export default function SystemAuditTab() {
 
       let allDone = 0, allInProg = 0, allOverdue = 0, allTasksCount = 0;
       const pRisk: any[] = [];
-      
+
       const allProjectsProgressList = projects.map((p: any) => {
         const tasks = allTasksCombined.filter((t: any) => String(t.project_id) === String(p.id));
-        allTasksCount += tasks.length;
-        
+        // Use only the in-period tasks for the displayed numbers.
+        const tasksShown = isNoTimeFilter
+          ? tasks
+          : tasks.filter((t: any) =>
+              checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)
+            );
+        allTasksCount += tasksShown.length;
+
         let pDone = 0, pOverdue = 0;
-        tasks.forEach((t: any) => {
+        tasksShown.forEach((t: any) => {
           if (t.status === 'Done' || t.status === 'done') { pDone++; allDone++; }
           else {
             allInProg++;
             if (t.days_late > 0) { pOverdue++; allOverdue++; }
           }
         });
-        
-        const prog = tasks.length > 0 ? Math.round((pDone / tasks.length) * 100) : 0;
-        
+
+        const prog = tasksShown.length > 0 ? Math.round((pDone / tasksShown.length) * 100) : 0;
+
         if (pOverdue > 0) {
           pRisk.push({
             id: p.id,
@@ -98,10 +140,10 @@ export default function SystemAuditTab() {
         }
 
         const hasPM = Boolean(p.pm_name || p.pm || p.pm_id || p.manager || p.project_manager || p.leader_name || p.owner || p.user_id || p.leader_id);
-        const hasTasks = tasks.length > 0;
+        const hasTasks = tasksShown.length > 0;
         const isDisplayable = hasTasks || hasPM;
-        
-        return { id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn', progress: prog, totalTasks: tasks.length, doneTasks: pDone, isDisplayable };
+
+        return { id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn', progress: prog, totalTasks: tasksShown.length, doneTasks: pDone, isDisplayable };
       });
 
       const sortedProjects = allProjectsProgressList.filter((p: any) => p.isDisplayable).sort((a: any, b: any) => b.progress - a.progress);
@@ -112,7 +154,7 @@ export default function SystemAuditTab() {
       const list = membersRes.data || [];
       const infra: any[] = [];
       const markee: any[] = [];
-      
+
       list.forEach((m: any) => {
         const item = {
           name: m.full_name || m.display_name || 'No Name',
@@ -152,7 +194,7 @@ export default function SystemAuditTab() {
         auditLogs: logs,
         auditTotal: total,
       };
-  }, [auditPage, auditModule]);
+  }, [auditPage, auditModule, selectedYear, selectedMonth, selectedWeek, activeQuickFilter]);
 
   const { data: auditData, isFetching: loading, refetch } = useQuery({
     queryKey: ['dashboard-system-audit', auditPage, auditModule],
@@ -202,13 +244,63 @@ export default function SystemAuditTab() {
     return w?.name || sharedWorkspaceCode;
   }, [sharedWorkspaceCode, workspacesData]);
 
+  // Time-range window for backend queries (start_date / end_date as
+  // YYYY-MM-DD). We forward these to the team-comparison / team-detail
+  // endpoints so Section 2 / 3 / 4 KPIs (Plan MD, Actual MD, Utilization,
+  // Efficiency, On-time, Overdue, per-project progress / timeline / health)
+  // are computed at the SQL layer for the selected window — never after
+  // aggregation. When the time filter is "all" we omit both parameters
+  // so the original (lifetime) behaviour is preserved.
+  const timeWindow = useMemo(() => {
+    if (activeQuickFilter === 'Tuần này') {
+      const r = getMondayToSundayRange(new Date());
+      return { start_date: formatYMD(r.monday), end_date: formatYMD(r.sunday) };
+    }
+    if (activeQuickFilter === 'Tuần trước') {
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      const r = getMondayToSundayRange(d);
+      return { start_date: formatYMD(r.monday), end_date: formatYMD(r.sunday) };
+    }
+    if (activeQuickFilter === 'Tuần tới') {
+      const d = new Date();
+      d.setDate(d.getDate() + 7);
+      const r = getMondayToSundayRange(d);
+      return { start_date: formatYMD(r.monday), end_date: formatYMD(r.sunday) };
+    }
+    if (typeof selectedMonth === 'number') {
+      const cycle = CYCLE_TEMPLATE[selectedMonth];
+      const yr = typeof selectedYear === 'number' ? selectedYear : new Date().getFullYear();
+      if (cycle) {
+        const s = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+        const e = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+        return { start_date: formatYMD(s), end_date: formatYMD(e) };
+      }
+      // Plain calendar month fallback
+      const s = new Date(yr, selectedMonth - 1, 1);
+      const e = new Date(yr, selectedMonth, 0);
+      return { start_date: formatYMD(s), end_date: formatYMD(e) };
+    }
+    if (typeof selectedYear === 'number') {
+      return {
+        start_date: `${selectedYear}-01-01`,
+        end_date: `${selectedYear}-12-31`,
+      };
+    }
+    return {} as { start_date?: string; end_date?: string };
+  }, [selectedYear, selectedMonth, activeQuickFilter]);
+
   const {
     data: teamComparison,
     isFetching: teamComparisonLoading,
     refetch: refetchTeamComparison,
   } = useQuery<TeamComparisonResponse>({
-    queryKey: ['system-audit-team-comparison', teamWsParam || 'all'],
-    queryFn: () => getTeamComparison({ workspace: teamWsParam }),
+    queryKey: ['system-audit-team-comparison', teamWsParam || 'all', timeWindow.start_date || '', timeWindow.end_date || ''],
+    queryFn: () => getTeamComparison({
+      workspace: teamWsParam,
+      start_date: timeWindow.start_date,
+      end_date: timeWindow.end_date,
+    }),
     staleTime: 60_000,
   });
   const teamComparisonData: TeamComparisonResponse | null = teamComparison || null;
@@ -232,7 +324,10 @@ export default function SystemAuditTab() {
   const openTeamDetail = useCallback(async (leaderUserId: number) => {
     setDetailLoading(true);
     try {
-      const res = await getTeamDetail(leaderUserId);
+      const res = await getTeamDetail(leaderUserId, {
+        start_date: timeWindow.start_date,
+        end_date: timeWindow.end_date,
+      });
       setDetailTeam(res.team);
     } catch (err) {
       console.error('Failed to load team detail', err);
@@ -240,7 +335,7 @@ export default function SystemAuditTab() {
     } finally {
       setDetailLoading(false);
     }
-  }, []);
+  }, [timeWindow.start_date, timeWindow.end_date]);
   const closeTeamDetail = useCallback(() => setDetailTeam(null), []);
 
   // Helpers — keep the helpers tiny and the same shape as the existing
@@ -261,6 +356,31 @@ export default function SystemAuditTab() {
     return h || '—';
   };
 
+  // Mirror Overview's `applyQuickFilter` shortcut — keeps the two dashboards
+  // speaking the same vocabulary (Requirement 2: same time-range state
+  // semantics as Overview).
+  const applyQuickFilter = (type: string) => {
+    setActiveQuickFilter(type);
+    const now = new Date();
+    if (type === 'Tuần trước') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tuần này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek(getWeekOfMonth(now));
+    } else if (type === 'Tuần tới') {
+      const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tháng trước') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng tới') {
+      const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    }
+  };
+
   const superAdminCards = [
     { label: 'Tổng Số Dự Án',      value: activeProjectsProgress.length, icon: 'project',   border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Toàn hệ thống' },
     { label: 'Tổng Task Hệ Thống', value: taskStats.total,              icon: 'tasks',     border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Tất cả dự án' },
@@ -278,21 +398,65 @@ export default function SystemAuditTab() {
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">System Audit & Super Admin Control Panel</h3>
           {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật dữ liệu hệ thống...</span>}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
             <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
-              <span className="text-slate-500">Tháng:</span>
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
-              >
-                <option value="08/2026">08/2026</option>
-                <option value="07/2026">07/2026</option>
-                <option value="06/2026">06/2026</option>
-              </select>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Năm:</span>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tất cả</option>
+                  {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+                </select>
+              </div>
+              <div className="w-px h-4 bg-slate-200 self-center"></div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Tháng:</span>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tất cả</option>
+                  {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                </select>
+              </div>
+              <div className="w-px h-4 bg-slate-200 self-center"></div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Tuần:</span>
+                <select
+                  value={selectedWeek}
+                  onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tất cả</option>
+                  {[...Array(5)].map((_, i) => (
+                    <option key={i + 1} value={i + 1}>{i + 1}</option>
+                  ))}
+                </select>
+              </div>
             </div>
+          </div>
+
+          {/* SHORTCUT FILTER BUTTONS — identical wording to Overview so the
+              Super Admin gets the exact same quick filters. */}
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {['Tuần trước', 'Tuần này', 'Tuần tới', 'Tháng trước', 'Tháng này', 'Tháng tới'].map(label => (
+              <button
+                key={label}
+                onClick={() => applyQuickFilter(label)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm active:scale-95 ${activeQuickFilter === label
+                    ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
+                    : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
+                  }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <button
@@ -552,91 +716,119 @@ export default function SystemAuditTab() {
           )}
         </div>
 
-        <div className="p-5 space-y-5">
+        <div className="p-5">
           {appliedLeaderIds.length === 0 ? (
             <p className="text-xs text-slate-400 italic text-center py-6">
               Chọn ít nhất một Leader rồi bấm "Apply Comparison" để xem so sánh project.
             </p>
           ) : (
-            appliedLeaderIds
-              .map(id => teamsList.find(t => t.leader_user_id === id))
-              .filter((t): t is TeamComparisonTeam => Boolean(t))
-              .map(t => (
-                <div key={t.leader_user_id} className="border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">
-                        {t.leader_name}
-                      </h4>
-                      <p className="text-[10px] text-slate-500 mt-0.5">
-                        Leader: <strong>{t.leader_name}</strong> • {t.member_count} thành viên • Workspace: {t.workspace}
-                      </p>
+            // ── Requirement 3 — Section 3 redesign ──
+            // Each selected Team becomes ONE comparison column. The row
+            // scrolls horizontally when there are more teams than fit on
+            // screen (xl = 2 columns, lg = 1). Inside each column, list that
+            // team's projects vertically, capped at the 4 newest projects
+            // (sorted by project_id desc — the project's auto-increment PK
+            // is the existing ordering field that mirrors creation order,
+            // so we reuse it instead of inventing a new "newest" rule).
+            <div className="flex gap-4 overflow-x-auto pb-3 custom-scrollbar">
+              {appliedLeaderIds
+                .map(id => teamsList.find(t => t.leader_user_id === id))
+                .filter((t): t is TeamComparisonTeam => Boolean(t))
+                .map(t => {
+                  const newestProjects: TeamComparisonProject[] = [...(t.projects || [])]
+                    .sort((a, b) => Number(b.project_id) - Number(a.project_id))
+                    .slice(0, 4);
+                  return (
+                    <div
+                      key={t.leader_user_id}
+                      className="border border-slate-200 rounded-xl overflow-hidden bg-white shrink-0 w-[340px] xl:w-[calc((100%-1rem)/2)]"
+                    >
+                      {/* Column header: Leader / Workspace / counts / health */}
+                      <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60">
+                        <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider truncate" title={t.leader_name}>
+                          {t.leader_name}
+                        </h4>
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                          Leader: <strong>{t.leader_name}</strong>
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                          Workspace: <strong className="text-slate-700">{t.workspace || '—'}</strong>
+                        </p>
+                        <div className="flex items-center gap-2 text-[10px] font-bold mt-2">
+                          <span className="px-2 py-0.5 rounded-full bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20">
+                            {t.projects.length} Projects
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full border ${healthBadge(t.health)}`}>
+                            {healthLabel(t.health)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Project list (vertical) — max 4 newest projects */}
+                      <div className="p-4 space-y-3 max-h-[640px] overflow-y-auto custom-scrollbar">
+                        {newestProjects.length === 0 ? (
+                          <p className="text-xs text-slate-400 italic text-center py-6">
+                            Team này chưa có Project nào trong kỳ đang xem.
+                          </p>
+                        ) : (
+                          newestProjects.map(p => (
+                            <Link
+                              key={p.project_id}
+                              href={`/project/detail/overview?id=${p.project_id}`}
+                              className="block p-3.5 bg-white border border-slate-200 rounded-xl hover:border-[#0058be]/40 hover:shadow-md transition-all"
+                            >
+                              <div className="flex items-center justify-between mb-2 gap-2">
+                                <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</span>
+                                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
+                                  {p.status || '—'}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 mb-2">
+                                Giai đoạn: <strong className="text-slate-700">{p.current_phase || '—'}</strong>
+                              </div>
+                              <ProgressBar value={p.progress_pct} color={projectBarColor[p.status || ''] || 'bg-blue-500'} height="h-2" />
+                              <div className="grid grid-cols-2 gap-2 mt-2.5 text-[10px]">
+                                <div>
+                                  <span className="text-slate-400 block">Progress</span>
+                                  <span className="font-extrabold text-[#0058be]">{p.progress_pct.toFixed(0)}%</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block">Timeline</span>
+                                  <span className="font-extrabold text-slate-700">{p.timeline_pct.toFixed(0)}%</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block">Task</span>
+                                  <span className="font-bold text-slate-700">{p.done}/{p.total}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block">Trễ</span>
+                                  <span className={`font-bold ${p.overdue > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{p.overdue}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block">MD</span>
+                                  <span className="font-bold text-slate-700">{p.manday_actual.toFixed(1)}/{p.manday_est.toFixed(1)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block">Health</span>
+                                  <span className={`font-bold ${p.health === 'Critical' ? 'text-rose-600' : p.health === 'Risk' ? 'text-amber-600' : p.health === 'On Track' ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                    {p.health}
+                                  </span>
+                                </div>
+                              </div>
+                            </Link>
+                          ))
+                        )}
+                        {/* Show total project count when capped at 4 newest */}
+                        {t.projects.length > newestProjects.length && (
+                          <p className="text-[10px] text-slate-400 italic text-center pt-2 border-t border-slate-100">
+                            Hiển thị {newestProjects.length} / {t.projects.length} project mới nhất trong kỳ
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] font-bold">
-                      <span className="px-2 py-0.5 rounded-full bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20">
-                        {t.projects.length} Projects
-                      </span>
-                      <span className={`px-2 py-0.5 rounded-full border ${healthBadge(t.health)}`}>
-                        {healthLabel(t.health)}
-                      </span>
-                    </div>
-                  </div>
-                  {t.projects.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic text-center py-6">
-                      Team này chưa có Project nào được giao.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
-                      {t.projects.map(p => (
-                        <Link
-                          key={p.project_id}
-                          href={`/project/detail/overview?id=${p.project_id}`}
-                          className="block p-3.5 bg-white border border-slate-200 rounded-xl hover:border-[#0058be]/40 hover:shadow-md transition-all"
-                        >
-                          <div className="flex items-center justify-between mb-2 gap-2">
-                            <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</span>
-                            <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
-                              {p.status || '—'}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-500 mb-2">
-                            Giai đoạn: <strong className="text-slate-700">{p.current_phase || '—'}</strong>
-                          </div>
-                          <ProgressBar value={p.progress_pct} color={projectBarColor[p.status || ''] || 'bg-blue-500'} height="h-2" />
-                          <div className="grid grid-cols-2 gap-2 mt-2.5 text-[10px]">
-                            <div>
-                              <span className="text-slate-400 block">Progress</span>
-                              <span className="font-extrabold text-[#0058be]">{p.progress_pct.toFixed(0)}%</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 block">Timeline</span>
-                              <span className="font-extrabold text-slate-700">{p.timeline_pct.toFixed(0)}%</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 block">Task</span>
-                              <span className="font-bold text-slate-700">{p.done}/{p.total}</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 block">Trễ</span>
-                              <span className={`font-bold ${p.overdue > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{p.overdue}</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 block">MD</span>
-                              <span className="font-bold text-slate-700">{p.manday_actual.toFixed(1)}/{p.manday_est.toFixed(1)}</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 block">Health</span>
-                              <span className={`font-bold ${p.health === 'Critical' ? 'text-rose-600' : p.health === 'Risk' ? 'text-amber-600' : p.health === 'On Track' ? 'text-emerald-600' : 'text-slate-500'}`}>
-                                {p.health}
-                              </span>
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))
+                  );
+                })}
+            </div>
           )}
         </div>
       </div>

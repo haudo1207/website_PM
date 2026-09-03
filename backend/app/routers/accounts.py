@@ -110,7 +110,9 @@ def _target_allowed_scopes(db: Session, target: User):
     return codes or ({base_scope} if base_scope else set())
 
 
-def _apply_user_workspace_access(db: Session, user: User, workspace_ids: list, *, caller: User | None = None) -> None:
+def _apply_user_workspace_access(
+    db: Session, user: User, workspace_ids: list, *, caller: User | None = None, primary_code: str | None = None,
+) -> None:
     """Replace the user's `user_workspace_access` rows with the given list
     of Workspace codes. Validates each code against the master table and
     against the caller's authorized scopes (so a Leader can never grant a
@@ -118,8 +120,12 @@ def _apply_user_workspace_access(db: Session, user: User, workspace_ids: list, *
     manage). Preserves the existing single-Workspace behavior when only
     one code is supplied.
 
-    `data_scope` is updated to the first code in the list (so all
-    legacy single-column code paths continue to work).
+    `primary_code` marks which of the granted codes is the "home"/Chính
+    Workspace (is_primary=True); defaults to the first code when omitted
+    or when it isn't actually in the granted list, matching the original
+    "first granted == primary" convention. `data_scope` is kept in sync
+    with whichever code ends up primary (so all legacy single-column code
+    paths continue to work).
     """
     if not workspace_ids:
         return
@@ -142,13 +148,31 @@ def _apply_user_workspace_access(db: Session, user: User, workspace_ids: list, *
                     raise HTTPException(403, f"Leader không có quyền gán Workspace '{code}' ngoài phạm vi của mình.")
 
     # Replace junction rows.
+    #
+    # The delete-then-insert sequence below is the entire fix for the
+    # "Cannot update because data already exists/duplicate data" error that
+    # surfaced when a Leader/Super Admin edited a Member's Workspace
+    # selection: without an explicit flush between DELETE and INSERT,
+    # SQLAlchemy's unit-of-work flushes both in the same transaction and
+    # the INSERT can run *before* the DELETE in some adapter orderings.
+    # That trips the `(user_id, workspace_id)` UNIQUE constraint on
+    # `user_workspace_access` and raises an `IntegrityError` that the
+    # caller saw as the misleading "data already exists" message.
+    #
+    # Flushing after the DELETE forces the database to remove the old rows
+    # synchronously so the subsequent INSERTs see a clean slate and the
+    # constraint is satisfied.
     db.query(UserWorkspaceAccess).filter(UserWorkspaceAccess.user_id == user.id).delete(synchronize_session=False)
+    db.flush()
+    primary = str(primary_code or "").strip().lower()
+    if primary not in normalized:
+        primary = normalized[0]
     for code in normalized:
         ws = resolve_workspace_by_code(db, code)
         if ws:
-            db.add(UserWorkspaceAccess(user_id=user.id, workspace_id=ws.id))
-    # Keep legacy single column in sync (first granted workspace).
-    user.data_scope = normalized[0]
+            db.add(UserWorkspaceAccess(user_id=user.id, workspace_id=ws.id, is_primary=(code == primary)))
+    # Keep legacy single column in sync with whichever code is primary.
+    user.data_scope = primary
 
 
 def resolve_workspace_by_code(db: Session, code: str):
@@ -184,32 +208,45 @@ def account_to_dict(u: User, db: Session | None = None) -> dict:
             "department": member.department,
         }
 
-    # Surface the full Workspace grant list for Leader accounts (multi-Workspace
-    # support) — additive to the legacy single `data_scope` column. For Super
-    # Admins the list contains every active Workspace, and `workspace_scope`
-    # is reported as ALL_SCOPE so the UI knows to skip the Workspace selector.
+    # Surface the full Workspace grant list (multi-Workspace support for both
+    # Leader and Member) — additive to the legacy single `data_scope` column.
+    # For Super Admins the list contains every active Workspace, and
+    # `workspace_scope` is reported as ALL_SCOPE so the UI knows to skip the
+    # Workspace selector.
     workspace_ids: list[str] = []
     workspaces: list[dict] = []
     if db is not None:
         if getattr(u, "role", None) == ROLE_SUPER_ADMIN or (getattr(u, "data_scope", None) or "").strip().lower() == ALL_SCOPE:
             workspace_ids = [ALL_SCOPE]
             for w in db.query(Workspace).order_by(Workspace.id.asc()).all():
-                workspaces.append({"id": w.id, "code": w.code, "name": w.name})
+                # Super Admin has no "home" Workspace — the Chính/Phụ
+                # distinction is only meaningful for Leader/Member.
+                workspaces.append({"id": w.id, "code": w.code, "name": w.name, "is_primary": False})
         else:
             rows = (
-                db.query(Workspace)
+                db.query(Workspace, UserWorkspaceAccess.is_primary)
                 .join(UserWorkspaceAccess, UserWorkspaceAccess.workspace_id == Workspace.id)
                 .filter(UserWorkspaceAccess.user_id == u.id)
-                .order_by(Workspace.id.asc())
+                .order_by(UserWorkspaceAccess.is_primary.desc(), Workspace.id.asc())
                 .all()
             )
-            workspace_ids = [w.code for w in rows]
-            workspaces = [{"id": w.id, "code": w.code, "name": w.name} for w in rows]
+            workspace_ids = [w.code for w, _ in rows]
+            workspaces = [{"id": w.id, "code": w.code, "name": w.name, "is_primary": bool(is_primary)} for w, is_primary in rows]
             if not workspace_ids and getattr(u, "data_scope", None):
                 # Defensive fallback for users that have not yet been
                 # backfilled into `user_workspace_access` — keep them visible
                 # as a single-Workspace grant so the UI doesn't drop them.
                 workspace_ids = [(u.data_scope or "").strip().lower()]
+
+    # NOTE: We deliberately do NOT collapse the list to a single `[ALL_SCOPE]`
+    # sentinel for non-Super-Admin accounts, even when every Workspace in
+    # the master is granted. Returning the actual junction codes preserves the
+    # full grant set, which is required for the Edit Account form to
+    # re-populate correctly (the UI detects "ALL WORKSPACES" itself by
+    # comparing `workspace_ids` length with the Workspace master length).
+    # The previous destructive normalization lost information on reopen and
+    # silently downgraded multi-Workspace accounts back to a single
+    # Workspace on the next save.
 
     workspace_scope = ALL_SCOPE if getattr(u, "role", None) == ROLE_SUPER_ADMIN else (
         workspace_ids[0] if workspace_ids else (u.data_scope or "")
@@ -294,8 +331,14 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
 
     # ── Workspace scope validation per role ──────────────────────
     #  Super Admin → Workspace = ALL (no dropdown, no individual codes).
-    #  Leader (only creatable by Super Admin) → multi-Workspace list.
-    #  Member/Viewer → exactly ONE Workspace (existing behavior).
+    #  Leader (only creatable by Super Admin) → multi-Workspace list,
+    #    must have at least one.
+    #  Member → multi-Workspace list (Requirement: extend Member scope);
+    #    falls back to the single `data_scope` for legacy callers.
+    #  Viewer → NO CHANGE — exactly one Workspace (single `data_scope`).
+    # Role-specific workspace_ids resolved once, reused for the junction
+    # write below so create stays atomic.
+    resolved_workspace_ids: list[str] = []
     if role == ROLE_SUPER_ADMIN:
         data_scope = ALL_SCOPE
         if raw_workspace_ids:
@@ -318,23 +361,42 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
                 raise HTTPException(400, f"Workspace không hợp lệ: '{code}'.")
         # First code becomes the legacy single-column data_scope.
         data_scope = ids[0]
-    else:  # ROLE_MEMBER / ROLE_VIEWER — exactly one Workspace.
+        resolved_workspace_ids = ids
+    elif role == ROLE_MEMBER:
+        # Multi-Workspace Member — same authoritative workspace_ids list as
+        # Leader. Permission model is unchanged (still MEMBER); only the
+        # data scope expands to the union of granted Workspaces.
+        if isinstance(raw_workspace_ids, list) and raw_workspace_ids:
+            ids = [str(x).strip().lower() for x in raw_workspace_ids if str(x or "").strip()]
+        else:
+            ids = [data_scope] if data_scope else []
+        if not ids:
+            raise HTTPException(400, "Member phải có ít nhất một Workspace.")
+        for code in ids:
+            if not is_valid_scope(db, code):
+                raise HTTPException(400, f"Workspace không hợp lệ: '{code}'.")
+        data_scope = ids[0]
+        resolved_workspace_ids = ids
+    else:  # ROLE_VIEWER — existing single-Workspace behavior, NO CHANGE.
         if not is_valid_scope(db, data_scope):
             raise HTTPException(400, f"Phạm vi dữ liệu không hợp lệ. Chọn một trong: {sorted(valid_data_scopes(db))}")
         if raw_workspace_ids:
-            # Member/Viewer may only ever have one Workspace; ignore any
-            # additional ones rather than rejecting, so a shared client form
-            # cannot accidentally grant excess access.
+            # Viewer may only ever have one Workspace; ignore any additional
+            # ones rather than rejecting, so a shared client form cannot
+            # accidentally grant excess access.
             pass
 
     _ensure_leader_allowed_role(caller, role)
     if caller.role == ROLE_LEADER:
         # A Leader may only create accounts inside their own Workspace(s);
-        # the assigned Workspace is authoritative and cannot be overridden
-        # through the request body.
+        # every assigned Workspace for the new account must lie inside the
+        # caller's authorized scope (single or multi).
         scopes = user_allowed_scopes(db, caller)
-        if scopes != ALL_SCOPE and data_scope not in scopes:
-            raise HTTPException(403, "Leader chỉ được tạo tài khoản trong Workspace của mình.")
+        if scopes != ALL_SCOPE:
+            granted = resolved_workspace_ids or [data_scope]
+            for code in granted:
+                if code not in scopes:
+                    raise HTTPException(403, "Leader chỉ được tạo tài khoản trong Workspace của mình.")
 
     if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(400, "Email đã tồn tại.")
@@ -370,13 +432,13 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
         raise HTTPException(400, "Email hoặc thành viên liên kết đã được sử dụng.")
     db.refresh(account)
 
-    # Persist multi-Workspace grant for Leaders (and keep `data_scope` in sync
-    # as the first granted code). Super Admins skip this — `data_scope='all'`
-    # alone is enough for the bypass everywhere. Member/Viewer skip it — their
-    # single `data_scope` row continues to drive scoping.
-    if role == ROLE_LEADER:
-        ids = raw_workspace_ids if (isinstance(raw_workspace_ids, list) and raw_workspace_ids) else [data_scope]
-        _apply_user_workspace_access(db, account, ids, caller=caller)
+    # Persist multi-Workspace grants for Leader and Member. Super Admin
+    # skips — `data_scope='all'` is the bypass everywhere. Viewer keeps its
+    # single `data_scope` row only.
+    if role in (ROLE_LEADER, ROLE_MEMBER):
+        ids = resolved_workspace_ids or [data_scope]
+        primary_code = str(body.get("primary_workspace_code") or "").strip().lower() or None
+        _apply_user_workspace_access(db, account, ids, caller=caller, primary_code=primary_code)
         db.commit()
         db.refresh(account)
 
@@ -489,24 +551,31 @@ def update_account(
         # `data_scope` is supplied we keep the junction in sync so existing
         # single-Workspace Leaders continue to behave as before.
         if account.role in {ROLE_MEMBER, ROLE_VIEWER}:
+            # IMPORTANT: when the body carries both `data_scope` and
+            # `workspace_ids`, the `workspace_ids` branch below is the
+            # single source of truth for the junction — calling
+            # `_apply_user_workspace_access` here would queue a second set
+            # of INSERT objects in the same unit-of-work. The flush at
+            # commit time batches all INSERTs together, and because the
+            # two calls share codes (e.g. `data_scope='infra'` plus
+            # `workspace_ids=['infra','dev']`) the batched INSERT includes
+            # the duplicate `(user_id, workspace_id)=(X, 1)` twice and
+            # trips `uq_user_workspace` — caught by the generic
+            # IntegrityError handler as the misleading
+            # "Không thể cập nhật do dữ liệu bị trùng." message.
+            # Defer to the `workspace_ids` branch when both fields are set.
             account.data_scope = data_scope
-            # Drop any extra junction rows the account may have accumulated
-            # from a previous Leader role, keeping only the single assigned
-            # code. Defensive — normally none exist.
-            _apply_user_workspace_access(db, account, [data_scope], caller=caller)
+            if "workspace_ids" not in body:
+                _apply_user_workspace_access(db, account, [data_scope], caller=caller)
         else:
             account.data_scope = data_scope
 
-    # Multi-Workspace grant for Leader (and Leader-only). Accept either an
-    # explicit `workspace_ids` list or fall back to the legacy single
-    # `data_scope` row (kept for backwards compatibility).
+    # Multi-Workspace grant for Leader and Member. Accept either an explicit
+    # `workspace_ids` list or fall back to the legacy single `data_scope` row
+    # (kept for backwards compatibility). Viewer keeps single-Workspace
+    # behavior (no junction write).
     if "workspace_ids" in body:
-        if account.role != ROLE_LEADER:
-            # Member/Viewer: must not be granted multi-Workspace access.
-            # Silently coerce to the single data_scope rather than 400-ing so
-            # a shared client form does not surface an error after role flip.
-            ids = []
-        else:
+        if account.role == ROLE_LEADER:
             if caller.role != ROLE_SUPER_ADMIN:
                 # A Leader must NEVER be able to grant/revoke Leader Workspace
                 # scope (spec REQUIREMENT 5). Even if the caller is a Leader
@@ -532,11 +601,48 @@ def update_account(
             for code in ids:
                 if not is_valid_scope(db, code):
                     raise HTTPException(400, f"Workspace không hợp lệ: '{code}'.")
-        if account.role == ROLE_LEADER:
-            _apply_user_workspace_access(db, account, ids, caller=caller)
-            # Keep data_scope consistent with the first granted code.
-            if ids:
-                account.data_scope = ids[0]
+            primary_code = str(body.get("primary_workspace_code") or "").strip().lower() or None
+            _apply_user_workspace_access(db, account, ids, caller=caller, primary_code=primary_code)
+            # data_scope was already synced to the resolved primary code
+            # inside _apply_user_workspace_access.
+        elif account.role == ROLE_MEMBER:
+            # Same multi-Workspace list as create — Member permission level
+            # is preserved, scope only expands. A Leader caller may only
+            # assign Workspaces inside their own authorized scope.
+            raw = body.get("workspace_ids")
+            if isinstance(raw, list) and raw:
+                ids = [str(x).strip().lower() for x in raw if str(x or "").strip()]
+            else:
+                ids = [(account.data_scope or "").strip().lower()]
+            if not ids:
+                raise HTTPException(400, "Member phải có ít nhất một Workspace.")
+            for code in ids:
+                if not is_valid_scope(db, code):
+                    raise HTTPException(400, f"Workspace không hợp lệ: '{code}'.")
+            if caller.role == ROLE_LEADER:
+                scopes = user_allowed_scopes(db, caller)
+                if scopes != ALL_SCOPE:
+                    for code in ids:
+                        if code not in scopes:
+                            raise HTTPException(403, "Leader chỉ được gán Workspace trong phạm vi của mình.")
+            primary_code = str(body.get("primary_workspace_code") or "").strip().lower() or None
+            _apply_user_workspace_access(db, account, ids, caller=caller, primary_code=primary_code)
+            # data_scope was already synced to the resolved primary code
+            # inside _apply_user_workspace_access.
+        else:
+            # Viewer / Super Admin: must not be granted multi-Workspace
+            # access. Silently coerce to the single data_scope rather than
+            # 400-ing so a shared client form does not surface an error
+            # after a role flip.
+            pass
+
+    # When `data_scope` alone is sent (legacy / single-Workspace path), keep
+    # the junction table in sync for Leader and Member too — so existing
+    # single-Workspace accounts continue to behave as before and the
+    # junction is never out-of-sync with `data_scope`.
+    if "data_scope" in body and "workspace_ids" not in body:
+        if account.role == ROLE_LEADER or account.role == ROLE_MEMBER:
+            _apply_user_workspace_access(db, account, [account.data_scope], caller=caller)
 
     try:
         db.commit()
@@ -558,6 +664,46 @@ def update_account(
             target_user_id=account.id, field_name="role", old_value=old_role, new_value=account.role,
             description=f"Đổi role tài khoản '{account.email}': '{old_role}' → '{account.role}'"
         )
+    db.commit()
+    return account_to_dict(account, db)
+
+
+@router.post("/{account_id}/primary-workspace")
+def set_primary_workspace(account_id: int, body: dict, db: Session = Depends(get_db), caller=Depends(require_manager)):
+    """Re-designate which of an account's already-granted Workspaces is
+    "Chính" (primary), without touching the grant list itself — the
+    lightweight counterpart to re-submitting `workspace_ids` on PUT
+    /accounts/{id} just to flip which one is primary."""
+    account = require_account(db, account_id)
+    _leader_guard(caller, account, "đổi Workspace chính")
+    _leader_scope_guard(db, caller, account)
+    if account.role not in (ROLE_LEADER, ROLE_MEMBER):
+        raise HTTPException(400, "Chỉ Leader/Member mới có khái niệm Workspace Chính/Phụ.")
+
+    code = str(body.get("workspace_code") or "").strip().lower()
+    if not code:
+        raise HTTPException(400, "Thiếu workspace_code.")
+
+    ws = resolve_workspace_by_code(db, code)
+    if not ws:
+        raise HTTPException(400, f"Workspace không hợp lệ: '{code}'.")
+    rows = db.query(UserWorkspaceAccess).filter(UserWorkspaceAccess.user_id == account.id).all()
+    target = next((r for r in rows if r.workspace_id == ws.id), None)
+    if not target:
+        raise HTTPException(400, f"Tài khoản chưa được gán Workspace '{code}'.")
+
+    for r in rows:
+        r.is_primary = (r.id == target.id)
+    account.data_scope = code
+    db.commit()
+    db.refresh(account)
+
+    AuditService.record(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=account.id, action="SET_PRIMARY_WORKSPACE", resource_name=account.email,
+        target_user_id=account.id,
+        description=f"Đặt Workspace chính cho '{account.email}' thành '{code}'"
+    )
     db.commit()
     return account_to_dict(account, db)
 

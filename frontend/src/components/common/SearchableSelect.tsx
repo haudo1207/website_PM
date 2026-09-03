@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 
 export interface SelectOptionItem {
   id: string | number;
@@ -27,6 +27,13 @@ export interface SearchableSelectProps {
   // Opt-in initials avatar next to each dropdown row — for people lists
   // (members/assignees), not generic option lists (channels, skills...).
   showAvatar?: boolean;
+}
+
+// Lets a parent trigger the dropdown open programmatically — e.g. a
+// standalone "+ Thêm người" button next to a members picker, instead of
+// requiring the user to click the picker's own trigger button.
+export interface SearchableSelectHandle {
+  open: () => void;
 }
 
 export const DEFAULT_SEARCH_THRESHOLD = 8;
@@ -93,7 +100,7 @@ function useDebounce<T>(val: T, delay: number = 200): T {
   return debouncedVal;
 }
 
-export default function SearchableSelect({
+const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProps>(function SearchableSelect({
   label,
   icon = '🔍',
   options,
@@ -106,7 +113,7 @@ export default function SearchableSelect({
   align = 'left',
   className = '',
   showAvatar = false
-}: SearchableSelectProps) {
+}, ref) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -116,6 +123,10 @@ export default function SearchableSelect({
 
   // Debounced search query (200ms)
   const debouncedSearch = useDebounce(search, 200);
+
+  useImperativeHandle(ref, () => ({
+    open: () => { if (!disabled) setOpen(true); }
+  }), [disabled]);
 
   // Close popup when clicking outside
   useEffect(() => {
@@ -362,7 +373,7 @@ export default function SearchableSelect({
 
       {/* Popup Menu */}
       {open && (
-        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
+        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full mt-1.5 w-[max(16rem,100%)] bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
           {/* Search Bar Input (if threshold met) */}
           {showSearchBar && (
             <div className="p-2 border-b border-slate-100 bg-slate-50/80 sticky top-0 z-10">
@@ -489,4 +500,6 @@ export default function SearchableSelect({
       )}
     </div>
   );
-}
+});
+
+export default SearchableSelect;

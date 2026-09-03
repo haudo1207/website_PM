@@ -16,7 +16,7 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 // it ends up pointing at whichever instance mounted last, so a click inside
 // the *other* instance's dropdown reads as "outside" and closes the menu
 // before the Link's navigation can fire.
-function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode, fixedWsNames, onProjectHub }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null; fixedWsNames?: string | null; onProjectHub: boolean }) {
+function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode, fixedWsSecondaryCount, onProjectHub }: { workspaces: any[]; currentWsCode: string | null; onNavigate?: () => void; fixedWsCode?: string | null; fixedWsSecondaryCount?: number; onProjectHub: boolean }) {
   const { setWorkspaceCode } = useWorkspaceFilter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -49,35 +49,28 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode,
   }, []);
 
   if (fixedWs) {
+    // Leader/Member/Viewer: never switchable — the label shows only their
+    // Chính (primary) Workspace. A Phụ Workspace never joins this label
+    // (that used to read as "pick any of these", which they can't); it's
+    // surfaced instead as a small "+N phụ" hint and via badges elsewhere
+    // (Dashboard Team cards, Accounts list).
     return (
       <div className="relative mb-2" ref={ref}>
         <div
           className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60"
-          title={`Workspace cố định: ${fixedWs.name}`}
+          title={fixedWsSecondaryCount ? `Workspace chính: ${fixedWs.name} (+${fixedWsSecondaryCount} phụ)` : `Workspace: ${fixedWs.name}`}
         >
-          <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🗂️</span>
+          <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🏠</span>
           <span className="flex-1 min-w-0 text-left">
-            <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspace</span>
-            <span className="block text-[12.5px] font-bold text-white truncate">{fixedWs.name}</span>
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  // Multi-Workspace Leader label (read-only badge; the user cannot switch
-  // because their access is the union of every granted Workspace).
-  if (fixedWsNames) {
-    return (
-      <div className="relative mb-2" ref={ref}>
-        <div
-          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60"
-          title={`Workspaces được gán: ${fixedWsNames}`}
-        >
-          <span className="w-7 h-7 rounded-md bg-gradient-to-br from-[#0058be] to-indigo-500 flex items-center justify-center text-xs shrink-0">🗂️</span>
-          <span className="flex-1 min-w-0 text-left">
-            <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspaces</span>
-            <span className="block text-[12.5px] font-bold text-white truncate">{fixedWsNames}</span>
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Workspace chính</span>
+            <span className="flex items-center gap-1.5">
+              <span className="text-[12.5px] font-bold text-white truncate">{fixedWs.name}</span>
+              {!!fixedWsSecondaryCount && (
+                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  +{fixedWsSecondaryCount} phụ
+                </span>
+              )}
+            </span>
           </span>
         </div>
       </div>
@@ -404,9 +397,12 @@ function NavbarContent() {
   });
   const effectiveRole = meData?.role || getRole() || '';
   const isFullAccessUser = effectiveRole === 'super_admin';
-  // Multi-Workspace aware — for Leaders with several Workspaces we render
-  // a comma-separated list in the switcher label rather than collapsing it
-  // back to the first code (which would mislead the user).
+  // Multi-Workspace aware — `workspace_ids` comes back Chính-first (see
+  // GET /api/users/me), so [0] is always the "home" Workspace. A Leader/
+  // Member with extra (Phụ) Workspaces never gets to switch — the label
+  // shows only their Chính Workspace plus a small "+N phụ" count, not a
+  // joined list of every Workspace they hold (that used to read as if they
+  // could pick any of them, which they can't).
   const myWorkspaceIds: string[] = (() => {
     if (!meData) return [];
     if (isFullAccessUser || (meData.data_scope || '').toLowerCase() === 'all') return [];
@@ -414,10 +410,8 @@ function NavbarContent() {
     if (ids.length) return ids;
     return meData.data_scope ? [meData.data_scope] : [];
   })();
-  const fixedWsCode = !isFullAccessUser && myWorkspaceIds.length === 1 ? myWorkspaceIds[0] : null;
-  const fixedWsNames = !isFullAccessUser && myWorkspaceIds.length > 1
-    ? myWorkspaceIds.map(code => (workspaces.find((w: any) => w.code === code)?.name) || code).join(', ')
-    : null;
+  const fixedWsCode = !isFullAccessUser && myWorkspaceIds.length >= 1 ? myWorkspaceIds[0] : null;
+  const fixedWsSecondaryCount = !isFullAccessUser && myWorkspaceIds.length > 1 ? myWorkspaceIds.length - 1 : 0;
 
   useEffect(() => {
     setName(getName() ?? '');
@@ -554,7 +548,7 @@ function NavbarContent() {
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
 
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsNames={fixedWsNames} onProjectHub={isOnProjectHub} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsSecondaryCount={fixedWsSecondaryCount} onProjectHub={isOnProjectHub} />
 
           {renderDashboardLink()}
 
@@ -661,7 +655,7 @@ function NavbarContent() {
 
         {/* Mobile Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsNames={fixedWsNames} onProjectHub={isOnProjectHub} onNavigate={() => setMobileMenuOpen(false)} />
+          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsSecondaryCount={fixedWsSecondaryCount} onProjectHub={isOnProjectHub} onNavigate={() => setMobileMenuOpen(false)} />
 
           {renderDashboardLink(() => setMobileMenuOpen(false))}
 
