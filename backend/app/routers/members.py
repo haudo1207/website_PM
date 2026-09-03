@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 import datetime
@@ -206,6 +206,17 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     leader_name: Optional[str] = None,
+    scope: Optional[bool] = Query(
+        False,
+        description=(
+            "When true, restrict the result to the caller's authorized "
+            "Workspace(s) — i.e. the same filter that applies to Member / "
+            "Viewer by default. Used by Dashboard → Overview (KPI Matrix) "
+            "for Leader callers so the KPI Matrix shows only members inside "
+            "the Leader's authorized Workspace(s). Default false preserves "
+            "the Members-tab behavior where Leaders see every member."
+        ),
+    ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -339,14 +350,23 @@ def list_members(
     # Workspace data scope: members are limited to the caller's Workspace
     # (linked account scope + members assigned to projects within scope).
     #
-    # Accounts → "Quản lý thành viên" tab is the Leader's Member directory —
-    # it intentionally bypasses the Workspace filter so a Leader can still
-    # see every Member in the database. The Workspace-scoped view lives on
-    # the "Quản lý tài khoản" tab (GET /api/accounts), which already filters
-    # via `_leader_scope_guard`. Super Admin keeps seeing every member;
-    # Member / Viewer continue to be scoped to their assigned Workspace
-    # because the helper already short-circuits for them.
-    if current_user.role != ROLE_LEADER:
+    # Three scopes coexist for the same endpoint:
+    #   1. Default (no `scope` param) — used by Accounts → "Quản lý thành
+    #      viên" tab, which intentionally bypasses the Workspace filter for
+    #      Leader callers (they need to manage every Member in the system).
+    #      Member / Viewer continue to be scoped to their assigned Workspaces
+    #      because `member_query_for_user` already short-circuits for them.
+    #   2. `?scope=true` — used by Dashboard → Overview KPI Matrix so a
+    #      Leader's KPI columns are restricted to their authorized
+    #      Workspace(s) only. Same backend filter as Member / Viewer.
+    #   3. Super Admin (`role == ROLE_SUPER_ADMIN` or `scopes == ALL_SCOPE`) —
+    #      always returns every Member regardless of `scope`.
+    if current_user.role == ROLE_LEADER and not scope:
+        # Path 1: Leader sees every Member (Members-tab behavior).
+        pass
+    else:
+        # Path 2 + 3: Super Admin short-circuits inside
+        # `member_query_for_user`; everyone else is scoped.
         q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()

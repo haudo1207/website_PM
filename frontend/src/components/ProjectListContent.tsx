@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, getEmail } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SearchableSelect from './common/SearchableSelect';
 import ProjectFormModal from './ProjectFormModal';
@@ -278,12 +278,18 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   }, [workspaces]);
 
   // Filter memoized
+  const myEmail = (getEmail() || '').toLowerCase();
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
       const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
-      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all');
+      // A project I'm explicitly assigned to always stays visible under the
+      // current Workspace tab, even if it belongs to a different Workspace
+      // (mirrors the membership-overrides-Workspace rule on the backend).
+      const isAssignedToMe = !!myEmail && Array.isArray(p.members) &&
+        p.members.some((m: any) => (m?.email || '').toLowerCase() === myEmail);
+      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all') || isAssignedToMe;
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
@@ -305,7 +311,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
       return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode, myEmail]);
 
   // Sort memoized
   const sorted = useMemo(() => {

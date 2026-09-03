@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, getMe } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
@@ -238,6 +238,10 @@ export default function MeetingDetailModal({
     return !pid || !assignee || !taskPhaseMap[idx] || !taskGroupMap[idx]
       || !edit.start_date || !taskSkillSolutionMap[idx] || !taskSkillVendorMap[idx];
   }).length;
+  // Drive recording playback link — distinct from meeting.meeting_url (the
+  // meet.google.com JOIN link, already shown separately in the Overview
+  // tab). Only n8n's post-meeting sync populates this.
+  const summaryVideoLink: string = meeting.ai_summary?.video_link || '';
   const summaryTeamName: string = meeting.team_name || meeting.ai_summary?.team_name || '';
   const summaryOrganizerName: string = meeting.organizer_name || meeting.ai_summary?.organizer_name || '';
   const summaryParticipantCount = meeting.participant_count ?? meeting.ai_summary?.participant_count ?? null;
@@ -473,13 +477,22 @@ export default function MeetingDetailModal({
         
         {/* Top Header Bar with Back Link */}
         <div className="px-6 pt-5 pb-4 bg-white border-b border-[#e2e8f0]">
-          <button
-            onClick={onClose}
-            className="flex items-center gap-1.5 text-xs font-semibold text-[#64748b] hover:text-[#0b1c30] transition-colors mb-3"
-          >
-            <ArrowLeft size={14} />
-            <span>Quay lại danh sách cuộc họp</span>
-          </button>
+          <div className="flex items-center justify-between mb-3">
+            <button
+              onClick={onClose}
+              className="flex items-center gap-1.5 text-xs font-semibold text-[#64748b] hover:text-[#0b1c30] transition-colors"
+            >
+              <ArrowLeft size={14} />
+              <span>Quay lại danh sách cuộc họp</span>
+            </button>
+            <button
+              onClick={onClose}
+              aria-label="Đóng"
+              className="p-1.5 text-[#64748b] hover:text-[#0b1c30] hover:bg-slate-100 rounded-lg transition-colors shrink-0"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             {/* Title & Badges */}
@@ -1072,12 +1085,12 @@ export default function MeetingDetailModal({
                     </div>
                     <div className="col-span-2">
                       <p className="text-[#94a3b8] font-semibold">Link record</p>
-                      {meeting.meeting_url || meeting.link ? (
-                        <a href={meeting.meeting_url || meeting.link} target="_blank" rel="noreferrer" className="text-[#6366f1] font-bold mt-0.5 hover:underline break-all block">
-                          {meeting.meeting_url || meeting.link}
+                      {summaryVideoLink ? (
+                        <a href={summaryVideoLink} target="_blank" rel="noreferrer" className="text-[#6366f1] font-bold mt-0.5 hover:underline break-all block">
+                          {summaryVideoLink}
                         </a>
                       ) : (
-                        <p className="text-[#0b1c30] font-bold mt-0.5">Không đề cập</p>
+                        <p className="text-[#0b1c30] font-bold mt-0.5">Chưa có bản ghi</p>
                       )}
                     </div>
                     <div>

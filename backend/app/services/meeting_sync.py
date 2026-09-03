@@ -654,13 +654,23 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
             pageSize=10,
         ).execute()
         files = resp.get("files", [])
-        for f in files:
-            mtype = f.get("mimeType", "")
-            name = f.get("name", "").lower()
-            if "document" in mtype or "text" in mtype or ".vtt" in name or ".txt" in name or ".srt" in name:
-                matched_file = f
-                logger.info(f"[Sync] Found Google Meet transcript: {f['name']}")
-                break
+        # Google Meet's "Take notes with Gemini" feature drops a second Doc
+        # alongside the real transcript — "Notes by Gemini - <title>" — with
+        # its own English AI summary and attendee/attachment metadata. Both
+        # match the mimeType/extension filter equally well, so without a
+        # name check the notes doc can win the race and get stored as the
+        # "transcript" (seen in production — see MeetingDetailModal's
+        # transcript tab showing a Notes doc instead of dialogue).
+        candidates = [
+            f for f in files
+            if ("document" in f.get("mimeType", "") or "text" in f.get("mimeType", "")
+                or f.get("name", "").lower().endswith((".vtt", ".txt", ".srt")))
+            and "notes" not in f.get("name", "").lower()
+        ]
+        matched_file = next((f for f in candidates if "transcript" in f.get("name", "").lower()), None) \
+            or (candidates[0] if candidates else None)
+        if matched_file:
+            logger.info(f"[Sync] Found Google Meet transcript: {matched_file['name']}")
     except Exception as e:
         logger.warning(f"[Sync] Direct drive search error: {e}")
 
@@ -705,6 +715,12 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
                     # recording and feed raw binary bytes into the AI prompt.
                     if not ("document" in doc_mtype or "text" in doc_mtype or ".vtt" in doc_name or ".txt" in doc_name or ".srt" in doc_name):
                         continue
+                    # Skip Gemini's auto-generated "Notes" doc — same title
+                    # pattern as the real transcript doc, but it's an AI
+                    # summary (attendees/attachments/English summary), not
+                    # the actual dialogue. See Search 1 above for detail.
+                    if "notes" in doc_name:
+                        continue
                     doc_time = datetime.datetime.fromisoformat(doc["createdTime"].replace("Z", "+00:00"))
                     diff = abs((doc_time - event_time).total_seconds())
                     if diff < 86400 and diff < min_diff:
@@ -745,11 +761,6 @@ def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Option
 
     return {
         "text": text_content,
-        "fileName": matched_file.get("name", "Transcript"),
-    }
-
-    return {
-        "text": export_resp.decode("utf-8") if isinstance(export_resp, bytes) else str(export_resp),
         "fileName": matched_file.get("name", "Transcript"),
     }
 
@@ -1021,6 +1032,161 @@ CẤU TRÚC JSON YÊU CẦU:
     }
 
 
+_SHEET_PROJECT_HEADER_RE = re.compile(r"^\d+\.\s*Project:\s*(.*)$")
+_SHEET_LIST_ITEM_RE = re.compile(r"^\d+\.\s*")
+_SHEET_PROJECT_FIELD_MAP = {
+    "Task cha": "detail_task",
+    "Priority": "priority",
+    "Manday Budget": "manday_est",
+    "Owner": "assigned_name",
+    "Deadline": "deadline",
+    "KPI / Output": "kpi_output",
+}
+
+
+def _parse_sheet_rows(rows: list) -> dict:
+    """Reconstruct the structured summary n8n's '14a. Parse Summary' node
+    originally computed, from the 2-column (label, value) rows it wrote to the
+    per-meeting Google Sheet tab. Mirrors that node's row layout — see
+    Meeting_AI_Summary_Sheets_Webhook copy.json for the JS source of truth."""
+    def cell(row, i):
+        return (row[i] if i < len(row) else "") or ""
+
+    data = {
+        "team_name": "", "organizer_name": "", "participant_count": None,
+        "video_link": "", "executive_summary": "", "issues": [], "next_steps": [],
+        "recommended_tasks": [],
+    }
+    section = None
+    current_project = None
+    projects = []
+    overview_lines = []
+
+    for row in rows:
+        a = cell(row, 0).strip()
+        b = cell(row, 1).strip()
+
+        if a == "Team":
+            data["team_name"] = b
+        elif a == "Người summary":
+            data["organizer_name"] = b
+        elif a == "Link record":
+            data["video_link"] = b
+        elif a == "Số người tham gia":
+            try:
+                data["participant_count"] = int(b)
+            except (ValueError, TypeError):
+                pass
+        elif a == "TỔNG QUAN":
+            section = "overview"
+        elif a == "TASK CHA ĐÃ CHỐT":
+            section = "projects"
+        elif a == "VẤN ĐỀ & RỦI RO":
+            section = "issues"
+        elif a == "BƯỚC TIẾP THEO":
+            section = "next_steps"
+        elif not a:
+            continue
+        elif section == "overview" and a != "Không có thông tin":
+            overview_lines.append(a)
+        elif section == "projects":
+            m_hdr = _SHEET_PROJECT_HEADER_RE.match(a)
+            if m_hdr:
+                if current_project:
+                    projects.append(current_project)
+                current_project = {"project_name": m_hdr.group(1).strip(), "priority": "Normal"}
+            elif current_project is not None and a in _SHEET_PROJECT_FIELD_MAP:
+                key = _SHEET_PROJECT_FIELD_MAP[a]
+                val = None if (not b or b == "Không đề cập") else b
+                if key == "manday_est" and val is not None:
+                    try:
+                        val = float(val)
+                    except ValueError:
+                        val = None
+                if key == "priority" and val not in ("Critical", "High", "Normal"):
+                    val = "Normal"
+                current_project[key] = val
+        elif section == "issues" and a != "Không có":
+            data["issues"].append(_SHEET_LIST_ITEM_RE.sub("", a))
+        elif section == "next_steps" and a != "Không có":
+            data["next_steps"].append(_SHEET_LIST_ITEM_RE.sub("", a))
+
+    if current_project:
+        projects.append(current_project)
+    for p in projects:
+        if not p.get("detail_task"):
+            p["detail_task"] = p.get("kpi_output") or p.get("project_name") or "Task từ cuộc họp"
+    data["recommended_tasks"] = projects
+    data["executive_summary"] = "\n".join(overview_lines)
+    return data
+
+
+def fetch_summary_from_sheet(db, user_id: int, tab_name: str) -> Optional[dict]:
+    """Read back the meeting summary n8n wrote to its Google Sheet tab — a
+    durable backup of the parsed AI summary, independent of whatever's
+    currently in ai_summary. Used by the "Đồng bộ" sync so a manual re-sync
+    restores the original n8n-generated summary instead of paying to
+    regenerate one via the app's own (different) AI call, and so a summary
+    accidentally lost/overwritten can be recovered without re-running the
+    whole AssemblyAI/GPT pipeline. Requires the spreadsheets.readonly OAuth
+    scope on the shared Google account — returns None if the API call fails
+    (e.g. scope not yet granted, tab renamed/deleted), letting the caller
+    fall back to the AI-regenerate path.
+    """
+    if not tab_name:
+        return None
+    try:
+        from googleapiclient.discovery import build
+        creds = _get_google_credentials(db, user_id)
+        sheets = build("sheets", "v4", credentials=creds)
+        resp = sheets.spreadsheets().values().get(
+            spreadsheetId=settings.MEETING_SUMMARY_SHEET_ID,
+            range=f"'{tab_name}'!A1:B300",
+        ).execute()
+        rows = resp.get("values", [])
+        if not rows:
+            return None
+        return _parse_sheet_rows(rows)
+    except Exception as e:
+        logger.warning(f"[Sync] Reading summary from Sheet tab '{tab_name}' failed: {e}")
+        return None
+
+
+def apply_sync_result_to_meeting(m, result: dict) -> None:
+    """Merge a sync result (from sync_google_meet/sync_zoom_meeting/summarize_with_ai)
+    into a Meeting row's transcript/ai_summary.
+
+    summarize_with_ai() returns a flat list of text lines, but the frontend
+    (MeetingDetailModal.tsx) only ever reads ai_summary as a dict —
+    executive_summary/decisions/issues/next_steps/recommended_tasks/video_link/
+    team_name/organizer_name/participant_count/is_auto_created/source. Assigning
+    the raw list (or a bare string, as the old auto-sync code did) directly makes
+    all of those read as undefined and the summary tab renders blank.
+
+    It also merges onto whatever ai_summary already has instead of replacing it —
+    a meeting synced once via the n8n pipeline carries structured metadata
+    (video_link, team_name, participant_count, is_auto_created...) that a manual
+    re-sync has no equivalent data for; overwriting wholesale silently destroys it.
+    """
+    if result.get("transcript"):
+        m.transcript = result["transcript"]
+
+    new_summary = result.get("summary")
+    if new_summary is None:
+        return
+    if isinstance(new_summary, list):
+        new_summary = {"executive_summary": "\n".join(str(line) for line in new_summary)}
+    elif not isinstance(new_summary, dict):
+        new_summary = {"executive_summary": str(new_summary)}
+
+    if isinstance(m.ai_summary, dict):
+        merged = dict(m.ai_summary)
+        merged.update(new_summary)
+        m.ai_summary = merged
+    else:
+        m.ai_summary = new_summary
+
+
 def summarize_with_ai(transcript: str, meeting_info: dict) -> list:
     """
     Summarize meeting transcript using AI (supports direct Gemini REST API or OpenAI format).
@@ -1162,14 +1328,7 @@ def auto_sync_all_ended_meetings(db):
 
             if result:
                 m.status = "DONE"
-                if result.get("transcript"):
-                    m.transcript = result["transcript"]
-                if result.get("summary"):
-                    if isinstance(result["summary"], dict):
-                        m.ai_summary = result["summary"].get("executive_summary") or str(result["summary"])
-                        m.recommended_tasks = result["summary"].get("recommended_tasks") or []
-                    else:
-                        m.ai_summary = result["summary"]
+                apply_sync_result_to_meeting(m, result)
                 db.commit()
                 count_synced += 1
             elif needs_end_update:

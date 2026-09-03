@@ -1090,28 +1090,47 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
         end_dt = datetime.datetime.combine(datetime.date.today(), m.end_time)
         meeting_info["duration"] = int((end_dt - start_dt).total_seconds() / 60)
 
-    try:
-        if "zoom" in platform and m.meeting_url:
-            from ..services.meeting_sync import sync_zoom_meeting
-            result = sync_zoom_meeting(m.meeting_url, meeting_info)
-        elif ("google" in platform or "meet" in platform) and m.meeting_url:
-            from ..services.meeting_sync import sync_google_meet
-            result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info)
-        elif m.transcript and m.transcript.strip():
-            from ..services.meeting_sync import summarize_with_ai
-            summary = summarize_with_ai(m.transcript, meeting_info)
-            result = {"transcript": m.transcript, "summary": summary, "status": "DONE"}
-        else:
-            raise HTTPException(400, f"Nền tảng '{m.platform}' chưa được hỗ trợ đồng bộ tự động.")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        logger.error(f"Sync meeting {id} failed: {e}")
-        raise HTTPException(500, f"Lỗi đồng bộ cuộc họp: {str(e)}")
+    # If this meeting was already summarized once by the n8n pipeline, its
+    # Google Sheet tab is a durable backup of that exact summary — prefer
+    # restoring from there over paying to regenerate a different one via the
+    # app's own AI call. Falls through to the normal sync below if there's no
+    # such backup, or the Sheet read fails (e.g. scope not granted yet).
+    sheet_tab = None
+    if isinstance(m.ai_summary, dict):
+        sheet_tab = (m.ai_summary.get("n8n_metadata") or {}).get("sheet_row_id")
+    result = None
+    if sheet_tab:
+        from ..services.meeting_sync import fetch_summary_from_sheet
+        sheet_summary = fetch_summary_from_sheet(db, current_user.id, sheet_tab)
+        if sheet_summary:
+            result = {"summary": sheet_summary, "status": "DONE"}
 
-    # Update meeting with sync results
-    m.transcript = result.get("transcript", m.transcript)
-    m.ai_summary = result.get("summary", m.ai_summary)
+    if result is None:
+        try:
+            if "zoom" in platform and m.meeting_url:
+                from ..services.meeting_sync import sync_zoom_meeting
+                result = sync_zoom_meeting(m.meeting_url, meeting_info)
+            elif ("google" in platform or "meet" in platform) and m.meeting_url:
+                from ..services.meeting_sync import sync_google_meet
+                result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info)
+            elif m.transcript and m.transcript.strip():
+                from ..services.meeting_sync import summarize_with_ai
+                summary = summarize_with_ai(m.transcript, meeting_info)
+                result = {"transcript": m.transcript, "summary": summary, "status": "DONE"}
+            else:
+                raise HTTPException(400, f"Nền tảng '{m.platform}' chưa được hỗ trợ đồng bộ tự động.")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            logger.error(f"Sync meeting {id} failed: {e}")
+            raise HTTPException(500, f"Lỗi đồng bộ cuộc họp: {str(e)}")
+
+    # Update meeting with sync results — merges onto existing ai_summary rather
+    # than overwriting, so a manual re-sync doesn't wipe n8n-sourced metadata
+    # (video_link/team_name/participant_count/is_auto_created). See
+    # apply_sync_result_to_meeting's docstring for the full reasoning.
+    from ..services.meeting_sync import apply_sync_result_to_meeting
+    apply_sync_result_to_meeting(m, result)
     if result.get("status") == "DONE":
         m.status = "DONE"
 
@@ -1158,6 +1177,7 @@ def google_auth_url(db: Session = Depends(get_db), current_user = Depends(get_cu
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/meetings.space.readonly",
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
@@ -1527,10 +1547,30 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
 
 
 # ─── N8N INTEGRATION WEBHOOK SCHEMAS & ENDPOINT ───────────────
+def _sanitize_meeting_join_url(url: Optional[str]) -> Optional[str]:
+    """meeting_url must be a join link (meet.google.com/zoom.us/...), never a Google
+    Drive file link. The n8n pipeline falls back to the Drive recording link
+    (`realMeetUrl || videoLink`) when it can't match the real Meet link via
+    Calendar, which would otherwise silently corrupt the join link shown in the
+    app (e.g. the "Vào họp" button opening a Drive page instead of the meeting).
+    Reject Drive links defensively rather than trust the payload."""
+    if not url:
+        return url
+    if "drive.google.com" in url.lower():
+        logger.warning(f"n8n webhook: rejected meeting_url that looks like a Drive link, not a join link: {url}")
+        return None
+    return url
+
+
 class N8nMeetingSummaryPayload(BaseModel):
     meeting_id: Optional[int] = None
     meeting_url: Optional[str] = None
     meeting_code: Optional[str] = None
+    # The Drive recording playback link — distinct from meeting_url (the
+    # meet.google.com JOIN link, used before/during the call). Stored in
+    # ai_summary rather than a dedicated column since it's display-only
+    # metadata alongside team_name/organizer_name, which already live there.
+    video_link: Optional[str] = None
     title: str = Field(..., min_length=1)
     meeting_date: str
     start_time: Optional[str] = "09:00"
@@ -1613,6 +1653,7 @@ def ingest_n8n_meeting_summary(
         "team_name": payload.team_name or "",
         "organizer_name": payload.organizer_name or "",
         "participant_count": payload.participant_count,
+        "video_link": payload.video_link or "",
         "source": "n8n_google_sheet",
         "n8n_metadata": {
             "sheet_row_id": payload.sheet_row_id,
@@ -1705,8 +1746,9 @@ def ingest_n8n_meeting_summary(
         matched_meeting.start_time = start_time
         if end_time:
             matched_meeting.end_time = end_time
-        if payload.meeting_url:
-            matched_meeting.meeting_url = payload.meeting_url
+        sanitized_meeting_url = _sanitize_meeting_join_url(payload.meeting_url)
+        if sanitized_meeting_url:
+            matched_meeting.meeting_url = sanitized_meeting_url
 
         db.commit()
         db.refresh(matched_meeting)
@@ -1740,7 +1782,7 @@ def ingest_n8n_meeting_summary(
             title=clean_title,
             description=f"Tự động tạo từ n8n (Row ID: {payload.sheet_row_id or 'N/A'})",
             platform=payload.platform or "Google Meet",
-            meeting_url=payload.meeting_url,
+            meeting_url=_sanitize_meeting_join_url(payload.meeting_url),
             meeting_date=meeting_date,
             start_time=start_time,
             end_time=end_time,

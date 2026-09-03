@@ -9,7 +9,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import PieChartCard from '@/components/dashboard/PieChartCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
-import { 
+import {
   priorityDot,
   statusStyle,
   activityColor,
@@ -40,12 +40,20 @@ function getTaskStartDay(t: any): string {
 }
 
 export default function ReportTab() {
-  // Quick Filter Highlight state
-  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>(null);
+  // ── Time-range filter (Requirement: default to "This Week" for ALL roles)
+  // Seed the same shape as `applyQuickFilter('Tuần này')` so the page opens
+  // already filtered to the current week (Mon→Sun). The "Tuần này" quick-filter
+  // chip starts highlighted because `activeQuickFilter='Tuần này'`. `checkTaskInPeriod`
+  // already understands both `selectedWeek` and the `Tuần này` shortcut, so every
+  // Report consumer (chartStats, myRealTasks, filteredTasks, chartWeeklyProgress,
+  // monthlyProgress, chartMonthlyProgress) computes against the same window
+  // without a second filter mechanism.
+  const initialNow = new Date();
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>('Tuần này');
   const router = useRouter();
-  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
-  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
-  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(initialNow.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>(initialNow.getMonth() + 1);
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>(getWeekOfMonth(initialNow));
 
   const [searchTaskName, setSearchTaskName] = useState<string>('');
   const [filterCustomer, setFilterCustomer] = useState<string>('all');

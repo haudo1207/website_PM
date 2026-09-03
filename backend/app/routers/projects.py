@@ -33,6 +33,7 @@ from ..utils.access import (
     ROLE_LEADER,
     ROLE_MEMBER,
     can_access_project,
+    has_full_project_access,
     project_query_for_user,
     require_project,
     require_route_project_access,
@@ -217,17 +218,29 @@ def list_projects(
     q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
+        # A project the caller is explicitly assigned to (project_members) always
+        # stays visible under the current Workspace tab, even when its own
+        # business/data_scope belongs to a different Workspace — mirrors the
+        # membership-overrides-Workspace rule in access.py's can_access_project.
+        member_id = getattr(current_user, "member_id", None)
+        assigned_project_ids = (
+            db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
+            if member_id else None
+        )
         ws = resolve_workspace(db, target_b)
         if ws:
             b_val = ws.name
-            q = q.filter(
-                or_(
-                    Project.business == b_val,
-                    Project.business == "All",
-                    and_(Project.business.is_(None), Project.data_scope == target_b),
-                    and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
-                )
-            )
+            filters = [
+                Project.business == b_val,
+                Project.business == "All",
+                and_(Project.business.is_(None), Project.data_scope == target_b),
+                and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
+            ]
+            if assigned_project_ids is not None:
+                filters.append(Project.id.in_(assigned_project_ids))
+            q = q.filter(or_(*filters))
+        elif assigned_project_ids is not None:
+            q = q.filter(Project.id.in_(assigned_project_ids))
         else:
             q = q.filter(Project.id == -1)
 
@@ -653,7 +666,12 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         requested_scope = str(body["data_scope"]).strip().lower()
         if not is_valid_scope(db, requested_scope):
             raise HTTPException(400, f"Invalid data scope. Must be one of: {sorted(valid_data_scopes(db))}")
-        if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
+        if (
+            requested_scope != p.data_scope
+            and user_scope(current_user) != ALL_SCOPE
+            and getattr(current_user, "role", None) not in {ROLE_SUPER_ADMIN, ROLE_LEADER}
+            and not has_full_project_access(db, current_user, pid)
+        ):
             raise HTTPException(403, "Only full-scope users can change project scope.")
         p.data_scope = requested_scope
 
@@ -783,7 +801,7 @@ def _delete_project_cascade(pid: int, db: Session, current_user) -> None:
     role = getattr(current_user, "role", ROLE_MEMBER)
     scope = user_scope(current_user)
     is_super = (role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE)
-    is_proj_leader = (role == ROLE_LEADER and can_access_project(db, current_user, p))
+    is_proj_leader = (role == ROLE_LEADER and can_access_project(db, current_user, p)) or has_full_project_access(db, current_user, p.id)
 
     if not (is_super or is_proj_leader):
         raise HTTPException(403, "Bạn không có quyền xóa dự án này.")

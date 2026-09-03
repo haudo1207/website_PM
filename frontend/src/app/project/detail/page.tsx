@@ -27,7 +27,8 @@ import {
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
-  remindLeader, remindTaskGroup
+  remindLeader, remindTaskGroup,
+  getMe
 } from '@/lib/api';
 import { isAdmin, isMember, getEmail } from '@/lib/auth';
 import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod } from '@/app/dashboard/constants';
@@ -605,6 +606,7 @@ function ProjectDetailContent() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
   const [projectMembers, setProjectMembers] = useState<any[]>([]);
+  const [myMemberId, setMyMemberId] = useState<number | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [categories, setCategories] = useState<any[]>([]);
   const [dbPriorities, setDbPriorities] = useState<any[]>([]);
@@ -831,6 +833,21 @@ function ProjectDetailContent() {
     loadProjectMembers();
     loadMeetings();
   }, [id, loadProject, reloadAll, loadChatData, loadProjectMembers, loadMeetings]);
+
+  useEffect(() => {
+    getMe().then(me => setMyMemberId(me?.member_id ?? null)).catch(() => setMyMemberId(null));
+  }, []);
+
+  // Full project-management rights: global admin (super_admin/leader), OR this
+  // project's own member_id assigned project-role PM/Leader in project_members
+  // (mirrors backend has_full_project_access in backend/app/utils/access.py).
+  const isProjectManager = useMemo(() => {
+    if (isAdmin()) return true;
+    if (myMemberId == null) return false;
+    return projectMembers.some(
+      (m: any) => (m.role === 'PM' || m.role === 'Leader') && Number(m.id) === Number(myMemberId)
+    );
+  }, [myMemberId, projectMembers]);
 
   // Load members, customers and categories
   useEffect(() => {
@@ -4244,7 +4261,7 @@ function ProjectDetailContent() {
                 </p>
               </div>
               <div className="flex gap-2">
-                {isAdmin() && (
+                {isProjectManager && (
                   <button
                     onClick={() => setShowEditProjectModal(true)}
                     className="bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-slate-200 transition-colors shadow-sm"
