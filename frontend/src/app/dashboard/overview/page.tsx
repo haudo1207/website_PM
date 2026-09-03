@@ -2454,6 +2454,18 @@ export default function OverviewTab() {
                   Nguyên tắc: chỉ xem đủ dữ liệu để quản lý workload, KPI đóng góp, deadline và risk của member mình — không xem cấu trúc vận hành nội bộ của Workspace khác.
                 </p>
               </div>
+
+              <div className="flex items-center justify-between gap-3 px-6 pb-6 pt-2 border-t border-slate-100">
+                <p className="text-[10px] text-slate-400 font-semibold leading-snug max-w-[60%]">
+                  Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.
+                </p>
+                <button
+                  onClick={() => { setContributionModalProject(null); router.push(`/project/detail/overview?id=${p.id}`); }}
+                  className="shrink-0 px-4 py-2 rounded-lg bg-[#0058be] hover:bg-[#004a9e] text-white text-xs font-bold"
+                >
+                  Mở dự án →
+                </button>
+              </div>
             </div>
           </div>
         );
