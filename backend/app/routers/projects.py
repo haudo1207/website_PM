@@ -33,6 +33,7 @@ from ..utils.access import (
     ROLE_LEADER,
     ROLE_MEMBER,
     can_access_project,
+    has_full_project_access,
     project_query_for_user,
     require_project,
     require_route_project_access,
@@ -653,7 +654,12 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         requested_scope = str(body["data_scope"]).strip().lower()
         if not is_valid_scope(db, requested_scope):
             raise HTTPException(400, f"Invalid data scope. Must be one of: {sorted(valid_data_scopes(db))}")
-        if requested_scope != p.data_scope and user_scope(current_user) != ALL_SCOPE and getattr(current_user, "role", None) not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
+        if (
+            requested_scope != p.data_scope
+            and user_scope(current_user) != ALL_SCOPE
+            and getattr(current_user, "role", None) not in {ROLE_SUPER_ADMIN, ROLE_LEADER}
+            and not has_full_project_access(db, current_user, pid)
+        ):
             raise HTTPException(403, "Only full-scope users can change project scope.")
         p.data_scope = requested_scope
 
@@ -783,7 +789,7 @@ def _delete_project_cascade(pid: int, db: Session, current_user) -> None:
     role = getattr(current_user, "role", ROLE_MEMBER)
     scope = user_scope(current_user)
     is_super = (role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE)
-    is_proj_leader = (role == ROLE_LEADER and can_access_project(db, current_user, p))
+    is_proj_leader = (role == ROLE_LEADER and can_access_project(db, current_user, p)) or has_full_project_access(db, current_user, p.id)
 
     if not (is_super or is_proj_leader):
         raise HTTPException(403, "Bạn không có quyền xóa dự án này.")

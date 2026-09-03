@@ -28,6 +28,12 @@ WRITE_ROLES = {ROLE_SUPER_ADMIN, ROLE_LEADER}
 # (same Workspace-based data-scope mechanism shared by Leader, Member and Viewer).
 WORKSPACE_SCOPED_ROLES = {ROLE_LEADER, ROLE_MEMBER, ROLE_VIEWER}
 
+# project_members_v2.role values that grant Leader-equivalent write access,
+# scoped to that one project, to an otherwise-restricted `member`/`viewer`.
+PROJECT_FULL_ACCESS_ROLES = {"PM", "Leader"}
+# Global roles eligible for the project-role escalation in has_full_project_access.
+PROJECT_ROLE_ESCALATABLE = {ROLE_MEMBER, ROLE_VIEWER}
+
 
 # ── Workspace Master (Single Source of Truth) ───────────────
 def get_workspaces(db: Session):
@@ -487,10 +493,40 @@ def _is_document_write(request: Request) -> bool:
     return re.search(r"/projects/\d+/documents(/.*)?", request.url.path) is not None
 
 
+def has_full_project_access(db: Session, user, project_id) -> bool:
+    """True if *user* has Leader-equivalent write access to *project_id*:
+    a super_admin, a global Leader, or a `member`/`viewer` whose
+    project_members_v2.role for this specific project is 'PM' or 'Leader'
+    (PROJECT_FULL_ACCESS_ROLES).
+
+    Scoped to the one project — it does not elevate the user's global role or
+    grant access to any other project.
+
+    Callers that also need a Workspace-scope check for the global-Leader case
+    (e.g. can_access_project) should keep doing that separately — this helper
+    only covers the project-role escalation path.
+    """
+    role = getattr(user, "role", None) or ROLE_MEMBER
+    if role in WRITE_ROLES:
+        return True
+    if role not in PROJECT_ROLE_ESCALATABLE or project_id is None:
+        return False
+    member_id = getattr(user, "member_id", None)
+    if not member_id:
+        return False
+    return db.execute(
+        project_members.select().where(
+            project_members.c.project_id == project_id,
+            project_members.c.member_id == member_id,
+            project_members.c.role.in_(PROJECT_FULL_ACCESS_ROLES),
+        )
+    ).first() is not None
+
+
 def is_project_leader(db: Session, user, project_id: int) -> bool:
     """True if *user* may approve/reject Resources for *project_id*:
-    a super_admin, or the project's own Technical Leader
-    (project_members_v2.role == 'Leader' for this project) — not to be
+    a super_admin, or the project's own PM/Technical Leader
+    (project_members_v2.role in {'PM', 'Leader'} for this project) — not to be
     confused with the global/workspace `User.role == 'leader'`.
     """
     if getattr(user, "role", None) == ROLE_SUPER_ADMIN:
@@ -502,7 +538,7 @@ def is_project_leader(db: Session, user, project_id: int) -> bool:
         project_members.select().where(
             project_members.c.project_id == project_id,
             project_members.c.member_id == member_id,
-            project_members.c.role == "Leader",
+            project_members.c.role.in_(PROJECT_FULL_ACCESS_ROLES),
         )
     ).first() is not None
 
@@ -566,8 +602,12 @@ def require_route_project_access(
     role = getattr(user, "role", ROLE_MEMBER)
     print(f"Role: {role}")
 
-    # ── Viewer: read-only — block every non-GET request unconditionally. ──
+    # ── Viewer: read-only, UNLESS their project-role for this project is
+    #    PM/Leader — that grants full write access scoped to this project. ──
     if role == ROLE_VIEWER and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        if project_id is not None and has_full_project_access(db, user, int(project_id)):
+            print("--- ACCESS GRANTED FOR VIEWER (project PM/Leader) ---")
+            return user
         raise HTTPException(403, "Viewer không có quyền thực hiện thao tác này!")
 
     # ── Role-based write authorization. ──
@@ -578,10 +618,15 @@ def require_route_project_access(
             # super_admin and leader may write freely within their scope.
             return user
 
-        # member: may perform Task CRUD, or Resources/Documents CRUD, if assigned
-        # to the current project. (Approve/reject are additionally gated by
-        # is_project_leader() inside the route handler itself.)
+        # member: full write access if their project-role for this project is
+        # PM/Leader (has_full_project_access); otherwise only Task CRUD or
+        # Resources/Documents CRUD, if assigned to the current project.
+        # (Approve/reject are additionally gated by is_project_leader() inside
+        # the route handler itself.)
         if role == ROLE_MEMBER:
+            if project_id is not None and has_full_project_access(db, user, int(project_id)):
+                print("--- ACCESS GRANTED FOR MEMBER (project PM/Leader) ---")
+                return user
             if (is_task_write_result or _is_document_write(request)) and project_id is not None:
                 print("--- ACCESS GRANTED FOR MEMBER ---")
                 return user
