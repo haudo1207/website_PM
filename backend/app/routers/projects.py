@@ -218,17 +218,29 @@ def list_projects(
     q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
+        # A project the caller is explicitly assigned to (project_members) always
+        # stays visible under the current Workspace tab, even when its own
+        # business/data_scope belongs to a different Workspace — mirrors the
+        # membership-overrides-Workspace rule in access.py's can_access_project.
+        member_id = getattr(current_user, "member_id", None)
+        assigned_project_ids = (
+            db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
+            if member_id else None
+        )
         ws = resolve_workspace(db, target_b)
         if ws:
             b_val = ws.name
-            q = q.filter(
-                or_(
-                    Project.business == b_val,
-                    Project.business == "All",
-                    and_(Project.business.is_(None), Project.data_scope == target_b),
-                    and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b))
-                )
-            )
+            filters = [
+                Project.business == b_val,
+                Project.business == "All",
+                and_(Project.business.is_(None), Project.data_scope == target_b),
+                and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
+            ]
+            if assigned_project_ids is not None:
+                filters.append(Project.id.in_(assigned_project_ids))
+            q = q.filter(or_(*filters))
+        elif assigned_project_ids is not None:
+            q = q.filter(Project.id.in_(assigned_project_ids))
         else:
             q = q.filter(Project.id == -1)
 
