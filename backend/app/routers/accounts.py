@@ -110,7 +110,9 @@ def _target_allowed_scopes(db: Session, target: User):
     return codes or ({base_scope} if base_scope else set())
 
 
-def _apply_user_workspace_access(db: Session, user: User, workspace_ids: list, *, caller: User | None = None) -> None:
+def _apply_user_workspace_access(
+    db: Session, user: User, workspace_ids: list, *, caller: User | None = None, primary_code: str | None = None,
+) -> None:
     """Replace the user's `user_workspace_access` rows with the given list
     of Workspace codes. Validates each code against the master table and
     against the caller's authorized scopes (so a Leader can never grant a
@@ -118,8 +120,12 @@ def _apply_user_workspace_access(db: Session, user: User, workspace_ids: list, *
     manage). Preserves the existing single-Workspace behavior when only
     one code is supplied.
 
-    `data_scope` is updated to the first code in the list (so all
-    legacy single-column code paths continue to work).
+    `primary_code` marks which of the granted codes is the "home"/Chính
+    Workspace (is_primary=True); defaults to the first code when omitted
+    or when it isn't actually in the granted list, matching the original
+    "first granted == primary" convention. `data_scope` is kept in sync
+    with whichever code ends up primary (so all legacy single-column code
+    paths continue to work).
     """
     if not workspace_ids:
         return
@@ -158,12 +164,15 @@ def _apply_user_workspace_access(db: Session, user: User, workspace_ids: list, *
     # constraint is satisfied.
     db.query(UserWorkspaceAccess).filter(UserWorkspaceAccess.user_id == user.id).delete(synchronize_session=False)
     db.flush()
+    primary = str(primary_code or "").strip().lower()
+    if primary not in normalized:
+        primary = normalized[0]
     for code in normalized:
         ws = resolve_workspace_by_code(db, code)
         if ws:
-            db.add(UserWorkspaceAccess(user_id=user.id, workspace_id=ws.id))
-    # Keep legacy single column in sync (first granted workspace).
-    user.data_scope = normalized[0]
+            db.add(UserWorkspaceAccess(user_id=user.id, workspace_id=ws.id, is_primary=(code == primary)))
+    # Keep legacy single column in sync with whichever code is primary.
+    user.data_scope = primary
 
 
 def resolve_workspace_by_code(db: Session, code: str):
@@ -210,17 +219,19 @@ def account_to_dict(u: User, db: Session | None = None) -> dict:
         if getattr(u, "role", None) == ROLE_SUPER_ADMIN or (getattr(u, "data_scope", None) or "").strip().lower() == ALL_SCOPE:
             workspace_ids = [ALL_SCOPE]
             for w in db.query(Workspace).order_by(Workspace.id.asc()).all():
-                workspaces.append({"id": w.id, "code": w.code, "name": w.name})
+                # Super Admin has no "home" Workspace — the Chính/Phụ
+                # distinction is only meaningful for Leader/Member.
+                workspaces.append({"id": w.id, "code": w.code, "name": w.name, "is_primary": False})
         else:
             rows = (
-                db.query(Workspace)
+                db.query(Workspace, UserWorkspaceAccess.is_primary)
                 .join(UserWorkspaceAccess, UserWorkspaceAccess.workspace_id == Workspace.id)
                 .filter(UserWorkspaceAccess.user_id == u.id)
-                .order_by(Workspace.id.asc())
+                .order_by(UserWorkspaceAccess.is_primary.desc(), Workspace.id.asc())
                 .all()
             )
-            workspace_ids = [w.code for w in rows]
-            workspaces = [{"id": w.id, "code": w.code, "name": w.name} for w in rows]
+            workspace_ids = [w.code for w, _ in rows]
+            workspaces = [{"id": w.id, "code": w.code, "name": w.name, "is_primary": bool(is_primary)} for w, is_primary in rows]
             if not workspace_ids and getattr(u, "data_scope", None):
                 # Defensive fallback for users that have not yet been
                 # backfilled into `user_workspace_access` — keep them visible
@@ -426,7 +437,8 @@ def create_account(body: dict, db: Session = Depends(get_db), caller=Depends(req
     # single `data_scope` row only.
     if role in (ROLE_LEADER, ROLE_MEMBER):
         ids = resolved_workspace_ids or [data_scope]
-        _apply_user_workspace_access(db, account, ids, caller=caller)
+        primary_code = str(body.get("primary_workspace_code") or "").strip().lower() or None
+        _apply_user_workspace_access(db, account, ids, caller=caller, primary_code=primary_code)
         db.commit()
         db.refresh(account)
 
@@ -589,10 +601,10 @@ def update_account(
             for code in ids:
                 if not is_valid_scope(db, code):
                     raise HTTPException(400, f"Workspace không hợp lệ: '{code}'.")
-            _apply_user_workspace_access(db, account, ids, caller=caller)
-            # Keep data_scope consistent with the first granted code.
-            if ids:
-                account.data_scope = ids[0]
+            primary_code = str(body.get("primary_workspace_code") or "").strip().lower() or None
+            _apply_user_workspace_access(db, account, ids, caller=caller, primary_code=primary_code)
+            # data_scope was already synced to the resolved primary code
+            # inside _apply_user_workspace_access.
         elif account.role == ROLE_MEMBER:
             # Same multi-Workspace list as create — Member permission level
             # is preserved, scope only expands. A Leader caller may only
@@ -613,9 +625,10 @@ def update_account(
                     for code in ids:
                         if code not in scopes:
                             raise HTTPException(403, "Leader chỉ được gán Workspace trong phạm vi của mình.")
-            _apply_user_workspace_access(db, account, ids, caller=caller)
-            if ids:
-                account.data_scope = ids[0]
+            primary_code = str(body.get("primary_workspace_code") or "").strip().lower() or None
+            _apply_user_workspace_access(db, account, ids, caller=caller, primary_code=primary_code)
+            # data_scope was already synced to the resolved primary code
+            # inside _apply_user_workspace_access.
         else:
             # Viewer / Super Admin: must not be granted multi-Workspace
             # access. Silently coerce to the single data_scope rather than
@@ -651,6 +664,46 @@ def update_account(
             target_user_id=account.id, field_name="role", old_value=old_role, new_value=account.role,
             description=f"Đổi role tài khoản '{account.email}': '{old_role}' → '{account.role}'"
         )
+    db.commit()
+    return account_to_dict(account, db)
+
+
+@router.post("/{account_id}/primary-workspace")
+def set_primary_workspace(account_id: int, body: dict, db: Session = Depends(get_db), caller=Depends(require_manager)):
+    """Re-designate which of an account's already-granted Workspaces is
+    "Chính" (primary), without touching the grant list itself — the
+    lightweight counterpart to re-submitting `workspace_ids` on PUT
+    /accounts/{id} just to flip which one is primary."""
+    account = require_account(db, account_id)
+    _leader_guard(caller, account, "đổi Workspace chính")
+    _leader_scope_guard(db, caller, account)
+    if account.role not in (ROLE_LEADER, ROLE_MEMBER):
+        raise HTTPException(400, "Chỉ Leader/Member mới có khái niệm Workspace Chính/Phụ.")
+
+    code = str(body.get("workspace_code") or "").strip().lower()
+    if not code:
+        raise HTTPException(400, "Thiếu workspace_code.")
+
+    ws = resolve_workspace_by_code(db, code)
+    if not ws:
+        raise HTTPException(400, f"Workspace không hợp lệ: '{code}'.")
+    rows = db.query(UserWorkspaceAccess).filter(UserWorkspaceAccess.user_id == account.id).all()
+    target = next((r for r in rows if r.workspace_id == ws.id), None)
+    if not target:
+        raise HTTPException(400, f"Tài khoản chưa được gán Workspace '{code}'.")
+
+    for r in rows:
+        r.is_primary = (r.id == target.id)
+    account.data_scope = code
+    db.commit()
+    db.refresh(account)
+
+    AuditService.record(
+        db=db, user_id=getattr(caller, "id", None), module="User", entity_type="User",
+        entity_id=account.id, action="SET_PRIMARY_WORKSPACE", resource_name=account.email,
+        target_user_id=account.id,
+        description=f"Đặt Workspace chính cho '{account.email}' thành '{code}'"
+    )
     db.commit()
     return account_to_dict(account, db)
 

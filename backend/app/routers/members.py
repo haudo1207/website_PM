@@ -163,6 +163,35 @@ def member_to_dict(m: Member) -> dict:
     }
 
 
+@router.get("/workspace-roles")
+def list_member_workspace_roles(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Chính/Phụ Workspace membership per Member, keyed by member_id — a
+    lightweight, separate lookup (rather than folding into the large
+    list_members() KPI query above) so the Dashboard/Project UIs can merge
+    it in client-side without touching that query's risk surface.
+    Only Members with a linked User account (role Leader/Member) have
+    entries; a Member with no login, or whose User is super_admin/viewer,
+    is simply absent from the response."""
+    from ..models.workspace_access import UserWorkspaceAccess
+    from ..models.system_category import Workspace
+    from ..utils.access import ROLE_LEADER, ROLE_MEMBER as _ROLE_MEMBER
+
+    rows = (
+        db.query(Member.id, Workspace.code, Workspace.name, UserWorkspaceAccess.is_primary)
+        .join(User, User.member_id == Member.id)
+        .join(UserWorkspaceAccess, UserWorkspaceAccess.user_id == User.id)
+        .join(Workspace, Workspace.id == UserWorkspaceAccess.workspace_id)
+        .filter(User.role.in_([ROLE_LEADER, _ROLE_MEMBER]))
+        .all()
+    )
+    result: dict[int, list[dict]] = {}
+    for member_id, code, name, is_primary in rows:
+        result.setdefault(member_id, []).append({"code": code, "name": name, "is_primary": bool(is_primary)})
+    for entries in result.values():
+        entries.sort(key=lambda e: (not e["is_primary"], e["code"]))
+    return result
+
+
 # ─── LIST ───────────────────────────────────────────────
 @router.get("")
 def list_members(

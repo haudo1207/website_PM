@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import { ReactNode, useEffect, useState } from 'react';
-import { isSuperAdmin, isLeader } from '@/lib/auth';
+import { isSuperAdmin, isLeader, isMember } from '@/lib/auth';
 
 type Tab = 'report' | 'overview' | 'system-audit';
 
@@ -23,7 +23,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const canAudit = isSuperAdmin();
-    const canOverview = true;
+    // Member only ever sees their own performance Report — the Overview tab
+    // (Team card, Leader-scoped stats) has nothing relevant for a Member to
+    // manage. Super Admin and Leader keep Overview.
+    const canOverview = !isMember();
 
     const filtered = ALL_TABS.filter(t => {
       if (t.id === 'system-audit') return canAudit;
@@ -35,6 +38,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
     // Permission guard
     if (pathname.includes('/system-audit') && !canAudit) {
+      router.replace('/dashboard/report');
+    }
+    if (pathname.includes('/dashboard/overview') && !canOverview) {
       router.replace('/dashboard/report');
     }
   }, [pathname, router]);

@@ -147,7 +147,20 @@ export default function ReportTab() {
 
   const currentUserProfile = reportData?.currentUserProfile ?? null;
   const realMemberData = reportData?.realMemberData ?? null;
-  const rawMyTasks: any[] = reportData?.rawMyTasks || [];
+  const rawMyTasksAll: any[] = reportData?.rawMyTasks || [];
+
+  // Chính/Phụ Workspace tabs — labeled by the actual Workspace name (never
+  // the literal words "Chính"/"Phụ"), Workspace chính first then each Phụ
+  // one after. super_admin has no home Workspace, so no tabs for them.
+  const myWorkspaces: { code: string; name: string; is_primary: boolean }[] = currentUserProfile?.workspaces || [];
+  const [reportWsCode, setReportWsCode] = useState<string | null>(null);
+  const primaryWs = myWorkspaces.find((w) => w.is_primary) || myWorkspaces[0] || null;
+  const activeReportWsCode = currentUserProfile?.role === 'super_admin'
+    ? null
+    : (reportWsCode || primaryWs?.code || null);
+  const rawMyTasks: any[] = activeReportWsCode
+    ? rawMyTasksAll.filter((t: any) => (t.projectDataScope || '').toLowerCase() === activeReportWsCode)
+    : rawMyTasksAll;
 
   const getMyTaskManday = useCallback((t: any) => {
     const isDone = t.status === 'Done' || t.status === 'done';
@@ -443,9 +456,27 @@ export default function ReportTab() {
     <div className="p-6 space-y-5">
       {/* HEADER & TIME FILTER */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Báo cáo hiệu suất cá nhân</h3>
           {loadingReal && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật...</span>}
+          {myWorkspaces.length > 1 && currentUserProfile?.role !== 'super_admin' && (
+            // Workspace chính first, then each Phụ one — labeled by the
+            // actual Workspace name only (never the words "Chính"/"Phụ").
+            // Switches which Workspace's tasks the whole report below shows.
+            <div className="flex items-center gap-1">
+              {myWorkspaces.map((w) => (
+                <button
+                  key={w.code}
+                  onClick={() => setReportWsCode(w.code)}
+                  className={`px-2.5 py-1 rounded-full text-[10.5px] font-bold transition-colors ${
+                    activeReportWsCode === w.code ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-500 hover:border-indigo-300'
+                  }`}
+                >
+                  {w.is_primary && '🏠 '}{w.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
