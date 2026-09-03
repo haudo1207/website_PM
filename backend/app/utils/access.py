@@ -177,8 +177,9 @@ def project_query_for_user(db: Session, user):
 
     - super_admin (scope=all): every project.
     - leader: projects matching any allowed Workspace, business==All, or explicitly assigned.
-    - member / viewer: projects where the user's linked member_id is in project_members
-      AND the project belongs to one of the user's assigned Workspace(s).
+    - member / viewer: every project the user's linked member_id is explicitly
+      assigned to (project_members), regardless of Workspace — same
+      membership-overrides-Workspace rule as Leader.
     """
     query = db.query(Project)
     scopes = user_allowed_scopes(db, user)
@@ -199,7 +200,8 @@ def project_query_for_user(db: Session, user):
             filters.append(Project.id.in_(assigned_project_ids))
         return query.filter(or_(*filters))
 
-    # member / viewer — assigned projects, restricted to the user's Workspace(s).
+    # member / viewer — every project they're explicitly assigned to,
+    # regardless of Workspace (mirrors the Leader membership-override rule).
     member_id = getattr(user, "member_id", None)
     if not member_id:
         # User has no linked member → they can see nothing.
@@ -210,8 +212,7 @@ def project_query_for_user(db: Session, user):
         .filter(project_members.c.member_id == member_id)
         .subquery()
     )
-    base = query.filter(Project.id.in_(assigned_project_ids))
-    return base.filter(or_(*project_belongs_to_workspace(db, scopes)))
+    return query.filter(Project.id.in_(assigned_project_ids))
 
 
 def member_query_for_user(db: Session, user):
@@ -408,22 +409,17 @@ def can_access_project(db: Session, user, project: Project) -> bool:
             or _is_member_of_project(db, user, project.id)
         )
 
-    # member / viewer — must be an explicit project member whose project
-    # belongs to one of the user's assigned Workspace(s).
+    # member / viewer — explicit project membership overrides Workspace,
+    # same as Leader: an assigned member/viewer sees the project regardless
+    # of which Workspace it belongs to.
     member_id = getattr(user, "member_id", None)
     if not member_id:
         return False
-    if not _is_member_of_project(db, user, project.id):
-        return False
-    if (
+    return (
         (project.data_scope in scopes)
         or (project.data_scope == ALL_SCOPE)
         or (project.business == "All")
-    ):
-        return True
-    return any(
-        (ws := resolve_workspace(db, scope)) is not None and project.business == ws.name
-        for scope in scopes
+        or _is_member_of_project(db, user, project.id)
     )
 
 
