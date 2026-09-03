@@ -176,10 +176,16 @@ def project_query_for_user(db: Session, user):
     """Return a Project query filtered by the caller's role and Workspace(s).
 
     - super_admin (scope=all): every project.
-    - leader: projects matching any allowed Workspace, business==All, or explicitly assigned.
-    - member / viewer: every project the user's linked member_id is explicitly
-      assigned to (project_members), regardless of Workspace — same
-      membership-overrides-Workspace rule as Leader.
+    - leader: full access to every project in their Chính (home, `data_scope`)
+      Workspace; in any Phụ (secondary) Workspace they only see projects
+      they're explicitly assigned to via project_members — same restriction
+      as Member. Holding a Phụ Workspace grants awareness of that team's
+      Dashboard stats, not blanket access to every one of that Workspace's
+      projects.
+    - member / viewer: every project the user's linked member_id is
+      explicitly assigned to via project_members, regardless of Workspace —
+      membership alone is sufficient, same membership-overrides-Workspace
+      rule as Leader's Phụ Workspace case above.
     """
     query = db.query(Project)
     scopes = user_allowed_scopes(db, user)
@@ -190,7 +196,10 @@ def project_query_for_user(db: Session, user):
 
     if role == ROLE_LEADER:
         member_id = getattr(user, "member_id", None)
-        filters = list(project_belongs_to_workspace(db, scopes))
+        primary_code = (getattr(user, "data_scope", None) or "").strip().lower()
+        filters = []
+        if primary_code and primary_code != ALL_SCOPE:
+            filters.extend(project_belongs_to_workspace(db, {primary_code}))
         if member_id:
             assigned_project_ids = (
                 db.query(project_members.c.project_id)
@@ -198,6 +207,8 @@ def project_query_for_user(db: Session, user):
                 .subquery()
             )
             filters.append(Project.id.in_(assigned_project_ids))
+        if not filters:
+            return query.filter(Project.id == -1)
         return query.filter(or_(*filters))
 
     # member / viewer — every project they're explicitly assigned to,
@@ -213,6 +224,39 @@ def project_query_for_user(db: Session, user):
         .subquery()
     )
     return query.filter(Project.id.in_(assigned_project_ids))
+
+
+def project_query_for_user_broad(db: Session, user):
+    """Same as project_query_for_user(), but for Leader every granted
+    Workspace (Chính AND Phụ) gets blanket access — not just their Chính one.
+
+    Use this ONLY for aggregate/awareness views (Dashboard team-wide KPI
+    totals) where a Leader needs the FULL picture of their team's workload
+    across every Workspace they're associated with, even projects they
+    personally aren't a member of. Never use it to gate opening a specific
+    project's page/detail — that must stay on the strict
+    project_query_for_user()/can_access_project() (Phụ = assignment-only),
+    so a Leader can see THAT a teammate has work on a project without being
+    able to click into that project's internals themselves.
+    """
+    role = getattr(user, "role", ROLE_MEMBER)
+    if role != ROLE_LEADER:
+        return project_query_for_user(db, user)
+
+    scopes = user_allowed_scopes(db, user)
+    if scopes == ALL_SCOPE:
+        return db.query(Project)
+
+    member_id = getattr(user, "member_id", None)
+    filters = list(project_belongs_to_workspace(db, scopes))
+    if member_id:
+        assigned_project_ids = (
+            db.query(project_members.c.project_id)
+            .filter(project_members.c.member_id == member_id)
+            .subquery()
+        )
+        filters.append(Project.id.in_(assigned_project_ids))
+    return db.query(Project).filter(or_(*filters))
 
 
 def member_query_for_user(db: Session, user):
@@ -402,8 +446,12 @@ def can_access_project(db: Session, user, project: Project) -> bool:
         return True
 
     if role == ROLE_LEADER:
+        # Full access only within their Chính (home) Workspace — a Phụ
+        # (secondary) Workspace only grants access to projects they're
+        # explicitly assigned to, matching project_query_for_user() above.
+        primary_code = (getattr(user, "data_scope", None) or "").strip().lower()
         return (
-            (project.data_scope in scopes)
+            (project.data_scope == primary_code)
             or (project.data_scope == ALL_SCOPE)
             or (project.business == "All")
             or _is_member_of_project(db, user, project.id)

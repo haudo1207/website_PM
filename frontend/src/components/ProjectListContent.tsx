@@ -531,7 +531,14 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                         )}
                       </div>
                     </div>
-                    <h3 className="text-base font-bold text-slate-800 mb-0.5 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <h3 className="text-base font-bold text-slate-800 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
+                      {p.business && (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded text-[9.5px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200" title={`Dự án thuộc Workspace ${p.business}`}>
+                          {p.business}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic flex items-center gap-1.5"><span className="not-italic text-sm">🏢</span> {p.customer_name || 'Chưa có khách hàng'}</p>
                     
                     <div className="grid grid-cols-2 gap-y-4 mb-3">

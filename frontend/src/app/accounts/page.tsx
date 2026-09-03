@@ -44,7 +44,7 @@ interface Account {
   role: string;
   data_scope: string;
   workspace_ids?: string[];
-  workspaces?: { id: number; code: string; name: string }[];
+  workspaces?: { id: number; code: string; name: string; is_primary: boolean }[];
   workspace_scope?: string;
   is_active: boolean;
   member_id: number | null;
@@ -250,6 +250,7 @@ export default function AccountsPage() {
         // is also accepted for backwards compatibility, but the backend now
         // derives it from the first code in `workspace_ids`.
         payload.workspace_ids = createForm.workspace_ids;
+        payload.primary_workspace_code = createForm.data_scope;
       } else if (createForm.role === 'super_admin') {
         // No Workspace assignment needed for Super Admin — backend coerces
         // data_scope='all'. Don't send `workspace_ids` so the backend treats
@@ -259,6 +260,7 @@ export default function AccountsPage() {
         // junction row per code; permission level (MEMBER) is unchanged.
         payload.workspace_ids = createForm.workspace_ids;
         payload.data_scope = createForm.data_scope;
+        payload.primary_workspace_code = createForm.data_scope;
       } else {
         // Viewer — NO CHANGE. Exactly one Workspace; backend ignores
         // `workspace_ids` for Viewer and the single `data_scope` row
@@ -337,6 +339,10 @@ export default function AccountsPage() {
     e.preventDefault();
     if (!editAccount) return;
     setEditError(null);
+    if ((editForm.role === 'leader' || editForm.role === 'member') && editForm.workspace_ids.length > 1 && !editForm.data_scope) {
+      setEditError('Chưa chọn Workspace chính — bấm vào 1 trong các Workspace bên dưới để đặt làm chính.');
+      return;
+    }
     try {
       const payload: any = {
         email: editForm.email,
@@ -347,12 +353,17 @@ export default function AccountsPage() {
       };
       if (editForm.role === 'leader') {
         payload.workspace_ids = editForm.workspace_ids;
+        // Which granted Workspace is "Chính" (home) — defaults to the first
+        // code when unset, but the Chính/Phụ picker below lets the admin
+        // explicitly override that.
+        payload.primary_workspace_code = editForm.data_scope;
       } else if (editForm.role === 'super_admin') {
         // No Workspace selector — backend handles 'all' globally.
       } else if (editForm.role === 'member') {
         // Multi-Workspace Member — backend writes one junction row per code.
         payload.workspace_ids = editForm.workspace_ids;
         payload.data_scope = editForm.data_scope;
+        payload.primary_workspace_code = editForm.data_scope;
       } else {
         // Viewer — existing single-Workspace behavior, NO CHANGE.
         payload.data_scope = editForm.data_scope;
@@ -594,14 +605,24 @@ export default function AccountsPage() {
                               );
                             }
                             if (acc.workspace_ids && acc.workspace_ids.length > 1) {
+                              // List stays clean — only the Chính (home)
+                              // Workspace shows here as a badge, with a small
+                              // "+N phụ" hint. Full Chính/Phụ management
+                              // (viewing/switching which one is primary)
+                              // lives in the Edit panel, not cluttering the
+                              // list row with every granted Workspace.
+                              const primaryEntry = acc.workspaces?.find(w => w.is_primary);
+                              const primaryCode = primaryEntry?.code || acc.workspace_ids[0];
+                              const secondaryCount = acc.workspace_ids.filter(c => c !== 'all').length - 1;
                               return (
-                                <div className="flex flex-wrap gap-1">
-                                  {acc.workspace_ids.filter(code => code !== 'all').map(code => (
-                                    <span key={code} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase tracking-wider">
-                                      {scopeLabels[code] || code}
-                                    </span>
-                                  ))}
-                                </div>
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-600 text-white text-[10px] font-bold uppercase tracking-wider">
+                                    🏠 {scopeLabels[primaryCode] || primaryCode}
+                                  </span>
+                                  {secondaryCount > 0 && (
+                                    <span className="text-[10px] text-amber-600 font-semibold">+{secondaryCount} phụ</span>
+                                  )}
+                                </span>
                               );
                             }
                             return <span>{scopeLabels[acc.data_scope] || acc.data_scope}</span>;
@@ -791,6 +812,28 @@ export default function AccountsPage() {
                     ))}
                   </select>
                 )}
+                {(createForm.role === 'leader' || createForm.role === 'member') && createForm.workspace_ids.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Workspace chính:</span>
+                    {createForm.workspace_ids.map(code => {
+                      const ws = workspaces.find(w => w.code === code);
+                      const isPrimary = createForm.data_scope === code;
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          onClick={() => setCreateForm(f => ({ ...f, data_scope: code }))}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold transition-colors ${
+                            isPrimary ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-500 hover:border-indigo-300'
+                          }`}
+                          title={isPrimary ? `${ws?.name || code} đang là Workspace chính` : `Đặt ${ws?.name || code} làm Workspace chính`}
+                        >
+                          {isPrimary && '🏠 '}{ws?.name || code}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <p className="text-[10px] text-slate-400 italic">
                   {createForm.role === 'super_admin'
                     ? 'Super Admin truy cập tất cả Workspace — không cần chọn.'
@@ -915,11 +958,15 @@ export default function AccountsPage() {
                     icon="🗂️"
                     options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
                     value={editForm.workspace_ids}
-                    onChange={(vals: string[]) => setEditForm(f => ({
-                      ...f,
-                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
-                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
-                    }))}
+                    onChange={(vals: string[]) => setEditForm(f => {
+                      const ids = Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean);
+                      // Adding/removing a Workspace never silently reassigns
+                      // Chính — new ones just join as Phụ. Only fall back to
+                      // the first code when there was no Chính chosen yet, or
+                      // the previous Chính got removed from the list.
+                      const dataScope = (f.data_scope && ids.includes(f.data_scope)) ? f.data_scope : (ids[0] || '');
+                      return { ...f, workspace_ids: ids, data_scope: dataScope };
+                    })}
                     isMulti={true}
                     placeholder="Chọn Workspace cho Team Leader..."
                     className="w-full"
@@ -931,11 +978,15 @@ export default function AccountsPage() {
                     icon="🗂️"
                     options={workspaces.map(ws => ({ id: ws.code, name: `${ws.name} — Dự án của team ${ws.name}` }))}
                     value={editForm.workspace_ids}
-                    onChange={(vals: string[]) => setEditForm(f => ({
-                      ...f,
-                      workspace_ids: Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean),
-                      data_scope: (Array.isArray(vals) ? vals[0] : vals) || f.data_scope,
-                    }))}
+                    onChange={(vals: string[]) => setEditForm(f => {
+                      const ids = Array.isArray(vals) ? vals.filter(Boolean) : [String(vals || '')].filter(Boolean);
+                      // Adding/removing a Workspace never silently reassigns
+                      // Chính — new ones just join as Phụ. Only fall back to
+                      // the first code when there was no Chính chosen yet, or
+                      // the previous Chính got removed from the list.
+                      const dataScope = (f.data_scope && ids.includes(f.data_scope)) ? f.data_scope : (ids[0] || '');
+                      return { ...f, workspace_ids: ids, data_scope: dataScope };
+                    })}
                     isMulti={true}
                     placeholder="Chọn một hoặc nhiều Workspace cho Member..."
                     className="w-full"
@@ -951,6 +1002,51 @@ export default function AccountsPage() {
                       <option key={ws.code} value={ws.code}>{ws.name} — Chỉ dự án của team {ws.name}</option>
                     ))}
                   </select>
+                )}
+                {(editForm.role === 'leader' || editForm.role === 'member') && editForm.workspace_ids.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Workspace chính:</span>
+                    {editForm.workspace_ids.map(code => {
+                      const ws = workspaces.find(w => w.code === code);
+                      const isPrimary = editForm.data_scope === code;
+                      const primaryIsCleared = !editForm.data_scope;
+                      if (isPrimary) {
+                        // Currently Chính — click removes it (must be cleared
+                        // before another Workspace can be picked, so this is
+                        // never an accidental one-click reassignment).
+                        return (
+                          <button
+                            key={code}
+                            type="button"
+                            onClick={() => setEditForm(f => ({ ...f, data_scope: '' }))}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold bg-indigo-600 text-white transition-colors"
+                            title={`Bỏ ${ws?.name || code} khỏi vị trí Workspace chính`}
+                          >
+                            🏠 {ws?.name || code} · ✕ Bỏ chính
+                          </button>
+                        );
+                      }
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          disabled={!primaryIsCleared}
+                          onClick={() => setEditForm(f => ({ ...f, data_scope: code }))}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold transition-colors ${
+                            primaryIsCleared
+                              ? 'bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-50'
+                              : 'bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed'
+                          }`}
+                          title={primaryIsCleared ? `Đặt ${ws?.name || code} làm Workspace chính` : 'Bỏ Workspace chính hiện tại trước'}
+                        >
+                          {ws?.name || code}
+                        </button>
+                      );
+                    })}
+                    {!editForm.data_scope && (
+                      <span className="text-[10px] text-amber-600 font-semibold">← chọn 1 cái để làm Chính</span>
+                    )}
+                  </div>
                 )}
                 <p className="text-[10px] text-slate-400 italic">
                   {editForm.role === 'super_admin'

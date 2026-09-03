@@ -223,19 +223,22 @@ def me(user=Depends(get_current_user), db: Session = Depends(get_db)):
     if (user.role or "").strip().lower() == "super_admin" or (user.data_scope or "").strip().lower() == ALL_SCOPE:
         workspace_ids = [ALL_SCOPE]
         workspaces = [
-            {"id": w.id, "code": w.code, "name": w.name}
+            {"id": w.id, "code": w.code, "name": w.name, "is_primary": False}
             for w in db.query(Workspace).order_by(Workspace.id.asc()).all()
         ]
     else:
+        # Primary (Chính) Workspace first — the Navbar's fixed label shows
+        # only this one, with any Phụ ones surfaced as a secondary count
+        # rather than joined into the main label (see WorkspaceSwitcher).
         rows = (
-            db.query(Workspace)
+            db.query(Workspace, UserWorkspaceAccess.is_primary)
             .join(UserWorkspaceAccess, UserWorkspaceAccess.workspace_id == Workspace.id)
             .filter(UserWorkspaceAccess.user_id == user.id)
-            .order_by(Workspace.id.asc())
+            .order_by(UserWorkspaceAccess.is_primary.desc(), Workspace.id.asc())
             .all()
         )
-        workspace_ids = [w.code for w in rows]
-        workspaces = [{"id": w.id, "code": w.code, "name": w.name} for w in rows]
+        workspace_ids = [w.code for w, _ in rows]
+        workspaces = [{"id": w.id, "code": w.code, "name": w.name, "is_primary": bool(is_primary)} for w, is_primary in rows]
         if not workspace_ids and user.data_scope:
             workspace_ids = [(user.data_scope or "").strip().lower()]
 

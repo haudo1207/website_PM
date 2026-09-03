@@ -23,7 +23,7 @@ from ..models.task import Task
 from ..models.member import Member
 from ..models.project import Project, project_members
 from ..utils.kpi_engine import recalculate_task, parse_date
-from ..utils.access import require_project, require_route_project_access, project_query_for_user, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
+from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
 from ..services.zalo_task_parser import notify_task_done_if_zalo_linked
@@ -666,7 +666,15 @@ def list_all_tasks_global(db: Session = Depends(get_db), current_user=Depends(ge
     from ..models.task import Task
     from ..models.skill_master import Group, Skill
 
-    # Leader data scope: only tasks belonging to the Leader's Workspace.
+    # Leader data scope: only tasks belonging to the Leader's Workspace(s).
+    # Deliberately uses the "broad" variant (blanket per-Workspace access,
+    # not assignment-only) — this feeds Dashboard's team-wide KPI/task
+    # totals, where a Leader needs the FULL picture of their team's
+    # workload across every Workspace they're associated with (Chính AND
+    # Phụ), even projects they personally aren't a member of. Opening a
+    # specific project's own page is a separate, stricter check
+    # (can_access_project) that still gates Phụ-Workspace projects to
+    # assigned members only.
     leader_scoped = (
         getattr(current_user, "role", None) == ROLE_LEADER
         and user_scope(current_user) != ALL_SCOPE
@@ -680,7 +688,7 @@ def list_all_tasks_global(db: Session = Depends(get_db), current_user=Depends(ge
     )
     if leader_scoped:
         scoped_project_ids = (
-            project_query_for_user(db, current_user).with_entities(Project.id).subquery()
+            project_query_for_user_broad(db, current_user).with_entities(Project.id).subquery()
         )
         base_query = base_query.filter(Project.id.in_(scoped_project_ids))
 
@@ -700,6 +708,7 @@ def list_all_tasks_global(db: Session = Depends(get_db), current_user=Depends(ge
             t_dict["name"] = task.detail or f"Task #{task.id}"
             t_dict["project_id"] = project.id
             t_dict["projectName"] = project.name
+            t_dict["projectDataScope"] = project.data_scope
             t_dict["customerName"] = project.customer_name
             t_dict["year"] = project.year
             t_dict["task_group_name"] = tg.name

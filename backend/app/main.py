@@ -191,6 +191,10 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
         ))
+        # Explicit "home" Workspace flag (Chính vs Phụ) — see workspace_access.py.
+        conn.execute(text(
+            "ALTER TABLE user_workspace_access ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false"
+        ))
         conn.execute(text("""
             DO $$
             BEGIN
@@ -1189,9 +1193,48 @@ def init_db_defaults():
             for u in users_needing_backfill:
                 ws = ws_by_code.get(str(u.data_scope or "").strip().lower())
                 if ws:
-                    db.add(UserWorkspaceAccess(user_id=u.id, workspace_id=ws.id))
+                    db.add(UserWorkspaceAccess(user_id=u.id, workspace_id=ws.id, is_primary=True))
                     backfilled += 1
             print(f"[*] Backfilled user_workspace_access for {backfilled}/{len(users_needing_backfill)} user(s)")
+
+        # Backfill is_primary for users who already had junction row(s) before
+        # this column existed — mark whichever row matches their data_scope
+        # (the pre-existing "primary" convention) as primary. Idempotent: a
+        # user who already has any is_primary=True row is left untouched.
+        already_has_primary = sql_exists().where(
+            (UserWorkspaceAccess.user_id == User.id) & (UserWorkspaceAccess.is_primary.is_(True))
+        )
+        users_needing_primary_flag = (
+            db.query(User)
+            .filter(User.role.in_(WORKSPACE_SCOPED_ROLES))
+            .filter(User.data_scope != ALL_SCOPE)
+            .filter(~already_has_primary)
+            .all()
+        )
+        if users_needing_primary_flag:
+            ws_by_code = {w.code.strip().lower(): w for w in db.query(Workspace).all() if w.code}
+            flagged = 0
+            for u in users_needing_primary_flag:
+                ws = ws_by_code.get(str(u.data_scope or "").strip().lower())
+                if not ws:
+                    continue
+                row = (
+                    db.query(UserWorkspaceAccess)
+                    .filter(UserWorkspaceAccess.user_id == u.id, UserWorkspaceAccess.workspace_id == ws.id)
+                    .first()
+                )
+                if row:
+                    row.is_primary = True
+                    flagged += 1
+                else:
+                    # data_scope points at a Workspace with no junction row at
+                    # all (shouldn't normally happen) — fall back to whichever
+                    # row they do have, so is_primary is never left unset.
+                    any_row = db.query(UserWorkspaceAccess).filter(UserWorkspaceAccess.user_id == u.id).first()
+                    if any_row:
+                        any_row.is_primary = True
+                        flagged += 1
+            print(f"[*] Backfilled is_primary for {flagged}/{len(users_needing_primary_flag)} user(s)")
 
         db.commit()
     except RuntimeError:
