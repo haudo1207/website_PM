@@ -777,28 +777,28 @@ export default function OverviewTab() {
   // to whichever Workspace is currently being viewed (effectiveWsCode below);
   // when no specific Workspace is selected (viewing "Tất cả"), falls back to
   // showing the person's own home Workspace instead.
-  function workspaceBadgeFor(memberId: any, wsCode: string | null): { label: string; sub: string | null; primary: boolean } | null {
+  function workspaceBadgeFor(memberId: any, wsCode: string | null): { label: string; subs: string[]; primary: boolean } | null {
     const entries = workspaceRolesByMember[Number(memberId)];
     if (!entries || entries.length < 1) return null;
     if (wsCode) {
       const match = entries.find((e) => e.code === wsCode);
       if (!match) return null;
       // A Leader viewing their own team always has wsCode forced to their own
-      // Chính code (no switcher) — still show "+N phụ" on a Member who holds
-      // extra Workspaces beyond this matched one, same as the aggregate
-      // branch below does for Admin's "Toàn bộ Leader" view. Returned as a
-      // separate `sub` line (rendered below the Chính badge) rather than
-      // appended inline — keeps the Chính badge short and puts "+N phụ" on
-      // its own row instead of cramming both onto one line.
-      const otherCount = entries.length - 1;
+      // Chính code (no switcher) — still list every Phụ Workspace a Member
+      // holds beyond this matched one, same as the aggregate branch below
+      // does for Admin's "Toàn bộ Leader" view. Returned as separate `subs`
+      // entries (one badge per Phụ Workspace, rendered on their own row
+      // below the Chính badge) instead of a combined "+N phụ" count, so
+      // each Phụ Workspace is individually visible, not just a number.
+      const others = entries.filter((e) => e !== match).map((e) => e.name);
       return match.is_primary
-        ? { label: `🏠 ${match.name}`, sub: otherCount > 0 ? `+${otherCount} phụ` : null, primary: true }
-        : { label: `${match.name} · Phụ`, sub: null, primary: false };
+        ? { label: `🏠 ${match.name}`, subs: others, primary: true }
+        : { label: `${match.name} · Phụ`, subs: [], primary: false };
     }
     const home = entries.find((e) => e.is_primary);
     if (!home) return null;
-    const secondaryCount = entries.length - 1;
-    return { label: `🏠 ${home.name}`, sub: secondaryCount > 0 ? `+${secondaryCount} phụ` : null, primary: true };
+    const secondaries = entries.filter((e) => e !== home).map((e) => e.name);
+    return { label: `🏠 ${home.name}`, subs: secondaries, primary: true };
   }
 
   // Company selection is shared app-wide via WorkspaceFilterProvider (see
@@ -1532,11 +1532,13 @@ export default function OverviewTab() {
                       </span>
                     )}
                   </div>
-                  {badge?.sub && (
-                    <div className="mt-0.5">
-                      <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
-                        {badge.sub}
-                      </span>
+                  {badge && badge.subs.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {badge.subs.map((name) => (
+                        <span key={name} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
+                          {name} · Phụ
+                        </span>
+                      ))}
                     </div>
                   )}
                   <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
@@ -1575,11 +1577,13 @@ export default function OverviewTab() {
                       </span>
                     )}
                   </div>
-                  {badge?.sub && (
-                    <div className="mt-0.5">
-                      <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
-                        {badge.sub}
-                      </span>
+                  {badge && badge.subs.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {badge.subs.map((name) => (
+                        <span key={name} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
+                          {name} · Phụ
+                        </span>
+                      ))}
                     </div>
                   )}
                   <div className="text-[10px] font-normal opacity-80 truncate">{m.team} · {m.totalTasks} task</div>
@@ -1925,11 +1929,11 @@ export default function OverviewTab() {
                                   <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
                                     {badge.label}
                                   </span>
-                                  {badge.sub && (
-                                    <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-300">
-                                      {badge.sub}
+                                  {badge.subs.map((name) => (
+                                    <span key={name} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-300">
+                                      {name} · Phụ
                                     </span>
-                                  )}
+                                  ))}
                                 </>
                               );
                             })()}
