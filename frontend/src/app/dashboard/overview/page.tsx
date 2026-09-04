@@ -1524,16 +1524,14 @@ export default function OverviewTab() {
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
-                  <div className="text-xs font-bold truncate flex items-center gap-1">
+                  <div className="text-xs font-bold truncate">
                     {ld.name}
-                    {badge && (
+                  </div>
+                  {badge && (
+                    <div className="flex flex-wrap gap-1 mt-1">
                       <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
                         {badge.label}
                       </span>
-                    )}
-                  </div>
-                  {badge && badge.subs.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-0.5">
                       {badge.subs.map((name) => (
                         <span key={name} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
                           {name} · Phụ
@@ -1541,7 +1539,7 @@ export default function OverviewTab() {
                       ))}
                     </div>
                   )}
-                  <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
+                  <div className="text-[10px] font-normal opacity-80 truncate mt-0.5">{ld.team} · {ld.count} member</div>
                 </div>
                 <CircularProgress value={ld.doneTasks} total={ld.totalTasks} />
               </button>
@@ -1569,16 +1567,14 @@ export default function OverviewTab() {
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedMemberId === String(m.id) ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
-                  <div className="text-xs font-bold truncate flex items-center gap-1">
+                  <div className="text-xs font-bold truncate">
                     {m.name}
-                    {badge && (
+                  </div>
+                  {badge && (
+                    <div className="flex flex-wrap gap-1 mt-1">
                       <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
                         {badge.label}
                       </span>
-                    )}
-                  </div>
-                  {badge && badge.subs.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-0.5">
                       {badge.subs.map((name) => (
                         <span key={name} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
                           {name} · Phụ
@@ -1586,7 +1582,7 @@ export default function OverviewTab() {
                       ))}
                     </div>
                   )}
-                  <div className="text-[10px] font-normal opacity-80 truncate">{m.team} · {m.totalTasks} task</div>
+                  <div className="text-[10px] font-normal opacity-80 truncate mt-0.5">{m.team} · {m.totalTasks} task</div>
                 </div>
                 <CircularProgress value={m.doneTasks} total={m.totalTasks} />
               </button>
