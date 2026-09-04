@@ -6,12 +6,14 @@ import Navbar from '@/components/Navbar';
 import { ReactNode, useEffect, useState } from 'react';
 import { isSuperAdmin, isLeader, isMember, isViewer } from '@/lib/auth';
 
-type Tab = 'report' | 'overview' | 'system-audit';
+type Tab = 'report' | 'overview' | 'system-audit' | 'kpi-matrix' | 'team-load';
 
 const ALL_TABS: { id: Tab; label: string; path: string }[] = [
   { id: 'overview',     label: 'Overview',     path: '/dashboard/overview' },
   { id: 'report',       label: 'Report',       path: '/dashboard/report' },
   { id: 'system-audit', label: 'System Audit', path: '/dashboard/system-audit' },
+  { id: 'kpi-matrix',   label: 'KPI Matrix',   path: '/dashboard/kpi-matrix' },
+  { id: 'team-load',    label: 'Team Load',    path: '/dashboard/team-load' },
 ];
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
@@ -30,10 +32,19 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     // no meaning for a Viewer account either. Super Admin and Leader keep
     // Overview.
     const canOverview = !isMember() && !isViewer();
+    // KPI Matrix is gated to Super Admin and Leader only — it surfaces
+    // Member/Leader performance breakdowns that have no meaning for a
+    // regular Member or a read-only Viewer account.
+    const canKpiMatrix = isSuperAdmin() || isLeader();
+    // Team Load is Super Admin only — the multi-team project comparison is
+    // an ops/oversight view that has no meaning for Leader/Member/Viewer.
+    const canTeamLoad = isSuperAdmin();
 
     const filtered = ALL_TABS.filter(t => {
       if (t.id === 'system-audit') return canAudit;
       if (t.id === 'overview') return canOverview;
+      if (t.id === 'kpi-matrix') return canKpiMatrix;
+      if (t.id === 'team-load') return canTeamLoad;
       return true;
     });
 
@@ -50,6 +61,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     if (pathname.includes('/dashboard/overview') && !canOverview) {
       router.replace('/dashboard/report');
     }
+    // Same guard for KPI Matrix — Member / Viewer that hit the URL directly
+    // get bounced to Report.
+    if (pathname.includes('/kpi-matrix') && !canKpiMatrix) {
+      router.replace('/dashboard/report');
+    }
+    // Team Load — only Super Admin; everyone else gets bounced to Report.
+    if (pathname.includes('/team-load') && !canTeamLoad) {
+      router.replace('/dashboard/report');
+    }
   }, [pathname, router]);
 
   let activeTab: Tab = 'report';
@@ -57,6 +77,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     activeTab = 'overview';
   } else if (pathname === '/dashboard/system-audit' || pathname === '/dashboard/super-admin') {
     activeTab = 'system-audit';
+  } else if (pathname === '/dashboard/kpi-matrix') {
+    activeTab = 'kpi-matrix';
+  } else if (pathname === '/dashboard/team-load') {
+    activeTab = 'team-load';
   } else {
     activeTab = 'report';
   }
@@ -65,6 +89,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     report:         'Dashboard hiệu suất & công việc cá nhân',
     overview:       'Dashboard quản lý & Audit log dành cho Team Leader',
     'system-audit': 'Dashboard kiểm toán hệ thống dành cho Sys Admin',
+    'kpi-matrix':   'Ma trận KPI thành viên theo tháng dành cho Super Admin & Leader',
+    'team-load':    'So sánh Project theo nhiều Team — chỉ dành cho Super Admin',
   };
 
   const currentDateStr = new Date().toLocaleDateString('vi-VN', { month: 'numeric', year: 'numeric' });
