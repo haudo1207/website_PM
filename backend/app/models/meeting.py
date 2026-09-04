@@ -10,6 +10,12 @@ class Meeting(Base):
     description  = Column(Text, nullable=True)
     platform     = Column(String(50), nullable=True)
     meeting_url  = Column(Text, nullable=True)
+    # Google Calendar event ID for the event created via create_google_meet_shared
+    # (shared mkt.szone@gmail.com account) — lets update_meeting reschedule the
+    # SAME event via events.patch instead of silently drifting out of sync.
+    # NULL for meetings without an auto-generated Google Meet link (manual link,
+    # Zoom, Teams, or created before this column existed).
+    google_event_id = Column(String(255), nullable=True)
     meeting_date = Column(Date, nullable=False)
     start_time   = Column(Time, nullable=False)
     end_time     = Column(Time, nullable=True)
@@ -29,8 +35,7 @@ class Meeting(Base):
 
     # Reminder — minutes before start_time to notify participants, and which
     # channels to notify through. See services/meeting_reminders.py for the
-    # actual dispatch (App/Telegram/Zalo now wired up; Email still pending
-    # SMTP provider config).
+    # actual dispatch (App/Telegram/Zalo).
     reminder_minutes = Column(Integer, nullable=False, default=15, server_default="15")
     notify_channels  = Column(JSON, nullable=True)
     # Set once a reminder has been dispatched for this meeting — the claim
