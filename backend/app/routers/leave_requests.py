@@ -209,7 +209,14 @@ def delete_leave_request(id: int, db: Session = Depends(get_db), current_user: U
     if not _leader_scope_ok(db, current_user, lr.user_id):
         raise HTTPException(403, "Không có quyền xóa (khác Công ty)")
 
+    lr_id, lr_user_id, lr_status = lr.id, lr.user_id, lr.status
     db.delete(lr)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Leave Request", entity_type="LeaveRequest",
+        entity_id=lr_id, action="DELETE", target_user_id=lr_user_id,
+        description=f"Xóa đơn nghỉ phép #{lr_id} (trạng thái: {lr_status}) của user #{lr_user_id}"
+    )
     db.commit()
     return {"message": "Đã xóa leave request thành công"}
 
