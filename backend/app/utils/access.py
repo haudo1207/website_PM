@@ -151,6 +151,29 @@ def user_allowed_scopes(db: Session, user):
     return codes or {base_scope}
 
 
+def primary_workspace_code_for_user(db: Session, user) -> str:
+    """The user's actual Chính (primary) Workspace code, resolved from the
+    canonical `user_workspace_access.is_primary` row — the same source the
+    Chính/Phụ badges (GET /api/members/workspace-roles) already trust.
+
+    `User.data_scope` is supposed to always mirror this row, but nothing
+    enforces that at the DB level, so callers that need "the caller's real
+    Chính Workspace" (e.g. filtering the Dashboard Leader roster by
+    Workspace) should use this instead of reading `data_scope` directly.
+    Falls back to `user_scope(user)` when no `is_primary` row exists yet.
+    """
+    user_id = getattr(user, "id", None)
+    row = (
+        db.query(Workspace.code)
+        .join(UserWorkspaceAccess, UserWorkspaceAccess.workspace_id == Workspace.id)
+        .filter(UserWorkspaceAccess.user_id == user_id, UserWorkspaceAccess.is_primary == True)  # noqa: E712
+        .first()
+    )
+    if row and row[0]:
+        return row[0].strip().lower()
+    return user_scope(user)
+
+
 def project_belongs_to_workspace(db: Session, scopes):
     """Return OR-conditions for projects belonging to any of the given
     Workspace scope(s). Accepts a single scope string or an iterable of scope
