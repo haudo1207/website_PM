@@ -1135,25 +1135,31 @@ export default function OverviewTab() {
 
     // 3. Filter Tasks by Team & Date
     // `rawTasks` is narrowed to a single Workspace by the page-wide scope
-    // (effectiveWsCode). For Super Admin that's an explicit, deliberate
-    // choice via the Navbar switcher — keep respecting it. But a Leader has
-    // no switcher at all: effectiveWsCode is silently forced to their own
-    // Chính Workspace, which would make "Toàn bộ Team" quietly drop a
-    // teammate's Phụ-Workspace tasks with no way to know it happened. A
-    // Leader always sees their team's full picture across every Workspace —
-    // no toggle needed; per-item Chính/Phụ Workspace badges (elsewhere on
-    // this page) are how each item's Workspace is communicated instead.
-    const taskSourceForDrill = currentUserRole === 'leader' ? rawTasksAll : rawTasks;
+    // (effectiveWsCode). The switcher's job is ONLY to decide the Leader/
+    // Member roster shown (who counts as "home" to that Workspace) — once
+    // Admin has drilled into one specific Leader/Member, that person's own
+    // Chính AND Phụ data must show in full regardless of the switcher, same
+    // as a Leader viewing their own team always does (no switcher at all).
+    // Otherwise switching to "Dev" would silently wipe out that person's
+    // "Tham gia ngoài" (Infra/Marketing) picture just because the switcher
+    // happened to be on Dev — the switcher narrows the roster, not a
+    // selected individual's own cross-Workspace picture.
+    const isDrilledIntoPerson = selectedLeader !== 'all' || selectedMemberId !== 'all';
+    // The specific Leader/Member's OWN member_id when drilled into exactly
+    // one of them — used both to scope the "Tham gia ngoài" pill's data
+    // below, and later to tell whether THIS specific person (not just
+    // someone on their team) is personally on a given project.
+    const drilledPersonId: number | null = showsLeaderCards
+      ? (selectedLeader !== 'all' ? (visibleLeaders.find((l: any) => l.name === selectedLeader)?.member_id ?? null) : null)
+      : (selectedMemberId !== 'all' ? Number(selectedMemberId) : null);
+    const taskSourceForDrill = (currentUserRole === 'leader' || isDrilledIntoPerson) ? rawTasksAll : rawTasks;
     let fTasks = taskSourceForDrill.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
     // Clicking the combined "Tham gia ngoài" pill narrows every stat below
     // (KPI cards, ranking, project list) to just the selected Leader/Member's
     // Phụ Workspace(s) — i.e. every Workspace that isn't their own Chính.
     if (selectedWorkspaceScope === 'external') {
-      const selectedPersonMemberId = showsLeaderCards
-        ? (selectedLeader !== 'all' ? visibleLeaders.find((l: any) => l.name === selectedLeader)?.member_id : null)
-        : (selectedMemberId !== 'all' ? Number(selectedMemberId) : null);
-      const homeCode = selectedPersonMemberId != null ? primaryWorkspaceCodeFor(selectedPersonMemberId) : null;
+      const homeCode = drilledPersonId != null ? primaryWorkspaceCodeFor(drilledPersonId) : null;
       if (homeCode) {
         fTasks = fTasks.filter(t => {
           const code = (t.projectDataScope || '').toLowerCase();
@@ -1281,12 +1287,9 @@ export default function OverviewTab() {
     });
 
     // 6. Active Projects (Filtered by BOTH Leader and Time Period)
-    // Same reasoning as taskSourceForDrill above: a Leader has no Workspace
-    // switcher, so `rawProjects` is silently narrowed to their Chính
-    // Workspace by effectiveWsCode — which would make every Phụ-Workspace
-    // project (their "Tham gia ngoài" contributions) invisible to the
-    // Dashboard's own project section. Use the unscoped list for Leader.
-    const projectSourceForDrill = currentUserRole === 'leader' ? rawProjectsAll : rawProjects;
+    // Same reasoning as taskSourceForDrill above: the switcher only decides
+    // the roster, not a drilled-into person's own cross-Workspace picture.
+    const projectSourceForDrill = (currentUserRole === 'leader' || isDrilledIntoPerson) ? rawProjectsAll : rawProjects;
     const allMappedProjects = projectSourceForDrill.map((p: any) => {
       const pAllTasks = taskSourceForDrill.filter(t => isSameId(t.project_id, p.id));
       const pLeaderTasks = pAllTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
@@ -1294,7 +1297,7 @@ export default function OverviewTab() {
       // Drilled in either as Admin picking one Leader, or as a Leader picking
       // one Member of their own team — either way, narrow the project list
       // the same way the KPI cards/ranking table already do.
-      const isDrilledIn = selectedLeader !== 'all' || selectedMemberId !== 'all';
+      const isDrilledIn = isDrilledIntoPerson;
 
       const pmName = (p.pm_name || p.pm || p.leader_name || p.manager || p.project_manager || p.owner || '').toLowerCase();
       const isLeaderPM = !isDrilledIn || activeTeamList.some(m => {
@@ -1339,9 +1342,29 @@ export default function OverviewTab() {
         pLeaderTasks.flatMap((t: any) => [t.assigned_name, t.support_name]).filter(Boolean)
       ));
 
+      // Does the specific drilled-into Leader/Member (not just someone else
+      // on their team) personally have a real assignment on this project?
+      // Drives whether the Limited-access modal shows the "unlocked, Mở dự
+      // án" state or a genuinely locked one with no way in — e.g. a Member
+      // participates in an outside project their Leader is NOT personally
+      // assigned to: the Leader's own click must show as locked, even
+      // though the project legitimately shows up for team-wide awareness.
+      // No specific person drilled into (viewing "Toàn bộ") — nobody to
+      // check access for, so default to unlocked.
+      const drilledPerson = drilledPersonId != null ? activeTeamList.find((m: any) => isSameId(m.id, drilledPersonId)) : null;
+      const drilledPersonName = (drilledPerson?.display_name || drilledPerson?.full_name || '').trim().toLowerCase();
+      const drilledPersonHasAccess = drilledPersonId == null
+        || pAllTasks.some((t: any) => isSameId(t.assigned_id, drilledPersonId) || isSameId(t.support_id, drilledPersonId))
+        || (Boolean(drilledPersonName) && pmName.includes(drilledPersonName));
+
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
-        progress: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
+        // Issue 3 — Project Progress from Settings → Master Phases (single
+        // source of truth). Fall back to 0 only if the backend omitted the
+        // field. Task-completion percentage is preserved as
+        // `taskCompletionPct` for surfaces that intentionally show it.
+        progress: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
+        taskCompletionPct: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
         totalTasks: pTasksToUse.length, doneTasks: done, openTasks: open, lateTasks: late,
         manday: Math.round(pManday * 10) / 10, mandayPlanned: Math.round(pMandayPlanned * 10) / 10,
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
@@ -1349,6 +1372,7 @@ export default function OverviewTab() {
         business: p.business || null,
         dataScope,
         contributingNames,
+        drilledPersonHasAccess,
         // "Owned" = the project sits in the current home Workspace (Leader's
         // Chính, or whichever Workspace is currently selected/drilled) — same
         // Full-vs-Limited-Access distinction the backend already enforces via
@@ -2209,7 +2233,11 @@ export default function OverviewTab() {
           const renderCard = (p: any, isOwnedCard: boolean) => (
             <div
               key={p.id}
-              onClick={() => isOwnedCard ? router.push(`/project/detail/overview?id=${p.id}`) : setContributionModalProject(p)}
+              // Every card — Phụ trách and Tham gia ngoài alike, for every
+              // role including Admin — opens the summary popup first; its
+              // own "Mở dự án →" button is the only path into the real
+              // project detail page from here.
+              onClick={() => setContributionModalProject(p)}
               className={`p-4 rounded-2xl border shadow-sm transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99] ${isOwnedCard
                   ? 'border-slate-200 bg-white hover:border-[#0058be] hover:shadow-md'
                   : 'border-purple-200/70 bg-[#fdfcff] hover:border-purple-400 hover:shadow-md'
@@ -2419,25 +2447,42 @@ export default function OverviewTab() {
       {contributionModalProject && (() => {
         const p = contributionModalProject;
         const wsLabel = (workspacesData || []).find((w: any) => w.code === p.dataScope)?.name || (p.dataScope || '').toUpperCase();
+        // Phụ trách (home-workspace) projects always carry blanket Full
+        // access regardless of personal task assignment — only Tham gia
+        // ngoài (Phụ workspace) cards depend on drilledPersonHasAccess.
+        const hasAccess = p.isOwned || p.drilledPersonHasAccess;
         return (
           <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setContributionModalProject(null)}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-slate-100">
                 <div className="min-w-0">
                   <h3 className="text-lg font-black text-[#0b1c30] truncate">{p.name}</h3>
-                  <p className="text-xs text-slate-400 font-semibold mt-1">{wsLabel} Workspace · Team bạn chỉ tham gia đóng góp</p>
+                  <p className="text-xs text-slate-400 font-semibold mt-1">
+                    {wsLabel} Workspace · {p.isOwned ? 'Dự án thuộc workspace chính của bạn' : 'Team bạn chỉ tham gia đóng góp'}
+                  </p>
                 </div>
                 <button onClick={() => setContributionModalProject(null)} className="shrink-0 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 font-bold">✕</button>
               </div>
 
-              <div className="mx-6 mt-5 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] font-bold text-amber-800 flex items-center gap-2">
-                <span>🔒</span>
-                <span>Dự án thuộc {wsLabel} Workspace. Team bạn chỉ xem phần đóng góp của member team mình và các chỉ số tổng quan được chia sẻ.</span>
-              </div>
+              {hasAccess ? (
+                <div className="mx-6 mt-5 p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-[11px] font-bold text-blue-800 flex items-center gap-2">
+                  <span>🔓</span>
+                  <span>
+                    {p.isOwned
+                      ? `Dự án thuộc ${wsLabel} Workspace — workspace chính của bạn, bạn có toàn quyền xem chi tiết dự án này.`
+                      : `Dự án thuộc ${wsLabel} Workspace — bạn có quyền mở dự án này. Tóm tắt dưới đây chỉ hiển thị phần đóng góp của team mình và các chỉ số tổng quan được chia sẻ.`}
+                  </span>
+                </div>
+              ) : (
+                <div className="mx-6 mt-5 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] font-bold text-amber-800 flex items-center gap-2">
+                  <span>🔒</span>
+                  <span>Dự án thuộc {wsLabel} Workspace. Bạn không được gán trực tiếp vào dự án này — chỉ member trong team mới tham gia. Tóm tắt dưới đây chỉ để bạn nắm khối lượng/KPI/risk của team, không thể mở vào dự án.</span>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mt-4">
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
-                  <span className="block text-[9px] uppercase font-black text-slate-400">Tiến độ phần giao</span>
+                  <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Tiến độ' : 'Tiến độ phần giao'}</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
@@ -2445,18 +2490,18 @@ export default function OverviewTab() {
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
-                  <span className="block text-[9px] uppercase font-black text-slate-400">MD đóng góp</span>
+                  <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Manday' : 'MD đóng góp'}</span>
                   <strong className="block text-base font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
-                  <span className="block text-[9px] uppercase font-black text-slate-400">KPI đóng góp</span>
+                  <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'KPI' : 'KPI đóng góp'}</span>
                   <strong className="block text-base font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-6 py-5 mt-1">
                 <div className="border border-slate-200 rounded-xl p-4">
-                  <h4 className="text-xs font-black text-slate-700 mb-3">Thông tin team bạn được phép xem</h4>
+                  <h4 className="text-xs font-black text-slate-700 mb-3">{p.isOwned ? 'Thông tin dự án' : 'Thông tin team bạn được phép xem'}</h4>
                   <dl className="space-y-2.5 text-xs">
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Workspace sở hữu</dt><dd className="font-black text-slate-700">{wsLabel}</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Giai đoạn chung</dt><dd className="font-black text-slate-700 text-right">{p.current_phase}</dd></div>
@@ -2465,11 +2510,23 @@ export default function OverviewTab() {
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold shrink-0">Member liên quan</dt><dd className="font-black text-slate-700 text-right">{p.contributingNames.length ? p.contributingNames.join(', ') : '—'}</dd></div>
                   </dl>
                 </div>
-                <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50/60 flex flex-col items-center justify-center text-center">
-                  <span className="text-2xl">🔒</span>
-                  <h4 className="text-xs font-black text-slate-700 mt-2">Không có quyền xem chi tiết nội bộ {wsLabel}</h4>
-                  <p className="text-[10px] text-slate-400 font-semibold mt-1.5 leading-snug">Không xem toàn bộ backlog, task của member {wsLabel}, tài liệu nội bộ, budget, comment hoặc milestone nội bộ.</p>
-                </div>
+                {hasAccess ? (
+                  <div className="border border-emerald-200 rounded-xl p-4 bg-emerald-50/60 flex flex-col items-center justify-center text-center">
+                    <span className="text-2xl">🔓</span>
+                    <h4 className="text-xs font-black text-emerald-700 mt-2">Bạn có quyền mở dự án này</h4>
+                    <p className="text-[10px] text-emerald-700/70 font-semibold mt-1.5 leading-snug">
+                      {p.isOwned
+                        ? 'Đây chỉ là bản tóm tắt nhanh — bấm "Mở dự án" để xem đầy đủ backlog, task và chi tiết dự án.'
+                        : `Đây chỉ là bản tóm tắt nhanh — bấm "Mở dự án" để xem đầy đủ task/phần việc của bạn. Backlog, tài liệu, budget nội bộ khác của ${wsLabel} vẫn không hiển thị ở đây.`}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50/60 flex flex-col items-center justify-center text-center">
+                    <span className="text-2xl">🔒</span>
+                    <h4 className="text-xs font-black text-slate-700 mt-2">Không có quyền xem chi tiết nội bộ {wsLabel}</h4>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-1.5 leading-snug">Không xem toàn bộ backlog, task của member {wsLabel}, tài liệu nội bộ, budget, comment hoặc milestone nội bộ.</p>
+                  </div>
+                )}
               </div>
 
               <div className="px-6 pb-5 -mt-1">
@@ -2479,15 +2536,25 @@ export default function OverviewTab() {
               </div>
 
               <div className="flex items-center justify-between gap-3 px-6 pb-6 pt-2 border-t border-slate-100">
-                <p className="text-[10px] text-slate-400 font-semibold leading-snug max-w-[60%]">
-                  Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.
-                </p>
-                <button
-                  onClick={() => { setContributionModalProject(null); router.push(`/project/detail/overview?id=${p.id}`); }}
-                  className="shrink-0 px-4 py-2 rounded-lg bg-[#0058be] hover:bg-[#004a9e] text-white text-xs font-bold"
-                >
-                  Mở dự án →
-                </button>
+                {hasAccess ? (
+                  <>
+                    <p className="text-[10px] text-slate-400 font-semibold leading-snug max-w-[60%]">
+                      {p.isOwned
+                        ? 'Dự án thuộc workspace chính của bạn nên bạn có toàn quyền mở và xem chi tiết.'
+                        : 'Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.'}
+                    </p>
+                    <button
+                      onClick={() => { setContributionModalProject(null); router.push(`/project/detail/overview?id=${p.id}`); }}
+                      className="shrink-0 px-4 py-2 rounded-lg bg-[#0058be] hover:bg-[#004a9e] text-white text-xs font-bold"
+                    >
+                      Mở dự án →
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-[10px] text-slate-400 font-semibold leading-snug">
+                    Bạn chưa được gán vào dự án này — chỉ member trong team mới tham gia, nên không thể mở vào dự án từ đây.
+                  </p>
+                )}
               </div>
             </div>
           </div>

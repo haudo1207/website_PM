@@ -1797,7 +1797,14 @@ function ProjectDetailContent() {
     const s = (x.status || '').toLowerCase();
     return s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
   }).length;
-  const devProgressPercent = kpiTotal > 0 ? Math.round((kpiDone / kpiTotal) * 100) : 0;
+  // Issue 3 — Project Progress from Settings → Master Phases (single source
+  // of truth). Falls back to 0 when the backend hasn't populated it yet.
+  const devProgressPercent = (project && typeof project.progress_pct === 'number')
+    ? Math.round(project.progress_pct)
+    : 0;
+  // Task-completion percentage is preserved as a separate metric for any
+  // surface that intentionally shows it.
+  const kpiTaskCompletionPct = kpiTotal > 0 ? Math.round((kpiDone / kpiTotal) * 100) : 0;
 
   // 3. Tổng Manday
   const kpiTotalManday = Math.round(kpiTasks.reduce((sum, task) => {

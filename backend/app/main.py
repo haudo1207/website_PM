@@ -191,6 +191,12 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
         ))
+        # Tracks the Google Calendar event backing a meeting's auto-generated
+        # Google Meet link, so editing the meeting's time can reschedule the
+        # SAME event (events.patch) instead of leaving Calendar stale.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)"
+        ))
         # Explicit "home" Workspace flag (Chính vs Phụ) — see workspace_access.py.
         conn.execute(text(
             "ALTER TABLE user_workspace_access ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false"
@@ -638,6 +644,37 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS ai_tasks JSON"
         ))
+
+        # ── Master Phase configured Project Progress (Issue 3) ───────────
+        # Settings → Danh mục hệ thống → Giai đoạn dự án is the single source
+        # of truth for Project Progress. The progress_pct column stores the
+        # configured 0..100 percentage for each Stage. Back-fill is purely
+        # derived from the existing sort_order so no business data is
+        # invented — see the rationale below.
+        conn.execute(text(
+            "ALTER TABLE master_phases ADD COLUMN IF NOT EXISTS progress_pct NUMERIC(5, 2)"
+        ))
+        conn.execute(text("""
+            WITH
+                bounds AS (
+                    SELECT
+                        MIN(sort_order) FILTER (WHERE name NOT LIKE '0.%') AS min_fwd,
+                        MAX(sort_order) FILTER (WHERE name NOT LIKE '0.%') AS max_fwd
+                    FROM master_phases
+                )
+            UPDATE master_phases mp
+            SET progress_pct = CASE
+                WHEN mp.name LIKE '0.%' THEN 0
+                WHEN (SELECT max_fwd - min_fwd FROM bounds) IS NULL
+                  OR (SELECT max_fwd - min_fwd FROM bounds) <= 0 THEN 0
+                ELSE ROUND(
+                    ((mp.sort_order - (SELECT min_fwd FROM bounds))::numeric
+                     / NULLIF((SELECT max_fwd - min_fwd FROM bounds), 0)) * 100,
+                    2
+                )
+            END
+            WHERE mp.progress_pct IS NULL
+        """))
 
 def init_db_defaults():
     from .database import SessionLocal

@@ -79,3 +79,19 @@ def require_admin(user=Depends(get_current_user)):
 def require_admin_write(request: Request, user=Depends(get_current_user)):
     """Legacy alias — maps to require_manager_write."""
     return require_manager_write(request, user)
+
+
+def require_audit_user(user=Depends(get_current_user)):
+    """Authorise the System Audit dashboard.
+
+    Allows super_admin (full visibility) and leader (scoped to the
+    Workspaces they're granted). The actual Workspace-scope enforcement
+    happens inside each endpoint via `audit_log_query_for_user()` and the
+    existing `project_query_for_user*` helpers — this dependency only gates
+    access to the route itself.
+
+    Anyone else (member, viewer, anonymous) is rejected with 403.
+    """
+    if user.role not in {"super_admin", "leader"}:
+        raise HTTPException(403, "Yêu cầu quyền Super Admin hoặc Leader để truy cập System Audit")
+    return user

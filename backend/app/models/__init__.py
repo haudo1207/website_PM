@@ -1,6 +1,6 @@
 from .system_category import Customer, TaskPriority, TaskStatus, Department, Team
 from .skill_master import Skill, Group, Category
-from .project import Project, Platform, ProjectLink
+from .project import Project, Platform, ProjectLink, ProjectPin
 from .phase import Phase
 from .task_group import TaskGroup
 from .task import Task

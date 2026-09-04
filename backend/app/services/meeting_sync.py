@@ -364,7 +364,9 @@ def get_shared_google_access_token(db=None) -> str:
 def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, creator_email: str, start_iso: str, end_iso: str, attendees_emails: list, db=None) -> dict:
     """
     Create Google Meet event using shared operational account (mkt.szone@gmail.com).
-    Calls Google Calendar API events.insert with conferenceDataVersion=1 & sendUpdates=all per Spec Chapter 07.
+    Calls Google Calendar API events.insert with conferenceDataVersion=1. sendUpdates=none:
+    the event still shows on each attendee's own Google Calendar (attendees[] controls that,
+    independently of sendUpdates), but Google won't email them an invite notice.
     """
     token = get_shared_google_access_token(db)
 
@@ -389,7 +391,7 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
 
     resp = requests.post(
         "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-        params={"conferenceDataVersion": 1, "sendUpdates": "all"},
+        params={"conferenceDataVersion": 1, "sendUpdates": "none"},
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
@@ -430,6 +432,35 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
     }
 
 
+def update_google_meet_event(db, google_event_id: str, start_iso: str, end_iso: str) -> None:
+    """
+    Reschedule an existing Google Calendar event (created via
+    create_google_meet_shared) to a new start/end time — events.patch on the
+    SAME event, so editing a meeting's time doesn't leave Calendar stale or
+    create a duplicate event. sendUpdates=none, matching create-time behavior:
+    no invite/update email is sent. Raises on failure; callers treat this as
+    best-effort (see update_meeting in routers/meetings.py).
+    """
+    token = get_shared_google_access_token(db)
+    body = {
+        "start": {"dateTime": start_iso, "timeZone": "Asia/Ho_Chi_Minh"},
+        "end": {"dateTime": end_iso, "timeZone": "Asia/Ho_Chi_Minh"},
+    }
+    resp = requests.patch(
+        f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}",
+        params={"sendUpdates": "none"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        },
+        json=body,
+        timeout=15
+    )
+    if not resp.ok:
+        logger.error(f"Google Calendar patch failed: status={resp.status_code}, body={resp.text}")
+        raise ValueError(f"Google Calendar patch failed: {resp.text}")
+
+
 def is_google_connected(db, user_id: int) -> bool:
     """Check if Google Calendar & Drive API connection is active with valid refresh token."""
     try:
@@ -460,7 +491,14 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
             creator_email = user.email
 
     try:
-        start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        # start_time arrives as Vietnam wall-clock time with a misleading trailing "Z"
+        # (it is NOT actually UTC). Strip it and keep the value naive/local: Google
+        # Calendar interprets a dateTime with no UTC offset using the accompanying
+        # "timeZone" field (Asia/Ho_Chi_Minh) as the wall-clock time — if we instead
+        # attach a "+00:00" offset here, Google treats it as a real UTC instant and the
+        # event renders 7 hours later than intended.
+        naive_start_time = start_time[:-1] if start_time.endswith("Z") else start_time
+        start = datetime.datetime.fromisoformat(naive_start_time)
         end = start + datetime.timedelta(minutes=duration_minutes)
         res = create_google_meet_shared(
             meeting_id=int(datetime.datetime.now().timestamp()),

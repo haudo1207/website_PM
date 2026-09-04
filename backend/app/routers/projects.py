@@ -10,7 +10,7 @@ from sqlalchemy import case, or_, and_
 from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
-from ..models.project import Project, Platform, ProjectLink, project_members
+from ..models.project import Project, Platform, ProjectLink, ProjectPin, project_members
 from ..models.system_category import Customer
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
@@ -35,11 +35,13 @@ from ..utils.access import (
     can_access_project,
     has_full_project_access,
     project_query_for_user,
+    project_query_for_user_broad,
     require_project,
     require_route_project_access,
     user_scope,
 )
 from ..utils.auth import get_current_user, require_super_admin, require_manager
+from ..utils.project_progress import get_progress_pct_for_phase
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
@@ -134,6 +136,8 @@ def serialize_project(p, db):
         "status": p.status,
         "current_phase": p.current_phase,
         "data_scope": p.data_scope,
+        # Issue 3 — configured Project Progress, single source of truth.
+        "progress_pct": round(get_progress_pct_for_phase(db, p.current_phase), 2),
         "phase_count": phase_count,
         "task_count": task_count,
         "completed_task_count": completed_task_count,
@@ -148,13 +152,30 @@ def serialize_project(p, db):
     }
 
 
-def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members, by_code=None, by_name=None):
-    """Serialize a project using list-level data loaded in a few batch queries."""
+def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members, by_code=None, by_name=None, progress_map=None):
+    """Serialize a project using list-level data loaded in a few batch queries.
+
+    progress_map (Issue 3) — optional pre-loaded name→Project Progress map
+    produced by `utils.project_progress.get_progress_pct_map(db)`. When
+    supplied we resolve `progress_pct` from the configured Master Phase so
+    every consumer of the project list sees the same Project Progress.
+    Falls back to a per-row lookup if the bulk map wasn't provided (single
+    project detail endpoint path).
+    """
     pms = role_members.get("PM", [])
     leaders = role_members.get("Leader", [])
     sales = role_members.get("Sales", [])
     members = role_members.get("Member", [])
     task_count, completed_task_count, warning_task_count = task_stats
+
+    if progress_map is not None:
+        try:
+            progress_pct = float(progress_map.get(p.current_phase, 0.0))
+        except (TypeError, ValueError):
+            progress_pct = 0.0
+    else:
+        from ..utils.project_progress import get_progress_pct_for_phase
+        progress_pct = get_progress_pct_for_phase(db, p.current_phase)
 
     return {
         "id": p.id,
@@ -185,6 +206,8 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "status": p.status,
         "current_phase": p.current_phase,
         "data_scope": p.data_scope,
+        # Issue 3 — configured Project Progress, single source of truth.
+        "progress_pct": round(progress_pct, 2),
         "phase_count": phase_count,
         "task_count": task_count,
         "completed_task_count": completed_task_count,
@@ -206,6 +229,7 @@ def list_projects(
     business_unit: Optional[str] = None,
     search: Optional[str] = None,
     customer: Optional[str] = None,
+    customer_id: Optional[int] = None,
     year: Optional[int] = None,
     phase: Optional[str] = None,
     pm_ids: Optional[str] = None,
@@ -215,7 +239,26 @@ def list_projects(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    q = project_query_for_user(db, current_user).options(joinedload(Project.customer))
+    # Issue 2 — Customer filter:
+    # When the caller explicitly narrows by customer (customer_id preferred,
+    # customer_name fallback), the Project scope is widened to the
+    # "broad" variant so a multi-Workspace Leader can see every project of
+    # that Customer across every Workspace they've been granted. This is the
+    # same pattern already used by `/all-tasks-global` for team-wide KPI
+    # totals — awareness of a project's existence (and its dashboard cards)
+    # does NOT bypass the stricter can_access_project() gate that still
+    # governs opening a specific project's internals (Phụ Workspace projects
+    # remain assignment-only for that step).
+    customer_filter_active = bool(
+        (customer_id and customer_id > 0)
+        or (customer and customer.strip() and customer.strip().lower() != "all")
+    )
+    base_query = (
+        project_query_for_user_broad(db, current_user)
+        if customer_filter_active
+        else project_query_for_user(db, current_user)
+    )
+    q = base_query.options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
         # A project the caller is explicitly assigned to (project_members) always
@@ -282,8 +325,12 @@ def list_projects(
         kw = f"%{search.strip()}%"
         q = q.filter(or_(Project.name.ilike(kw), Project.code.ilike(kw), Project.description.ilike(kw)))
 
-    # Filter: customer
-    if customer and customer.strip() and customer != "all":
+    # Filter: customer — Issue 2. customer_id (relational) wins over
+    # customer_name (legacy/display). When neither is supplied we keep the
+    # existing name-based fuzzy match for the legacy dropdown.
+    if customer_id and customer_id > 0:
+        q = q.filter(Project.customer_id == int(customer_id))
+    elif customer and customer.strip() and customer.strip().lower() != "all":
         q = q.filter(Project.customer_name.ilike(f"%{customer.strip()}%"))
 
     # Sorting
@@ -348,6 +395,11 @@ def list_projects(
         all_members[project_id].append(member)
 
     by_code, by_name = preload_workspace_maps(db)
+    # Bulk lookup the configured Project Progress (Issue 3) for every
+    # project in the result in one query.
+    from ..utils.project_progress import get_progress_pct_map
+    progress_map = get_progress_pct_map(db)
+
     return [
         serialize_project_summary(
             p,
@@ -358,9 +410,49 @@ def list_projects(
             all_members[p.id],
             by_code,
             by_name,
+            progress_map=progress_map,
         )
         for p in projects
     ]
+
+
+def _member_id_for_pin(current_user, db: Session):
+    member_id = getattr(current_user, "member_id", None)
+    if member_id:
+        return member_id
+    if current_user and getattr(current_user, "email", None):
+        member = db.query(Member).filter(Member.email.ilike(current_user.email)).first()
+        if member:
+            return member.id
+    return None
+
+
+@router.get("/projects/pins")
+def list_pinned_project_ids(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    member_id = _member_id_for_pin(current_user, db)
+    if not member_id:
+        return {"pinned_project_ids": []}
+    ids = [r.project_id for r in db.query(ProjectPin).filter(ProjectPin.member_id == member_id).all()]
+    return {"pinned_project_ids": ids}
+
+
+@router.post("/projects/{pid:int}/pin")
+def toggle_project_pin(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    member_id = _member_id_for_pin(current_user, db)
+    if not member_id:
+        raise HTTPException(400, "Không xác định được thành viên")
+    existing = (
+        db.query(ProjectPin)
+        .filter(ProjectPin.member_id == member_id, ProjectPin.project_id == pid)
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"success": True, "is_pinned": False}
+    db.add(ProjectPin(member_id=member_id, project_id=pid))
+    db.commit()
+    return {"success": True, "is_pinned": True}
 
 
 @router.post("/projects")
