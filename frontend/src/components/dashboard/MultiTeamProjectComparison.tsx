@@ -381,42 +381,47 @@ export default function MultiTeamProjectComparison() {
                             <Link
                               key={p.project_id}
                               href={`/project/detail/overview?id=${p.project_id}`}
-                              className="block p-3.5 bg-white border border-slate-200 rounded-xl hover:border-[#0058be]/40 hover:shadow-md transition-all"
+                              className="block p-3 bg-white border border-slate-200 rounded-xl hover:border-[#0058be]/40 hover:shadow-md transition-all"
                             >
-                              <div className="flex items-center justify-between mb-2 gap-2">
+                              <div className="flex items-center justify-between mb-1.5 gap-2">
                                 <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</span>
                                 <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
                                   {p.status || '—'}
                                 </span>
                               </div>
-                              <div className="text-[10px] text-slate-500 mb-2">
+                              <div className="text-[10px] text-slate-500 mb-1.5 truncate">
                                 Giai đoạn: <strong className="text-slate-700">{p.current_phase || '—'}</strong>
                               </div>
-                              <ProgressBar value={p.progress_pct} color={projectBarColor[p.status || ''] || 'bg-blue-500'} height="h-2" />
-                              <div className="grid grid-cols-2 gap-2 mt-2.5 text-[10px]">
-                                <div>
-                                  <span className="text-slate-400 block">Progress</span>
-                                  <span className="font-extrabold text-[#0058be]">{p.progress_pct.toFixed(0)}%</span>
+                              <ProgressBar value={p.progress_pct} color={projectBarColor[p.status || ''] || 'bg-blue-500'} height="h-1.5" />
+                              {/* Compact single-row metric strip — preserves all
+                                  six existing metrics (Progress / Timeline /
+                                  Task / Trễ / MD / Health) with their existing
+                                  values/formulas, only their layout density
+                                  changed. */}
+                              <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-x-2 gap-y-1 text-[10px]">
+                                <div className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[8.5px]">Progress</span>
+                                  <span className="font-extrabold text-[#0058be] truncate">{p.progress_pct.toFixed(0)}%</span>
                                 </div>
-                                <div>
-                                  <span className="text-slate-400 block">Timeline</span>
-                                  <span className="font-extrabold text-slate-700">{p.timeline_pct.toFixed(0)}%</span>
+                                <div className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[8.5px]">Timeline</span>
+                                  <span className="font-extrabold text-slate-700 truncate">{p.timeline_pct.toFixed(0)}%</span>
                                 </div>
-                                <div>
-                                  <span className="text-slate-400 block">Task</span>
-                                  <span className="font-bold text-slate-700">{p.done}/{p.total}</span>
+                                <div className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[8.5px]">Task</span>
+                                  <span className="font-bold text-slate-700 truncate">{p.done}/{p.total}</span>
                                 </div>
-                                <div>
-                                  <span className="text-slate-400 block">Trễ</span>
-                                  <span className={`font-bold ${p.overdue > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{p.overdue}</span>
+                                <div className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[8.5px]">Trễ</span>
+                                  <span className={`font-bold truncate ${p.overdue > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{p.overdue}</span>
                                 </div>
-                                <div>
-                                  <span className="text-slate-400 block">MD</span>
-                                  <span className="font-bold text-slate-700">{p.manday_actual.toFixed(1)}/{p.manday_est.toFixed(1)}</span>
+                                <div className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[8.5px]">MD</span>
+                                  <span className="font-bold text-slate-700 truncate">{p.manday_actual.toFixed(1)}/{p.manday_est.toFixed(1)}</span>
                                 </div>
-                                <div>
-                                  <span className="text-slate-400 block">Health</span>
-                                  <span className={`font-bold ${p.health === 'Critical' ? 'text-rose-600' : p.health === 'Risk' ? 'text-amber-600' : p.health === 'On Track' ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                <div className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[8.5px]">Health</span>
+                                  <span className={`font-bold truncate ${p.health === 'Critical' ? 'text-rose-600' : p.health === 'Risk' ? 'text-amber-600' : p.health === 'On Track' ? 'text-emerald-600' : 'text-slate-500'}`}>
                                     {p.health}
                                   </span>
                                 </div>
