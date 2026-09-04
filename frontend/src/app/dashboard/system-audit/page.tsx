@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import Link from 'next/link';
-import { getToken } from '@/lib/auth';
+import { getToken, isSuperAdmin } from '@/lib/auth';
 import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import BarChartCard from '@/components/dashboard/BarChartCard';
@@ -370,8 +370,8 @@ export default function SystemAuditTab() {
   };
 
   const superAdminCards = [
-    { label: 'Tổng Số Dự Án',      value: activeProjectsProgress.length, icon: 'project',   border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Toàn hệ thống' },
-    { label: 'Tổng Task Hệ Thống', value: taskStats.total,              icon: 'tasks',     border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: 'Tất cả dự án' },
+    { label: 'Tổng Số Dự Án',      value: activeProjectsProgress.length, icon: 'project',   border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: isSuperAdmin() ? 'Toàn hệ thống' : 'Workspace của bạn' },
+    { label: 'Tổng Task Hệ Thống', value: taskStats.total,              icon: 'tasks',     border: 'border-l-[#0058be]',  text: 'text-[#0058be]',  trend: isSuperAdmin() ? 'Tất cả dự án' : 'Dự án được phép' },
     { label: 'Dự Án Trễ/Rủi Ro',   value: projectsAtRisk.length,        icon: 'alert',     border: 'border-l-red-500',     text: 'text-red-600',    trend: 'Cần can thiệp' },
     { label: 'Task Hoàn Thành',    value: taskStats.done,               icon: 'check',     border: 'border-l-emerald-500', text: 'text-emerald-600', trend: taskStats.total ? `${Math.round(taskStats.done/taskStats.total*100)}%` : '0%' },
   ];
@@ -380,10 +380,15 @@ export default function SystemAuditTab() {
 
   return (
     <div className="p-6 space-y-5">
-      {/* Super Admin Control Header */}
+      {/* System Audit Control Header — wording adapts to role: Super Admin
+          sees the full system, Leader sees only their assigned Workspaces. */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">System Audit & Super Admin Control Panel</h3>
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+            {isSuperAdmin()
+              ? 'System Audit & Super Admin Control Panel'
+              : 'System Audit — Leader View (Workspace-scoped)'}
+          </h3>
           {loading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật dữ liệu hệ thống...</span>}
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -464,7 +469,7 @@ export default function SystemAuditTab() {
             <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">TỔNG SỐ DỰ ÁN</span>
             <div className="flex items-baseline gap-2 mt-1">
               <span className="text-2xl font-black text-[#0058be]">{activeProjectsProgress.length}</span>
-              <span className="text-[10px] font-bold text-slate-400">Toàn hệ thống</span>
+              <span className="text-[10px] font-bold text-slate-400">{isSuperAdmin() ? 'Toàn hệ thống' : 'Workspace của bạn'}</span>
             </div>
             
             {/* SUB METRICS: ĐANG HOẠT ĐỘNG & DỰ ÁN TRẮNG */}
@@ -507,12 +512,14 @@ export default function SystemAuditTab() {
       </div>
 
       {/* ── SECTION 2: So sánh Team trong Workspace ──────────────────────
-          Super Admin only (the entire System Audit tab is already gated by
-          dashboard/layout.tsx → isSuperAdmin). Re-uses the existing shared
-          Workspace selector (top-of-page, visible in the screenshot sample
-          for the task). Leaders are filtered by the backend endpoint to
-          those with at least one managed member, so the table can render
-          the API response directly. */}
+          Super Admin + Leader (the System Audit tab is gated by
+          dashboard/layout.tsx → isSuperAdmin || isLeader). Re-uses the
+          existing shared Workspace selector (top-of-page, visible in the
+          screenshot sample for the task). Leaders are filtered by the
+          backend endpoint to those with at least one managed member, and
+          further restricted to the caller's granted Workspaces for
+          Leader accounts, so the table can render the API response
+          directly. */}
       <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -523,6 +530,9 @@ export default function SystemAuditTab() {
               </h3>
               <p className="text-[10px] text-slate-400 mt-0.5">
                 So sánh KPI, Manday, Utilization, hiệu suất và sức khỏe team từ các Leader — Workspace hiện tại: <strong className="text-[#0058be]">{currentWsLabel}</strong>
+                {!isSuperAdmin() && (
+                  <span className="ml-1 italic text-slate-500">(giới hạn theo Workspace của bạn)</span>
+                )}
               </p>
             </div>
           </div>
@@ -625,7 +635,10 @@ export default function SystemAuditTab() {
           the shared `getTeamComparison` query. */}
 
       {/* ── SECTION 4: So sánh Member giữa các Team ─────────────────────
-          Read-only member-vs-team comparison for Super Admin monitoring.
+          Read-only member-vs-team comparison. Super Admin sees every Team
+          across every Workspace; Leader sees only the Teams whose
+          `data_scope` matches one of their granted Workspaces (already
+          restricted by `_aggregate_team_comparison` server-side).
           Re-uses the same `teamsList` already fetched for Section 2/3, so
           no new API call is required. The eligible Leaders / Members /
           task metrics are the same ones already aggregated on the backend

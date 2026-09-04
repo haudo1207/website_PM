@@ -13,6 +13,7 @@ from ..models.workspace_access import UserWorkspaceAccess
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.user import User
+from ..models.audit_log import AuditLog
 from .auth import get_current_user
 
 ALL_SCOPE = "all"
@@ -257,6 +258,67 @@ def project_query_for_user_broad(db: Session, user):
         )
         filters.append(Project.id.in_(assigned_project_ids))
     return db.query(Project).filter(or_(*filters))
+
+
+def audit_log_query_for_user(db: Session, user, base_query=None):
+    """Apply Workspace-scope filtering to an AuditLog query based on the
+    caller's role + assigned Workspaces.
+
+    Behaviour:
+    - super_admin / scope='all': returns the query unchanged (sees every log).
+    - leader with one or more assigned Workspaces: returns the query filtered
+      to logs that are *about* one of those Workspaces. Specifically a log
+      is kept when EITHER:
+        (a) `audit_logs.business_unit` matches one of the caller's Workspaces
+            (case-insensitive on code or name), OR
+        (b) `audit_logs.project_id` points at a project within one of the
+            caller's Workspaces (uses `project_query_for_user_broad()` so a
+            Leader sees logs for every project in any granted Workspace,
+            Chính or Phụ).
+      Global / cross-Workspace events (business_unit = 'all' or NULL that
+      aren't tied to a project in scope) are intentionally hidden from
+      Leader — those are operational/security events that stay super-admin
+      territory. This matches the "only data related to their Workspaces"
+      rule from the System Audit Leader-access spec.
+    - any other role: returns a query that resolves to the empty set
+      (`audit_logs.id == -1`) as a defensive guard — `require_audit_user`
+      already blocks these callers at the route-dep level, so this branch is
+      only hit if some other router reuses this helper without that gate.
+    """
+    if base_query is None:
+        base_query = db.query(AuditLog)
+
+    role = getattr(user, "role", ROLE_MEMBER)
+    scopes = user_allowed_scopes(db, user)
+
+    if role == ROLE_SUPER_ADMIN or scopes == ALL_SCOPE:
+        return base_query
+
+    if role != ROLE_LEADER:
+        return base_query.filter(AuditLog.id == -1)
+
+    # Build the "business_unit matches one of my workspaces" OR-clause.
+    bu_filters = []
+    for scope in scopes:
+        ws = resolve_workspace(db, scope)
+        if ws:
+            bu_filters.append(AuditLog.business_unit.ilike(ws.code))
+            bu_filters.append(AuditLog.business_unit.ilike(ws.name))
+
+    # Build the "project_id is in one of my workspaces" clause via the
+    # shared project-scoping helper — same rule used everywhere else for
+    # Leader multi-Workspace access so we never diverge.
+    scoped_project_ids = (
+        project_query_for_user_broad(db, user)
+        .with_entities(Project.id)
+        .subquery()
+    )
+    project_clause = AuditLog.project_id.in_(scoped_project_ids)
+
+    clauses = bu_filters + [project_clause]
+    if not clauses:
+        return base_query.filter(AuditLog.id == -1)
+    return base_query.filter(or_(*clauses))
 
 
 def member_query_for_user(db: Session, user):
