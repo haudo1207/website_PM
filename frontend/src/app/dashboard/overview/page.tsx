@@ -2228,11 +2228,11 @@ export default function OverviewTab() {
           const renderCard = (p: any, isOwnedCard: boolean) => (
             <div
               key={p.id}
-              // Every role — Admin included — sees the Limited-access
-              // "locked" preview first for a Tham gia ngoài card; the
-              // preview's own "Mở dự án →" button is the only path into the
-              // real project detail page from here.
-              onClick={() => isOwnedCard ? router.push(`/project/detail/overview?id=${p.id}`) : setContributionModalProject(p)}
+              // Every card — Phụ trách and Tham gia ngoài alike, for every
+              // role including Admin — opens the summary popup first; its
+              // own "Mở dự án →" button is the only path into the real
+              // project detail page from here.
+              onClick={() => setContributionModalProject(p)}
               className={`p-4 rounded-2xl border shadow-sm transition-all flex flex-col justify-between cursor-pointer active:scale-[0.99] ${isOwnedCard
                   ? 'border-slate-200 bg-white hover:border-[#0058be] hover:shadow-md'
                   : 'border-purple-200/70 bg-[#fdfcff] hover:border-purple-400 hover:shadow-md'
@@ -2442,21 +2442,31 @@ export default function OverviewTab() {
       {contributionModalProject && (() => {
         const p = contributionModalProject;
         const wsLabel = (workspacesData || []).find((w: any) => w.code === p.dataScope)?.name || (p.dataScope || '').toUpperCase();
+        // Phụ trách (home-workspace) projects always carry blanket Full
+        // access regardless of personal task assignment — only Tham gia
+        // ngoài (Phụ workspace) cards depend on drilledPersonHasAccess.
+        const hasAccess = p.isOwned || p.drilledPersonHasAccess;
         return (
           <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setContributionModalProject(null)}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-slate-100">
                 <div className="min-w-0">
                   <h3 className="text-lg font-black text-[#0b1c30] truncate">{p.name}</h3>
-                  <p className="text-xs text-slate-400 font-semibold mt-1">{wsLabel} Workspace · Team bạn chỉ tham gia đóng góp</p>
+                  <p className="text-xs text-slate-400 font-semibold mt-1">
+                    {wsLabel} Workspace · {p.isOwned ? 'Dự án thuộc workspace chính của bạn' : 'Team bạn chỉ tham gia đóng góp'}
+                  </p>
                 </div>
                 <button onClick={() => setContributionModalProject(null)} className="shrink-0 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 font-bold">✕</button>
               </div>
 
-              {p.drilledPersonHasAccess ? (
+              {hasAccess ? (
                 <div className="mx-6 mt-5 p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-[11px] font-bold text-blue-800 flex items-center gap-2">
                   <span>🔓</span>
-                  <span>Dự án thuộc {wsLabel} Workspace — bạn có quyền mở dự án này. Tóm tắt dưới đây chỉ hiển thị phần đóng góp của team mình và các chỉ số tổng quan được chia sẻ.</span>
+                  <span>
+                    {p.isOwned
+                      ? `Dự án thuộc ${wsLabel} Workspace — workspace chính của bạn, bạn có toàn quyền xem chi tiết dự án này.`
+                      : `Dự án thuộc ${wsLabel} Workspace — bạn có quyền mở dự án này. Tóm tắt dưới đây chỉ hiển thị phần đóng góp của team mình và các chỉ số tổng quan được chia sẻ.`}
+                  </span>
                 </div>
               ) : (
                 <div className="mx-6 mt-5 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] font-bold text-amber-800 flex items-center gap-2">
@@ -2467,7 +2477,7 @@ export default function OverviewTab() {
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mt-4">
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
-                  <span className="block text-[9px] uppercase font-black text-slate-400">Tiến độ phần giao</span>
+                  <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Tiến độ' : 'Tiến độ phần giao'}</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
@@ -2475,18 +2485,18 @@ export default function OverviewTab() {
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
-                  <span className="block text-[9px] uppercase font-black text-slate-400">MD đóng góp</span>
+                  <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Manday' : 'MD đóng góp'}</span>
                   <strong className="block text-base font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center">
-                  <span className="block text-[9px] uppercase font-black text-slate-400">KPI đóng góp</span>
+                  <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'KPI' : 'KPI đóng góp'}</span>
                   <strong className="block text-base font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-6 py-5 mt-1">
                 <div className="border border-slate-200 rounded-xl p-4">
-                  <h4 className="text-xs font-black text-slate-700 mb-3">Thông tin team bạn được phép xem</h4>
+                  <h4 className="text-xs font-black text-slate-700 mb-3">{p.isOwned ? 'Thông tin dự án' : 'Thông tin team bạn được phép xem'}</h4>
                   <dl className="space-y-2.5 text-xs">
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Workspace sở hữu</dt><dd className="font-black text-slate-700">{wsLabel}</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Giai đoạn chung</dt><dd className="font-black text-slate-700 text-right">{p.current_phase}</dd></div>
@@ -2495,11 +2505,15 @@ export default function OverviewTab() {
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold shrink-0">Member liên quan</dt><dd className="font-black text-slate-700 text-right">{p.contributingNames.length ? p.contributingNames.join(', ') : '—'}</dd></div>
                   </dl>
                 </div>
-                {p.drilledPersonHasAccess ? (
+                {hasAccess ? (
                   <div className="border border-emerald-200 rounded-xl p-4 bg-emerald-50/60 flex flex-col items-center justify-center text-center">
                     <span className="text-2xl">🔓</span>
                     <h4 className="text-xs font-black text-emerald-700 mt-2">Bạn có quyền mở dự án này</h4>
-                    <p className="text-[10px] text-emerald-700/70 font-semibold mt-1.5 leading-snug">Đây chỉ là bản tóm tắt nhanh — bấm "Mở dự án" để xem đầy đủ task/phần việc của bạn. Backlog, tài liệu, budget nội bộ khác của {wsLabel} vẫn không hiển thị ở đây.</p>
+                    <p className="text-[10px] text-emerald-700/70 font-semibold mt-1.5 leading-snug">
+                      {p.isOwned
+                        ? 'Đây chỉ là bản tóm tắt nhanh — bấm "Mở dự án" để xem đầy đủ backlog, task và chi tiết dự án.'
+                        : `Đây chỉ là bản tóm tắt nhanh — bấm "Mở dự án" để xem đầy đủ task/phần việc của bạn. Backlog, tài liệu, budget nội bộ khác của ${wsLabel} vẫn không hiển thị ở đây.`}
+                    </p>
                   </div>
                 ) : (
                   <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50/60 flex flex-col items-center justify-center text-center">
@@ -2517,10 +2531,12 @@ export default function OverviewTab() {
               </div>
 
               <div className="flex items-center justify-between gap-3 px-6 pb-6 pt-2 border-t border-slate-100">
-                {p.drilledPersonHasAccess ? (
+                {hasAccess ? (
                   <>
                     <p className="text-[10px] text-slate-400 font-semibold leading-snug max-w-[60%]">
-                      Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.
+                      {p.isOwned
+                        ? 'Dự án thuộc workspace chính của bạn nên bạn có toàn quyền mở và xem chi tiết.'
+                        : 'Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.'}
                     </p>
                     <button
                       onClick={() => { setContributionModalProject(null); router.push(`/project/detail/overview?id=${p.id}`); }}
