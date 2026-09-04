@@ -30,6 +30,7 @@ from ..utils.access import (
     ROLE_LEADER,
     ALL_SCOPE,
 )
+from ..utils.project_progress import get_progress_pct_for_phase
 
 router = APIRouter(prefix="/system-audit", tags=["system-audit"], dependencies=[Depends(require_audit_user)])
 
@@ -929,7 +930,15 @@ def _aggregate_team_comparison(
             sql_func.sum(Task.manday_actual).label("support_manday_actual"),
             sql_func.sum(Task.kpi_support).label("support_kpi"),
         )
-        .filter(Task.support_id.in_(team_member_ids))
+        # Exclude self-supported tasks from the "support" rollup so the same
+        # Task isn't counted twice for the same Member (one as assigned, one as
+        # support) — Fix for Issue 1 (System Audit Section 4 double-counting).
+        # Such tasks are still aggregated under their assigned_* fields above,
+        # which is the canonical "owner" view.
+        .filter(
+            Task.support_id.in_(team_member_ids),
+            Task.support_id != Task.assigned_id,
+        )
         .group_by(Task.support_id)
     )
     if time_filters:
@@ -1093,7 +1102,13 @@ def _aggregate_team_comparison(
             ps["manday_est"] = float(md_est or 0)
             ps["manday_actual"] = float(md_actual or 0)
             ps["kpi"] = float(kpi or 0)
-            ps["progress_pct"] = round((done_n / total_n) * 100, 1) if total_n > 0 else 0
+            # Issue 3 — Project Progress is now the configured Master Phase
+            # percentage (single source of truth). The task-based percentage
+            # is still computed separately as `task_completion_pct` so existing
+            # dashboards that intentionally surface task-completion aren't
+            # broken.
+            ps["progress_pct"] = round(get_progress_pct_for_phase(db, p.current_phase), 2)
+            ps["task_completion_pct"] = round((done_n / total_n) * 100, 1) if total_n > 0 else 0
             ps["timeline_pct"] = round(((total_n - overdue_n) / total_n) * 100, 1) if total_n > 0 else 0
             ps["health"] = _team_health(done_n, total_n, overdue_n)
             # The frontend will likely show a workspace label; provide the

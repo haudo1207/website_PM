@@ -131,16 +131,39 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     return () => document.removeEventListener('click', handler);
   }, [menuOpenId]);
 
+  const { data: customersData } = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => getCustomers(),
+    staleTime: 5 * 60_000,
+  });
+  const customers: any[] = customersData || [];
+
+  // Resolve a customer_id (relational, preferred) from the URL param OR the
+  // currently selected dropdown customer name. The backend uses this to
+  // broaden the project scope to all granted Workspaces for multi-Workspace
+  // Leaders — see Issue 2 fix in backend/app/routers/projects.py.
+  const resolvedCustomerId: number | null = useMemo(() => {
+    if (paramCustId) {
+      const n = Number(paramCustId);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    if (customerFilter && customerFilter !== 'All' && customers.length > 0) {
+      const c = customers.find(c => (c?.name || '').toLowerCase() === customerFilter.toLowerCase());
+      if (c && c.id) return Number(c.id);
+    }
+    return null;
+  }, [paramCustId, customerFilter, customers]);
+
   const { data: listData, refetch: reload } = useQuery({
-    queryKey: ['project-list'],
+    queryKey: ['project-list', resolvedCustomerId],
     queryFn: async () => {
-      const [projs, custs] = await Promise.all([
-        getProjects(),
-        getCustomers(),
-      ]);
+      // Issue 2 — when a customer filter is active, send customer_id
+      // (preferred) so the backend uses the broad project-query variant and
+      // a multi-Workspace Leader sees every project of that Customer across
+      // their granted Workspaces.
+      const projs = await getProjects(resolvedCustomerId ? { customer_id: resolvedCustomerId } : undefined);
       return {
         projects: projs || [],
-        customers: custs || [],
       };
     },
   });
@@ -152,7 +175,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     staleTime: 5 * 60_000,
   });
   const projects: any[] = listData?.projects || [];
-  const customers: any[] = listData?.customers || [];
   const workspaces: Workspace[] = workspacesData || [];
 
   // Project Hub: lock the Workspace filter to the current tab's Workspace.
