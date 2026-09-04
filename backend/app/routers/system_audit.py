@@ -96,9 +96,15 @@ def get_system_audit_logs(
     """Returns paginated global system audit logs with event grouping and multi-attribute filters."""
     q = db.query(AuditLog)
 
-    # System Audit Scope: Exclude operational project progress logs
+    # System Audit Scope: exclude high-volume, low-signal operational noise
+    # (per-task status edits, task-group/phase shuffling) from the default
+    # "all module" view — but NOT "Project" itself. Project CREATE/UPDATE/
+    # DELETE are comparatively rare and always worth surfacing by default;
+    # excluding the whole module used to hide them too, so admins had no way
+    # to see "who created/deleted/renamed which project" without manually
+    # picking module=Project every time.
     if not module or module.strip().lower() == "all":
-        q = q.filter(AuditLog.module.not_in(["Project", "Phase", "Task Group", "Task", "Meeting"]))
+        q = q.filter(AuditLog.module.not_in(["Phase", "Task Group", "Task", "Meeting"]))
 
     if business_unit and business_unit.strip().lower() != "all":
         bu = business_unit.strip().lower()
@@ -206,7 +212,7 @@ def get_system_audit_logs(
         
         # Build human readable summary with resource name
         if len(changes) > 1:
-            base_dict["description"] = f"{log.user_name} đã cập nhật {log.module} '{log.resource_name or log.entity_id}' ({len(changes)} thay đổi)"
+            base_dict["description"] = f"{base_dict['user_name']} đã cập nhật {log.module} '{log.resource_name or log.entity_id}' ({len(changes)} thay đổi)"
 
         grouped_events.append(base_dict)
 
@@ -385,7 +391,7 @@ def export_system_audit_logs_json(
     db: Session = Depends(get_db)
 ):
     """Export global system audit logs as structured JSON array for external SIEM/SOC forensic tools."""
-    q = db.query(AuditLog).filter(AuditLog.module.not_in(["Project", "Phase", "Task Group", "Task", "Meeting"]))
+    q = db.query(AuditLog).filter(AuditLog.module.not_in(["Phase", "Task Group", "Task", "Meeting"]))
     if category and category.strip().lower() != "all":
         q = q.filter(AuditLog.category.ilike(category.strip()))
     if source and source.strip().lower() != "all":

@@ -721,6 +721,18 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         sync_members = True
 
     if sync_members:
+        # Snapshot the pre-change assignment for every role, so the role
+        # reassignment itself (not just the plain Project fields below) gets
+        # an audit trail — this used to be a silent no-log operation even
+        # though it directly changes who has PM/Leader/Sales access to the
+        # project.
+        old_role_rows = db.query(project_members.c.role, project_members.c.member_id).filter(
+            project_members.c.project_id == pid
+        ).all()
+        old_by_role: dict[str, set] = {}
+        for role_name, m_id in old_role_rows:
+            old_by_role.setdefault(role_name, set()).add(m_id)
+
         if pm_ids is None:
             pm_ids = [r[0] for r in db.query(project_members.c.member_id).filter(project_members.c.project_id == pid, project_members.c.role == "PM").all()]
         if tl_ids is None:
@@ -750,6 +762,35 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             if m_id and (m_id, "Member") not in inserted:
                 db.execute(project_members.insert().values(project_id=pid, member_id=m_id, role="Member"))
                 inserted.add((m_id, "Member"))
+
+        new_by_role = {
+            "PM": set(m for m in pm_ids if m),
+            "Leader": set(m for m in tl_ids if m),
+            "Sales": set(m for m in sales_ids if m),
+            "Member": set(m for m in member_ids if m),
+        }
+        all_touched_ids = set().union(*old_by_role.values()) | set().union(*new_by_role.values())
+        member_name_by_id = {
+            m.id: (m.display_name or m.full_name or f"#{m.id}")
+            for m in db.query(Member).filter(Member.id.in_(all_touched_ids)).all()
+        } if all_touched_ids else {}
+
+        role_changes = []
+        for role_name, new_set in new_by_role.items():
+            old_set = old_by_role.get(role_name, set())
+            added = new_set - old_set
+            removed = old_set - new_set
+            if added:
+                role_changes.append(f"+{role_name}: {', '.join(member_name_by_id.get(m, f'#{m}') for m in added)}")
+            if removed:
+                role_changes.append(f"-{role_name}: {', '.join(member_name_by_id.get(m, f'#{m}') for m in removed)}")
+        if role_changes:
+            AuditService.record(
+                db=db, user_id=getattr(current_user, "id", None), module="Permission",
+                entity_type="Project", entity_id=p.id, action="UPDATE_PROJECT_MEMBERS",
+                resource_name=p.name, project_id=p.id,
+                description=f"Cập nhật phân quyền dự án '{p.name}': " + "; ".join(role_changes),
+            )
 
     p.last_activity_at = sql_func.now()
     db.commit()

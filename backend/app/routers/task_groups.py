@@ -978,8 +978,14 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
         remark=body.get("remark"),
         send=body.get("send"),
         notes=body.get("notes"),
+        end_date_actual=parse_date(body.get("end_date_actual")),
         sort_order=max_order + 1,
     )
+    # Safety net: a task created directly with status = Done (import/API
+    # callers) still needs a completion date, otherwise it silently drops
+    # out of the /api/members KPI aggregate (end_date_actual IS NOT NULL).
+    if (task.status or "").strip().lower() == "done" and not task.end_date_actual:
+        task.end_date_actual = date.today()
     db.add(task)
     db.flush()
 
@@ -1146,6 +1152,9 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     if "start_date" in body:
         task.start_date = parse_date(body["start_date"])
     
+    new_status_lower = (task.status or "").strip().lower()
+    old_status_lower = (old_dict["status"] or "").strip().lower()
+
     if is_parent_being_set_to_done:
         task.end_date_actual = date.today()
     elif "end_date_actual" in body:
@@ -1155,6 +1164,17 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
             if status_to_check and status_to_check.strip().lower() not in ["done"]:
                 raise HTTPException(400, "End Date Actual only available when Status = Done.")
         task.end_date_actual = parse_date(body["end_date_actual"])
+    elif new_status_lower == "done" and old_status_lower != "done":
+        # Server-side safety net: stamp the completion date on every Done
+        # transition even when the caller doesn't send end_date_actual
+        # (duplicate/copy/import flows, direct API calls, or a future
+        # frontend regression). Without this, the task's own kpi_final can
+        # still compute, but /api/members' KPI aggregate requires
+        # end_date_actual IS NOT NULL — so it silently drops out of the
+        # member's KPI total while looking "Done" everywhere else.
+        task.end_date_actual = date.today()
+    elif new_status_lower != "done" and old_status_lower == "done":
+        task.end_date_actual = None
 
     # Assigned / Support
     if "assigned_id" in body:

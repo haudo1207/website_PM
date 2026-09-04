@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import Link from 'next/link';
@@ -10,7 +10,7 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
 import { projectStatusBadge, projectBarColor, getMondayToSundayRange, getWeekOfMonth, checkTaskInPeriod, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
-import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse, TeamComparisonProject } from '@/lib/api';
+import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 function formatYMD(d: Date): string {
@@ -305,18 +305,6 @@ export default function SystemAuditTab() {
   });
   const teamComparisonData: TeamComparisonResponse | null = teamComparison || null;
   const teamsList: TeamComparisonTeam[] = teamComparisonData?.teams || [];
-
-  // Multi-Leader selection (Section 3).
-  const [selectedLeaderIds, setSelectedLeaderIds] = useState<number[]>([]);
-  const [appliedLeaderIds, setAppliedLeaderIds] = useState<number[]>([]);
-  // Reset selection when the underlying eligible-Leader set changes
-  // (workspace switch / fresh data load) so we never keep a Leader that's
-  // no longer eligible.
-  useEffect(() => {
-    const eligible = new Set(teamsList.map(t => t.leader_user_id));
-    setSelectedLeaderIds(prev => prev.filter(id => eligible.has(id)));
-    setAppliedLeaderIds(prev => prev.filter(id => eligible.has(id)));
-  }, [teamsList]);
 
   // Detail drawer (Section 2 — "Chi tiết")
   const [detailTeam, setDetailTeam] = useState<TeamComparisonTeam | null>(null);
@@ -629,209 +617,12 @@ export default function SystemAuditTab() {
         </div>
       </div>
 
-      {/* ── SECTION 3: So sánh Project theo nhiều Team ──────────────────
-          Multi-Leader selection using the same eligible Leader set as
-          Section 2 (already filtered by the backend to Leaders with managed
-          members, workspace-scoped). 'Apply Comparison' re-renders the
-          per-team project cards; this is purely client-side — we already
-          have the data from the team-comparison query. */}
-      <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <SvgIcon name="chart" className="w-4 h-4 text-purple-600" />
-            <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">
-                3. So sánh Project theo nhiều Team
-              </h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                Chọn nhiều Leader để so sánh các Project đang được team phụ trách.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="px-5 py-4 border-b border-slate-100 bg-[#f8fafc] space-y-3">
-          {teamsList.length === 0 ? (
-            <p className="text-xs text-slate-400 italic text-center py-2">
-              Chưa có Leader đủ điều kiện trong Workspace hiện tại.
-            </p>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center gap-2">
-                {teamsList.map(t => {
-                  const checked = selectedLeaderIds.includes(t.leader_user_id);
-                  const projectCount = t.projects?.length || 0;
-                  return (
-                    <button
-                      key={t.leader_user_id}
-                      onClick={() => {
-                        setSelectedLeaderIds(prev => checked
-                          ? prev.filter(id => id !== t.leader_user_id)
-                          : [...prev, t.leader_user_id]);
-                      }}
-                      className={`flex items-center gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
-                        checked
-                          ? 'bg-[#0058be] text-white border-[#0058be] shadow-sm'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-[#0058be]/40 hover:text-[#0058be]'
-                      }`}
-                    >
-                      <span className={`flex items-center justify-center w-4 h-4 rounded border ${checked ? 'bg-white border-white' : 'bg-white border-slate-300'}`}>
-                        {checked && <span className="material-symbols-outlined text-[12px] text-[#0058be] font-black">check</span>}
-                      </span>
-                      <span className="truncate max-w-[160px]">{t.leader_name}</span>
-                      <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${checked ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                        {projectCount} project
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
-                  <span>Đã chọn: <strong className="text-[#0058be]">{selectedLeaderIds.length}</strong> / {teamsList.length} team</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setSelectedLeaderIds(teamsList.map(t => t.leader_user_id))}
-                    className="text-[11px] font-bold text-[#0058be] hover:bg-[#eff4ff] px-3 py-1.5 rounded-md transition-colors"
-                  >
-                    Select All
-                  </button>
-                  <button
-                    onClick={() => { setSelectedLeaderIds([]); setAppliedLeaderIds([]); }}
-                    className="text-[11px] font-bold text-slate-500 hover:bg-slate-100 px-3 py-1.5 rounded-md transition-colors"
-                  >
-                    Clear
-                  </button>
-                  <button
-                    onClick={() => setAppliedLeaderIds([...selectedLeaderIds])}
-                    disabled={selectedLeaderIds.length === 0}
-                    className="text-[11px] font-bold text-white bg-[#0058be] hover:bg-[#004499] disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-1.5 rounded-md shadow-sm transition-all"
-                  >
-                    Apply Comparison
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="p-5">
-          {appliedLeaderIds.length === 0 ? (
-            <p className="text-xs text-slate-400 italic text-center py-6">
-              Chọn ít nhất một Leader rồi bấm "Apply Comparison" để xem so sánh project.
-            </p>
-          ) : (
-            // ── Requirement 3 — Section 3 redesign ──
-            // Each selected Team becomes ONE comparison column. The row
-            // scrolls horizontally when there are more teams than fit on
-            // screen (xl = 2 columns, lg = 1). Inside each column, list that
-            // team's projects vertically, capped at the 4 newest projects
-            // (sorted by project_id desc — the project's auto-increment PK
-            // is the existing ordering field that mirrors creation order,
-            // so we reuse it instead of inventing a new "newest" rule).
-            <div className="flex gap-4 overflow-x-auto pb-3 custom-scrollbar">
-              {appliedLeaderIds
-                .map(id => teamsList.find(t => t.leader_user_id === id))
-                .filter((t): t is TeamComparisonTeam => Boolean(t))
-                .map(t => {
-                  const newestProjects: TeamComparisonProject[] = [...(t.projects || [])]
-                    .sort((a, b) => Number(b.project_id) - Number(a.project_id))
-                    .slice(0, 4);
-                  return (
-                    <div
-                      key={t.leader_user_id}
-                      className="border border-slate-200 rounded-xl overflow-hidden bg-white shrink-0 w-[340px] xl:w-[calc((100%-1rem)/2)]"
-                    >
-                      {/* Column header: Leader / Workspace / counts / health */}
-                      <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60">
-                        <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider truncate" title={t.leader_name}>
-                          {t.leader_name}
-                        </h4>
-                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">
-                          Leader: <strong>{t.leader_name}</strong>
-                        </p>
-                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">
-                          Workspace: <strong className="text-slate-700">{t.workspace || '—'}</strong>
-                        </p>
-                        <div className="flex items-center gap-2 text-[10px] font-bold mt-2">
-                          <span className="px-2 py-0.5 rounded-full bg-[#eff4ff] text-[#0058be] border border-[#0058be]/20">
-                            {t.projects.length} Projects
-                          </span>
-                          <span className={`px-2 py-0.5 rounded-full border ${healthBadge(t.health)}`}>
-                            {healthLabel(t.health)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Project list (vertical) — max 4 newest projects */}
-                      <div className="p-4 space-y-3 max-h-[640px] overflow-y-auto custom-scrollbar">
-                        {newestProjects.length === 0 ? (
-                          <p className="text-xs text-slate-400 italic text-center py-6">
-                            Team này chưa có Project nào trong kỳ đang xem.
-                          </p>
-                        ) : (
-                          newestProjects.map(p => (
-                            <Link
-                              key={p.project_id}
-                              href={`/project/detail/overview?id=${p.project_id}`}
-                              className="block p-3.5 bg-white border border-slate-200 rounded-xl hover:border-[#0058be]/40 hover:shadow-md transition-all"
-                            >
-                              <div className="flex items-center justify-between mb-2 gap-2">
-                                <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</span>
-                                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
-                                  {p.status || '—'}
-                                </span>
-                              </div>
-                              <div className="text-[10px] text-slate-500 mb-2">
-                                Giai đoạn: <strong className="text-slate-700">{p.current_phase || '—'}</strong>
-                              </div>
-                              <ProgressBar value={p.progress_pct} color={projectBarColor[p.status || ''] || 'bg-blue-500'} height="h-2" />
-                              <div className="grid grid-cols-2 gap-2 mt-2.5 text-[10px]">
-                                <div>
-                                  <span className="text-slate-400 block">Progress</span>
-                                  <span className="font-extrabold text-[#0058be]">{p.progress_pct.toFixed(0)}%</span>
-                                </div>
-                                <div>
-                                  <span className="text-slate-400 block">Timeline</span>
-                                  <span className="font-extrabold text-slate-700">{p.timeline_pct.toFixed(0)}%</span>
-                                </div>
-                                <div>
-                                  <span className="text-slate-400 block">Task</span>
-                                  <span className="font-bold text-slate-700">{p.done}/{p.total}</span>
-                                </div>
-                                <div>
-                                  <span className="text-slate-400 block">Trễ</span>
-                                  <span className={`font-bold ${p.overdue > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{p.overdue}</span>
-                                </div>
-                                <div>
-                                  <span className="text-slate-400 block">MD</span>
-                                  <span className="font-bold text-slate-700">{p.manday_actual.toFixed(1)}/{p.manday_est.toFixed(1)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-slate-400 block">Health</span>
-                                  <span className={`font-bold ${p.health === 'Critical' ? 'text-rose-600' : p.health === 'Risk' ? 'text-amber-600' : p.health === 'On Track' ? 'text-emerald-600' : 'text-slate-500'}`}>
-                                    {p.health}
-                                  </span>
-                                </div>
-                              </div>
-                            </Link>
-                          ))
-                        )}
-                        {/* Show total project count when capped at 4 newest */}
-                        {t.projects.length > newestProjects.length && (
-                          <p className="text-[10px] text-slate-400 italic text-center pt-2 border-t border-slate-100">
-                            Hiển thị {newestProjects.length} / {t.projects.length} project mới nhất trong kỳ
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-          )}
-        </div>
-      </div>
+      {/* ── SECTION 3 was relocated to Dashboard → Team Load (Super Admin
+          only). The original Section 3 logic now lives in
+          `frontend/src/components/dashboard/MultiTeamProjectComparison.tsx`
+          and is rendered at `/dashboard/team-load`. Sections 2 and 4 below
+          remain unchanged and keep using the same `teamsList` produced by
+          the shared `getTeamComparison` query. */}
 
       {/* ── SECTION 4: So sánh Member giữa các Team ─────────────────────
           Read-only member-vs-team comparison for Super Admin monitoring.
@@ -883,8 +674,16 @@ export default function SystemAuditTab() {
                 const sortedMembers = [...teamMembers].sort(memberSortComparator);
                 return (
                   <div key={t.leader_user_id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/30">
-                    {/* Team summary header */}
-                    <div className="px-4 py-3 border-b border-slate-200 bg-white">
+                    {/* Team summary header — light-blue tint to visually separate
+                        this team from the page background and from the
+                        member cards below. Same hierarchy / info / badges /
+                        counters as before, only the background color changed
+                        (bg-blue-50/80 → bg-blue-100, a stronger light-blue
+                        Tailwind token already used widely across the project
+                        for chip / badge / highlight backgrounds — provides
+                        clearer contrast against the white page while staying
+                        light and professional). */}
+                    <div className="px-4 py-3 border-b border-slate-200 bg-blue-100">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="min-w-0">
                           <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider truncate" title={t.leader_name}>
@@ -915,8 +714,41 @@ export default function SystemAuditTab() {
                       </div>
                     </div>
 
-                    {/* Member list */}
+                    {/* Member list (Leader card first, then sorted members) */}
                     <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">
+                      {/* Leader card — appears BEFORE every other member, uses the
+                          same member-card visual structure (border, rounded, padding,
+                          metric grid via SmallStat) and reuses the team-level
+                          existing metrics already produced by the backend
+                          aggregator (no new formulas). Not double-counted in
+                          `totalMembers` because the backend's `members` array
+                          only contains managed Members (the leader is not part
+                          of `t.members`). */}
+                      <div className="p-3 bg-white border border-blue-200 rounded-lg ring-1 ring-blue-100">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-[#0b1c30] truncate" title={t.leader_name}>
+                              {t.leader_name}
+                            </p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              {t.leader_email || '—'}
+                            </p>
+                          </div>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block"></span>
+                            Leader
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
+                          <SmallStat label="Done"   value={t.done}        color="text-emerald-600" />
+                          <SmallStat label="Doing"  value={t.in_progress} color="text-blue-600" />
+                          <SmallStat label="Trễ"    value={t.overdue}     color={t.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
+                          <SmallStat label="KPI"    value={t.kpi.toFixed(1)} color="text-[#0058be]" />
+                          <SmallStat label="Manday" value={`${t.actual_md.toFixed(1)}/${t.plan_md.toFixed(1)}`} />
+                          <SmallStat label="Util"   value={`${t.util.toFixed(1)}%`} color={t.util >= 100 ? 'text-rose-600' : t.util >= 80 ? 'text-emerald-600' : 'text-slate-600'} />
+                        </div>
+                      </div>
+
                       {sortedMembers.length === 0 ? (
                         <p className="text-xs text-slate-400 italic text-center py-4">
                           Team chưa có thành viên.

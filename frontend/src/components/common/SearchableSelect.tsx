@@ -117,9 +117,24 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  // When the trigger sits near the bottom of the viewport (e.g. the last
+  // field in a scrollable modal), the popup — which always rendered below
+  // via `top-full` — got pushed past the visible area, so opening it looked
+  // like nothing happened until the user manually scrolled the modal down.
+  // Flip it to open upward in that case so it's visible immediately.
+  const [dropUp, setDropUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open || !containerRef.current) return;
+    const estimatedPopupHeight = 320; // search bar + option list + footer, roughly
+    const rect = containerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    setDropUp(spaceBelow < estimatedPopupHeight && spaceAbove > spaceBelow);
+  }, [open]);
 
   // Debounced search query (200ms)
   const debouncedSearch = useDebounce(search, 200);
@@ -373,7 +388,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
 
       {/* Popup Menu */}
       {open && (
-        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full mt-1.5 w-[max(16rem,100%)] bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
+        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${dropUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} w-[max(16rem,100%)] bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
           {/* Search Bar Input (if threshold met) */}
           {showSearchBar && (
             <div className="p-2 border-b border-slate-100 bg-slate-50/80 sticky top-0 z-10">

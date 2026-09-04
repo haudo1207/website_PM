@@ -13,6 +13,7 @@ from ..models.project_feature import ProjectFeature, ProjectFeatureLog
 from ..models.member import Member
 from ..utils.access import require_route_project_access, require_project
 from ..utils.auth import get_current_user
+from ..utils.audit_service import AuditService
 
 logger = logging.getLogger("project_features")
 
@@ -126,6 +127,13 @@ def create_feature(pid: int, body: dict, db: Session = Depends(get_db), current_
     db.add(feature)
     db.commit()
     db.refresh(feature)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Feature",
+        entity_type="ProjectFeature", entity_id=feature.id, action="CREATE",
+        resource_name=feature.name, project_id=pid,
+        description=f"Tạo tính năng '{feature.name}'"
+    )
+    db.commit()
     return _feature_to_dict(feature)
 
 
@@ -140,9 +148,19 @@ def rename_feature(pid: int, fid: int, body: dict, db: Session = Depends(get_db)
     if not name:
         raise HTTPException(400, "Thiếu tên tính năng")
 
+    old_name = feature.name
     feature.name = name
     db.commit()
     db.refresh(feature)
+    if old_name != feature.name:
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Project Feature",
+            entity_type="ProjectFeature", entity_id=feature.id, action="UPDATE",
+            resource_name=feature.name, project_id=pid,
+            field_name="name", old_value=old_name, new_value=feature.name,
+            description=f"Đổi tên tính năng '{old_name}' → '{feature.name}'"
+        )
+        db.commit()
     return _feature_to_dict(feature)
 
 
@@ -156,7 +174,15 @@ def delete_feature(pid: int, fid: int, db: Session = Depends(get_db), current_us
     if feature.logs:
         raise HTTPException(400, "Tính năng này đang chứa lịch sử làm việc. Hãy xóa các log trước.")
 
+    feature_id, feature_name = feature.id, feature.name
     db.delete(feature)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Feature",
+        entity_type="ProjectFeature", entity_id=feature_id, action="DELETE",
+        resource_name=feature_name, project_id=pid,
+        description=f"Xóa tính năng '{feature_name}'"
+    )
     db.commit()
     return {"success": True}
 
@@ -215,6 +241,13 @@ def create_log(pid: int, fid: int, body: dict, background_tasks: BackgroundTasks
 
     db.commit()
     db.refresh(log)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Feature Log",
+        entity_type="ProjectFeatureLog", entity_id=log.id, action="CREATE",
+        resource_name=feature.name, project_id=pid,
+        description=f"Thêm log '{content[:80]}' vào tính năng '{feature.name}'"
+    )
+    db.commit()
 
     # Auto-summarize every new WIP log — no manual "Tạo tóm tắt" click
     # needed. Runs as a BackgroundTask (after this response is already sent)
@@ -254,6 +287,13 @@ def add_log_attachment(pid: int, lid: int, body: dict, background_tasks: Backgro
     log.attached_files = [*(log.attached_files or []), meta]
     db.commit()
     db.refresh(log)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Feature Log",
+        entity_type="ProjectFeatureLog", entity_id=log.id, action="ADD_ATTACHMENT",
+        resource_name=file_name, project_id=pid,
+        description=f"Đính kèm file '{file_name}' vào log #{log.id}"
+    )
+    db.commit()
 
     # The create-log auto-summarize is a single, un-retried attempt (see
     # _auto_summarize_log_background). If it never produced a summary yet,
@@ -299,6 +339,13 @@ def create_share_link(pid: int, request: Request, db: Session = Depends(get_db),
     if not project.share_token:
         project.share_token = secrets.token_urlsafe(24)
         db.commit()
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Project Feature",
+            entity_type="Project", entity_id=project.id, action="CREATE_SHARE_LINK",
+            resource_name=project.name, project_id=pid,
+            description=f"Tạo link chia sẻ công khai cho dự án '{project.name}'"
+        )
+        db.commit()
 
     # Not request.base_url — behind the Next.js proxy that reflects the
     # internal Docker hostname (http://backend:8000), not a browser-reachable
@@ -315,7 +362,15 @@ def delete_log(pid: int, lid: int, db: Session = Depends(get_db), current_user=D
     if not log:
         raise HTTPException(404, "Không tìm thấy log")
 
+    log_id, log_content = log.id, (log.content or "")[:80]
     db.delete(log)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Feature Log",
+        entity_type="ProjectFeatureLog", entity_id=log_id, action="DELETE",
+        project_id=pid,
+        description=f"Xóa log '{log_content}' (#{log_id})"
+    )
     db.commit()
     return {"success": True}
 
@@ -558,4 +613,12 @@ def push_log_tasks(pid: int, lid: int, body: dict, db: Session = Depends(get_db)
     log.ai_tasks = existing_tasks
     db.commit()
     db.refresh(log)
+    if pushed_count:
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Project Feature Log",
+            entity_type="ProjectFeatureLog", entity_id=log.id, action="PUSH_TASKS",
+            resource_name=feature.name if feature else None, project_id=pid,
+            description=f"Đẩy {pushed_count} task từ log '{feature.name if feature else lid}' vào Project Plan"
+        )
+        db.commit()
     return {"success": True, "pushed_count": pushed_count, "log": _log_to_dict(log)}
