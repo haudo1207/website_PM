@@ -25,7 +25,6 @@ from ..utils.access import (
     resolve_workspace,
     audit_log_query_for_user,
     user_allowed_scopes,
-    project_query_for_user_broad,
     ROLE_SUPER_ADMIN,
     ROLE_LEADER,
     ALL_SCOPE,
@@ -950,10 +949,14 @@ def _aggregate_team_comparison(
     #    "Project comparison by team" view, so we build a per-project row
     #    tied to its assigned members.
     #
-    # Leader callers: restrict the project list to projects within the
-    # caller's allowed Workspaces. Without this guard, a Leader could see
-    # project KPIs from Workspaces they're not granted (e.g. a DEV Leader
-    # could see INFRA-only projects via their Team's members).
+    # IMPORTANT: The project list is NOT filtered by the caller's Workspace
+    # scope. The task aggregation (step 8) already includes ALL tasks for
+    # team members across ALL Workspaces — filtering the project list by
+    # Workspace would hide projects that the team actually works on,
+    # creating a mismatch between the metrics (which are cross-Workspace)
+    # and the visible project list. Workspace filtering controls which
+    # Leaders/Teams are displayed, NOT which projects they are responsible
+    # for once a Team is included.
     proj_rows_q = db.query(
         Project.id.label("project_id"),
         Project.name.label("name"),
@@ -962,13 +965,6 @@ def _aggregate_team_comparison(
         Project.data_scope.label("data_scope"),
         Project.business.label("business"),
     )
-    if current_user is not None and not caller_is_super_admin:
-        scoped_project_ids_subq = (
-            project_query_for_user_broad(db, current_user)
-            .with_entities(Project.id)
-            .subquery()
-        )
-        proj_rows_q = proj_rows_q.filter(Project.id.in_(scoped_project_ids_subq))
     proj_rows = proj_rows_q.order_by(Project.id.asc()).all()
     project_member_rows = (
         db.query(
