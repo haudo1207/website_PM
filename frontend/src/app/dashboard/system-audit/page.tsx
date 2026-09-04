@@ -674,8 +674,16 @@ export default function SystemAuditTab() {
                 const sortedMembers = [...teamMembers].sort(memberSortComparator);
                 return (
                   <div key={t.leader_user_id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/30">
-                    {/* Team summary header */}
-                    <div className="px-4 py-3 border-b border-slate-200 bg-white">
+                    {/* Team summary header — light-blue tint to visually separate
+                        this team from the page background and from the
+                        member cards below. Same hierarchy / info / badges /
+                        counters as before, only the background color changed
+                        (bg-blue-50/80 → bg-blue-100, a stronger light-blue
+                        Tailwind token already used widely across the project
+                        for chip / badge / highlight backgrounds — provides
+                        clearer contrast against the white page while staying
+                        light and professional). */}
+                    <div className="px-4 py-3 border-b border-slate-200 bg-blue-100">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="min-w-0">
                           <h4 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider truncate" title={t.leader_name}>
@@ -706,8 +714,41 @@ export default function SystemAuditTab() {
                       </div>
                     </div>
 
-                    {/* Member list */}
+                    {/* Member list (Leader card first, then sorted members) */}
                     <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">
+                      {/* Leader card — appears BEFORE every other member, uses the
+                          same member-card visual structure (border, rounded, padding,
+                          metric grid via SmallStat) and reuses the team-level
+                          existing metrics already produced by the backend
+                          aggregator (no new formulas). Not double-counted in
+                          `totalMembers` because the backend's `members` array
+                          only contains managed Members (the leader is not part
+                          of `t.members`). */}
+                      <div className="p-3 bg-white border border-blue-200 rounded-lg ring-1 ring-blue-100">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-[#0b1c30] truncate" title={t.leader_name}>
+                              {t.leader_name}
+                            </p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              {t.leader_email || '—'}
+                            </p>
+                          </div>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block"></span>
+                            Leader
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
+                          <SmallStat label="Done"   value={t.done}        color="text-emerald-600" />
+                          <SmallStat label="Doing"  value={t.in_progress} color="text-blue-600" />
+                          <SmallStat label="Trễ"    value={t.overdue}     color={t.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
+                          <SmallStat label="KPI"    value={t.kpi.toFixed(1)} color="text-[#0058be]" />
+                          <SmallStat label="Manday" value={`${t.actual_md.toFixed(1)}/${t.plan_md.toFixed(1)}`} />
+                          <SmallStat label="Util"   value={`${t.util.toFixed(1)}%`} color={t.util >= 100 ? 'text-rose-600' : t.util >= 80 ? 'text-emerald-600' : 'text-slate-600'} />
+                        </div>
+                      </div>
+
                       {sortedMembers.length === 0 ? (
                         <p className="text-xs text-slate-400 italic text-center py-4">
                           Team chưa có thành viên.
