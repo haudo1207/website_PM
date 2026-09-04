@@ -375,7 +375,11 @@ export default function ReportTab() {
         kpiTarget: Math.round(p.kpiTarget * 10) / 10,
         mandayActual: Math.round(p.mandayActual * 10) / 10,
         mandayPlanned: Math.round(p.mandayPlanned * 10) / 10,
-        progress: p.tasks > 0 ? Math.round((p.done / p.tasks) * 100) : 0
+        // Issue 3 — Project Progress from Settings → Master Phases (single
+        // source of truth). Task-completion percentage is preserved as
+        // `taskCompletionPct` for surfaces that intentionally show it.
+        progress: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : (p.tasks > 0 ? Math.round((p.done / p.tasks) * 100) : 0),
+        taskCompletionPct: p.tasks > 0 ? Math.round((p.done / p.tasks) * 100) : 0,
       }));
 
     const mandayPlannedTotal = Math.round(topProjects.reduce((s, p) => s + p.mandayPlanned, 0) * 10) / 10;

@@ -1359,7 +1359,12 @@ export default function OverviewTab() {
 
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
-        progress: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
+        // Issue 3 — Project Progress from Settings → Master Phases (single
+        // source of truth). Fall back to 0 only if the backend omitted the
+        // field. Task-completion percentage is preserved as
+        // `taskCompletionPct` for surfaces that intentionally show it.
+        progress: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
+        taskCompletionPct: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
         totalTasks: pTasksToUse.length, doneTasks: done, openTasks: open, lateTasks: late,
         manday: Math.round(pManday * 10) / 10, mandayPlanned: Math.round(pMandayPlanned * 10) / 10,
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,

@@ -24,7 +24,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   ]);
 
   useEffect(() => {
-    const canAudit = isSuperAdmin();
+    // System Audit dashboard is now available to BOTH Super Admin and
+    // Leader. Super Admin sees every Workspace; Leader sees only the
+    // Workspaces they're granted (enforced server-side by
+    // `audit_log_query_for_user` + the existing project/member scope
+    // helpers — see `backend/app/utils/access.py`). Member / Viewer stay
+    // excluded; they have no governance / cross-team visibility role.
+    const canAudit = isSuperAdmin() || isLeader();
     // Member only ever sees their own performance Report — the Overview tab
     // (Team card, Leader-scoped stats) has nothing relevant for a Member to
     // manage. Viewer is read-only and the Overview tab surfaces Leader /
@@ -88,7 +94,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const tabSubtitle: Record<Tab, string> = {
     report:         'Dashboard hiệu suất & công việc cá nhân',
     overview:       'Dashboard quản lý & Audit log dành cho Team Leader',
-    'system-audit': 'Dashboard kiểm toán hệ thống dành cho Sys Admin',
+    'system-audit': 'Dashboard kiểm toán hệ thống dành cho Super Admin & Leader (giới hạn theo Workspace được giao)',
     'kpi-matrix':   'Ma trận KPI thành viên theo tháng dành cho Super Admin & Leader',
     'team-load':    'So sánh Project theo nhiều Team — chỉ dành cho Super Admin',
   };

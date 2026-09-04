@@ -27,7 +27,7 @@ interface MeetingFormData {
   notify_channels: string[];
 }
 
-const NOTIFY_CHANNEL_OPTIONS = ['App', 'Telegram', 'Zalo', 'Nhóm dự án', 'Email'];
+const NOTIFY_CHANNEL_OPTIONS = ['App', 'Telegram', 'Zalo', 'Nhóm dự án'];
 
 // Numbered-list UX for Mục tiêu / Agenda — Enter continues "1. / 2. / 3. ..."
 // so leaders don't have to type the numbers by hand.
@@ -84,6 +84,36 @@ function addMinutes(time: string, durationStr: string): string {
   const eh = Math.floor(total / 60) % 24;
   const em = total % 60;
   return `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
+}
+
+// 30-minute increments across the full day: "00:00", "00:30", ..., "23:30".
+const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
+  const h = Math.floor(i / 2);
+  const m = i % 2 === 0 ? '00' : '30';
+  return `${String(h).padStart(2, '0')}:${m}`;
+});
+
+// Default start time for a freshly-opened create form: the next half-hour
+// mark strictly after "now" (08:05 -> 08:30, 08:30 -> 09:00, 23:45 -> next
+// day 00:00) so the form never proposes a time that's already passed.
+function computeDefaultDateTime(now: Date): { date: string; time: string } {
+  const totalMin = now.getHours() * 60 + now.getMinutes();
+  const nextBoundary = Math.floor(totalMin / 30) * 30 + 30;
+  const dayOverflow = Math.floor(nextBoundary / 1440);
+  const wrapped = nextBoundary % 1440;
+  // Build the date from local y/m/d (+ day rollover), never toISOString() —
+  // that converts to UTC first, which silently lands on the wrong calendar
+  // day for Vietnam (UTC+7) whenever "now" is between 00:00 and 06:59 local.
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOverflow);
+  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return {
+    date,
+    time: `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`,
+  };
+}
+
+function toDateTimeMs(dateStr: string, timeStr: string): number {
+  return new Date(`${dateStr}T${timeStr}:00`).getTime();
 }
 
 function SectionLabel({ n, label }: { n: number; label: string }) {
@@ -163,12 +193,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       // Editing an existing meeting: keep its title as-is, don't auto-overwrite.
       setManualTitleEdit(true);
     } else {
-      const today = new Date().toISOString().split('T')[0];
+      const { date: defaultDate, time: defaultTime } = computeDefaultDateTime(new Date());
       setFormData({
         title: '',
         platform: 'Google Meet',
-        date: today,
-        time: '09:00',
+        date: defaultDate,
+        time: defaultTime,
         duration: '60',
         link: '',
         transcript: '',
@@ -317,23 +347,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
   if (!isOpen) return null;
 
-  // Parse current HH:mm to 12-hour AM/PM
-  const timeParts = (formData.time || '09:00').split(':');
-  const h24 = parseInt(timeParts[0] || '9', 10);
-  const minuteStr = timeParts[1] || '00';
-  const period: 'AM' | 'PM' = h24 >= 12 ? 'PM' : 'AM';
-  const hour12 = h24 % 12 === 0 ? 12 : h24 % 12;
-
-  const handleTimeChange = (h12Val: number, mVal: string, pVal: 'AM' | 'PM') => {
-    let newH24 = h12Val;
-    if (pVal === 'AM') {
-      newH24 = h12Val === 12 ? 0 : h12Val;
-    } else {
-      newH24 = h12Val === 12 ? 12 : h12Val + 12;
-    }
-    const formattedHour = String(newH24).padStart(2, '0');
-    setFormData({ ...formData, time: `${formattedHour}:${mVal}` });
-  };
+  const isEditingPastMeeting = !!initialData && !!formData.date && !!formData.time && toDateTimeMs(formData.date, formData.time) < Date.now();
 
   const handleFillTeam = async () => {
     if (formData.project_ids.length === 0) {
@@ -406,6 +420,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       isSubmittingRef.current = false;
       return;
     }
+    if (!initialData && toDateTimeMs(formData.date, formData.time) < Date.now()) {
+      setError('Thời gian họp phải lớn hơn thời gian hiện tại.');
+      isSubmittingRef.current = false;
+      return;
+    }
     if (formData.project_ids.length === 0) {
       setError('Vui lòng chọn ít nhất một dự án cho cuộc họp');
       isSubmittingRef.current = false;
@@ -472,7 +491,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           <div className="flex items-center gap-2 text-[#0058be]">
             <CalendarIcon size={18} />
             <h2 className="text-[14px] font-bold text-[#0b1c30]">
-              {initialData ? 'Sửa Meeting' : 'Tạo Meeting mới'}
+              {initialData ? 'Chỉnh sửa cuộc họp' : 'Tạo Meeting mới'}
             </h2>
           </div>
           <button onClick={onClose} disabled={isLoading} className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-[#eff4ff] transition-colors disabled:opacity-40">
@@ -652,47 +671,21 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   </select>
                 </div>
 
-                <div className="flex items-center gap-1 mt-2">
+                <div className="mt-2">
                   <select
-                    value={hour12}
-                    onChange={e => handleTimeChange(parseInt(e.target.value, 10), minuteStr, period)}
-                    className="flex-1 px-2 py-2.5 border border-[#c2c6d6] rounded-lg text-xs bg-white focus:outline-none focus:border-[#0058be] transition-all text-center font-bold text-[#0b1c30]"
+                    value={formData.time}
+                    onChange={e => setFormData({ ...formData, time: e.target.value })}
+                    className="w-full px-2 py-2.5 border border-[#c2c6d6] rounded-lg text-xs bg-white focus:outline-none focus:border-[#0058be] transition-all text-center font-bold text-[#0b1c30]"
                   >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(h => (
-                      <option key={h} value={h}>{String(h).padStart(2, '0')}</option>
+                    {Array.from(new Set([...TIME_OPTIONS, formData.time])).filter(Boolean).sort().map(t => (
+                      <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
-                  <span className="text-[#c2c6d6] font-bold">:</span>
-                  <select
-                    value={minuteStr}
-                    onChange={e => handleTimeChange(hour12, e.target.value, period)}
-                    className="flex-1 px-2 py-2.5 border border-[#c2c6d6] rounded-lg text-xs bg-white focus:outline-none focus:border-[#0058be] transition-all text-center font-bold text-[#0b1c30]"
-                  >
-                    {Array.from(new Set(['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55', minuteStr])).sort().map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                  <div className="flex rounded-lg border border-[#c2c6d6] overflow-hidden bg-[#f0f2f5] p-0.5 ml-0.5">
-                    <button
-                      type="button"
-                      onClick={() => handleTimeChange(hour12, minuteStr, 'AM')}
-                      className={`px-2 py-1.5 text-[10px] font-bold rounded-md transition-all ${
-                        period === 'AM' ? 'bg-[#0058be] text-white shadow-sm' : 'text-[#565e74] hover:text-[#0b1c30]'
-                      }`}
-                    >
-                      AM
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleTimeChange(hour12, minuteStr, 'PM')}
-                      className={`px-2 py-1.5 text-[10px] font-bold rounded-md transition-all ${
-                        period === 'PM' ? 'bg-[#0058be] text-white shadow-sm' : 'text-[#565e74] hover:text-[#0b1c30]'
-                      }`}
-                    >
-                      PM
-                    </button>
-                  </div>
                 </div>
+
+                {isEditingPastMeeting && (
+                  <p className="text-[11px] text-amber-700 font-semibold mt-1.5 leading-relaxed">⚠ Cuộc họp này đã diễn ra hoặc đã bắt đầu. Vẫn có thể lưu thay đổi nếu cần.</p>
+                )}
 
                 {checkingConflicts && (
                   <p className="text-[11px] text-[#94a3b8] mt-2">Đang kiểm tra trùng lịch...</p>
@@ -869,7 +862,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   onChange={(vals: string[]) => setFormData({ ...formData, notify_channels: vals })}
                 />
               </div>
-              <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Hệ thống sẽ tự động nhắc qua các kênh đã chọn đúng vào mốc thời gian này (Email chỉ gửi được nếu SMTP đã được cấu hình).</p>
+              <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Hệ thống sẽ tự động nhắc qua các kênh đã chọn đúng vào mốc thời gian này.</p>
             </div>
           </div>
 
@@ -899,7 +892,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               disabled={isLoading}
               className="px-4 py-2 flex items-center gap-2 text-xs font-bold text-white bg-[#0058be] rounded-lg hover:bg-[#0058be]/90 transition-colors disabled:opacity-70 shadow-sm"
             >
-              {isLoading ? 'Đang xử lý...' : (initialData ? 'Cập nhật' : 'Tạo meeting')}
+              {isLoading ? 'Đang xử lý...' : (initialData ? 'Lưu thay đổi' : 'Tạo meeting')}
             </button>
             </div>
           </div>

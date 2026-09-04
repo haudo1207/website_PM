@@ -133,17 +133,6 @@ class Settings(BaseSettings):
     ZALO_WORKER_URL: str = "http://zalo-worker:8090"
     ZALO_WORKER_INTERNAL_TOKEN: str = ""
 
-    # Email notifications (meeting-created → project members) via Gmail SMTP
-    # with an App Password (https://myaccount.google.com/apppasswords) —
-    # SMTP_USER is both the login and the "From" address unless SMTP_FROM_EMAIL
-    # is set separately.
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_FROM_EMAIL: str = ""
-    SMTP_FROM_NAME: str = "Markee AI"
-
     @property
     def telegram_base_url(self) -> str:
         return (self.APP_BASE_URL or self.FRONTEND_URL or "").rstrip("/")
@@ -151,10 +140,6 @@ class Settings(BaseSettings):
     @property
     def is_telegram_enabled(self) -> bool:
         return bool(self.TELEGRAM_BOT_TOKEN)
-
-    @property
-    def is_smtp_enabled(self) -> bool:
-        return bool(self.SMTP_HOST and self.SMTP_USER and self.SMTP_PASSWORD)
 
     @property
     def superadmin_emails(self) -> set[str]:

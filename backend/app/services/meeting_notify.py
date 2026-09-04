@@ -1,8 +1,8 @@
 """On meeting creation: push the join link to any Zalo group(s) linked to
-the meeting's project(s), and email it to those projects' members — the
-Zalo/email counterparts of services/telegram.py's send_meeting_notification.
-Both are best-effort (never raise) so a delivery failure never blocks meeting
-creation, matching how the existing Telegram call is wrapped in meetings.py.
+the meeting's project(s) — the Zalo counterpart of services/telegram.py's
+send_meeting_notification. Best-effort (never raises) so a delivery failure
+never blocks meeting creation, matching how the existing Telegram call is
+wrapped in meetings.py.
 """
 import datetime
 import logging
@@ -10,11 +10,8 @@ import logging
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from ..models.member import Member
-from ..models.project import project_members
 from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage
 from . import zalo as zalo_service
-from .email_client import send_email
 
 logger = logging.getLogger("meeting_notify")
 
@@ -101,31 +98,3 @@ def notify_zalo_groups_meeting_created(db: Session, meeting) -> int:
     if sent:
         db.commit()
     return sent
-
-
-def notify_project_members_email_meeting_created(db: Session, meeting) -> int:
-    """Emails the join link to every member (Member.email) of the meeting's
-    project(s). Returns how many addresses the email was accepted for."""
-    project_ids = _meeting_project_ids(meeting)
-    if not project_ids:
-        return 0
-
-    rows = (
-        db.query(Member.email)
-        .join(project_members, project_members.c.member_id == Member.id)
-        .filter(project_members.c.project_id.in_(project_ids), Member.email.isnot(None))
-        .distinct()
-        .all()
-    )
-    emails = [r.email for r in rows if r.email and r.email.strip()]
-    if not emails:
-        logger.info(
-            "No member email on file for meeting %s (project(s) %s) — skipping email notice",
-            meeting.id, project_ids,
-        )
-        return 0
-
-    lines = _meeting_message_lines(meeting)
-    html_body = "<p>" + "</p><p>".join(lines) + "</p>"
-    subject = f"[Meeting] {meeting.title}"
-    return send_email(emails, subject, html_body)

@@ -637,6 +637,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # Handle Link mappings — auto-generate if empty
     meeting_url = body.get("meeting_url") or body.get("link")
     platform = body.get("platform") or "Google Meet"
+    google_event_id = None
 
     if not meeting_url:
         # Build ISO start_time for API calls
@@ -663,6 +664,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                 from ..services.meeting_sync import create_google_meet_link
                 result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
                 meeting_url = result["join_url"]
+                google_event_id = result.get("id")
             except Exception as e:
                 logger.error(f"Auto-generate Google Meet link failed: {e}")
                 raise HTTPException(status_code=400, detail=str(e))
@@ -685,6 +687,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         description=body.get("description"),
         platform=body.get("platform"),
         meeting_url=meeting_url,
+        google_event_id=google_event_id,
         meeting_date=meeting_date,
         start_time=start_time,
         end_time=end_time,
@@ -770,14 +773,6 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     except Exception as e:
         logger.warning(f"Failed to send Zalo notification for meeting {m.id}: {e}")
 
-    # Email the join link to the meeting's project member(s)
-    try:
-        from ..services.meeting_notify import notify_project_members_email_meeting_created
-        email_count = notify_project_members_email_meeting_created(db, m)
-        logger.info(f"Email notification for meeting {m.id} sent to {email_count} recipient(s)")
-    except Exception as e:
-        logger.warning(f"Failed to send email notification for meeting {m.id}: {e}")
-
     return {"success": True, "data": meeting_to_dict(m)}
 
 # ─── UPDATE ──────────────────────────────────────────────
@@ -789,6 +784,9 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
 
     old_dict = {"title": m.title, "status": m.status, "meeting_date": str(m.meeting_date) if m.meeting_date else None}
     old_status = m.status
+    old_meeting_date = m.meeting_date
+    old_start_time = m.start_time
+    old_end_time = m.end_time
     status_input = str(body.get("status", m.status)).upper()
     new_status = STATUS_FE_TO_DB.get(status_input, status_input)
     if new_status not in ["UPCOMING", "ONGOING", "DONE", "CANCELLED"]:
@@ -932,6 +930,19 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             send_meeting_notification(db, m)
         except Exception as e:
             logger.warning(f"Failed to send Telegram notification for meeting update {m.id}: {e}")
+
+    # Reschedule the SAME Google Calendar event (events.patch) if the date/time
+    # actually changed — best-effort, mirrors the Telegram/Zalo notify pattern
+    # above so a Calendar hiccup never blocks saving the edit.
+    time_changed = (m.meeting_date != old_meeting_date) or (m.start_time != old_start_time) or (m.end_time != old_end_time)
+    if m.google_event_id and time_changed and m.start_time and m.end_time:
+        try:
+            from ..services.meeting_sync import update_google_meet_event
+            start_iso = datetime.datetime.combine(m.meeting_date, m.start_time).isoformat()
+            end_iso = datetime.datetime.combine(m.meeting_date, m.end_time).isoformat()
+            update_google_meet_event(db, m.google_event_id, start_iso, end_iso)
+        except Exception as e:
+            logger.warning(f"Failed to sync rescheduled time to Google Calendar for meeting {m.id}: {e}")
 
     return {"success": True, "data": meeting_to_dict(m)}
 

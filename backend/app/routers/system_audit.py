@@ -19,10 +19,19 @@ from ..models.member import Member
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.phase import Phase
-from ..utils.auth import get_current_user, require_admin
-from ..utils.access import get_workspaces, resolve_workspace, ALL_SCOPE
+from ..utils.auth import get_current_user, require_admin, require_audit_user
+from ..utils.access import (
+    get_workspaces,
+    resolve_workspace,
+    audit_log_query_for_user,
+    user_allowed_scopes,
+    ROLE_SUPER_ADMIN,
+    ROLE_LEADER,
+    ALL_SCOPE,
+)
+from ..utils.project_progress import get_progress_pct_for_phase
 
-router = APIRouter(prefix="/system-audit", tags=["system-audit"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/system-audit", tags=["system-audit"], dependencies=[Depends(require_audit_user)])
 
 
 @router.get("/stats")
@@ -30,11 +39,16 @@ def get_system_audit_stats(
     period: str = Query("today", description="today, 7days, 30days, custom"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(require_audit_user),
 ):
-    """Returns summary stats counts (Create, Update, Delete, AI Check, Login, Failed Login)."""
+    """Returns summary stats counts (Create, Update, Delete, AI Check, Login, Failed Login).
+
+    Scoped to the caller's Workspaces for Leader accounts (see
+    `audit_log_query_for_user`) — Super Admin continues to see every event.
+    """
     now = datetime.now()
-    q = db.query(AuditLog)
+    q = audit_log_query_for_user(db, current_user)
 
     if period == "today":
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -56,6 +70,11 @@ def get_system_audit_stats(
     update_cnt = q.filter(AuditLog.action == "UPDATE").count()
     delete_cnt = q.filter(AuditLog.action == "DELETE").count()
     ai_check_cnt = q.filter(AuditLog.action == "CHECK").count()
+    # LOGIN / FAILED_LOGIN events are global by nature (no Workspace
+    # context). They are surfaced only to Super Admin — for Leader the
+    # count is the number of login events tied to a Workspace in their
+    # scope, which is normally zero. This matches the rule "Leader sees
+    # only data related to their assigned Workspaces".
     login_cnt = q.filter(AuditLog.action == "LOGIN").count()
     failed_login_cnt = q.filter(AuditLog.action == "FAILED_LOGIN").count()
 
@@ -91,10 +110,18 @@ def get_system_audit_logs(
     end_date: Optional[str] = None,
     page: int = 1,
     page_size: int = 25,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(require_audit_user),
 ):
-    """Returns paginated global system audit logs with event grouping and multi-attribute filters."""
-    q = db.query(AuditLog)
+    """Returns paginated global system audit logs with event grouping and multi-attribute filters.
+
+    Always scoped to the caller's Workspaces (see
+    `audit_log_query_for_user`). A Leader who manually picks a
+    `business_unit` filter is constrained to filters inside their assigned
+    set — selecting a Workspace outside their scope yields an empty result
+    rather than leaking data.
+    """
+    q = audit_log_query_for_user(db, current_user)
 
     # System Audit Scope: exclude high-volume, low-signal operational noise
     # (per-task status edits, task-group/phase shuffling) from the default
@@ -108,19 +135,25 @@ def get_system_audit_logs(
 
     if business_unit and business_unit.strip().lower() != "all":
         bu = business_unit.strip().lower()
-        ws = resolve_workspace(db, bu)
-        if ws is None:
+        # Leader: refuse workspaces outside their assigned scope (return empty).
+        scopes = user_allowed_scopes(db, current_user)
+        role = getattr(current_user, "role", None)
+        if role == ROLE_LEADER and scopes != ALL_SCOPE and bu not in scopes:
             q = q.filter(AuditLog.id == -1)
         else:
-            bu_filters = [
-                AuditLog.business_unit.ilike(ws.code),
-                AuditLog.business_unit.ilike(ws.name),
-                AuditLog.business_unit.ilike("all"),
-            ]
-            workspaces = get_workspaces(db)
-            if workspaces and ws.id == workspaces[0].id:
-                bu_filters.append(AuditLog.business_unit.is_(None))
-            q = q.filter(or_(*bu_filters))
+            ws = resolve_workspace(db, bu)
+            if ws is None:
+                q = q.filter(AuditLog.id == -1)
+            else:
+                bu_filters = [
+                    AuditLog.business_unit.ilike(ws.code),
+                    AuditLog.business_unit.ilike(ws.name),
+                    AuditLog.business_unit.ilike("all"),
+                ]
+                workspaces = get_workspaces(db)
+                if workspaces and ws.id == workspaces[0].id:
+                    bu_filters.append(AuditLog.business_unit.is_(None))
+                q = q.filter(or_(*bu_filters))
     if project_id:
         q = q.filter(AuditLog.project_id == project_id)
     if module and module.strip().lower() != "all":
@@ -242,21 +275,32 @@ def export_system_audit_logs(
     search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(require_audit_user),
 ):
-    """Export global system audit logs to UTF-8 CSV file."""
-    q = db.query(AuditLog)
+    """Export global system audit logs to UTF-8 CSV file.
+
+    Scoped to the caller's Workspaces (mirrors `/logs`). Leader cannot
+    export events for a Workspace outside their assigned scope.
+    """
+    q = audit_log_query_for_user(db, current_user)
 
     if business_unit and business_unit.strip().lower() != "all":
-        ws = resolve_workspace(db, business_unit.strip().lower())
-        if ws:
-            q = q.filter(or_(
-                AuditLog.business_unit.ilike(ws.code),
-                AuditLog.business_unit.ilike(ws.name),
-                AuditLog.business_unit.ilike("all"),
-            ))
-        else:
+        bu = business_unit.strip().lower()
+        scopes = user_allowed_scopes(db, current_user)
+        role = getattr(current_user, "role", None)
+        if role == ROLE_LEADER and scopes != ALL_SCOPE and bu not in scopes:
             q = q.filter(AuditLog.id == -1)
+        else:
+            ws = resolve_workspace(db, bu)
+            if ws:
+                q = q.filter(or_(
+                    AuditLog.business_unit.ilike(ws.code),
+                    AuditLog.business_unit.ilike(ws.name),
+                    AuditLog.business_unit.ilike("all"),
+                ))
+            else:
+                q = q.filter(AuditLog.id == -1)
     if project_id:
         q = q.filter(AuditLog.project_id == project_id)
     if module and module.strip().lower() != "all":
@@ -317,13 +361,28 @@ def export_system_audit_logs(
 
 
 @router.get("/analytics")
-def get_system_audit_analytics(db: Session = Depends(get_db)):
-    """Returns top analytics metrics (Top Active Users, Top Updated Projects, Top AI Users, Top Login Failures)."""
+def get_system_audit_analytics(db: Session = Depends(get_db), current_user=Depends(require_audit_user)):
+    """Returns top analytics metrics (Top Active Users, Top Updated Projects, Top AI Users, Top Login Failures).
+
+    All four sub-aggregations are seeded from the same Workspace-scoped
+    AuditLog query (`audit_log_query_for_user`) — Super Admin keeps the
+    unchanged global roll-up, Leader sees only the roll-up of activity
+    inside their assigned Workspaces.
+    """
+    scoped_q = audit_log_query_for_user(db, current_user)
+
     # Top Active Users
-    top_users_query = db.query(
-        AuditLog.user_id,
-        sql_func.count(AuditLog.id).label("total_actions")
-    ).filter(AuditLog.user_id.isnot(None)).group_by(AuditLog.user_id).order_by(desc("total_actions")).limit(5).all()
+    top_users_query = (
+        scoped_q.filter(AuditLog.user_id.isnot(None))
+        .with_entities(
+            AuditLog.user_id,
+            sql_func.count(AuditLog.id).label("total_actions"),
+        )
+        .group_by(AuditLog.user_id)
+        .order_by(desc("total_actions"))
+        .limit(5)
+        .all()
+    )
 
     top_users = []
     for uid, count in top_users_query:
@@ -335,10 +394,17 @@ def get_system_audit_analytics(db: Session = Depends(get_db)):
         })
 
     # Top Updated Projects
-    top_projects_query = db.query(
-        AuditLog.project_id,
-        sql_func.count(AuditLog.id).label("total_updates")
-    ).filter(AuditLog.project_id.isnot(None)).group_by(AuditLog.project_id).order_by(desc("total_updates")).limit(5).all()
+    top_projects_query = (
+        scoped_q.filter(AuditLog.project_id.isnot(None))
+        .with_entities(
+            AuditLog.project_id,
+            sql_func.count(AuditLog.id).label("total_updates"),
+        )
+        .group_by(AuditLog.project_id)
+        .order_by(desc("total_updates"))
+        .limit(5)
+        .all()
+    )
 
     top_projects = []
     for pid, count in top_projects_query:
@@ -350,10 +416,17 @@ def get_system_audit_analytics(db: Session = Depends(get_db)):
         })
 
     # Top AI Users
-    top_ai_query = db.query(
-        AuditLog.user_id,
-        sql_func.count(AuditLog.id).label("total_checks")
-    ).filter(AuditLog.action == "CHECK", AuditLog.user_id.isnot(None)).group_by(AuditLog.user_id).order_by(desc("total_checks")).limit(5).all()
+    top_ai_query = (
+        scoped_q.filter(AuditLog.action == "CHECK", AuditLog.user_id.isnot(None))
+        .with_entities(
+            AuditLog.user_id,
+            sql_func.count(AuditLog.id).label("total_checks"),
+        )
+        .group_by(AuditLog.user_id)
+        .order_by(desc("total_checks"))
+        .limit(5)
+        .all()
+    )
 
     top_ai_users = []
     for uid, count in top_ai_query:
@@ -364,11 +437,20 @@ def get_system_audit_analytics(db: Session = Depends(get_db)):
             "total_checks": count
         })
 
-    # Top Login Failures
-    top_failures_query = db.query(
-        AuditLog.ip_address,
-        sql_func.count(AuditLog.id).label("total_failures")
-    ).filter(AuditLog.action == "FAILED_LOGIN").group_by(AuditLog.ip_address).order_by(desc("total_failures")).limit(5).all()
+    # Top Login Failures — failed_logins are global security events with
+    # no Workspace context, so they remain Super Admin only. For Leader
+    # this list is always empty (no rows match the Workspace scope).
+    top_failures_query = (
+        scoped_q.filter(AuditLog.action == "FAILED_LOGIN")
+        .with_entities(
+            AuditLog.ip_address,
+            sql_func.count(AuditLog.id).label("total_failures"),
+        )
+        .group_by(AuditLog.ip_address)
+        .order_by(desc("total_failures"))
+        .limit(5)
+        .all()
+    )
 
     top_failures = [
         {"ip_address": ip or "Unknown", "total_failures": count}
@@ -388,10 +470,15 @@ def export_system_audit_logs_json(
     search: Optional[str] = None,
     category: Optional[str] = None,
     source: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(require_audit_user),
 ):
-    """Export global system audit logs as structured JSON array for external SIEM/SOC forensic tools."""
-    q = db.query(AuditLog).filter(AuditLog.module.not_in(["Phase", "Task Group", "Task", "Meeting"]))
+    """Export global system audit logs as structured JSON array for external SIEM/SOC forensic tools.
+
+    Scoped to the caller's Workspaces — Leader only exports events
+    related to their assigned Workspaces.
+    """
+    q = audit_log_query_for_user(db, current_user).filter(AuditLog.module.not_in(["Phase", "Task Group", "Task", "Meeting"]))
     if category and category.strip().lower() != "all":
         q = q.filter(AuditLog.category.ilike(category.strip()))
     if source and source.strip().lower() != "all":
@@ -413,12 +500,18 @@ def export_system_audit_logs_json(
 @router.get("/session-timeline/{session_id}")
 def get_session_timeline(
     session_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(require_audit_user),
 ):
-    """Returns chronological event timeline for a specific User Login Session ID."""
-    logs = db.query(AuditLog).filter(
+    """Returns chronological event timeline for a specific User Login Session ID.
+
+    Scoped to the caller's Workspaces — Leader only sees events for sessions
+    that touched projects or Workspaces they have access to.
+    """
+    q = audit_log_query_for_user(db, current_user).filter(
         AuditLog.session_id == session_id
-    ).order_by(AuditLog.created_at.asc()).all()
+    )
+    logs = q.order_by(AuditLog.created_at.asc()).all()
 
     return {
         "session_id": session_id,
@@ -496,6 +589,7 @@ def get_team_comparison(
         ),
     ),
     db: Session = Depends(get_db),
+    current_user=Depends(require_audit_user),
 ):
     """Per-Leader team aggregates for the System Audit "So sánh Team" section.
 
@@ -504,6 +598,15 @@ def get_team_comparison(
     aggregation, no per-task row shipping) so the dashboard behaviour stays
     consistent with Overview / KPI pages. Only the data source has been
     re-grouped by `leader_member_id`.
+
+    Workspace scoping for Leader accounts:
+    - A Leader passing a `workspace` argument that isn't in their assigned
+      scope gets an empty result (no 4xx — the workspace filter is treated
+      as a UI hint, the actual permission comes from the Leader's grants).
+    - For a Leader, the aggregator further restricts which Leader-Teams
+      are eligible based on `user_allowed_scopes`, so even with
+      `workspace=all` a Leader only sees Teams that touch their assigned
+      Workspaces.
 
     Time-range filter: when `start_date` / `end_date` are provided, the
     task-level aggregations are scoped to that window so the System Audit
@@ -514,6 +617,7 @@ def get_team_comparison(
     return _aggregate_team_comparison(
         db=db, workspace=workspace,
         start_date=start_date, end_date=end_date,
+        current_user=current_user,
     )
 
 
@@ -529,16 +633,21 @@ def get_team_detail(
         description="Optional inclusive end date (YYYY-MM-DD) — see /team-comparison.",
     ),
     db: Session = Depends(get_db),
+    current_user=Depends(require_audit_user),
 ):
     """Drill-down view for a single team — the same data shape used by the
-    'Chi tiết' button in Section 2 of the System Audit. Strictly super_admin
-    (router-wide dependency). Returns team identity + members + projects so
-    the frontend can render the existing detail-drawer pattern without
-    issuing any extra requests.
+    'Chi tiết' button in Section 2 of the System Audit. Authorised for
+    super_admin and leader; the shared `_aggregate_team_comparison()`
+    enforces the Leader's Workspace scope so a Leader can only drill into
+    a team that touches one of their granted Workspaces.
+
+    Returns team identity + members + projects so the frontend can render
+    the existing detail-drawer pattern without issuing any extra requests.
     """
     payload = _aggregate_team_comparison(
         db=db, workspace=None,
         start_date=start_date, end_date=end_date,
+        current_user=current_user,
     )
     for team in payload.get("teams", []):
         if team.get("leader_user_id") == leader_user_id:
@@ -551,6 +660,7 @@ def _aggregate_team_comparison(
     workspace: Optional[str],
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    current_user=None,
 ):
     """Shared team-comparison aggregator used by both `team-comparison` and
     `team-detail`. Eligibility (matches the rules specified for the System
@@ -561,6 +671,13 @@ def _aggregate_team_comparison(
         `leader_member_id` resolves to the Leader's `Member.id`).
       - The Leader's `data_scope` is either 'all' or matches the requested
         workspace filter.
+
+    Leader Workspace scoping:
+      When `current_user` is a Leader (not super_admin), this aggregator
+      restricts both the eligible Leader set and the project rollup to the
+      Workspaces the caller is granted. The optional `workspace` argument
+      is treated as a hint, not a permission — a Leader passing a workspace
+      outside their assigned set gets an empty response.
 
     Optional time-range filter (Requirement 2 — System Audit global sync):
       When `start_date` / `end_date` are provided, every per-task aggregate
@@ -574,6 +691,16 @@ def _aggregate_team_comparison(
     touch the team.
     """
     today = datetime.now().date()
+
+    # Resolve the caller's Workspace scope (ALL_SCOPE for super_admin).
+    caller_scopes = None
+    caller_is_super_admin = True
+    if current_user is not None:
+        caller_scopes = user_allowed_scopes(db, current_user)
+        caller_is_super_admin = (
+            getattr(current_user, "role", None) == ROLE_SUPER_ADMIN
+            or caller_scopes == ALL_SCOPE
+        )
 
     # Parse optional time window. Both inclusive.
     parsed_start: Optional[datetime] = None
@@ -613,6 +740,19 @@ def _aggregate_team_comparison(
             )
         workspace_label = ws_obj.name
 
+    # Leader: refuse workspaces outside their assigned scope (empty result).
+    if (
+        ws_filter is not None
+        and current_user is not None
+        and not caller_is_super_admin
+        and ws_filter not in (caller_scopes or set())
+    ):
+        return {
+            "workspace": workspace_label,
+            "workspace_filter": ws_filter,
+            "teams": [],
+        }
+
     # 3. Build Leader → {leader_member_id, display, scope} map.
     leader_info = []
     seen_names = set()
@@ -636,6 +776,18 @@ def _aggregate_team_comparison(
             "email": u.email or "",
             "data_scope": scope,
         })
+
+    # 3b. For Leader callers, restrict the eligible Leader set to those
+    #     whose data_scope is either 'all' (rare — only super-admin-style
+    #     accounts) or matches one of the caller's allowed Workspaces.
+    #     This ensures a Leader cannot see KPIs of a Team they have no
+    #     visibility into, even if their Leader account happens to share
+    #     the same display name.
+    if current_user is not None and not caller_is_super_admin and caller_scopes:
+        leader_info = [
+            li for li in leader_info
+            if li["data_scope"] == ALL_SCOPE or li["data_scope"] in caller_scopes
+        ]
 
     # 4. Apply workspace filter — keep 'all'-scope leaders always, plus
     #    leaders whose scope matches the requested workspace.
@@ -777,7 +929,15 @@ def _aggregate_team_comparison(
             sql_func.sum(Task.manday_actual).label("support_manday_actual"),
             sql_func.sum(Task.kpi_support).label("support_kpi"),
         )
-        .filter(Task.support_id.in_(team_member_ids))
+        # Exclude self-supported tasks from the "support" rollup so the same
+        # Task isn't counted twice for the same Member (one as assigned, one as
+        # support) — Fix for Issue 1 (System Audit Section 4 double-counting).
+        # Such tasks are still aggregated under their assigned_* fields above,
+        # which is the canonical "owner" view.
+        .filter(
+            Task.support_id.in_(team_member_ids),
+            Task.support_id != Task.assigned_id,
+        )
         .group_by(Task.support_id)
     )
     if time_filters:
@@ -788,18 +948,24 @@ def _aggregate_team_comparison(
     #    for the team-level KPI/manday context AND for Section 3's
     #    "Project comparison by team" view, so we build a per-project row
     #    tied to its assigned members.
-    proj_rows = (
-        db.query(
-            Project.id.label("project_id"),
-            Project.name.label("name"),
-            Project.status.label("status"),
-            Project.current_phase.label("current_phase"),
-            Project.data_scope.label("data_scope"),
-            Project.business.label("business"),
-        )
-        .order_by(Project.id.asc())
-        .all()
+    #
+    # IMPORTANT: The project list is NOT filtered by the caller's Workspace
+    # scope. The task aggregation (step 8) already includes ALL tasks for
+    # team members across ALL Workspaces — filtering the project list by
+    # Workspace would hide projects that the team actually works on,
+    # creating a mismatch between the metrics (which are cross-Workspace)
+    # and the visible project list. Workspace filtering controls which
+    # Leaders/Teams are displayed, NOT which projects they are responsible
+    # for once a Team is included.
+    proj_rows_q = db.query(
+        Project.id.label("project_id"),
+        Project.name.label("name"),
+        Project.status.label("status"),
+        Project.current_phase.label("current_phase"),
+        Project.data_scope.label("data_scope"),
+        Project.business.label("business"),
     )
+    proj_rows = proj_rows_q.order_by(Project.id.asc()).all()
     project_member_rows = (
         db.query(
             project_members.c.project_id,
@@ -932,7 +1098,13 @@ def _aggregate_team_comparison(
             ps["manday_est"] = float(md_est or 0)
             ps["manday_actual"] = float(md_actual or 0)
             ps["kpi"] = float(kpi or 0)
-            ps["progress_pct"] = round((done_n / total_n) * 100, 1) if total_n > 0 else 0
+            # Issue 3 — Project Progress is now the configured Master Phase
+            # percentage (single source of truth). The task-based percentage
+            # is still computed separately as `task_completion_pct` so existing
+            # dashboards that intentionally surface task-completion aren't
+            # broken.
+            ps["progress_pct"] = round(get_progress_pct_for_phase(db, p.current_phase), 2)
+            ps["task_completion_pct"] = round((done_n / total_n) * 100, 1) if total_n > 0 else 0
             ps["timeline_pct"] = round(((total_n - overdue_n) / total_n) * 100, 1) if total_n > 0 else 0
             ps["health"] = _team_health(done_n, total_n, overdue_n)
             # The frontend will likely show a workspace label; provide the

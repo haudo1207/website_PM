@@ -9,11 +9,6 @@ Delivery per channel:
   link a personal chat_id), so this is a group announcement, not a 1:1 ping.
 - Zalo / "Nhóm dự án": post into the meeting's project's linked Zalo group
   conversation (if any), @mentioning participants who have a zalo_uid.
-- Email: to each participant's Member.email (not the whole project — a
-  reminder is for the people attending), via the same SMTP client
-  meeting_notify.py's on-create notification already uses. A no-op if SMTP
-  isn't configured (see config.is_smtp_enabled) or no participant has an
-  email on file.
 """
 import datetime
 import logging
@@ -29,7 +24,6 @@ from ..models.notification import Notification
 from ..models.zalo import ZaloConversation
 from . import telegram as telegram_service
 from . import zalo as zalo_service
-from .email_client import send_email
 
 logger = logging.getLogger(__name__)
 
@@ -104,21 +98,6 @@ def _notify_zalo(db, meeting, member_ids, text) -> None:
             logger.exception("Zalo reminder failed for meeting %s conversation %s", meeting.id, conv.id)
 
 
-def _notify_email(db, meeting, member_ids, text) -> None:
-    if not member_ids:
-        return
-    rows = db.query(Member.email).filter(Member.id.in_(member_ids), Member.email.isnot(None)).all()
-    emails = [r.email for r in rows if r.email and r.email.strip()]
-    if not emails:
-        return
-    subject = f"🔔 Nhắc lịch họp: {meeting.title}"
-    html_body = "<p>" + text.replace("\n", "</p><p>") + "</p>"
-    try:
-        send_email(emails, subject, html_body)
-    except Exception:
-        logger.exception("Email reminder failed for meeting %s", meeting.id)
-
-
 def _claim_due_meetings(db):
     """Atomically claim every meeting due for a reminder right now.
 
@@ -186,8 +165,6 @@ def dispatch_due_reminders(db) -> int:
                 _notify_telegram(meeting, text)
             if "Zalo" in channels or "Nhóm dự án" in channels:
                 _notify_zalo(db, meeting, member_ids, text)
-            if "Email" in channels:
-                _notify_email(db, meeting, member_ids, text)
 
             sent += 1
             logger.info("Dispatched meeting reminder id=%s via %s", meeting.id, channels)
