@@ -11,9 +11,10 @@ from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..utils.auth import require_admin, get_current_user
+from ..models.workspace_access import UserWorkspaceAccess
 from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE, ROLE_LEADER
 from ..utils.audit_service import AuditService
-from sqlalchemy import func, extract, false, or_
+from sqlalchemy import func, extract, false, or_, and_
 
 TEAM_POSITIONS = {
   "Infrastructure": [
@@ -339,9 +340,25 @@ def list_members(
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:
+            # Chính-only match: a member whose Chính is elsewhere but holds
+            # this Workspace as Phụ must NOT pass this filter (that's the
+            # whole point of "Chính before Phụ" scoping on the Dashboard
+            # roster) — resolved from the canonical is_primary row, not the
+            # legacy `User.data_scope` column, which can drift out of sync
+            # with it (see primary_workspace_code_for_user docstring).
+            primary_user_ids = db.query(UserWorkspaceAccess.user_id).filter(
+                UserWorkspaceAccess.workspace_id == ws.id, UserWorkspaceAccess.is_primary == True  # noqa: E712
+            )
+            users_without_access_rows = db.query(User.id).filter(
+                ~User.id.in_(db.query(UserWorkspaceAccess.user_id))
+            )
             # A "all"-scope account belongs to every Workspace — same fallback
             # projects.py already applies for Project.business == "All".
-            q = q.filter(or_(User.data_scope == ws.code, User.data_scope == ALL_SCOPE))
+            q = q.filter(or_(
+                User.id.in_(primary_user_ids),
+                and_(User.id.in_(users_without_access_rows), User.data_scope == ws.code),
+                User.data_scope == ALL_SCOPE,
+            ))
         else:
             q = q.filter(false())
     if skill_id:
