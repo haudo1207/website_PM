@@ -198,6 +198,7 @@ export const getProjects = (params?: {
   business_unit?: string;
   search?: string;
   customer?: string;
+  customer_id?: number;
   year?: number;
   phase?: string;
   pm_ids?: string;
@@ -735,7 +736,11 @@ export interface TeamComparisonProject {
   manday_est: number;
   manday_actual: number;
   kpi: number;
+  // Issue 3 — configured Project Progress from Settings → Master Phases.
+  // Replaces the previous task-based calculation as the source of truth.
   progress_pct: number;
+  // Kept for surfaces that intentionally show task-completion separately.
+  task_completion_pct?: number;
   timeline_pct: number;
   health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
 }

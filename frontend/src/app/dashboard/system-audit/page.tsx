@@ -127,7 +127,17 @@ export default function SystemAuditTab() {
           }
         });
 
-        const prog = tasksShown.length > 0 ? Math.round((pDone / tasksShown.length) * 100) : 0;
+        // Issue 3 — Project Progress comes from the backend's configured
+        // Master Phase percentage (Settings → Danh mục hệ thống → Giai đoạn
+        // dự án). Fall back to 0 only if the backend omitted the field for
+        // this row (legacy shape). Task-completion percentage is kept
+        // separately for any surface that intentionally shows it.
+        const prog = typeof p.progress_pct === 'number'
+          ? Math.round(p.progress_pct)
+          : 0;
+        const taskCompletionPct = tasksShown.length > 0
+          ? Math.round((pDone / tasksShown.length) * 100)
+          : 0;
 
         if (pOverdue > 0) {
           pRisk.push({
@@ -143,7 +153,19 @@ export default function SystemAuditTab() {
         const hasTasks = tasksShown.length > 0;
         const isDisplayable = hasTasks || hasPM;
 
-        return { id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn', progress: prog, totalTasks: tasksShown.length, doneTasks: pDone, isDisplayable };
+        return {
+          id: p.id,
+          name: p.name,
+          status: p.status || 'Developing',
+          current_phase: p.current_phase || '1. Tư vấn',
+          // Project Progress — source of truth from Settings.
+          progress: prog,
+          // Kept for any surface that needs the task-based view.
+          taskCompletionPct,
+          totalTasks: tasksShown.length,
+          doneTasks: pDone,
+          isDisplayable,
+        };
       });
 
       const sortedProjects = allProjectsProgressList.filter((p: any) => p.isDisplayable).sort((a: any, b: any) => b.progress - a.progress);

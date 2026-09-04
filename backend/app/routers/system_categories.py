@@ -473,7 +473,13 @@ def list_customers(business_unit: Optional[str] = None, db: Session = Depends(ge
     if role in WORKSPACE_SCOPED_ROLES:
         scopes = user_allowed_scopes(db, current_user)
         if scopes != ALL_SCOPE:
-            q = q.filter(sql_or(Customer.business_unit.in_(scopes), Customer.business_unit == ALL_SCOPE))
+            # Issue 2 fix — derive Customer Workspace from the Customer's
+            # linked Projects (in the user's granted Workspaces) instead of
+            # trusting Customer.business_unit alone, so the dropdown never
+            # exposes a Customer whose Projects the Leader can't actually see.
+            q = customer_query_for_user(db, current_user)
+            if business_unit and business_unit.strip().lower() not in ("all", "null", "none", ""):
+                q = q.filter(Customer.business_unit == business_unit.strip().lower())
             return q.order_by(Customer.name.asc()).all()
     if business_unit:
         # A "all"-scope Customer belongs to every Workspace — same fallback
@@ -625,7 +631,22 @@ def create_master_phase(body: dict, db: Session = Depends(get_db), current_user=
         raise HTTPException(400, "Tên giai đoạn không được để trống")
     desc = str(body.get("description", "")).strip()
     max_order = db.query(sql_func.max(MasterPhase.sort_order)).scalar() or 0
-    mp = MasterPhase(name=name, description=desc or None, sort_order=max_order + 1, is_active=True)
+    progress_pct = body.get("progress_pct")
+    # Validate progress_pct is in 0..100 if provided.
+    if progress_pct is not None:
+        try:
+            progress_pct = float(progress_pct)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "progress_pct phải là số trong khoảng 0..100")
+        if progress_pct < 0 or progress_pct > 100:
+            raise HTTPException(400, "progress_pct phải nằm trong khoảng 0..100")
+    mp = MasterPhase(
+        name=name,
+        description=desc or None,
+        sort_order=max_order + 1,
+        is_active=True,
+        progress_pct=progress_pct,
+    )
     db.add(mp)
     db.commit()
     db.refresh(mp)
@@ -659,7 +680,11 @@ def update_master_phase(id: int, body: dict, db: Session = Depends(get_db), curr
     name = str(body.get("name", "")).strip()
     if not name:
         raise HTTPException(400, "Tên giai đoạn không được để trống")
-    old_dict = {"name": mp.name, "description": mp.description, "sort_order": mp.sort_order, "is_active": mp.is_active}
+    old_dict = {
+        "name": mp.name, "description": mp.description,
+        "sort_order": mp.sort_order, "is_active": mp.is_active,
+        "progress_pct": float(mp.progress_pct) if mp.progress_pct is not None else None,
+    }
     mp.name = name
     if "description" in body:
         mp.description = body["description"]
@@ -667,13 +692,28 @@ def update_master_phase(id: int, body: dict, db: Session = Depends(get_db), curr
         mp.sort_order = body["sort_order"]
     if "is_active" in body:
         mp.is_active = body["is_active"]
+    # Project Progress configured percentage — Issue 3. Bounded to 0..100.
+    if "progress_pct" in body and body["progress_pct"] is not None:
+        try:
+            new_pct = float(body["progress_pct"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "progress_pct phải là số trong khoảng 0..100")
+        if new_pct < 0 or new_pct > 100:
+            raise HTTPException(400, "progress_pct phải nằm trong khoảng 0..100")
+        mp.progress_pct = new_pct
+    elif "progress_pct" in body and body["progress_pct"] is None:
+        mp.progress_pct = None
     db.commit()
     db.refresh(mp)
     AuditService.record_diff(
         db=db, user_id=getattr(current_user, "id", None), module="Master Phase", entity_type="MasterPhase",
         entity_id=mp.id, old_dict=old_dict,
-        new_dict={"name": mp.name, "description": mp.description, "sort_order": mp.sort_order, "is_active": mp.is_active},
-        field_labels={"name": "Tên", "description": "Mô tả", "sort_order": "Thứ tự", "is_active": "Đang áp dụng"}
+        new_dict={
+            "name": mp.name, "description": mp.description,
+            "sort_order": mp.sort_order, "is_active": mp.is_active,
+            "progress_pct": float(mp.progress_pct) if mp.progress_pct is not None else None,
+        },
+        field_labels={"name": "Tên", "description": "Mô tả", "sort_order": "Thứ tự", "is_active": "Đang áp dụng", "progress_pct": "Tiến độ (%)"}
     )
     db.commit()
     return mp
