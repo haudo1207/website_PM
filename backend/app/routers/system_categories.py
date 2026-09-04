@@ -463,11 +463,18 @@ def delete_team(id: int, db: Session = Depends(get_db), current_user=Depends(req
 @router.get("/customers")
 def list_customers(business_unit: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     q = db.query(Customer)
-    # Workspace data scope: for Leader, Member and Viewer the effective Workspace
-    # comes from the authenticated user, so the business_unit query parameter can
-    # never bypass the caller's assigned Workspace.
-    if getattr(current_user, "role", None) in WORKSPACE_SCOPED_ROLES and user_scope(current_user) != ALL_SCOPE:
-        business_unit = user_scope(current_user)
+    # Workspace data scope: for Leader, Member and Viewer the effective
+    # Workspace(s) come from the authenticated user's FULL grant set (Chính +
+    # every Phụ via user_allowed_scopes) — not just their primary data_scope
+    # column — so a Phụ Workspace grant isn't silently invisible here the way
+    # it used to be. The business_unit query parameter can never bypass this
+    # for a scoped role.
+    role = getattr(current_user, "role", None)
+    if role in WORKSPACE_SCOPED_ROLES:
+        scopes = user_allowed_scopes(db, current_user)
+        if scopes != ALL_SCOPE:
+            q = q.filter(sql_or(Customer.business_unit.in_(scopes), Customer.business_unit == ALL_SCOPE))
+            return q.order_by(Customer.name.asc()).all()
     if business_unit:
         # A "all"-scope Customer belongs to every Workspace — same fallback
         # already applied to Project/Member workspace filters.
