@@ -777,7 +777,7 @@ export default function OverviewTab() {
   // to whichever Workspace is currently being viewed (effectiveWsCode below);
   // when no specific Workspace is selected (viewing "Tất cả"), falls back to
   // showing the person's own home Workspace instead.
-  function workspaceBadgeFor(memberId: any, wsCode: string | null): { label: string; primary: boolean } | null {
+  function workspaceBadgeFor(memberId: any, wsCode: string | null): { label: string; sub: string | null; primary: boolean } | null {
     const entries = workspaceRolesByMember[Number(memberId)];
     if (!entries || entries.length < 1) return null;
     if (wsCode) {
@@ -786,16 +786,19 @@ export default function OverviewTab() {
       // A Leader viewing their own team always has wsCode forced to their own
       // Chính code (no switcher) — still show "+N phụ" on a Member who holds
       // extra Workspaces beyond this matched one, same as the aggregate
-      // branch below does for Admin's "Toàn bộ Leader" view.
+      // branch below does for Admin's "Toàn bộ Leader" view. Returned as a
+      // separate `sub` line (rendered below the Chính badge) rather than
+      // appended inline — keeps the Chính badge short and puts "+N phụ" on
+      // its own row instead of cramming both onto one line.
       const otherCount = entries.length - 1;
       return match.is_primary
-        ? { label: `🏠 ${match.name}${otherCount > 0 ? ` +${otherCount} phụ` : ''}`, primary: true }
-        : { label: `${match.name} · Phụ`, primary: false };
+        ? { label: `🏠 ${match.name}`, sub: otherCount > 0 ? `+${otherCount} phụ` : null, primary: true }
+        : { label: `${match.name} · Phụ`, sub: null, primary: false };
     }
     const home = entries.find((e) => e.is_primary);
     if (!home) return null;
     const secondaryCount = entries.length - 1;
-    return { label: `🏠 ${home.name}${secondaryCount > 0 ? ` +${secondaryCount} phụ` : ''}`, primary: true };
+    return { label: `🏠 ${home.name}`, sub: secondaryCount > 0 ? `+${secondaryCount} phụ` : null, primary: true };
   }
 
   // Company selection is shared app-wide via WorkspaceFilterProvider (see
@@ -1529,6 +1532,13 @@ export default function OverviewTab() {
                       </span>
                     )}
                   </div>
+                  {badge?.sub && (
+                    <div className="mt-0.5">
+                      <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
+                        {badge.sub}
+                      </span>
+                    </div>
+                  )}
                   <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
                 </div>
                 <CircularProgress value={ld.doneTasks} total={ld.totalTasks} />
@@ -1565,6 +1575,13 @@ export default function OverviewTab() {
                       </span>
                     )}
                   </div>
+                  {badge?.sub && (
+                    <div className="mt-0.5">
+                      <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
+                        {badge.sub}
+                      </span>
+                    </div>
+                  )}
                   <div className="text-[10px] font-normal opacity-80 truncate">{m.team} · {m.totalTasks} task</div>
                 </div>
                 <CircularProgress value={m.doneTasks} total={m.totalTasks} />
@@ -1904,9 +1921,16 @@ export default function OverviewTab() {
                               const badge = workspaceBadgeFor(m.id, effectiveWsCode);
                               if (!badge) return null;
                               return (
-                                <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
-                                  {badge.label}
-                                </span>
+                                <>
+                                  <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
+                                    {badge.label}
+                                  </span>
+                                  {badge.sub && (
+                                    <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-300">
+                                      {badge.sub}
+                                    </span>
+                                  )}
+                                </>
                               );
                             })()}
                           </div>
