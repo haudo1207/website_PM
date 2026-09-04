@@ -2,7 +2,7 @@
 Project, Platform, ProjectLink, ProjectMember models.
 Implements the new 4-level hierarchy: Project → Phase → TaskGroup → Task
 """
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, func
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from ..database import Base
 from .system_category import Customer
@@ -93,6 +93,18 @@ class ProjectLink(Base):
     # Relationships
     project  = relationship("Project", back_populates="links")
     platform = relationship("Platform", back_populates="links", lazy="select")
+
+
+class ProjectPin(Base):
+    """Per-member pinned project on the Projects list — pinned projects
+    sort to the top instead of the user having to search the whole list."""
+    __tablename__ = "project_pins"
+    __table_args__ = (UniqueConstraint("member_id", "project_id", name="uq_project_pin"),)
+
+    id         = Column(Integer, primary_key=True, index=True)
+    member_id  = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, server_default=func.now())
 
 
 from sqlalchemy import event
