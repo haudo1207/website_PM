@@ -1048,7 +1048,19 @@ export default function OverviewTab() {
         visibleLeaders = lList.filter(ld => ld.name && ld.name !== 'Không có Leader');
       }
       if (selectedWorkspaceCode || workspaceCode) {
-        visibleLeaders = visibleLeaders.filter(ld => ld.count > 0);
+        const activeCode = String(selectedWorkspaceCode || workspaceCode || '').trim().toLowerCase();
+        visibleLeaders = visibleLeaders.filter(ld => {
+          if (ld.count <= 0) return false;
+          // A Workspace filter must only surface leaders whose own Chính is
+          // that Workspace — having a subordinate whose own Chính happens to
+          // match (while the leader's own Chính is elsewhere/Phụ) is not
+          // enough, otherwise a Phụ-only leader leaks into the roster.
+          if (ld.member_id != null) {
+            const home = primaryWorkspaceCodeFor(ld.member_id);
+            if (home) return home === activeCode;
+          }
+          return true;
+        });
       }
     } else {
       lList = [];
