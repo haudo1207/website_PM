@@ -209,6 +209,10 @@ export const getProjects = (params?: {
 export const getSidebarTree = (businessUnit?: string) =>
   api.get('/projects/sidebar-tree', { params: businessUnit ? { business_unit: businessUnit } : {} }).then(r => r.data);
 export const getProject = (id: number) => api.get(`/projects/${id}`).then(r => r.data);
+export const getPinnedProjectIds = () =>
+  api.get<{ pinned_project_ids: number[] }>('/projects/pins').then(r => r.data.pinned_project_ids || []);
+export const toggleProjectPin = (id: number) =>
+  api.post<{ success: boolean; is_pinned: boolean }>(`/projects/${id}/pin`).then(r => r.data);
 export const createProject = (data: object) => api.post('/projects', data).then(r => r.data);
 export const updateProject = (id: number, data: object) => api.patch(`/projects/${id}`, data).then(r => r.data);
 export const deleteProject = (id: number) => api.delete(`/projects/${id}`).then(r => r.data);

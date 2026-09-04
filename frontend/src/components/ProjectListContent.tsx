@@ -1,9 +1,9 @@
 'use client';
 import { useEffect, useState, useMemo, ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace } from '@/lib/api';
+import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin } from '@/lib/api';
 import { isAdmin, getEmail } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SearchableSelect from './common/SearchableSelect';
@@ -93,6 +93,7 @@ interface ProjectListContentProps {
 
 export default function ProjectListContent({ lockedWorkspace, renderTabs }: ProjectListContentProps = {}) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const paramCustId = searchParams.get('customer_id');
@@ -174,6 +175,24 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     queryFn: () => getWorkspaces(),
     staleTime: 5 * 60_000,
   });
+  const { data: pinnedIdsData } = useQuery({
+    queryKey: ['project-pins'],
+    queryFn: () => getPinnedProjectIds(),
+  });
+  const pinnedIds = useMemo(() => new Set<number>(pinnedIdsData || []), [pinnedIdsData]);
+  const handleTogglePin = async (e: React.MouseEvent, projectId: number) => {
+    e.stopPropagation();
+    // Optimistic update so the pin/reorder feels instant, then reconcile with the server.
+    const prevIds = pinnedIdsData || [];
+    const nextIds = prevIds.includes(projectId) ? prevIds.filter((id: number) => id !== projectId) : [...prevIds, projectId];
+    queryClient.setQueryData(['project-pins'], nextIds);
+    try {
+      await toggleProjectPin(projectId);
+    } catch {
+      queryClient.setQueryData(['project-pins'], prevIds);
+      setMsg({ t: 'Không thể ghim dự án, vui lòng thử lại.', e: true });
+    }
+  };
   const projects: any[] = listData?.projects || [];
   const workspaces: Workspace[] = workspacesData || [];
 
@@ -335,9 +354,10 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     });
   }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode, myEmail]);
 
-  // Sort memoized
+  // Sort memoized — pinned projects always float to the top; the chosen
+  // sortBy comparator only breaks ties within each (pinned / unpinned) group.
   const sorted = useMemo(() => {
-    return [...filtered].sort((a, b) => {
+    const compare = (a: any, b: any) => {
       if (sortBy === 'newest') {
         const timeA = new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
         const timeB = new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
@@ -353,8 +373,14 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       if (sortBy === 'name_asc') return a.name.localeCompare(b.name, 'vi');
       if (sortBy === 'name_desc') return b.name.localeCompare(a.name, 'vi');
       return 0;
+    };
+    return [...filtered].sort((a, b) => {
+      const aPinned = pinnedIds.has(a.id) ? 0 : 1;
+      const bPinned = pinnedIds.has(b.id) ? 0 : 1;
+      if (aPinned !== bPinned) return aPinned - bPinned;
+      return compare(a, b);
     });
-  }, [filtered, sortBy]);
+  }, [filtered, sortBy, pinnedIds]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
@@ -519,7 +545,16 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                   )}
                   <div className="p-6 flex-1 flex flex-col">
                     <div className="flex justify-between items-start mb-3">
-                      <span className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200 px-2 py-0.5 rounded">Năm: {p.year || '—'}</span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => handleTogglePin(e, p.id)}
+                          className={`w-6 h-6 flex items-center justify-center rounded-md transition-all shrink-0 cursor-pointer text-sm ${pinnedIds.has(p.id) ? 'bg-amber-50 hover:bg-amber-100' : 'opacity-25 grayscale hover:opacity-70 hover:grayscale-0'}`}
+                          title={pinnedIds.has(p.id) ? 'Bỏ ghim dự án' : 'Ghim dự án lên đầu danh sách'}
+                        >
+                          📌
+                        </button>
+                        <span className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200 px-2 py-0.5 rounded">Năm: {p.year || '—'}</span>
+                      </div>
                       <div className="flex items-center gap-1.5">
                         <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
                         {canManage && (

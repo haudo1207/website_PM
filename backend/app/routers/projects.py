@@ -10,7 +10,7 @@ from sqlalchemy import case, or_, and_
 from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
-from ..models.project import Project, Platform, ProjectLink, project_members
+from ..models.project import Project, Platform, ProjectLink, ProjectPin, project_members
 from ..models.system_category import Customer
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
@@ -414,6 +414,45 @@ def list_projects(
         )
         for p in projects
     ]
+
+
+def _member_id_for_pin(current_user, db: Session):
+    member_id = getattr(current_user, "member_id", None)
+    if member_id:
+        return member_id
+    if current_user and getattr(current_user, "email", None):
+        member = db.query(Member).filter(Member.email.ilike(current_user.email)).first()
+        if member:
+            return member.id
+    return None
+
+
+@router.get("/projects/pins")
+def list_pinned_project_ids(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    member_id = _member_id_for_pin(current_user, db)
+    if not member_id:
+        return {"pinned_project_ids": []}
+    ids = [r.project_id for r in db.query(ProjectPin).filter(ProjectPin.member_id == member_id).all()]
+    return {"pinned_project_ids": ids}
+
+
+@router.post("/projects/{pid:int}/pin")
+def toggle_project_pin(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    member_id = _member_id_for_pin(current_user, db)
+    if not member_id:
+        raise HTTPException(400, "Không xác định được thành viên")
+    existing = (
+        db.query(ProjectPin)
+        .filter(ProjectPin.member_id == member_id, ProjectPin.project_id == pid)
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"success": True, "is_pinned": False}
+    db.add(ProjectPin(member_id=member_id, project_id=pid))
+    db.commit()
+    return {"success": True, "is_pinned": True}
 
 
 @router.post("/projects")
