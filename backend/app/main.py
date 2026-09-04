@@ -191,6 +191,12 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
         ))
+        # Tracks the Google Calendar event backing a meeting's auto-generated
+        # Google Meet link, so editing the meeting's time can reschedule the
+        # SAME event (events.patch) instead of leaving Calendar stale.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)"
+        ))
         # Explicit "home" Workspace flag (Chính vs Phụ) — see workspace_access.py.
         conn.execute(text(
             "ALTER TABLE user_workspace_access ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false"
