@@ -96,13 +96,15 @@ class ProjectLink(Base):
 
 
 class ProjectPin(Base):
-    """Per-member pinned project on the Projects list — pinned projects
-    sort to the top instead of the user having to search the whole list."""
+    """Per-user pinned project on the Projects list — pinned projects sort
+    to the top instead of the user having to search the whole list. Keyed
+    by User.id (not Member.id) — some accounts (e.g. an admin login with no
+    linked Member row) still need to be able to pin their own projects."""
     __tablename__ = "project_pins"
-    __table_args__ = (UniqueConstraint("member_id", "project_id", name="uq_project_pin"),)
+    __table_args__ = (UniqueConstraint("user_id", "project_id", name="uq_project_pin"),)
 
     id         = Column(Integer, primary_key=True, index=True)
-    member_id  = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now())
 
