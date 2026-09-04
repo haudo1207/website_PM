@@ -652,6 +652,12 @@ export default function OverviewTab() {
   // Workspace/Leader Filter
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
   const [projectFilterMode, setProjectFilterMode] = useState<'all' | 'owned' | 'external'>('all');
+  // Which of the selected Leader/Member's Workspaces the dashboard is
+  // currently scoped to — null means their Chính (whole-person) view. Set
+  // by clicking one of their "Phụ" pills (rendered alongside their main
+  // Chính pill whenever they hold a Phụ Workspace), which narrows every
+  // task-derived stat (KPI cards, ranking, ...) to just that Workspace.
+  const [selectedWorkspaceScope, setSelectedWorkspaceScope] = useState<string | null>(null);
   const [externalProjectsCollapsed, setExternalProjectsCollapsed] = useState(false);
   const [contributionModalProject, setContributionModalProject] = useState<any>(null);
   const [selectedWorkspaceCode, setSelectedWorkspaceCode] = useState<string>('');
@@ -801,6 +807,20 @@ export default function OverviewTab() {
     return { label: `🏠 ${home.name}`, subs: secondaries, primary: true };
   }
 
+  // Every Phụ Workspace a Leader/Member holds, as {code, name} — listed as
+  // badges inside their single combined "Tham gia ngoài" pill (stacked below
+  // their main Chính pill, not one separate pill per Phụ Workspace).
+  function secondaryWorkspacesFor(memberId: any): { code: string; name: string }[] {
+    const entries = workspaceRolesByMember[Number(memberId)];
+    if (!entries) return [];
+    return entries.filter((e) => !e.is_primary).map((e) => ({ code: e.code, name: e.name }));
+  }
+
+  function primaryWorkspaceCodeFor(memberId: any): string | null {
+    const entries = workspaceRolesByMember[Number(memberId)];
+    return entries?.find((e) => e.is_primary)?.code?.toLowerCase() || null;
+  }
+
   // Company selection is shared app-wide via WorkspaceFilterProvider (see
   // Navbar's Workspace switcher). Filtering here — right where the raw
   // arrays enter the page — means every downstream computation (the large
@@ -928,6 +948,26 @@ export default function OverviewTab() {
     const memberTaskFilter = (memberIds: any[]) => (t: any) =>
       isIdInList(memberIds, t.assigned_id) || isIdInList(memberIds, t.support_id);
 
+    // Per-Workspace done/total breakdown for a set of memberIds — powers the
+    // CircularProgress on each "Phụ" pill (a Leader/Member's Chính pill
+    // keeps using the existing rawTasks-scoped doneTasks/totalTasks
+    // untouched; this is ADDITIONAL data for the new Phụ pills only, so it
+    // deliberately reads from rawTasksAll — unscoped by the page-wide
+    // Workspace switcher — since a Phụ pill's whole point is showing a
+    // Workspace outside whatever the switcher/Leader's own Chính is).
+    const computeWsBreakdown = (memberIds: any[]): Record<string, { done: number; total: number }> => {
+      const breakdown: Record<string, { done: number; total: number }> = {};
+      rawTasksAll.forEach((t: any) => {
+        if (!isIdInList(memberIds, t.assigned_id) && !isIdInList(memberIds, t.support_id)) return;
+        const code = (t.projectDataScope || '').toLowerCase();
+        if (!code) return;
+        if (!breakdown[code]) breakdown[code] = { done: 0, total: 0 };
+        breakdown[code].total++;
+        if (t.status === 'Done' || t.status === 'done') breakdown[code].done++;
+      });
+      return breakdown;
+    };
+
     // 1. Get Leaders — canonical for Super Admin (Uses User.member_id → Member.id + Member.leader_member_id)
     // Legacy grouping kept as fallback when canonical list is unavailable.
     let lList: any[] = [];
@@ -979,7 +1019,7 @@ export default function OverviewTab() {
         lList = Array.from(canonicalMap.values()).map(ld => {
           const lTasks = rawTasks.filter(t => isIdInList(ld.memberIds, t.assigned_id) || isIdInList(ld.memberIds, t.support_id));
           const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
-          return { ...ld, totalTasks: lTasks.length, doneTasks: done };
+          return { ...ld, totalTasks: lTasks.length, doneTasks: done, wsBreakdown: computeWsBreakdown(ld.memberIds) };
         }).sort((a, b) => b.count - a.count);
       } else {
         const leaderMap = new Map();
@@ -995,7 +1035,7 @@ export default function OverviewTab() {
         lList = Array.from(leaderMap.values()).map(ld => {
           const lTasks = rawTasks.filter(t => isIdInList(ld.memberIds, t.assigned_id) || isIdInList(ld.memberIds, t.support_id));
           const done = lTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
-          return { ...ld, totalTasks: lTasks.length, doneTasks: done };
+          return { ...ld, totalTasks: lTasks.length, doneTasks: done, wsBreakdown: computeWsBreakdown(ld.memberIds) };
         }).sort((a, b) => b.count - a.count);
       }
       visibleLeaders = lList;
@@ -1040,6 +1080,7 @@ export default function OverviewTab() {
         team: m.team || m.department || 'General',
         totalTasks: mTasks.length,
         doneTasks: done,
+        wsBreakdown: computeWsBreakdown([m.id]),
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
     const memberCardIds = memberCardSource.map(m => m.id);
@@ -1105,6 +1146,21 @@ export default function OverviewTab() {
     const taskSourceForDrill = currentUserRole === 'leader' ? rawTasksAll : rawTasks;
     let fTasks = taskSourceForDrill.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
+    // Clicking the combined "Tham gia ngoài" pill narrows every stat below
+    // (KPI cards, ranking, project list) to just the selected Leader/Member's
+    // Phụ Workspace(s) — i.e. every Workspace that isn't their own Chính.
+    if (selectedWorkspaceScope === 'external') {
+      const selectedPersonMemberId = showsLeaderCards
+        ? (selectedLeader !== 'all' ? visibleLeaders.find((l: any) => l.name === selectedLeader)?.member_id : null)
+        : (selectedMemberId !== 'all' ? Number(selectedMemberId) : null);
+      const homeCode = selectedPersonMemberId != null ? primaryWorkspaceCodeFor(selectedPersonMemberId) : null;
+      if (homeCode) {
+        fTasks = fTasks.filter(t => {
+          const code = (t.projectDataScope || '').toLowerCase();
+          return code && code !== homeCode;
+        });
+      }
+    }
 
     // 4. Calculate Stats (PM)
     let pmDone = 0, pmInProg = 0, pmOverdue = 0, pmTotal = fTasks.length, pmManday = 0, pmKpi = 0;
@@ -1366,7 +1422,7 @@ export default function OverviewTab() {
       bonusMatrix: bonM,
       drilledMemberId,
     };
-  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
+  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always
@@ -1504,9 +1560,9 @@ export default function OverviewTab() {
 
         {/* 2. LEADER / MEMBER SELECTOR BAR WITH PERCENTAGE CIRCLE */}
         {showsLeaderCards ? (
-          <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
+          <div className="flex flex-nowrap items-start gap-2 overflow-x-auto pb-2 custom-scrollbar">
             <button
-              onClick={() => setSelectedLeader('all')}
+              onClick={() => { setSelectedLeader('all'); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
               className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
               <div>
@@ -1517,41 +1573,63 @@ export default function OverviewTab() {
             </button>
             {leaders.map(ld => {
               const badge = workspaceBadgeFor(ld.member_id, effectiveWsCode);
+              const secondaries = secondaryWorkspacesFor(ld.member_id);
+              const homeCode = primaryWorkspaceCodeFor(ld.member_id);
+              const isMainSelected = selectedLeader === ld.name && !selectedWorkspaceScope;
+              const isExtSelected = selectedLeader === ld.name && selectedWorkspaceScope === 'external';
+              const extStats = Object.entries(ld.wsBreakdown || {})
+                .filter(([code]) => code !== homeCode)
+                .reduce((acc, [, v]: any) => ({ done: acc.done + v.done, total: acc.total + v.total }), { done: 0, total: 0 });
               return (
+              <div key={ld.name} className="flex flex-col gap-2 shrink-0">
               <button
-                key={ld.name}
-                onClick={() => setSelectedLeader(ld.name)}
-                className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedLeader === ld.name ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
-                  <div className="text-xs font-bold truncate flex items-center gap-1">
+                  <div className="text-xs font-bold truncate">
                     {ld.name}
-                    {badge && (
+                  </div>
+                  {badge && (
+                    <div className="flex flex-wrap gap-1 mt-1">
                       <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
                         {badge.label}
                       </span>
-                    )}
-                  </div>
-                  {badge && badge.subs.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-0.5">
-                      {badge.subs.map((name) => (
-                        <span key={name} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
-                          {name} · Phụ
-                        </span>
-                      ))}
                     </div>
                   )}
-                  <div className="text-[10px] font-normal opacity-80 truncate">{ld.team} · {ld.count} member</div>
+                  <div className="text-[10px] font-normal opacity-80 truncate mt-0.5">{ld.team} · {ld.count} member</div>
                 </div>
                 <CircularProgress value={ld.doneTasks} total={ld.totalTasks} />
               </button>
+              {secondaries.length > 0 && (
+                <button
+                  onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope('external'); setProjectFilterMode('external'); }}
+                  className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isExtSelected ? 'bg-amber-50 border-amber-300 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <div className="truncate">
+                    <div className="text-xs font-bold truncate">
+                      {ld.name}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {secondaries.map(sec => (
+                        <span key={sec.code} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
+                          {sec.name}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-[10px] font-normal opacity-80 truncate mt-0.5">Tham gia ngoài</div>
+                  </div>
+                  <CircularProgress value={extStats.done} total={extStats.total} />
+                </button>
+              )}
+              </div>
               );
             })}
           </div>
         ) : (
-          <div className="flex flex-nowrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
+          <div className="flex flex-nowrap items-start gap-2 overflow-x-auto pb-2 custom-scrollbar">
             <button
-              onClick={() => setSelectedMemberId('all')}
+              onClick={() => { setSelectedMemberId('all'); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
               className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedMemberId === 'all' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
               <div>
@@ -1562,34 +1640,56 @@ export default function OverviewTab() {
             </button>
             {memberCards.map(m => {
               const badge = workspaceBadgeFor(m.id, effectiveWsCode);
+              const secondaries = secondaryWorkspacesFor(m.id);
+              const homeCode = primaryWorkspaceCodeFor(m.id);
+              const isMainSelected = selectedMemberId === String(m.id) && !selectedWorkspaceScope;
+              const isExtSelected = selectedMemberId === String(m.id) && selectedWorkspaceScope === 'external';
+              const extStats = Object.entries(m.wsBreakdown || {})
+                .filter(([code]) => code !== homeCode)
+                .reduce((acc, [, v]: any) => ({ done: acc.done + v.done, total: acc.total + v.total }), { done: 0, total: 0 });
               return (
+              <div key={m.id} className="flex flex-col gap-2 shrink-0">
               <button
-                key={m.id}
-                onClick={() => setSelectedMemberId(String(m.id))}
-                className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${selectedMemberId === String(m.id) ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
-                  <div className="text-xs font-bold truncate flex items-center gap-1">
+                  <div className="text-xs font-bold truncate">
                     {m.name}
-                    {badge && (
+                  </div>
+                  {badge && (
+                    <div className="flex flex-wrap gap-1 mt-1">
                       <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case ${badge.primary ? 'bg-indigo-600 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300'}`}>
                         {badge.label}
                       </span>
-                    )}
-                  </div>
-                  {badge && badge.subs.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-0.5">
-                      {badge.subs.map((name) => (
-                        <span key={name} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
-                          {name} · Phụ
-                        </span>
-                      ))}
                     </div>
                   )}
-                  <div className="text-[10px] font-normal opacity-80 truncate">{m.team} · {m.totalTasks} task</div>
+                  <div className="text-[10px] font-normal opacity-80 truncate mt-0.5">{m.team} · {m.totalTasks} task</div>
                 </div>
                 <CircularProgress value={m.doneTasks} total={m.totalTasks} />
               </button>
+              {secondaries.length > 0 && (
+                <button
+                  onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope('external'); setProjectFilterMode('external'); }}
+                  className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isExtSelected ? 'bg-amber-50 border-amber-300 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <div className="truncate">
+                    <div className="text-xs font-bold truncate">
+                      {m.name}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {secondaries.map(sec => (
+                        <span key={sec.code} className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold normal-case bg-amber-50 text-amber-700 border border-amber-300">
+                          {sec.name}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-[10px] font-normal opacity-80 truncate mt-0.5">Tham gia ngoài</div>
+                  </div>
+                  <CircularProgress value={extStats.done} total={extStats.total} />
+                </button>
+              )}
+              </div>
               );
             })}
           </div>
