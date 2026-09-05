@@ -718,6 +718,50 @@ def _aggregate_team_comparison(
         except ValueError:
             parsed_end = None
 
+    # ── Fiscal weeks divisor for KPI% calculation ──────────────────────
+    # Reuse the same CYCLE_TEMPLATE the KPI page uses. When a start_date
+    # and end_date are provided we count how many fiscal weeks the window
+    # spans. For quick-filters that already map to a single fiscal week
+    # the caller sends Mon→Sun which always falls inside one fiscal week
+    # → weeks_divisor = 1.  For full fiscal months the caller sends the
+    # CYCLE_TEMPLATE start/end → weeks_divisor = template weeks (4 or 5).
+    # For a full year or no filter → 52.
+    CYCLE_TEMPLATE = {
+        1:  ("-12-22", "-01-18", -1, 0, 4),
+        2:  ("-01-19", "-02-22",  0, 0, 5),
+        3:  ("-02-23", "-03-22",  0, 0, 4),
+        4:  ("-03-23", "-04-19",  0, 0, 4),
+        5:  ("-04-20", "-05-24",  0, 0, 5),
+        6:  ("-05-25", "-06-21",  0, 0, 4),
+        7:  ("-06-22", "-07-19",  0, 0, 4),
+        8:  ("-07-20", "-08-23",  0, 0, 5),
+        9:  ("-08-24", "-09-20",  0, 0, 4),
+        10: ("-09-21", "-10-25",  0, 0, 5),
+        11: ("-10-26", "-11-22",  0, 0, 4),
+        12: ("-11-23", "-12-20",  0, 0, 4),
+    }
+
+    weeks_divisor = 52  # default: full year
+    if parsed_start and parsed_end:
+        # Try to match the window to a known fiscal month
+        matched = False
+        year_ref = parsed_start.year
+        for m, (s_md, e_md, s_yo, e_yo, weeks) in CYCLE_TEMPLATE.items():
+            cycle_start = datetime.strptime(f"{year_ref + s_yo}{s_md}", "%Y-%m-%d")
+            cycle_end = datetime.strptime(f"{year_ref + e_yo}{e_md}", "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
+            if abs((parsed_start - cycle_start).total_seconds()) < 86400 and \
+               abs((parsed_end - cycle_end).total_seconds()) < 86400:
+                weeks_divisor = weeks
+                matched = True
+                break
+        if not matched:
+            # Check if the window spans ~7 days (a single week)
+            day_span = (parsed_end - parsed_start).days + 1
+            if day_span <= 7:
+                weeks_divisor = 1
+
     # 1. Canonical Leaders (active portal users with role=leader).
     leaders = (
         db.query(User)
@@ -982,6 +1026,45 @@ def _aggregate_team_comparison(
         support_rows = support_rows.filter(*time_filters)
     support_rows = support_rows.all()
 
+    # 8b. Period KPI aggregation — ONLY Done tasks whose end_date_actual
+    #     falls inside the selected period. This is the source of truth for
+    #     workload KPI% classification (separate from the OR-based task
+    #     visibility filter above).
+    per_member_period_kpi: dict[int, float] = {}
+    if parsed_start and parsed_end:
+        kpi_period_filter = [
+            Task.status.in_(["Done", "done"]),
+            Task.end_date_actual.isnot(None),
+            Task.end_date_actual >= parsed_start.date(),
+            Task.end_date_actual <= parsed_end.date(),
+        ]
+        assigned_period_kpi = (
+            db.query(
+                Task.assigned_id.label("member_id"),
+                sql_func.sum(Task.kpi_assigned).label("period_kpi"),
+            )
+            .filter(Task.assigned_id.in_(team_member_ids), *kpi_period_filter)
+            .group_by(Task.assigned_id)
+            .all()
+        )
+        support_period_kpi = (
+            db.query(
+                Task.support_id.label("member_id"),
+                sql_func.sum(Task.kpi_support).label("period_kpi"),
+            )
+            .filter(
+                Task.support_id.in_(team_member_ids),
+                Task.support_id != Task.assigned_id,
+                *kpi_period_filter,
+            )
+            .group_by(Task.support_id)
+            .all()
+        )
+        for mid, kpi in assigned_period_kpi:
+            per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
+        for mid, kpi in support_period_kpi:
+            per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
+
     # 9. Project rollup: which projects touch this team? We need this both
     #    for the team-level KPI/manday context AND for Section 3's
     #    "Project comparison by team" view, so we build a per-project row
@@ -1203,6 +1286,10 @@ def _aggregate_team_comparison(
                 "manday_actual": round(a_md_actual + s_md_actual, 2),
                 "kpi": round(a_kpi + s_kpi, 2),
                 "progress_pct": round((dn / tot) * 100, 1) if tot > 0 else 0,
+                # Period KPI: KPI from Done tasks whose end_date_actual falls
+                # inside the selected period. Used for workload KPI% classification.
+                "period_kpi": round(per_member_period_kpi.get(m.id, 0.0), 2),
+                "kpi_pct": round(per_member_period_kpi.get(m.id, 0.0) / weeks_divisor, 2) if weeks_divisor > 0 else 0.0,
             })
 
             agg_total += tot
@@ -1247,6 +1334,10 @@ def _aggregate_team_comparison(
         # is unreliable; we use the data_scope on the Leader account).
         workspace_name = li["data_scope"] if li["data_scope"] != ALL_SCOPE else "All"
 
+        # Leader's individual KPI (from their own tasks, NOT team aggregate)
+        leader_period_kpi = per_member_period_kpi.get(leader_member_id, 0.0)
+        leader_kpi_pct = round(leader_period_kpi / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
+
         teams_out.append({
             "leader_user_id": li["user_id"],
             "leader_member_id": leader_member_id,
@@ -1269,13 +1360,36 @@ def _aggregate_team_comparison(
             "in_progress": agg_inprog,
             "health": _team_health(agg_done, agg_total, agg_overdue),
             "projects": team_projects,
+            # Leader's individual workload KPI (own tasks only)
+            "leader_period_kpi": round(leader_period_kpi, 2),
+            "leader_kpi_pct": leader_kpi_pct,
         })
 
     # Stable ordering: highest KPI first, then most members.
     teams_out.sort(key=lambda t: (-t["kpi"], -t["member_count"], t["leader_name"]))
 
+    # Load workload settings for the frontend to use in classification
+    from ..models.workload_setting import WorkloadSetting
+    ws_rows = (
+        db.query(WorkloadSetting)
+        .filter(WorkloadSetting.is_active == True)
+        .order_by(WorkloadSetting.sort_order.asc())
+        .all()
+    )
+    workload_settings = [
+        {
+            "status_key": r.status_key,
+            "status_label": r.status_label,
+            "min_kpi": float(r.min_kpi) if r.min_kpi is not None else None,
+            "max_kpi": float(r.max_kpi) if r.max_kpi is not None else None,
+        }
+        for r in ws_rows
+    ]
+
     return {
         "workspace": workspace_label,
         "workspace_filter": ws_filter or "all",
         "teams": teams_out,
+        "weeks_divisor": weeks_divisor,
+        "workload_settings": workload_settings,
     }

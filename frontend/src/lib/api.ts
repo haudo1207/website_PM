@@ -724,6 +724,9 @@ export interface TeamComparisonMember {
   manday_actual: number;
   kpi: number;
   progress_pct: number;
+  // KPI% for workload classification (from Done tasks in selected period)
+  period_kpi: number;
+  kpi_pct: number;
 }
 export interface TeamComparisonProject {
   project_id: number;
@@ -770,11 +773,22 @@ export interface TeamComparisonTeam {
   in_progress: number;
   health: 'On Track' | 'Risk' | 'Critical' | 'N/A' | string;
   projects: TeamComparisonProject[];
+  // Leader's individual workload KPI (own tasks only, NOT team aggregate)
+  leader_period_kpi: number;
+  leader_kpi_pct: number;
+}
+export interface WorkloadSetting {
+  status_key: string;
+  status_label: string;
+  min_kpi: number | null;
+  max_kpi: number | null;
 }
 export interface TeamComparisonResponse {
   workspace: string;
   workspace_filter: string;
   teams: TeamComparisonTeam[];
+  weeks_divisor: number;
+  workload_settings: WorkloadSetting[];
 }
 export const getTeamComparison = (params?: { workspace?: string; start_date?: string; end_date?: string }) =>
   api.get<TeamComparisonResponse>('/system-audit/team-comparison', { params }).then(r => r.data);
@@ -785,6 +799,12 @@ export const getTeamDetail = (
   api.get<{ team: TeamComparisonTeam }>('/system-audit/team-detail', {
     params: { leader_user_id, ...(params || {}) },
   }).then(r => r.data);
+
+// ── Workload Settings (Super Admin only) ─────────────────────
+export const getWorkloadSettings = () =>
+  api.get<WorkloadSetting[]>('/workload-settings').then(r => r.data);
+export const updateWorkloadSettings = (settings: Partial<WorkloadSetting>[]) =>
+  api.put<{ success: boolean; data: WorkloadSetting[] }>('/workload-settings', settings).then(r => r.data);
 
 // Telegram connection (Leave Request notifications)
 export interface TelegramStatus {
