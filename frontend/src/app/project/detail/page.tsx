@@ -6445,16 +6445,18 @@ function ProjectDetailContent() {
                       <h2 className="text-base font-bold text-[#0b1c30]">Quản lý Cuộc họp & Schedule (Dự án: {project?.name || ''})</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Theo dõi lịch họp tuần, biên bản tóm tắt AI và push task khuyến nghị cho riêng dự án này.</p>
                     </div>
-                    <button
-                      onClick={() => {
-                        setEditingMeeting({ project: project?.name || '' });
-                        setShowMeetingModal(true);
-                      }}
-                      className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">add</span>
-                      Tạo meeting dự án
-                    </button>
+                    {(isAdmin() || isMember()) && (
+                      <button
+                        onClick={() => {
+                          setEditingMeeting({ project: project?.name || '' });
+                          setShowMeetingModal(true);
+                        }}
+                        className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">add</span>
+                        Tạo meeting dự án
+                      </button>
+                    )}
                   </div>
 
                   {/* WEEKLY SCHEDULE CALENDAR FOR THIS PROJECT */}
@@ -6589,9 +6591,8 @@ function ProjectDetailContent() {
                         <MeetingCard
                           key={m.id}
                           meeting={m}
-                          onEdit={meeting => { setEditingMeeting(meeting); setShowMeetingModal(true); }}
-                          onDelete={id => setDeleteConfirmId(id)}
-                          onSummarize={meeting => { setSummarizingMeeting(meeting); setIsSummarizeOpen(true); }}
+                          onDelete={m.can_manage ? (id => setDeleteConfirmId(id)) : undefined}
+                          onSummarize={m.can_manage ? (meeting => { setSummarizingMeeting(meeting); setIsSummarizeOpen(true); }) : undefined}
                           onOpenDetail={meeting => { setDetailMeeting(meeting); setIsDetailOpen(true); }}
                         />
                       ))
@@ -6599,28 +6600,32 @@ function ProjectDetailContent() {
                   </div>
 
                   {/* Modals */}
-                  <CreateMeetingModal
-                    isOpen={showMeetingModal}
-                    onClose={() => { setShowMeetingModal(false); setEditingMeeting(null); }}
-                    onSave={handleSaveMeeting}
-                    initialData={editingMeeting}
-                  />
+                  {(isAdmin() || isMember()) && (
+                    <CreateMeetingModal
+                      isOpen={showMeetingModal}
+                      onClose={() => { setShowMeetingModal(false); setEditingMeeting(null); }}
+                      onSave={handleSaveMeeting}
+                      initialData={editingMeeting}
+                    />
+                  )}
 
-                  <SummarizeModal
-                    isOpen={isSummarizeOpen}
-                    onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }}
-                    meeting={summarizingMeeting}
-                    onSave={(updatedMeeting) => {
-                      setMeetings(prev => prev.map(x => x.id === updatedMeeting.id ? updatedMeeting : x));
-                    }}
-                  />
+                  {(isAdmin() || detailMeeting?.can_manage) && (
+                    <SummarizeModal
+                      isOpen={isSummarizeOpen}
+                      onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }}
+                      meeting={summarizingMeeting}
+                      onSave={(updatedMeeting) => {
+                        setMeetings(prev => prev.map(x => x.id === updatedMeeting.id ? updatedMeeting : x));
+                      }}
+                    />
+                  )}
 
                   <MeetingDetailModal
                     isOpen={isDetailOpen}
                     onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }}
                     meeting={detailMeeting}
-                    onEdit={m => { setIsDetailOpen(false); setEditingMeeting(m); setShowMeetingModal(true); }}
-                    onSummarize={m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }}
+                    onEdit={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setEditingMeeting(m); setShowMeetingModal(true); }) : undefined}
+                    onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
                   />
 
                   {/* Delete Confirm Modal */}

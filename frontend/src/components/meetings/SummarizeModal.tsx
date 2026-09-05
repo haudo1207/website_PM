@@ -2,8 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Sparkles, AlertTriangle, CheckCircle, Send, FileText } from 'lucide-react';
 
-import { pushMeetingTasks, getProjects, getAccounts, updateMeeting } from '@/lib/api';
-import { getToken } from '@/lib/auth';
+import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, summarizeMeetingTranscript } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface Props {
@@ -16,7 +15,6 @@ interface Props {
 export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Props) {
   const [transcript, setTranscript] = useState('');
   const [executiveSummary, setExecutiveSummary] = useState('');
-  const [decisions, setDecisions] = useState<string[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   
   const [projectsList, setProjectsList] = useState<any[]>([]);
@@ -36,7 +34,6 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
     if (meeting && isOpen) {
       setTranscript(meeting.transcript || '');
       setExecutiveSummary(meeting.executive_summary || '');
-      setDecisions(meeting.decisions || []);
       setSelectedProjectId(meeting.project_id || null);
       setSelectedCreatorId(meeting.created_by || null);
 
@@ -81,19 +78,9 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
     setError('');
     setPushSuccess('');
     try {
-      const token = getToken();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch('/api/ai/summarize', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ meetingId: meeting.id, transcript })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await summarizeMeetingTranscript(meeting.id, transcript);
+      if (data.success) {
         if (data.executive_summary) setExecutiveSummary(data.executive_summary);
-        if (data.decisions) setDecisions(data.decisions);
         if (data.recommended_tasks) {
           setTasks(data.recommended_tasks.map((t: any) => ({ ...t, checked: true })));
         }
@@ -103,7 +90,7 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
         setError(data.error || 'Lỗi khi gửi văn bản đến AI.');
       }
     } catch (err: any) {
-      setError(err.message || 'Không thể kết nối API tóm tắt.');
+      setError(err.response?.data?.error || err.message || 'Không thể kết nối API tóm tắt.');
     } finally {
       setIsLoading(false);
     }
@@ -305,21 +292,6 @@ export default function SummarizeModal({ isOpen, onClose, meeting, onSave }: Pro
                 <p>{executiveSummary}</p>
               </div>
             </div>
-
-            {/* Section 2: Key Decisions */}
-            {decisions.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-xs font-extrabold text-[#17253d] uppercase tracking-wider">Quyết định chính</h3>
-                <ul className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-[#59687f] space-y-2 font-medium">
-                  {decisions.map((dec, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="text-[#1769d2] font-bold">•</span>
-                      <span>{dec}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
 
             {/* Section 3: AI Recommended Tasks Form */}
             <div className="space-y-3 pt-2">

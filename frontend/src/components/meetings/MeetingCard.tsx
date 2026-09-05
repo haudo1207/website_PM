@@ -5,7 +5,6 @@ import { Video, Folder, Calendar, Clock, User, Sparkles, MoreVertical, ChevronRi
 
 interface MeetingCardProps {
   meeting: any;
-  onEdit?: (meeting: any) => void;
   onDelete?: (id: string) => void;
   onSummarize?: (meeting: any) => void;
   onSync?: (meeting: any) => Promise<any>;
@@ -32,7 +31,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
   const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
   const isProcessing = statusUpper === 'ĐANG XỬ LÝ AI' || (meeting as any).ai_status === 'processing';
   
-  const durationStr = meeting.duration ? `${meeting.duration} phút` : (meeting.time ? '30 phút' : '30 phút');
+  const durationStr = meeting.duration ? `${meeting.duration} phút` : '30 phút';
   const execSummary = meeting.executive_summary || (meeting.summary && meeting.summary.length ? meeting.summary[0] : '');
   const hasAISummary = Boolean(execSummary || meeting.ai_summary);
 
@@ -193,12 +192,14 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
               >
                 Xem chi tiết
               </button>
-              <button
-                onClick={() => { setShowMenu(false); onSummarize?.(meeting); }}
-                className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-purple-700"
-              >
-                Chạy AI Tóm tắt
-              </button>
+              {onSummarize && (
+                <button
+                  onClick={() => { setShowMenu(false); onSummarize(meeting); }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-purple-700"
+                >
+                  Chạy AI Tóm tắt
+                </button>
+              )}
               {onSync && (
                 <button
                   onClick={() => { setShowMenu(false); handleSyncClick(); }}

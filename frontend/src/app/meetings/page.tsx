@@ -15,7 +15,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
-import { isAdmin } from '@/lib/auth';
+import { isAdmin, getRole } from '@/lib/auth';
 
 // Deterministic color per project (no color field on Project yet — same
 // project.id/name always hashes to the same palette entry, so week-grid
@@ -63,6 +63,10 @@ function MeetingsPageContent() {
   const queryClient = useQueryClient();
 
   const [canManage, setCanManage] = useState(false);
+  // Members may create meetings for projects they belong to (backend enforces
+  // the project-membership check) — but editing/deleting/syncing stays
+  // admin-only (canManage), matching the current UI's scope.
+  const [canCreate, setCanCreate] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'calendar' | 'personal'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
@@ -176,6 +180,7 @@ function MeetingsPageContent() {
 
   useEffect(() => {
     setCanManage(isAdmin());
+    setCanCreate(isAdmin() || getRole() === 'member');
   }, []);
 
   const { data: meetingsData, isLoading, refetch: fetchMeetings } = useQuery({
@@ -271,6 +276,12 @@ function MeetingsPageContent() {
   const personOptions = useMemo(() => {
     const names = new Set<string>();
     meetings.forEach(m => (m.members || []).forEach((mm: any) => { if (mm.display_name) names.add(mm.display_name); }));
+    return Array.from(names).sort();
+  }, [meetings]);
+
+  const platformOptions = useMemo(() => {
+    const names = new Set<string>();
+    meetings.forEach(m => { if (m.platform) names.add(m.platform); });
     return Array.from(names).sort();
   }, [meetings]);
 
@@ -573,13 +584,15 @@ function MeetingsPageContent() {
               <Sparkles size={15} className="text-[#6366f1]" />
               <span>Cấu hình AI & Google Admin</span>
             </button>
-            <button
-              onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }}
-              className="flex items-center gap-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-sm whitespace-nowrap"
-            >
-              <span className="text-base font-normal leading-none">+</span>
-              <span>Tạo meeting</span>
-            </button>
+            {canCreate && (
+              <button
+                onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }}
+                className="flex items-center gap-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-sm whitespace-nowrap"
+              >
+                <span className="text-base font-normal leading-none">+</span>
+                <span>Tạo meeting</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -663,8 +676,7 @@ function MeetingsPageContent() {
                   </select>
                   <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#6366f1] min-w-[130px] text-[#0b1c30] font-medium">
                     <option value="All">Tất cả nền tảng</option>
-                    <option value="Google Meet">Google Meet</option>
-                    <option value="Zoom">Zoom</option>
+                    {platformOptions.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                   <input
                     type={monthFilter === 'All' ? 'text' : 'month'}
@@ -837,7 +849,7 @@ function MeetingsPageContent() {
                               </td>
                               <td className="p-3 text-right">
                                 <div className="flex items-center justify-end gap-1.5">
-                                  {canManage && (
+                                  {m.can_manage && (
                                     <button
                                       onClick={() => setDeleteConfirmId(String(m.id))}
                                       title="Xóa cuộc họp"
@@ -1087,16 +1099,16 @@ function MeetingsPageContent() {
       </div>
 
       {/* Modals */}
-      {canManage && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} />}
+      {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
-      {canManage && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(x => x.id === m.id ? m : x))} />}
-      <MeetingDetailModal 
-        isOpen={isDetailOpen} 
-        onClose={handleCloseDetail} 
-        meeting={detailMeeting} 
-        onEdit={canManage ? handleOpenEditFromDetail : undefined}
-        onSummarize={canManage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
-        onSync={canManage ? handleSync : undefined}
+      {(canManage || detailMeeting?.can_manage) && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(x => x.id === m.id ? m : x))} />}
+      <MeetingDetailModal
+        isOpen={isDetailOpen}
+        onClose={handleCloseDetail}
+        meeting={detailMeeting}
+        onEdit={detailMeeting?.can_manage ? handleOpenEditFromDetail : undefined}
+        onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
+        onSync={detailMeeting?.can_manage ? handleSync : undefined}
       />
 
       {/* Delete Confirm Modal */}

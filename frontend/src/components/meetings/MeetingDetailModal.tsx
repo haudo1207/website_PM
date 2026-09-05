@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, getMe } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, getMe } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
@@ -90,7 +90,12 @@ export default function MeetingDetailModal({
     return { id: found.id, name: found.full_name || found.display_name };
   };
 
-  const [selectedMemberNames, setSelectedMemberNames] = useState<string[]>([]);
+  // Real Member roster for the picker (distinct from accountsList/getAccounts()
+  // above, which is login Accounts used for task-assignee matching — meeting
+  // participants must be real Member.id rows, matching addMeetingMember()'s
+  // member_id and the MeetingMember table).
+  const [memberOptionsList, setMemberOptionsList] = useState<any[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
   const [customMemberInput, setCustomMemberInput] = useState('');
   const [memberSearch, setMemberSearch] = useState('');
   const [memberRole, setMemberRole] = useState('Thành viên');
@@ -227,7 +232,6 @@ export default function MeetingDetailModal({
   // Real AI & Summary Data
   const execSummary = meeting.executive_summary || (meeting.ai_summary?.executive_summary) || (Array.isArray(meeting.summary) && meeting.summary.length ? meeting.summary[0] : '');
 
-  const decisionsList: string[] = meeting.decisions || (meeting.ai_summary?.decisions) || [];
   const issuesList: string[] = meeting.issues || (meeting.ai_summary?.issues) || [];
   const nextStepsList: string[] = meeting.next_steps || (meeting.ai_summary?.next_steps) || [];
   const tasksList: any[] = score.recommended_tasks || (score.ai_summary?.recommended_tasks) || [];
@@ -292,21 +296,33 @@ export default function MeetingDetailModal({
     }
   };
 
-  const toggleSelectMember = (name: string) => {
-    setSelectedMemberNames(prev =>
-      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
+  // The 4 roles MeetingMember.role actually accepts server-side (add_meeting_member
+  // falls back to PARTICIPANT for anything else) — map the Vietnamese dropdown
+  // label to the matching backend enum. "Người ghi chép" has no dedicated
+  // backend role; PARTICIPANT is the closest fit (an active attendee, not a
+  // read-only VIEWER).
+  const MEMBER_ROLE_TO_BACKEND: Record<string, string> = {
+    'Thành viên': 'PARTICIPANT',
+    'PM / Chủ trì': 'PM',
+    'Host': 'HOST',
+    'Người ghi chép': 'PARTICIPANT',
+  };
+
+  const toggleSelectMember = (id: number) => {
+    setSelectedMemberIds(prev =>
+      prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]
     );
   };
 
   const handleOpenAddMember = async () => {
     setIsAddMemberOpen(true);
-    setSelectedMemberNames([]);
+    setSelectedMemberIds([]);
     setCustomMemberInput('');
     setMemberSearch('');
     try {
-      const res = await getAccounts();
+      const res = await getMembers();
       const items = res?.data || res || [];
-      setAccountsList(Array.isArray(items) ? items : []);
+      setMemberOptionsList(Array.isArray(items) ? items : []);
     } catch (err) {
       console.error(err);
     }
@@ -314,48 +330,43 @@ export default function MeetingDetailModal({
 
   const handleAddMemberSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const namesToAdd = [...selectedMemberNames];
-    if (customMemberInput.trim() && !namesToAdd.includes(customMemberInput.trim())) {
-      namesToAdd.push(customMemberInput.trim());
-    }
 
-    if (namesToAdd.length === 0) {
+    const existingMemberIds = new Set(localMembers.map((m: any) => m.member_id).filter((id: any) => id != null));
+    const idsToAdd = selectedMemberIds.filter(id => !existingMemberIds.has(id));
+    const customName = customMemberInput.trim();
+
+    if (idsToAdd.length === 0 && !customName) {
       alert("Vui lòng chọn ít nhất 1 thành viên hoặc tự nhập tên thành viên!");
       return;
     }
 
     setIsAddingMember(true);
     try {
-      const hostObj = { display_name: creatorName, role: 'Người tạo (Host)' };
-      const hasHost = localMembers.some((m: any) =>
-        (m.display_name && m.display_name.includes('Host')) || (m.role && m.role.includes('Host')) || m.display_name === creatorName
-      );
-      const baseList = hasHost ? localMembers : [hostObj, ...localMembers];
+      const backendRole = MEMBER_ROLE_TO_BACKEND[memberRole] || 'PARTICIPANT';
+      let latest: any = null;
+      for (const memberId of idsToAdd) {
+        latest = await addMeetingMember(meeting.id, memberId, backendRole);
+      }
 
-      const existingNamesSet = new Set(baseList.map((m: any) => m.display_name || m.full_name || m.name));
-      const newMemberObjects = namesToAdd
-        .filter(name => !existingNamesSet.has(name))
-        .map(name => ({
-          display_name: name,
-          role: memberRole
-        }));
+      if (customName) {
+        const existingNames = new Set(localMembers.map((m: any) => m.display_name || m.name));
+        if (!existingNames.has(customName)) {
+          const customEntries = [...localMembers, { display_name: customName, role: memberRole }];
+          latest = await updateMeeting(meeting.id, { members: customEntries });
+        }
+      }
 
-      const updatedMembers = [...baseList, ...newMemberObjects];
-      const data = await updateMeeting(meeting.id, { members: updatedMembers });
-
-      setLocalMembers(updatedMembers);
-      meeting.members = updatedMembers;
-
-      if (data?.data) {
+      if (latest?.data) {
+        setLocalMembers(latest.data.members || []);
+        meeting.members = latest.data.members;
         queryClient.setQueryData(['meetings'], (prev: any[] = []) =>
-          prev.map(m => m.id === meeting.id ? data.data : m)
+          prev.map(m => m.id === meeting.id ? latest.data : m)
         );
       }
       setIsAddMemberOpen(false);
-      setSelectedMemberNames([]);
+      setSelectedMemberIds([]);
       setCustomMemberInput('');
-      triggerToast(`✓ Đã thêm ${namesToAdd.length} thành viên tham dự!`);
+      triggerToast(`✓ Đã thêm ${idsToAdd.length + (customName ? 1 : 0)} thành viên tham dự!`);
     } catch (err: any) {
       alert(err?.response?.data?.detail || 'Lỗi khi thêm thành viên');
     } finally {
@@ -531,17 +542,23 @@ export default function MeetingDetailModal({
                 )}
 
                 {isUnassignedProject ? (
-                  <button 
-                    type="button"
-                    onClick={handleOpenAssignProject}
-                    className="px-3 py-1 rounded-full text-[11px] font-extrabold bg-[#fef3c7] hover:bg-[#fde68a] text-[#92400e] border border-[#f59e0b]/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                    title="Bấm để chọn và gán dự án"
-                  >
-                    <span>⚠️ Chưa gán Dự án</span>
-                    <span className="underline text-[10px] font-bold opacity-80">(Bấm để gán)</span>
-                  </button>
-                ) : (
-                  <button 
+                  meeting?.can_manage ? (
+                    <button
+                      type="button"
+                      onClick={handleOpenAssignProject}
+                      className="px-3 py-1 rounded-full text-[11px] font-extrabold bg-[#fef3c7] hover:bg-[#fde68a] text-[#92400e] border border-[#f59e0b]/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      title="Bấm để chọn và gán dự án"
+                    >
+                      <span>⚠️ Chưa gán Dự án</span>
+                      <span className="underline text-[10px] font-bold opacity-80">(Bấm để gán)</span>
+                    </button>
+                  ) : (
+                    <span className="px-3 py-1 rounded-full text-[11px] font-extrabold bg-[#fef3c7] text-[#92400e] border border-[#f59e0b]/40 flex items-center gap-1.5">
+                      ⚠️ Chưa gán Dự án
+                    </span>
+                  )
+                ) : meeting?.can_manage ? (
+                  <button
                     type="button"
                     onClick={handleOpenAssignProject}
                     className="px-3 py-1 rounded-full text-[11px] font-bold bg-blue-50 hover:bg-blue-100 text-[#0058be] border border-blue-200 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
@@ -550,6 +567,10 @@ export default function MeetingDetailModal({
                     <span>📁 {projectName}</span>
                     <span className="text-[10px] opacity-75 font-semibold">(Đổi)</span>
                   </button>
+                ) : (
+                  <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-[#0058be] border border-blue-200 flex items-center gap-1.5">
+                    📁 {projectName}
+                  </span>
                 )}
 
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f1f5f9] text-[#64748b]">
@@ -630,12 +651,14 @@ export default function MeetingDetailModal({
 
                 {showMenu && (
                   <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-xs font-medium space-y-0.5">
-                    <button
-                      onClick={() => { setShowMenu(false); onEdit?.(meeting); }}
-                      className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0b1c30] flex items-center gap-2"
-                    >
-                      <span>✏️ Chỉnh sửa cuộc họp</span>
-                    </button>
+                    {onEdit && (
+                      <button
+                        onClick={() => { setShowMenu(false); onEdit(meeting); }}
+                        className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0b1c30] flex items-center gap-2"
+                      >
+                        <span>✏️ Chỉnh sửa cuộc họp</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => { setShowMenu(false); handleCopyLink(); }}
                       className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#6366f1] flex items-center gap-2"
@@ -740,14 +763,16 @@ export default function MeetingDetailModal({
                         ) : (
                           <span className="font-bold text-[#0b1c30] text-xs">{projectName}</span>
                         )}
-                        <button 
-                          type="button"
-                          onClick={handleOpenAssignProject} 
-                          className="px-3 py-1.5 text-xs font-extrabold text-[#6366f1] bg-[#f5f3ff] hover:bg-[#6366f1] hover:text-white border border-[#c7d2fe] hover:border-[#6366f1] rounded-xl transition-all shadow-2xs cursor-pointer flex items-center gap-1.5 active:scale-95"
-                        >
-                          <FolderPlus size={14} />
-                          <span>{isUnassignedProject ? '+ Gán Dự Án Ngay' : 'Đổi Dự Án'}</span>
-                        </button>
+                        {meeting?.can_manage && (
+                          <button
+                            type="button"
+                            onClick={handleOpenAssignProject}
+                            className="px-3 py-1.5 text-xs font-extrabold text-[#6366f1] bg-[#f5f3ff] hover:bg-[#6366f1] hover:text-white border border-[#c7d2fe] hover:border-[#6366f1] rounded-xl transition-all shadow-2xs cursor-pointer flex items-center gap-1.5 active:scale-95"
+                          >
+                            <FolderPlus size={14} />
+                            <span>{isUnassignedProject ? '+ Gán Dự Án Ngay' : 'Đổi Dự Án'}</span>
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -850,13 +875,15 @@ export default function MeetingDetailModal({
                       </div>
                     )}
 
-                    <button 
-                      onClick={handleOpenAddMember} 
-                      className="w-9 h-9 rounded-full border-2 border-dashed border-[#cbd5e1] hover:border-[#6366f1] text-[#64748b] hover:text-[#6366f1] font-bold text-xs flex items-center justify-center transition-colors cursor-pointer"
-                      title="Thêm thành viên tham dự"
-                    >
-                      <Plus size={16} />
-                    </button>
+                    {meeting?.can_manage && (
+                      <button
+                        onClick={handleOpenAddMember}
+                        className="w-9 h-9 rounded-full border-2 border-dashed border-[#cbd5e1] hover:border-[#6366f1] text-[#64748b] hover:text-[#6366f1] font-bold text-xs flex items-center justify-center transition-colors cursor-pointer"
+                        title="Thêm thành viên tham dự"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -932,24 +959,6 @@ export default function MeetingDetailModal({
                       </p>
                     )}
                   </div>
-
-                  {/* Section 2: QUYẾT ĐỊNH CHÍNH */}
-                  {decisionsList.length > 0 && (
-                    <div className="space-y-1.5">
-                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                        Quyết định chính
-                      </h4>
-                      <div className="space-y-1.5">
-                        {decisionsList.map((dec: string, idx: number) => (
-                          <div key={idx} className="flex items-start gap-2 text-xs text-[#334155] bg-emerald-50/60 border border-emerald-100 rounded-lg px-2.5 py-2">
-                            <Check size={13} className="text-emerald-600 mt-0.5 shrink-0" />
-                            <span>{dec}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   {/* Section 2b: VẤN ĐỀ & RỦI RO */}
                   {issuesList.length > 0 && (
@@ -1145,23 +1154,6 @@ export default function MeetingDetailModal({
                       </div>
                     </div>
                   )}
-
-                  {/* Decisions List */}
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">CÁC QUYẾT ĐỊNH CHÍNH ({decisionsList.length})</h4>
-                    {decisionsList.length > 0 ? (
-                      <div className="space-y-2">
-                        {decisionsList.map((dec, i) => (
-                          <div key={i} className="p-3.5 bg-emerald-50/60 border border-emerald-200/80 rounded-xl flex items-start gap-3 text-xs text-[#065f46]">
-                            <Check size={16} className="text-emerald-600 shrink-0 mt-0.5" />
-                            <span className="font-medium">{dec}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[#94a3b8] italic">Chưa ghi nhận quyết định nào từ AI.</p>
-                    )}
-                  </div>
 
                   {/* Issues & Risks */}
                   {issuesList.length > 0 && (
@@ -1745,31 +1737,31 @@ export default function MeetingDetailModal({
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-[11px] font-bold text-[#64748b] uppercase">Danh sách nhân sự công ty</label>
-                  <span className="text-[11px] font-bold text-[#6366f1]">Đã chọn: {selectedMemberNames.length} người</span>
+                  <span className="text-[11px] font-bold text-[#6366f1]">Đã chọn: {selectedMemberIds.length} người</span>
                 </div>
 
                 <div className="max-h-48 overflow-y-auto space-y-1 p-2 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl">
-                  {accountsList.length === 0 ? (
+                  {memberOptionsList.length === 0 ? (
                     <p className="text-xs text-slate-400 text-center py-4">Đang tải danh sách nhân sự...</p>
                   ) : (
-                    accountsList
-                      .filter(acc => {
-                        const name = acc.full_name || acc.display_name || acc.email || '';
+                    memberOptionsList
+                      .filter(mo => {
+                        const name = mo.full_name || mo.display_name || mo.email || '';
                         return name.toLowerCase().includes(memberSearch.toLowerCase());
                       })
-                      .map((acc, idx) => {
-                        const name = acc.full_name || acc.display_name || acc.email || `Nhân sự #${acc.id}`;
-                        const isChecked = selectedMemberNames.includes(name);
-                        const isAlreadyInMeeting = localMembers.some(m => (m.display_name || m.name) === name);
+                      .map((mo, idx) => {
+                        const name = mo.display_name || mo.full_name || mo.email || `Nhân sự #${mo.id}`;
+                        const isChecked = selectedMemberIds.includes(mo.id);
+                        const isAlreadyInMeeting = localMembers.some((m: any) => m.member_id === mo.id);
 
                         return (
                           <label
-                            key={acc.id || idx}
+                            key={mo.id || idx}
                             className={`flex items-center justify-between p-2 rounded-lg transition-all text-xs cursor-pointer ${
-                              isAlreadyInMeeting 
+                              isAlreadyInMeeting
                                 ? 'opacity-50 bg-slate-100 cursor-not-allowed'
-                                : isChecked 
-                                ? 'bg-[#f5f3ff] border border-[#e0e7ff] text-[#4338ca]' 
+                                : isChecked
+                                ? 'bg-[#f5f3ff] border border-[#e0e7ff] text-[#4338ca]'
                                 : 'hover:bg-white text-[#0b1c30]'
                             }`}
                           >
@@ -1778,7 +1770,7 @@ export default function MeetingDetailModal({
                                 type="checkbox"
                                 disabled={isAlreadyInMeeting}
                                 checked={isChecked || isAlreadyInMeeting}
-                                onChange={() => !isAlreadyInMeeting && toggleSelectMember(name)}
+                                onChange={() => !isAlreadyInMeeting && toggleSelectMember(mo.id)}
                                 className="w-4 h-4 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer"
                               />
                               <div className="w-7 h-7 rounded-full bg-[#e0e7ff] text-[#4338ca] font-bold text-[10px] flex items-center justify-center shrink-0">
@@ -1786,7 +1778,7 @@ export default function MeetingDetailModal({
                               </div>
                               <div className="min-w-0">
                                 <p className="font-bold truncate leading-tight">{name}</p>
-                                <p className="text-[10px] text-[#64748b] truncate">{acc.email || acc.role || 'Thành viên công ty'}</p>
+                                <p className="text-[10px] text-[#64748b] truncate">{mo.email || mo.role || 'Thành viên công ty'}</p>
                               </div>
                             </div>
                             {isAlreadyInMeeting && (
@@ -1829,7 +1821,7 @@ export default function MeetingDetailModal({
               {/* Action Buttons */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <span className="text-xs font-bold text-[#6366f1]">
-                  Tổng thêm: {selectedMemberNames.length + (customMemberInput.trim() ? 1 : 0)} người
+                  Tổng thêm: {selectedMemberIds.length + (customMemberInput.trim() ? 1 : 0)} người
                 </span>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setIsAddMemberOpen(false)} className="px-4 py-2 text-xs font-bold text-[#64748b] bg-white border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors">
@@ -1837,11 +1829,11 @@ export default function MeetingDetailModal({
                   </button>
                   <button
                     type="submit"
-                    disabled={isAddingMember || (selectedMemberNames.length === 0 && !customMemberInput.trim())}
+                    disabled={isAddingMember || (selectedMemberIds.length === 0 && !customMemberInput.trim())}
                     className="px-4 py-2 text-xs font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] disabled:opacity-50 rounded-xl transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
                   >
                     <Check size={15} />
-                    <span>{isAddingMember ? 'Đang thêm...' : `Xác nhận thêm (${selectedMemberNames.length + (customMemberInput.trim() ? 1 : 0)})`}</span>
+                    <span>{isAddingMember ? 'Đang thêm...' : `Xác nhận thêm (${selectedMemberIds.length + (customMemberInput.trim() ? 1 : 0)})`}</span>
                   </button>
                 </div>
               </div>
