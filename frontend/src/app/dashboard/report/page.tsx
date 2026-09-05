@@ -166,8 +166,23 @@ export default function ReportTab() {
   const activeReportWsCode = currentUserProfile?.role === 'super_admin'
     ? null
     : (reportWsCode || primaryWs?.code || null);
+  // A task whose project belongs to none of my granted Workspaces (Chính or
+  // any Phụ) has no tab of its own here — it only reached `rawMyTasksAll`
+  // because I'm explicitly assigned to it (project_members), same
+  // membership-overrides-Workspace escape hatch already applied on the
+  // Project page (ProjectListContent.tsx's `isAssignedToMe`, projects.py's
+  // `assigned_project_ids`). Without this, such a task would silently
+  // disappear from every Report tab even though it still shows up as one of
+  // "my projects" on the Project page.
+  const myWorkspaceCodes = useMemo(
+    () => new Set(myWorkspaces.map((w) => w.code.toLowerCase())),
+    [myWorkspaces]
+  );
   const rawMyTasks: any[] = activeReportWsCode
-    ? rawMyTasksAll.filter((t: any) => (t.projectDataScope || '').toLowerCase() === activeReportWsCode)
+    ? rawMyTasksAll.filter((t: any) => {
+        const scope = (t.projectDataScope || '').toLowerCase();
+        return scope === activeReportWsCode || !myWorkspaceCodes.has(scope);
+      })
     : rawMyTasksAll;
 
   const getMyTaskManday = useCallback((t: any) => {
