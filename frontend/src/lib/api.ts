@@ -486,6 +486,15 @@ export const generateAiMeetingContent = (data: { title: string; project_name?: s
 export const getMeetingInsights = (params?: { from_date?: string; to_date?: string }) =>
   api.get('/meetings/insights', { params }).then(r => r.data);
 
+// AI prompt settings + transcript summarization — Next.js-local routes
+// (app/api/ai/*), not the FastAPI backend, but routed through the same `api`
+// client so they get the Authorization header + proactive token refresh
+// every other call gets, instead of a bare fetch().
+export const getAiSettings = () => api.get('/ai/settings').then(r => r.data);
+export const saveAiSettings = (promptTemplate: string) => api.post('/ai/settings', { promptTemplate }).then(r => r.data);
+export const summarizeMeetingTranscript = (meetingId: number, transcript: string) =>
+  api.post('/ai/summarize', { meetingId, transcript }).then(r => r.data);
+
 // Project Features — "Tính năng" + WIP log timeline
 export const getProjectFeatures = (projectId: number) =>
   api.get(`/projects/${projectId}/features`).then(r => r.data);

@@ -93,7 +93,7 @@ def _notify_zalo(db, meeting, member_ids, text) -> None:
                 if i < len(mentioned) - 1:
                     body += " "
         try:
-            zalo_service.send_message(conv.zalo_thread_id, body, conv.is_group, mentions or None)
+            zalo_service.send_message(conv.account_id, conv.zalo_thread_id, body, conv.is_group, mentions or None)
         except Exception:
             logger.exception("Zalo reminder failed for meeting %s conversation %s", meeting.id, conv.id)
 

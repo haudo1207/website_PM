@@ -24,17 +24,38 @@ Task cha đã chốt
 
 Lưu ý: Không viết thêm bất kỳ lời dẫn hay kết luận nào, chỉ trả về nội dung theo đúng cấu trúc trên.`;
 
+// This route calls a paid Gemini/OpenAI-compatible API before it ever checks
+// whether meetingId is one the caller can actually write to (the backend
+// PUT /api/meetings/{id} call further down does enforce that) — an
+// unauthenticated caller could still burn through the shared API key's quota
+// with arbitrary transcripts. Require a valid session (any role; the
+// per-meeting project-access check stays with the backend PUT below).
+async function requireAuth(request: Request): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const backendUrl = process.env.BACKEND_INTERNAL_URL || 'http://backend:8000';
+  const forwardHeaders = new Headers();
+  const cookie = request.headers.get('cookie');
+  if (cookie) forwardHeaders.set('cookie', cookie);
+  const auth = request.headers.get('authorization');
+  if (auth) forwardHeaders.set('authorization', auth);
+
+  try {
+    const res = await fetch(`${backendUrl}/api/users/me`, { headers: forwardHeaders });
+    if (!res.ok) return { ok: false, status: 401, error: 'Chưa đăng nhập.' };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, status: 401, error: 'Không thể xác thực người dùng.' };
+  }
+}
+
 function getGeminiApiKey(): string | undefined {
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
   if (process.env.AI_API_KEY) return process.env.AI_API_KEY;
-  
+
   try {
     const envPaths = [
       path.join(process.cwd(), '.env'),
       path.join(process.cwd(), '..', '.env'),
       path.join(process.cwd(), 'frontend', '.env'),
-      'd:\\PM_ProjectManager\\.env',
-      'd:\\PM_ProjectManager\\frontend\\.env'
     ];
     for (const envPath of envPaths) {
       if (fs.existsSync(envPath)) {
@@ -60,6 +81,10 @@ function getGeminiApiKey(): string | undefined {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+  }
   try {
     const body = await request.json();
     const { meetingId, transcript } = body;

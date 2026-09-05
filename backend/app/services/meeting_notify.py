@@ -51,17 +51,17 @@ def notify_zalo_groups_meeting_created(db: Session, meeting) -> int:
     (ZaloConversation.project_id) to any of the meeting's project(s).
     Returns how many groups were actually notified."""
     project_ids = _meeting_project_ids(meeting)
-    if not project_ids:
+    if not project_ids or not zalo_service.is_configured():
         return 0
 
-    account = db.query(ZaloAccount).filter(ZaloAccount.is_active.is_(True)).first()
-    if not account or not zalo_service.is_configured():
-        return 0
-
+    # Fan out across every connected Leader's account whose conversations
+    # are linked to this project — not "the one active account" (multiple
+    # independent accounts can each have their own group linked here).
     conversations = (
         db.query(ZaloConversation)
+        .join(ZaloAccount, ZaloConversation.account_id == ZaloAccount.id)
         .filter(
-            ZaloConversation.account_id == account.id,
+            ZaloAccount.is_active.is_(True),
             ZaloConversation.project_id.in_(project_ids),
             ZaloConversation.is_group.is_(True),
         )
@@ -75,7 +75,7 @@ def notify_zalo_groups_meeting_created(db: Session, meeting) -> int:
     sent = 0
     for conv in conversations:
         try:
-            result = zalo_service.send_message(conv.zalo_thread_id, text, conv.is_group)
+            result = zalo_service.send_message(conv.account_id, conv.zalo_thread_id, text, conv.is_group)
         except RuntimeError as e:
             logger.warning("Failed to send meeting notice to Zalo group %s: %s", conv.id, e)
             continue
