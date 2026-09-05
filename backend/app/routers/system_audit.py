@@ -29,7 +29,6 @@ from ..utils.access import (
     ROLE_LEADER,
     ALL_SCOPE,
 )
-from ..utils.project_progress import get_progress_pct_for_phase
 
 router = APIRouter(prefix="/system-audit", tags=["system-audit"], dependencies=[Depends(require_audit_user)])
 
@@ -886,21 +885,60 @@ def _aggregate_team_comparison(
     )
     done_expr = case((Task.status.in_(["Done", "done"]), 1), else_=0)
 
-    # Time-range window clause: a task belongs to the window if its
-    # `end_date_est` (preferred), else its `start_date`, else its
-    # `created_at`, falls inside [parsed_start, parsed_end]. When no window
-    # is provided we skip the clause entirely (preserves existing
-    # behaviour).
+    # Time-range window clause: a task belongs to the window if ANY of
+    # these conditions are true:
+    #   1. Task assigned during the selected period (start_date or created_at
+    #      falls within [parsed_start, parsed_end])
+    #   2. Task deadline falls within the selected period (end_date_est
+    #      falls within [parsed_start, parsed_end])
+    #   3. Task is overdue relative to the selected period (end_date_est
+    #      < parsed_end AND status not Done/Cancel)
+    # When no window is provided we skip the clause entirely (preserves
+    # existing behaviour).
     time_filters = []
     if parsed_start is not None or parsed_end is not None:
-        # Coalesce to the most informative date the task has.
-        task_date_expr = sql_func.coalesce(
-            Task.end_date_est, Task.start_date, Task.created_at
-        )
-        if parsed_start is not None:
-            time_filters.append(task_date_expr >= parsed_start)
+        # Build OR conditions for task inclusion
+        or_conditions = []
+        
+        # Condition 1: Task assigned during the period
+        if parsed_start is not None and parsed_end is not None:
+            or_conditions.append(
+                (Task.start_date.between(parsed_start, parsed_end)) |
+                (Task.created_at.between(parsed_start, parsed_end))
+            )
+        elif parsed_start is not None:
+            or_conditions.append(
+                (Task.start_date >= parsed_start) |
+                (Task.created_at >= parsed_start)
+            )
+        elif parsed_end is not None:
+            or_conditions.append(
+                (Task.start_date <= parsed_end) |
+                (Task.created_at <= parsed_end)
+            )
+        
+        # Condition 2: Task deadline falls within the period
+        if parsed_start is not None and parsed_end is not None:
+            or_conditions.append(
+                Task.end_date_est.between(parsed_start, parsed_end)
+            )
+        elif parsed_start is not None:
+            or_conditions.append(Task.end_date_est >= parsed_start)
+        elif parsed_end is not None:
+            or_conditions.append(Task.end_date_est <= parsed_end)
+        
+        # Condition 3: Task is overdue relative to the period
         if parsed_end is not None:
-            time_filters.append(task_date_expr <= parsed_end)
+            or_conditions.append(
+                (Task.end_date_est < parsed_end) &
+                (Task.end_date_est.isnot(None)) &
+                (Task.status.notin_(["Done", "done", "Cancel", "cancel"]))
+            )
+        
+        # Combine with OR - task matches if ANY condition is true
+        if or_conditions:
+            from sqlalchemy import or_
+            time_filters.append(or_(*or_conditions))
 
     member_rows = (
         db.query(
@@ -1098,12 +1136,13 @@ def _aggregate_team_comparison(
             ps["manday_est"] = float(md_est or 0)
             ps["manday_actual"] = float(md_actual or 0)
             ps["kpi"] = float(kpi or 0)
-            # Issue 3 — Project Progress is now the configured Master Phase
-            # percentage (single source of truth). The task-based percentage
-            # is still computed separately as `task_completion_pct` so existing
-            # dashboards that intentionally surface task-completion aren't
-            # broken.
-            ps["progress_pct"] = round(get_progress_pct_for_phase(db, p.current_phase), 2)
+            # New requirement: Project Progress = Completed MD / Total Task MD × 100
+            # This replaces the previous Master Phase percentage calculation.
+            # Progress is based on manday_actual (completed work) vs manday_est
+            # (planned work) for tasks within the filtered period.
+            md_est_val = float(md_est or 0)
+            md_actual_val = float(md_actual or 0)
+            ps["progress_pct"] = round((md_actual_val / md_est_val) * 100, 2) if md_est_val > 0 else 0
             ps["task_completion_pct"] = round((done_n / total_n) * 100, 1) if total_n > 0 else 0
             ps["timeline_pct"] = round(((total_n - overdue_n) / total_n) * 100, 1) if total_n > 0 else 0
             ps["health"] = _team_health(done_n, total_n, overdue_n)
