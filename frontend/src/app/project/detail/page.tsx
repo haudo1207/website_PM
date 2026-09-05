@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useState, useCallback, useRef, Fragment, Suspense, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, Fragment, Suspense, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
@@ -14,6 +15,7 @@ import ProjectPrototypeTab from '@/components/ProjectPrototypeTab';
 import ProjectZaloSummaryTab from '@/components/ProjectZaloSummaryTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProjectFormModal from '@/components/ProjectFormModal';
+import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import {
   getProjects, getProject, updateProject, deleteProject,
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
@@ -28,10 +30,34 @@ import {
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup,
-  getMe
+  getMe,
+  getProjectAuditLogs
 } from '@/lib/api';
 import { isAdmin, isMember, getEmail } from '@/lib/auth';
+import {
+  Search, Filter, Columns3, Plus, ChevronDown, ChevronRight, MoreHorizontal,
+  GripVertical, Pencil, Trash2, Copy, RotateCcw, Lock, Expand, Minimize2, X,
+  Bell, Sparkles, Building2, LayoutTemplate, FolderPlus, Pin, PinOff,
+  Users, AlertTriangle, Layers, UserX, ArrowRight, Clock,
+  ArrowUpRight, ArrowDownRight, Minus, Trophy, BarChart3,
+} from 'lucide-react';
 import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod } from '@/app/dashboard/constants';
+
+// Format 1 real timestamp (Audit Log created_at) thành nhãn tương đối kiểu
+// "2 phút trước" - không phải data giả, chỉ format lại 1 giá trị thời gian thật.
+const formatTimeAgo = (iso: string): string => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'Vừa xong';
+  if (min < 60) return `${min} phút trước`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} giờ trước`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day} ngày trước`;
+  return d.toLocaleDateString('vi-VN');
+};
 
 const ROMAN_PAIRS: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
 const to_roman = (n: number): string => {
@@ -83,6 +109,140 @@ const TAB_TO_SLUG: Record<TabKey, string> = {
   resources: 'resources',
   prototype: 'prototype',
 };
+
+// Dropdown/popover được portal thẳng ra document.body và định vị bằng
+// getBoundingClientRect() của trigger, để không bao giờ bị clip/tạo scrollbar
+// bởi các container overflow-auto/overflow-x-auto (phase strip, table wrapper...).
+// Đóng khi: click ra ngoài, Escape, scroll (bất kỳ ancestor nào, kể cả nested
+// scroll container - dùng capture:true), hoặc resize window.
+function FloatingDropdown({
+  anchorEl,
+  open,
+  onClose,
+  align = 'left',
+  className = '',
+  children,
+}: {
+  anchorEl: HTMLElement | null;
+  open: boolean;
+  onClose: () => void;
+  align?: 'left' | 'right';
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open || !anchorEl) {
+      setPos(null);
+      return;
+    }
+    const rect = anchorEl.getBoundingClientRect();
+    setPos(align === 'right'
+      ? { top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) }
+      : { top: rect.bottom + 4, left: rect.left });
+
+    // 'scroll' không bubble nên phải nghe ở capture phase để bắt được scroll
+    // của bất kỳ ancestor/scroll-container nào (phase strip, table wrapper...).
+    // Nhưng capture phase cũng bắt luôn scroll NỘI BỘ của chính menu (vd. danh
+    // sách cột dài) - phải loại trừ trường hợp đó, nếu không menu sẽ tự đóng
+    // ngay khi user vừa mới lăn chuột để cuộn nó.
+    const closeOnOutsideScroll = (e: Event) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      onClose();
+    };
+    window.addEventListener('scroll', closeOnOutsideScroll, true);
+    window.addEventListener('resize', onClose);
+    return () => {
+      window.removeEventListener('scroll', closeOnOutsideScroll, true);
+      window.removeEventListener('resize', onClose);
+    };
+  }, [open, anchorEl, align, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if (anchorEl?.contains(target)) return;
+      onClose();
+    };
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [open, onClose, anchorEl]);
+
+  if (!open || !pos || typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      ref={menuRef}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 200 }}
+      className={className}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+}
+
+// Donut chart cho Overview > Tổng quan: có tổng số ở tâm + legend kèm số liệu
+// từng phần (PieChartCard dùng chung cho /dashboard chỉ có Legend tên+màu,
+// không có số - không sửa component đó vì các trang khác đang dùng, làm bản
+// riêng cho Overview).
+function OverviewDonutCard({
+  title,
+  data,
+  centerLabel,
+}: {
+  title: string;
+  data: { name: string; value: number; fill: string }[];
+  centerLabel: string;
+}) {
+  const total = data.reduce((sum, d) => sum + d.value, 0);
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+      <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-2">{title}</h3>
+      {total === 0 ? (
+        <p className="text-xs text-slate-500 italic text-center py-10 flex-1 flex items-center justify-center">Chưa có dữ liệu để hiển thị.</p>
+      ) : (
+        <>
+          <div className="relative flex-1 min-h-[160px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={data} cx="50%" cy="50%" innerRadius={52} outerRadius={78} paddingAngle={3} dataKey="value">
+                  {data.map((entry, idx) => (
+                    <Cell key={idx} fill={entry.fill} />
+                  ))}
+                </Pie>
+                <RechartsTooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }} formatter={(value: any) => [value, '']} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-xl font-bold text-[#0b1c30]">{total}</span>
+              <span className="text-[10px] text-slate-400">{centerLabel}</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-3">
+            {data.map(d => (
+              <div key={d.name} className="flex items-center justify-between gap-2 text-[11px] min-w-0">
+                <span className="flex items-center gap-1.5 text-slate-600 truncate min-w-0">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: d.fill }} />
+                  <span className="truncate">{d.name}</span>
+                </span>
+                <span className="font-bold text-[#0b1c30] shrink-0">{d.value}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function ProjectDetailContent() {
   const searchParams = useSearchParams();
@@ -146,6 +306,39 @@ function ProjectDetailContent() {
   const [skillVendorDropdownOpen, setSkillVendorDropdownOpen] = useState(false);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const [columnSearch, setColumnSearch] = useState('');
+  const [rowDensity, setRowDensity] = useState<'compact' | 'normal' | 'spacious'>('compact');
+  const [addTaskMenuOpen, setAddTaskMenuOpen] = useState(false);
+  const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
+  const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
+  const [taskFocusMode, setTaskFocusMode] = useState(false);
+  const [openHeaderMenu, setOpenHeaderMenu] = useState<string | null>(null);
+  const [headerMenuAnchorEl, setHeaderMenuAnchorEl] = useState<HTMLElement | null>(null);
+  const [rowMenuAnchorEl, setRowMenuAnchorEl] = useState<HTMLElement | null>(null);
+  const columnMenuBtnRef = useRef<HTMLButtonElement>(null);
+  const addTaskMenuBtnRef = useRef<HTMLButtonElement>(null);
+  const filterPopoverBtnRef = useRef<HTMLButtonElement>(null);
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [pinnedColumns, setPinnedColumns] = useState<string[]>([]);
+  const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
+  const resizingColumnRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  // Phase navigation: overflow-to-dropdown (never wrap, never horizontal scroll)
+  const MAX_VISIBLE_REAL_PHASES = 7; // + Master = 8 total slots
+  const [pinnedPhaseIds, setPinnedPhaseIds] = useState<number[]>([]);
+  const [phaseOverflowOpen, setPhaseOverflowOpen] = useState(false);
+  const [phaseOverflowSearch, setPhaseOverflowSearch] = useState('');
+  const phaseOverflowBtnRef = useRef<HTMLButtonElement>(null);
+  const [phaseNavContainerWidth, setPhaseNavContainerWidth] = useState(9999);
+  const phaseNavContainerRef = useRef<HTMLDivElement>(null);
+  const [phaseTabWidths, setPhaseTabWidths] = useState<Record<string, number>>({});
+  const phaseTabMeasureRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // Width của Master / "Phase khác (N)" / "+ Thêm Phase" / "Áp dụng template" là
+  // text cố định (không phụ thuộc dữ liệu user) nên dùng hằng số ước lượng rộng
+  // rãi thay vì đo DOM - chỉ label Phase (tên do user đặt, có thể rất dài) mới
+  // cần đo thật.
+  const PHASE_CHROME_WIDTHS = { master: 76, overflow: 140, addPhase: 112, template: 152 } as const;
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
@@ -362,6 +555,8 @@ function ProjectDetailContent() {
     return `${parentTaskId}.${nextSubNum}`;
   };
 
+  const ACTION_COL_WIDTH = 56;
+
   const TASK_COLUMNS = [
     "TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY EST", "STATUS", "START DATE",
     "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "LINK",
@@ -426,8 +621,28 @@ function ProjectDetailContent() {
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
   const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
 
+  // Cột phụ ít dùng - ẩn mặc định cho user CHƯA từng lưu preference (không
+  // đụng tới preference đã lưu của user cũ).
+  const DEFAULT_HIDDEN_COLUMNS = [
+    'KPI RATIO', 'LINK', 'REMARK', 'SEND', 'END DATE EST', 'MD ACTUAL', 'END ACTUAL',
+    'DAYS LATE', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID',
+    'ROOT TASKS', 'NOTES', 'SOLUTION',
+  ];
+
+  const MIN_COLUMN_WIDTH = 70;
+  const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
+
+  const getColumnDefaultWidth = (col: string): number => {
+    const colUpper = col.toUpperCase();
+    if (colUpper.includes('DETAIL TASK') || colUpper === 'TASK' || colUpper === 'DESCRIPTION') return 350;
+    if (colUpper.includes('ID')) return 90;
+    return 130;
+  };
+
+  const getColumnWidth = (col: string): number => columnWidths[col] || getColumnDefaultWidth(col);
+
   const getDynamicColumns = () => {
-    return TASK_COLUMNS.filter(col => !hiddenColumns.includes(col));
+    return columnOrder.filter(col => TASK_COLUMNS.includes(col) && !hiddenColumns.includes(col));
   };
 
   const toggleColumnVisibility = (col: string) => {
@@ -443,7 +658,54 @@ function ProjectDetailContent() {
     });
   };
 
-  const resetColumnVisibility = () => setHiddenColumns([]);
+  const resetColumnVisibility = () => {
+    setHiddenColumns([]);
+    setRowDensity('compact');
+    setColumnOrder(TASK_COLUMNS);
+    setColumnWidths({});
+    setPinnedColumns([]);
+  };
+
+  const reorderColumn = (fromCol: string, toCol: string) => {
+    if (fromCol === toCol) return;
+    setColumnOrder(prev => {
+      const arr = [...prev];
+      const fromIdx = arr.indexOf(fromCol);
+      const toIdx = arr.indexOf(toCol);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, fromCol);
+      return arr;
+    });
+  };
+
+  const togglePinColumn = (col: string) => {
+    setPinnedColumns(prev => prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]);
+  };
+
+  const getPinTdStyle = (col: string): React.CSSProperties | undefined => {
+    if (!pinnedColumns.includes(col)) return undefined;
+    return { position: 'sticky', left: getPinnedLeftOffset(col), zIndex: 11, background: 'inherit' };
+  };
+
+  const getPinnedLeftOffset = (col: string): number => {
+    if (!pinnedColumns.includes(col)) return 0;
+    const renderedPinnedInOrder = getDynamicColumns().filter(c => pinnedColumns.includes(c));
+    const idx = renderedPinnedInOrder.indexOf(col);
+    if (idx === -1) return 0;
+    let offset = ACTION_COL_WIDTH;
+    for (let i = 0; i < idx; i++) {
+      offset += getColumnWidth(renderedPinnedInOrder[i]);
+    }
+    return offset;
+  };
+
+  const ROW_PAD_Y: Record<'compact' | 'normal' | 'spacious', string> = {
+    compact: 'py-2.5',
+    normal: 'py-3.5',
+    spacious: 'py-5',
+  };
+  const rowPadY = ROW_PAD_Y[rowDensity];
 
   // Phases/task groups/tasks now live in the React Query cache instead of
   // 3 separate useState — enabled:false because every fetch here has always
@@ -517,6 +779,56 @@ function ProjectDetailContent() {
     }))
   ];
 
+  // Phase thật, theo đúng thứ tự gốc (KHÔNG bao giờ sắp xếp lại) - bấm active
+  // một Phase không được làm nó "nhảy" chỗ trên thanh (feedback: đứng chỗ nào
+  // đứng luôn). Thứ tự ưu tiên (active trước, rồi pinned, rồi còn lại) CHỈ
+  // dùng để quyết định Phase nào được CHỌN vào N slot hiển thị khi thiếu chỗ,
+  // không dùng để sắp xếp lại vị trí hiển thị.
+  const realPhases = useMemo(() => dynamicTabs.filter(t => !t.is_master), [phases]);
+
+  const phaseSelectionPriorityOrder = useMemo(() => {
+    const activeReal = realPhases.find(t => t.key === activePhase);
+    const pinnedSet = new Set(pinnedPhaseIds);
+    const ordered: typeof realPhases = [];
+    const seen = new Set<string>();
+    if (activeReal) { ordered.push(activeReal); seen.add(activeReal.key); }
+    for (const t of realPhases) {
+      if (seen.has(t.key)) continue;
+      if (pinnedSet.has(t.id)) { ordered.push(t); seen.add(t.key); }
+    }
+    for (const t of realPhases) {
+      if (seen.has(t.key)) continue;
+      ordered.push(t); seen.add(t.key);
+    }
+    return ordered;
+  }, [realPhases, activePhase, pinnedPhaseIds]);
+
+  // Bao nhiêu Phase (không tính Master) thực sự vừa trên 1 hàng, đo bằng width
+  // thật của từng tab (đo ẩn, xem lớp measurement bên dưới JSX) - đảm bảo
+  // never-wrap/never-scroll ở mọi viewport, không hard-code theo số Phase.
+  // "+ Thêm Phase" và "Áp dụng template" LUÔN hiện ngoài thanh (không rơi vào
+  // dropdown) nên width của chúng luôn được reserve, bất kể có overflow hay không.
+  const visiblePhaseCount = (() => {
+    const total = phaseSelectionPriorityOrder.length;
+    const cap = Math.min(MAX_VISIBLE_REAL_PHASES, total);
+    const activeIsRealPhase = total > 0 && phaseSelectionPriorityOrder[0].key === activePhase;
+    const minN = activeIsRealPhase ? 1 : 0;
+    const GAP = 16;
+    for (let n = cap; n >= minN; n--) {
+      const hasOverflow = n < total;
+      let width = PHASE_CHROME_WIDTHS.master + GAP + PHASE_CHROME_WIDTHS.addPhase + GAP + PHASE_CHROME_WIDTHS.template + GAP;
+      for (let i = 0; i < n; i++) {
+        width += (phaseTabWidths[phaseSelectionPriorityOrder[i].key] || 90) + GAP;
+      }
+      if (hasOverflow) width += PHASE_CHROME_WIDTHS.overflow + GAP;
+      if (n === minN || width <= phaseNavContainerWidth) return n;
+    }
+    return minN;
+  })();
+  const visiblePhaseKeys = new Set(phaseSelectionPriorityOrder.slice(0, visiblePhaseCount).map(t => t.key));
+  const visibleRealPhaseTabs = realPhases.filter(t => visiblePhaseKeys.has(t.key));
+  const overflowRealPhaseTabs = realPhases.filter(t => !visiblePhaseKeys.has(t.key));
+
   // Local state for meetings, chats
   const [meetings, setMeetings] = useState<any[]>([]);
   const [showMeetingModal, setShowMeetingModal] = useState(false);
@@ -533,6 +845,14 @@ function ProjectDetailContent() {
   const [overviewMonth, setOverviewMonth] = useState<number | 'all'>('all');
   const [overviewWeek, setOverviewWeek] = useState<number | 'all'>('all');
   const [overviewQuickFilter, setOverviewQuickFilter] = useState<string | null>('all');
+
+  // Overview sub-tab: "Tổng quan" (fast dashboard) vs "Chi tiết" (báo cáo sâu,
+  // các block cũ dời qua nguyên vẹn). Local state, không route, không reset
+  // hay refetch gì khi đổi qua lại (project-tasks query đã enabled:false).
+  const [overviewSubTab, setOverviewSubTab] = useState<'summary' | 'detail'>('summary');
+  const [showAllOverviewPhases, setShowAllOverviewPhases] = useState(false);
+  const [showAllOverviewWorkload, setShowAllOverviewWorkload] = useState(false);
+  const [showAllOverviewActivity, setShowAllOverviewActivity] = useState(false);
 
   const applyOverviewQuickFilter = (type: string) => {
     setOverviewQuickFilter(type);
@@ -622,7 +942,6 @@ function ProjectDetailContent() {
   const supportFilterRef = useRef<HTMLDivElement>(null);
   const skillSolutionFilterRef = useRef<HTMLDivElement>(null);
   const skillVendorFilterRef = useRef<HTMLDivElement>(null);
-  const columnMenuRef = useRef<HTMLDivElement>(null);
   const [addMemberDropdownOpen, setAddMemberDropdownOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState('');
   const addMemberRef = useRef<HTMLDivElement>(null);
@@ -795,20 +1114,114 @@ function ProjectDetailContent() {
     return () => clearInterval(timer);
   }, [id, loadChatData, activeMainTab]);
 
-  // Cột hiển thị của bảng Task - lưu theo máy/trình duyệt, áp dụng cho tất cả dự án
-  const TASK_HIDDEN_COLUMNS_KEY = 'pm_task_hidden_columns';
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(TASK_HIDDEN_COLUMNS_KEY);
-      if (saved) setHiddenColumns(JSON.parse(saved));
-    } catch {}
-  }, []);
+  // Cột hiển thị + mật độ hàng của bảng Task - lưu riêng theo từng dự án và từng user
+  // (khoá cũ pm_task_hidden_columns dùng chung cho mọi dự án/user trên máy - vẫn đọc
+  // 1 lần để migrate cho user cũ chưa có prefs mới).
+  const TASK_HIDDEN_COLUMNS_LEGACY_KEY = 'pm_task_hidden_columns';
+  const taskTablePrefsKey = (projectId: any, email: string) => `pm_task_table_prefs:${projectId}:${email || 'anon'}`;
 
   useEffect(() => {
+    if (!id) return;
     try {
-      localStorage.setItem(TASK_HIDDEN_COLUMNS_KEY, JSON.stringify(hiddenColumns));
+      const key = taskTablePrefsKey(id, getEmail() || '');
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // v1 blob = {hiddenColumns, density}, no `version` field - still supported.
+        if (Array.isArray(parsed.hiddenColumns)) setHiddenColumns(parsed.hiddenColumns);
+        if (parsed.density === 'compact' || parsed.density === 'normal' || parsed.density === 'spacious') {
+          setRowDensity(parsed.density);
+        }
+        setColumnOrder(Array.isArray(parsed.columnOrder) && parsed.columnOrder.length ? parsed.columnOrder : TASK_COLUMNS);
+        setColumnWidths(parsed.columnWidths && typeof parsed.columnWidths === 'object' ? parsed.columnWidths : {});
+        setPinnedColumns(Array.isArray(parsed.pinnedColumns) ? parsed.pinnedColumns : []);
+      } else {
+        const legacy = localStorage.getItem(TASK_HIDDEN_COLUMNS_LEGACY_KEY);
+        if (legacy) {
+          setHiddenColumns(JSON.parse(legacy));
+        } else {
+          setHiddenColumns(DEFAULT_HIDDEN_COLUMNS);
+        }
+        setColumnOrder(TASK_COLUMNS);
+        setColumnWidths({});
+        setPinnedColumns([]);
+      }
     } catch {}
-  }, [hiddenColumns]);
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    try {
+      const key = taskTablePrefsKey(id, getEmail() || '');
+      localStorage.setItem(key, JSON.stringify({
+        version: 2,
+        hiddenColumns,
+        density: rowDensity,
+        columnOrder,
+        columnWidths,
+        pinnedColumns,
+      }));
+    } catch {}
+  }, [id, hiddenColumns, rowDensity, columnOrder, columnWidths, pinnedColumns]);
+
+  // Pin Phase trên thanh navigation - lưu riêng theo dự án + user, giống pattern
+  // pm_task_table_prefs ở trên.
+  const phasePinsKey = (projectId: any, email: string) => `pm_phase_pins:${projectId}:${email || 'anon'}`;
+
+  useEffect(() => {
+    if (!id) return;
+    try {
+      const saved = localStorage.getItem(phasePinsKey(id, getEmail() || ''));
+      setPinnedPhaseIds(saved ? JSON.parse(saved) : []);
+    } catch {
+      setPinnedPhaseIds([]);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    try {
+      localStorage.setItem(phasePinsKey(id, getEmail() || ''), JSON.stringify(pinnedPhaseIds));
+    } catch {}
+  }, [id, pinnedPhaseIds]);
+
+  const MAX_PINNED_PHASES = 8;
+  const togglePinPhase = (phaseId: number) => {
+    setPinnedPhaseIds(prev => {
+      if (prev.includes(phaseId)) return prev.filter(x => x !== phaseId);
+      if (prev.length >= MAX_PINNED_PHASES) {
+        alert(`Chỉ được ghim tối đa ${MAX_PINNED_PHASES} Phase. Hãy bỏ ghim bớt 1 Phase trước khi ghim thêm.`);
+        return prev;
+      }
+      return [...prev, phaseId];
+    });
+  };
+
+  // Theo dõi width thật của khu vực Phase-nav (co giãn theo viewport, vd 1280px
+  // laptop) để tính lại visiblePhaseCount ở trên mỗi khi resize.
+  useEffect(() => {
+    const el = phaseNavContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setPhaseNavContainerWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    setPhaseNavContainerWidth(el.getBoundingClientRect().width);
+    return () => ro.disconnect();
+  }, []);
+
+  // Đo width thật (ẩn, không ảnh hưởng layout) của từng Phase tab + các control
+  // cố định (Master, "Phase khác (N)", "+ Thêm Phase", "Áp dụng template") mỗi
+  // khi danh sách/tên Phase thay đổi.
+  useLayoutEffect(() => {
+    const widths: Record<string, number> = {};
+    realPhases.forEach(t => {
+      const el = phaseTabMeasureRefs.current[t.key];
+      if (el) widths[t.key] = el.offsetWidth;
+    });
+    setPhaseTabWidths(widths);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realPhases.map(t => t.key + ':' + t.label).join('|')]);
 
   // Load chats from localStorage
   useEffect(() => {
@@ -908,6 +1321,12 @@ function ProjectDetailContent() {
       });
   }, []);
 
+  // Lưu ý: columnMenuOpen / addTaskMenuOpen / filterPopoverOpen / openRowMenu /
+  // openHeaderMenu / 6 per-column filter dropdown KHÔNG xử lý outside-click/Escape
+  // ở đây nữa - dropdown của chúng được portal ra document.body qua
+  // <FloatingDropdown>, tự đóng khi click ngoài/Escape/scroll/resize (xem component
+  // FloatingDropdown ở đầu file). Giữ chúng ở effect này sẽ sai vì target bên trong
+  // portal không còn nằm trong subtree DOM gốc để `.contains()`/`closest()` nhận ra.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
@@ -915,31 +1334,19 @@ function ProjectDetailContent() {
         setAddMemberDropdownOpen(false);
         setAddMemberSearch('');
       }
-      if (priorityDropdownOpen && priorityFilterRef.current && !priorityFilterRef.current.contains(target)) {
-        setPriorityDropdownOpen(false);
-      }
-      if (statusDropdownOpen && statusFilterRef.current && !statusFilterRef.current.contains(target)) {
-        setStatusDropdownOpen(false);
-      }
-      if (assignedDropdownOpen && assignedFilterRef.current && !assignedFilterRef.current.contains(target)) {
-        setAssignedDropdownOpen(false);
-      }
-      if (supportDropdownOpen && supportFilterRef.current && !supportFilterRef.current.contains(target)) {
-        setSupportDropdownOpen(false);
-      }
-      if (skillSolutionDropdownOpen && skillSolutionFilterRef.current && !skillSolutionFilterRef.current.contains(target)) {
-        setSkillSolutionDropdownOpen(false);
-      }
-      if (skillVendorDropdownOpen && skillVendorFilterRef.current && !skillVendorFilterRef.current.contains(target)) {
-        setSkillVendorDropdownOpen(false);
-      }
-      if (columnMenuOpen && columnMenuRef.current && !columnMenuRef.current.contains(target)) {
-        setColumnMenuOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [addMemberDropdownOpen, priorityDropdownOpen, statusDropdownOpen, assignedDropdownOpen, supportDropdownOpen, skillSolutionDropdownOpen, skillVendorDropdownOpen, columnMenuOpen]);
+  }, [addMemberDropdownOpen]);
+
+  // Escape thoát Task Focus Mode (các menu/popover portal tự xử lý Escape riêng)
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && taskFocusMode) setTaskFocusMode(false);
+    };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [taskFocusMode]);
 
   const handleSaveChannelLink = async (channelKey: string, value: string) => {
     setIsSavingLink(true);
@@ -1885,6 +2292,105 @@ function ProjectDetailContent() {
       .sort((a, b) => b.total - a.total);
   })();
 
+  // ============================================================
+  // TỔNG QUAN (dashboard) - toàn bộ derived từ items/taskGroups/phases đã có
+  // sẵn (query project-tasks), cùng kỳ lọc overviewTasksInPeriod/kpiTasks với
+  // 5 KPI card phía trên - không gọi thêm API nào ngoài activity feed.
+  // ============================================================
+
+  // Tiến độ theo Phase - không có field % theo phase từ backend, tính lại từ
+  // task/group/phase đã load sẵn (cùng cách summaryProjectStats/overdueTasksList
+  // đã tự tính từ items).
+  const overviewPhaseProgress = (() => {
+    const realPhases = phases.filter(p => !p.is_master && p.name.toLowerCase() !== 'master');
+    return realPhases.map(phase => {
+      const groupIds = new Set(taskGroups.filter(g => g.phase_id === phase.id).map(g => g.id));
+      const tasksInPhase = overviewTasksInPeriod.filter(t => groupIds.has(t.task_group_id));
+      const doneInPhase = tasksInPhase.filter(t => {
+        const s = (t.status || '').toLowerCase();
+        return s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+      }).length;
+      const total = tasksInPhase.length;
+      return { id: phase.id, name: phase.name, done: doneInPhase, total, percent: total > 0 ? Math.round((doneInPhase / total) * 100) : 0 };
+    });
+  })();
+
+  // Phân bổ task theo trạng thái - 4 nhóm loại trừ lẫn nhau (cộng lại = kpiTotal):
+  // Hoàn thành trước, còn lại nếu trễ hạn thì tính Trễ hạn (không tính lại vào
+  // Đang thực hiện/Chờ xử lý), phần còn lại mới xét status text.
+  const overviewStatusDistribution = (() => {
+    let done = 0, overdue = 0, inProgress = 0, waiting = 0;
+    kpiTasks.forEach((t: any) => {
+      const s = (t.status || '').toLowerCase();
+      const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+      if (isDone) { done++; return; }
+      if (calculateDaysLate(t) > 0) { overdue++; return; }
+      const isInProgress = s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress';
+      if (isInProgress) inProgress++; else waiting++;
+    });
+    return { done, inProgress, waiting, overdue };
+  })();
+
+  // Task theo Priority - giá trị priority thật trong hệ thống là
+  // Normal/High/Critical/Interrupt (không có "Low" - không hard-code nhãn mockup
+  // không khớp business data thật).
+  const overviewPriorityDistribution = (() => {
+    const counts: Record<string, number> = { Critical: 0, High: 0, Normal: 0, Interrupt: 0 };
+    kpiTasks.forEach((t: any) => {
+      const p = (t.priority || 'Normal');
+      const key = (['Critical', 'High', 'Normal', 'Interrupt'] as const).find(k => k.toLowerCase() === String(p).toLowerCase()) || 'Normal';
+      counts[key] += 1;
+    });
+    return counts;
+  })();
+
+  // Task theo loại - dùng skill_solution_name (field thật, đã dùng cho filter
+  // cột Skill Solution ở Tasks tab), không invent category mới.
+  const overviewSkillDistribution = (() => {
+    const counts: Record<string, number> = {};
+    kpiTasks.forEach((t: any) => {
+      const name = (t.skill_solution_name || '').trim();
+      if (!name) return;
+      counts[name] = (counts[name] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+  })();
+
+  // Khối lượng công việc theo thành viên - bản đầy đủ hơn workloadStats (có
+  // thêm cột Đang làm/Trễ hạn), vẫn key theo assigned_name như workloadStats
+  // đã làm (field thật trên task, không phải FK sang projectMembers).
+  const overviewMemberWorkload = (() => {
+    const map: Record<string, { name: string; total: number; done: number; inProgress: number; overdue: number }> = {};
+    kpiTasks.forEach((t: any) => {
+      const name = (t.assigned_name || '').trim();
+      if (!name) return;
+      if (!map[name]) map[name] = { name, total: 0, done: 0, inProgress: 0, overdue: 0 };
+      map[name].total += 1;
+      const s = (t.status || '').toLowerCase();
+      const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+      if (isDone) map[name].done += 1;
+      else if (calculateDaysLate(t) > 0) map[name].overdue += 1;
+      else if (s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress') map[name].inProgress += 1;
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  })();
+
+  // "Cần chú ý" - toàn bộ là aggregate trên data đã có, không thêm nguồn mới.
+  const overviewUnassignedCount = kpiTasks.filter((t: any) => !(t.assigned_name || '').trim()).length;
+  const overviewMembersWithOverdue = new Set(overdueTasksList.map((t: any) => (t.assigned_name || '').trim()).filter(Boolean)).size;
+
+  // Task gần đây - KHÔNG có field last-updated ở task nào cả (đã audit), nên
+  // dùng id giảm dần làm proxy "gần thêm gần đây nhất", không fake timestamp.
+  const overviewRecentTasks = [...kpiTasks].sort((a: any, b: any) => (b.id || 0) - (a.id || 0)).slice(0, 8);
+
+  // Hoạt động gần đây - gọi lại đúng API Audit Logs hiện có (getProjectAuditLogs),
+  // chỉ khi đang thực sự đứng ở Overview > Tổng quan để tránh fetch thừa.
+  const { data: overviewActivityData } = useQuery({
+    queryKey: ['overview-activity', id],
+    queryFn: () => getProjectAuditLogs(Number(id), { page: 1, page_size: 8 }),
+    enabled: !!id && activeMainTab === 'overview' && overviewSubTab === 'summary',
+  });
+  const overviewActivityItems = overviewActivityData?.items || [];
 
   const getGroupIndex = (groupId: number) => {
     const group = taskGroups.find(g => g.id === groupId);
@@ -2455,7 +2961,7 @@ function ProjectDetailContent() {
   const renderInlineAddRow = (groupId: number, parentCode: string | null, level: number) => {
     return (
       <tr key={`add-task-row-${groupId}-${parentCode || 'root'}`} className="bg-[#f0fdf4] border-2 border-emerald-500/40 animate-fade-in">
-        <td className="p-1 text-center sticky left-0 bg-[#f0fdf4] z-10" style={{ width: '130px', minWidth: '130px' }}>
+        <td className="p-1 text-center sticky left-0 bg-[#f0fdf4] z-10" style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
           <div className="flex items-center justify-center gap-1">
             <button
               onClick={handleSaveTask}
@@ -2641,7 +3147,7 @@ function ProjectDetailContent() {
         ? "bg-white hover:bg-[#f0f5ff]/60"
         : "bg-[#f8fafc] hover:bg-[#eef3fb] border-l-[3px] border-l-[#0058be]";
 
-    const cellStyle = "px-4 py-3 border-r border-slate-100 last:border-r-0 text-left align-middle text-[12.5px]";
+    const cellStyle = `px-3 ${rowPadY} border-r border-slate-100/70 last:border-r-0 text-left align-middle text-[12.5px]`;
 
     return (
       <tr
@@ -2695,10 +3201,10 @@ function ProjectDetailContent() {
           }
         }}
       >
-        {/* ACTION BUTTONS: ☰ ↑ ↓ 📄 🗑️ */}
-        <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
+        {/* Action cell: drag handle luôn hiện, các action còn lại gộp vào menu ⋯ khi hover */}
+        <td className="px-1 py-2 text-center sticky left-0 z-[11] bg-white" style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
           <div className="flex items-center justify-center gap-1">
-            {/* ☰ Drag / Move */}
+            {/* Drag / Move to another group */}
             <button
               type="button"
               onMouseDown={() => {
@@ -2710,132 +3216,118 @@ function ProjectDetailContent() {
                 if (el) el.setAttribute('draggable', 'false');
               }}
               onClick={() => handleMoveTask(task.task_group_id, task.id)}
-              className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400 font-bold"
-              title="Di chuyển task sang group khác"
+              className="flex items-center justify-center w-6 h-6 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400"
+              title="Kéo hoặc bấm để di chuyển task sang group khác"
             >
-              <span>☰</span>
+              <GripVertical size={14} />
             </button>
 
-            {/* ↑ Add Above */}
-            <button
-              type="button"
-              onClick={() => {
-                setAddingTaskGroupId(task.task_group_id);
-                const parentCode = getParentCode(task.task_code) || null;
-                setAddingTaskParentCode(parentCode);
-                // Find previous task code to insert after
-                const prevIdx = tIdx - 1;
-                if (prevIdx >= 0) {
-                  const prevTask = sortedTasks[prevIdx];
-                  setAddingTaskAfterCode(prevTask.task_code);
-                } else {
-                  setAddingTaskAfterCode(null);
-                }
-                const dynamicCols = getDynamicColumns();
-                const initialForm: Record<string, string> = {};
-                dynamicCols.forEach(col => { initialForm[col] = ''; });
-                const todayStr = toPickerDate(new Date().toISOString());
-                const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                if (statusCol) initialForm[statusCol] = 'Waiting';
-                const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
-                if (priorityCol) initialForm[priorityCol] = 'Normal';
-                const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
-                if (startDateCol) initialForm[startDateCol] = todayStr;
-                const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
-                if (kpiRatioCol) initialForm[kpiRatioCol] = '90/10';
-                const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
-                if (mandayCol) initialForm[mandayCol] = '1.0';
-                console.log('Today string:', todayStr);
-                console.log('Initial form START DATE:', startDateCol ? initialForm[startDateCol] : undefined);
-                setNewForm(initialForm);
-              }}
-              className="flex items-center justify-center w-5 h-5 hover:bg-blue-100 rounded text-blue-500 font-bold text-[12px]"
-              title="Thêm Task phía trên"
-            >
-              <span>↑</span>
-            </button>
+            {/* More actions menu */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  const key = `task-${task.id}`;
+                  setRowMenuAnchorEl(e.currentTarget);
+                  setOpenRowMenu(openRowMenu === key ? null : key);
+                }}
+                className="flex items-center justify-center w-6 h-6 rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-slate-700 transition-opacity data-[open=true]:opacity-100 data-[open=true]:bg-slate-200"
+                data-open={openRowMenu === `task-${task.id}`}
+                title="Thao tác khác"
+              >
+                <MoreHorizontal size={15} />
+              </button>
+              <FloatingDropdown
+                anchorEl={rowMenuAnchorEl}
+                open={openRowMenu === `task-${task.id}`}
+                onClose={() => setOpenRowMenu(null)}
+                align="right"
+                className="bg-white border border-slate-200 rounded-lg shadow-lg w-[190px] py-1 text-left"
+              >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenRowMenu(null);
+                      setAddingTaskGroupId(task.task_group_id);
+                      const parentCode = getParentCode(task.task_code) || null;
+                      setAddingTaskParentCode(parentCode);
+                      const prevIdx = tIdx - 1;
+                      if (prevIdx >= 0) {
+                        const prevTask = sortedTasks[prevIdx];
+                        setAddingTaskAfterCode(prevTask.task_code);
+                      } else {
+                        setAddingTaskAfterCode(null);
+                      }
+                      const dynamicCols = getDynamicColumns();
+                      const initialForm: Record<string, string> = {};
+                      dynamicCols.forEach(col => { initialForm[col] = ''; });
+                      const todayStr = toPickerDate(new Date().toISOString());
+                      const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                      if (statusCol) initialForm[statusCol] = 'Waiting';
+                      const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
+                      if (priorityCol) initialForm[priorityCol] = 'Normal';
+                      const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
+                      if (startDateCol) initialForm[startDateCol] = todayStr;
+                      const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
+                      if (kpiRatioCol) initialForm[kpiRatioCol] = '90/10';
+                      const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
+                      if (mandayCol) initialForm[mandayCol] = '1.0';
+                      setNewForm(initialForm);
+                    }}
+                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                  >
+                    <Plus size={15} className="text-blue-500" />
+                    Thêm task phía trên
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenRowMenu(null);
+                      setAddingTaskGroupId(task.task_group_id);
+                      const parentCode = getParentCode(task.task_code) || null;
+                      setAddingTaskParentCode(parentCode);
+                      setAddingTaskAfterCode(task.task_code);
+                      const dynamicCols = getDynamicColumns();
+                      const initialForm: Record<string, string> = {};
+                      dynamicCols.forEach(col => { initialForm[col] = ''; });
+                      const todayStr = toPickerDate(new Date().toISOString());
+                      const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                      if (statusCol) initialForm[statusCol] = 'Waiting';
+                      const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
+                      if (priorityCol) initialForm[priorityCol] = 'Normal';
+                      const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
+                      if (startDateCol) initialForm[startDateCol] = todayStr;
+                      const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
+                      if (kpiRatioCol) initialForm[kpiRatioCol] = '90/10';
+                      const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
+                      if (mandayCol) initialForm[mandayCol] = '1.0';
+                      setNewForm(initialForm);
+                    }}
+                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                  >
+                    <Plus size={15} className="text-emerald-600" />
+                    Thêm task phía dưới
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setOpenRowMenu(null); handleDuplicateTask(task.task_group_id, task.id); }}
+                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                  >
+                    <Copy size={15} className="text-amber-600" />
+                    Nhân bản
+                  </button>
+                  <div className="my-1 border-t border-slate-100" />
+                  <button
+                    type="button"
+                    onClick={() => { setOpenRowMenu(null); setTaskToDelete(task.id); }}
+                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 size={15} />
+                    Xóa
+                  </button>
+              </FloatingDropdown>
+            </div>
 
-            {/* ↓ Add Below */}
-            <button
-              type="button"
-              onClick={() => {
-                setAddingTaskGroupId(task.task_group_id);
-                const parentCode = getParentCode(task.task_code) || null;
-                setAddingTaskParentCode(parentCode);
-                setAddingTaskAfterCode(task.task_code);
-                const dynamicCols = getDynamicColumns();
-                const initialForm: Record<string, string> = {};
-                dynamicCols.forEach(col => { initialForm[col] = ''; });
-                const todayStr = toPickerDate(new Date().toISOString());
-                const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                if (statusCol) initialForm[statusCol] = 'Waiting';
-                const priorityCol = dynamicCols.find(c => c.toUpperCase() === 'PRIORITY');
-                if (priorityCol) initialForm[priorityCol] = 'Normal';
-                const startDateCol = dynamicCols.find(c => c.toUpperCase() === 'START DATE');
-                if (startDateCol) initialForm[startDateCol] = todayStr;
-                const kpiRatioCol = dynamicCols.find(c => c.toUpperCase() === 'KPI RATIO');
-                if (kpiRatioCol) initialForm[kpiRatioCol] = '90/10';
-                const mandayCol = dynamicCols.find(c => c.toUpperCase() === 'MANDAY EST');
-                if (mandayCol) initialForm[mandayCol] = '1.0';
-                console.log('Today string:', todayStr);
-                console.log('Initial form START DATE:', startDateCol ? initialForm[startDateCol] : undefined);
-                setNewForm(initialForm);
-              }}
-              className="flex items-center justify-center w-5 h-5 hover:bg-emerald-100 rounded text-emerald-600 font-bold text-[12px]"
-              title="Thêm Task phía dưới"
-            >
-              <span>↓</span>
-            </button>
-
-            {/* 📄 Duplicate */}
-            <button
-              type="button"
-              onClick={() => handleDuplicateTask(task.task_group_id, task.id)}
-              className="flex items-center justify-center w-5 h-5 hover:bg-amber-100 rounded text-amber-600"
-              title="Nhân bản Task"
-            >
-              <span>📄</span>
-            </button>
-
-            {/* 🔔 Nhắc Leader
-            {(() => {
-              const today = new Date(); today.setHours(0,0,0,0);
-              const endEst = task.end_date_est ? new Date(task.end_date_est) : null;
-              const isOverdue = endEst && endEst < today && !['Done','Cancel'].includes(task.status);
-              const isDonePending = task.status === 'Done' && (!task.kpi_final || Number(task.kpi_final) === 0);
-              const needsRemind = isOverdue || isDonePending;
-              return (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await remindLeader(task.id);
-                      flash('Đã gửi nhắc nhở tới Leader thành công! 🔔');
-                    } catch (err: any) {
-                      alert('Lỗi gửi nhắc nhở: ' + (err.response?.data?.detail || err.message));
-                    }
-                  }}
-                  className={`flex items-center justify-center w-5 h-5 rounded text-[11px] transition-all ${
-                    needsRemind
-                      ? 'hover:bg-amber-100 text-amber-500 animate-pulse'
-                      : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'
-                  }`}
-                  title={needsRemind ? (isOverdue ? 'Task đang trễ hạn! Nhắc Leader' : 'Task Done chờ Leader xác nhận') : 'Nhắc Leader'}
-                >
-                  <span>🔔</span>
-                </button>
-              );
-            })()} */}
-
-            {/* 🗑️ Delete */}
-            <button
-              type="button"
-              onClick={() => setTaskToDelete(task.id)}
-              className="flex items-center justify-center w-5 h-5 hover:bg-red-100 rounded text-red-400"
-              title="Xóa Task"
-            >
-              <span>🗑️</span>
-            </button>
           </div>
         </td>
 
@@ -3261,9 +3753,9 @@ function ProjectDetailContent() {
                       e.stopPropagation();
                       toggleParentCollapse(taskIdVal);
                     }}
-                    className="cursor-pointer select-none text-[11px] p-0.5 hover:bg-slate-200 rounded font-normal text-slate-400 inline-flex items-center justify-center w-5 h-5 transition-all duration-200 hover:text-slate-600"
+                    className="cursor-pointer select-none p-0.5 hover:bg-slate-200 rounded font-normal text-slate-400 inline-flex items-center justify-center w-5 h-5 transition-all duration-200 hover:text-slate-600"
                   >
-                    {isCollapsedParent ? '▶' : '▼'}
+                    {isCollapsedParent ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
                   </span>
                 )}
                 {!hasChildren && level > 0 && (
@@ -3397,6 +3889,7 @@ function ProjectDetailContent() {
             <td
               key={col}
               className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-text hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
+              style={{ width: getColumnWidth(col), ...getPinTdStyle(col) }}
               onClick={() => {
                 if (!isReadOnly) handleStartEdit(col, val);
               }}
@@ -3404,7 +3897,7 @@ function ProjectDetailContent() {
               <div className="flex items-center justify-between w-full">
                 {cellContent}
                 {!isReadOnly && (
-                  <span className="opacity-0 group-hover:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
+                  <Pencil size={11} className="opacity-0 group-hover:opacity-40 transition-opacity shrink-0 text-slate-500" />
                 )}
               </div>
             </td>
@@ -3481,7 +3974,7 @@ function ProjectDetailContent() {
           onBlur={handleBlurEvent}
         >
           {/* Action Column */}
-          <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
+          <td className={`px-1 ${rowPadY} text-center`} style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
             <span className="text-[10px] text-indigo-600 font-bold">Thêm Group...</span>
           </td>
 
@@ -3567,7 +4060,7 @@ function ProjectDetailContent() {
             // Auto columns
             if (['END DATE EST', 'MANDAY ACTUAL', 'END ACTUAL', 'MD ACTUAL', 'END DATE (EST)', 'END DAY (EST)', 'END DATE ACTUAL', 'MANDAY ACTUAL'].includes(colUpper)) {
               return (
-                <td key={col} className="px-4 py-2 text-slate-400 font-mono text-center bg-slate-50/20 text-[10px]">
+                <td key={col} className={`px-3 ${rowPadY} text-slate-400 font-mono text-center bg-slate-50/20 text-[10px]`}>
                   Auto
                 </td>
               );
@@ -3575,7 +4068,7 @@ function ProjectDetailContent() {
 
             // Other columns not applicable to Task Group
             return (
-              <td key={col} className="px-4 py-2 bg-slate-100/50 text-slate-300 text-center select-none">
+              <td key={col} className={`px-3 ${rowPadY} bg-slate-100/40 text-slate-300 text-center select-none`}>
                 -
               </td>
             );
@@ -3594,7 +4087,7 @@ function ProjectDetailContent() {
         result.push(
           <tr
             key={`phase-hdr-${phase.id}`}
-            className="bg-[#e2e8f0] border-l-[6px] border-l-[#475569] border-b border-[#c2c6d6]/40 transition-colors duration-150"
+            className="bg-[#F7F9FC] border-b border-[#E3E7EE] transition-colors duration-150"
             onDragOver={(e) => {
               e.preventDefault();
               e.currentTarget.classList.add("bg-indigo-100");
@@ -3619,11 +4112,16 @@ function ProjectDetailContent() {
               }
             }}
           >
-            <td className="px-2 py-2.5 text-center"></td>
-            <td colSpan={getDynamicColumns().length} className="px-4 py-2.5">
-              <span className="text-[12px] font-black text-[#1e293b] uppercase tracking-wider">
-                GIAI ĐOẠN: {phase.name}
-              </span>
+            <td className="px-2 py-2 text-center"></td>
+            <td colSpan={getDynamicColumns().length} className="px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-semibold text-[#334155] uppercase tracking-wide">
+                  {phase.name}
+                </span>
+                <span className="text-[10.5px] font-normal text-[#b0b6c2] normal-case tracking-normal">
+                  {groupsInPhase.reduce((sum, g) => sum + (g.task_count || 0), 0)} tasks • {groupsInPhase.reduce((sum, g) => sum + (Number(g.manday_est) || 0), 0)} MD
+                </span>
+              </div>
             </td>
           </tr>
         );
@@ -3651,7 +4149,7 @@ function ProjectDetailContent() {
           <tr
             id={`tg-row-${group.id}`}
             key={`tg-row-${group.id}`}
-            className="bg-[#eef2ff] hover:bg-[#e0e7ff] border-b border-[#c7d2fe] border-l-4 border-l-indigo-500 group transition-colors"
+            className="bg-white hover:bg-slate-50/70 border-b border-[#E3E7EE] border-l-2 border-l-indigo-200 group transition-colors"
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("application/json", JSON.stringify({ type: "group", groupId: group.id, phaseId: group.phase_id }));
@@ -3699,16 +4197,16 @@ function ProjectDetailContent() {
             }}
           >
             {/* Actions column */}
-            <td className="px-1 py-2 text-center" style={{ width: '130px', minWidth: '130px' }}>
-              <div className="flex items-center justify-center gap-1.5 text-[12px] select-none">
+            <td className={`px-1 ${rowPadY} text-center sticky left-0 z-[11] bg-white`} style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
+              <div className="flex items-center justify-center gap-1.5 select-none">
                 {/* 1. Toggle Expand/Collapse (Always visible) */}
                 <button
                   type="button"
                   onClick={() => toggleGroupCollapse(group.id)}
-                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-indigo-700 font-bold"
+                  className="flex items-center justify-center w-6 h-6 rounded hover:bg-indigo-200 text-indigo-700"
                   title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
                 >
-                  <span>{isCollapsed ? '▶' : '▼'}</span>
+                  {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 </button>
 
                 {/* 2. Drag Handle / Move Task Group (Always visible, clickable) */}
@@ -3723,55 +4221,77 @@ function ProjectDetailContent() {
                     if (el) el.setAttribute('draggable', 'false');
                   }}
                   onClick={() => handleMoveTaskGroup(group.phase_id, group.id)}
-                  className="flex items-center justify-center w-5 h-5 cursor-grab active:cursor-grabbing hover:bg-indigo-200 rounded text-slate-400 font-bold"
-                  title="Di chuyển Task Group sang Phase khác"
+                  className="flex items-center justify-center w-6 h-6 cursor-grab active:cursor-grabbing hover:bg-indigo-200 rounded text-slate-400"
+                  title="Kéo hoặc bấm để di chuyển Task Group sang Phase khác"
                 >
-                  <span>☰</span>
+                  <GripVertical size={14} />
                 </button>
 
-                {/* 3. Add Task (Hover visible) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingTaskGroupId(group.id);
-                    setAddingTaskParentCode(null);
-                    const initialForm: Record<string, string> = {};
-                    dynamicCols.forEach(col => { initialForm[col] = ''; });
-                    if (dynamicCols.find(c => c.toUpperCase() === 'STATUS')) {
-                      initialForm['STATUS'] = 'Waiting';
-                    }
-                    setNewForm(initialForm);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-slate-400"
-                  title="Thêm Task con"
-                >
-                  <span>➕</span>
-                </button>
-
-                {/* 4. Edit Task Group Name (Hover visible) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const detailCol = dynamicCols.find(c => ['DETAIL TASK', 'TASK', 'DESCRIPTION'].includes(c.toUpperCase().trim())) || 'Detail Task';
-                    const groupVal = getGroupCellValue(group, detailCol.toUpperCase().trim());
-                    setEditingCell({ taskId: -group.id, colName: detailCol });
-                    setEditValue(groupVal);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-slate-400"
-                  title="Chỉnh sửa Task Group"
-                >
-                  <span>✏️</span>
-                </button>
-
-                {/* 5. Delete Task Group (Hover visible) */}
-                <button
-                  type="button"
-                  onClick={() => handleDeleteTaskGroupClick(group)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded hover:bg-indigo-200 text-slate-400"
-                  title="Xóa Task Group"
-                >
-                  <span>🗑️</span>
-                </button>
+                {/* 3. More actions (hover visible): add task / edit name / delete */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      const key = `group-${group.id}`;
+                      setRowMenuAnchorEl(e.currentTarget);
+                      setOpenRowMenu(openRowMenu === key ? null : key);
+                    }}
+                    className="flex items-center justify-center w-6 h-6 rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-indigo-200 hover:text-slate-700 transition-opacity data-[open=true]:opacity-100 data-[open=true]:bg-indigo-200"
+                    data-open={openRowMenu === `group-${group.id}`}
+                    title="Thao tác khác"
+                  >
+                    <MoreHorizontal size={15} />
+                  </button>
+                  <FloatingDropdown
+                    anchorEl={rowMenuAnchorEl}
+                    open={openRowMenu === `group-${group.id}`}
+                    onClose={() => setOpenRowMenu(null)}
+                    align="right"
+                    className="bg-white border border-slate-200 rounded-lg shadow-lg w-[190px] py-1 text-left"
+                  >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenRowMenu(null);
+                          setAddingTaskGroupId(group.id);
+                          setAddingTaskParentCode(null);
+                          const initialForm: Record<string, string> = {};
+                          dynamicCols.forEach(col => { initialForm[col] = ''; });
+                          if (dynamicCols.find(c => c.toUpperCase() === 'STATUS')) {
+                            initialForm['STATUS'] = 'Waiting';
+                          }
+                          setNewForm(initialForm);
+                        }}
+                        className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                      >
+                        <Plus size={15} className="text-[#0058be]" />
+                        Thêm task
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenRowMenu(null);
+                          const detailCol = dynamicCols.find(c => ['DETAIL TASK', 'TASK', 'DESCRIPTION'].includes(c.toUpperCase().trim())) || 'Detail Task';
+                          const groupVal = getGroupCellValue(group, detailCol.toUpperCase().trim());
+                          setEditingCell({ taskId: -group.id, colName: detailCol });
+                          setEditValue(groupVal);
+                        }}
+                        className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                      >
+                        <Pencil size={15} className="text-slate-500" />
+                        Đổi tên nhóm
+                      </button>
+                      <div className="my-1 border-t border-slate-100" />
+                      <button
+                        type="button"
+                        onClick={() => { setOpenRowMenu(null); handleDeleteTaskGroupClick(group); }}
+                        className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 size={15} />
+                        Xóa nhóm
+                      </button>
+                  </FloatingDropdown>
+                </div>
               </div>
             </td>
 
@@ -3788,7 +4308,7 @@ function ProjectDetailContent() {
               // TASK ID = Roman numeral
               if (isTaskId) {
                 return (
-                  <td key={col} className="px-4 py-2.5 text-[13px] font-black text-indigo-800 whitespace-nowrap">
+                  <td key={col} className="px-4 py-2.5 text-[13px] font-bold text-indigo-600 whitespace-nowrap" style={{ width: getColumnWidth(col), ...getPinTdStyle(col) }}>
                     {group.roman_index || to_roman(gIdx + 1)}
                   </td>
                 );
@@ -3878,7 +4398,7 @@ function ProjectDetailContent() {
                 }
 
                 // Display mode with edit icon for END ACTUAL
-                const cellStyle = "px-4 py-2.5 text-xs font-bold text-[#1e293b] whitespace-nowrap";
+                const cellStyle = `px-3 ${rowPadY} text-xs font-bold text-[#1e293b] whitespace-nowrap`;
                 return (
                   <td key={col} className={`${cellStyle} group cursor-pointer hover:bg-indigo-100/60`} onClick={() => setEditingGroupDate(group.id)}>
                     <div className="flex items-center justify-between w-full">
@@ -3893,7 +4413,7 @@ function ProjectDetailContent() {
                           <span className="text-slate-400 italic">—</span>
                         )}
                       </span>
-                      <span className="opacity-0 group-hover:opacity-60 text-[10px] transition-opacity shrink-0">✏️</span>
+                      <Pencil size={11} className="opacity-0 group-hover:opacity-60 transition-opacity shrink-0 text-slate-500" />
                     </div>
                   </td>
                 );
@@ -4049,7 +4569,7 @@ function ProjectDetailContent() {
                 const allDone = childTasks.length > 0 && childTasks.every(t => (t.status || '').toLowerCase() === 'done');
                 displayContent = (
                   <div className="flex items-center justify-between w-full pr-2 gap-2">
-                    <span className="text-[12px] font-black text-[#0f172a] whitespace-pre-wrap break-words block leading-relaxed pr-2">{val}</span>
+                    <span className="text-[12.5px] font-semibold text-[#1e293b] whitespace-pre-wrap break-words block leading-relaxed pr-2 pl-3">{val}</span>
                     {isMember() && (group.status.toLowerCase() !== 'done') && (
                       <button
                         type="button"
@@ -4061,7 +4581,7 @@ function ProjectDetailContent() {
                           }
                           try {
                             await remindTaskGroup(group.id);
-                            flash('Đã gửi thông báo nhắc Leader duyệt Task Cha thành công! 🔔');
+                            flash('Đã gửi thông báo nhắc Leader duyệt Task Cha thành công!');
                           } catch (err: any) {
                             alert(err.response?.data?.detail || 'Lỗi khi gửi thông báo nhắc duyệt!');
                           }
@@ -4072,7 +4592,8 @@ function ProjectDetailContent() {
                           }`}
                         title={allDone ? "Nhắc Leader duyệt Task Cha này" : "Phải hoàn thành tất cả task con (Done) mới được gửi thông báo"}
                       >
-                        <span>🔔 Nhắc Leader</span>
+                        <Bell size={11} />
+                        <span>Nhắc Leader</span>
                       </button>
                     )}
                   </div>
@@ -4083,6 +4604,7 @@ function ProjectDetailContent() {
                 <td
                   key={col}
                   className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : ''} ${isEditable ? 'cursor-text hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')}`}
+                  style={{ width: getColumnWidth(col), ...getPinTdStyle(col) }}
                   onClick={() => {
                     if (isEditable) {
                       setEditingCell({ taskId: -group.id, colName: col });
@@ -4093,7 +4615,7 @@ function ProjectDetailContent() {
                   <div className="flex items-center justify-between w-full">
                     {displayContent}
                     {isEditable && (
-                      <span className="opacity-0 group-hover:opacity-40 text-[10px] transition-opacity shrink-0">✏️</span>
+                      <Pencil size={11} className="opacity-0 group-hover:opacity-40 transition-opacity shrink-0 text-slate-500" />
                     )}
                   </div>
                 </td>
@@ -4188,18 +4710,52 @@ function ProjectDetailContent() {
 
   return (
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden font-body-md" style={{ fontFamily: "'Work Sans', sans-serif" }}>
-      {!isFullscreen && <Navbar />}
+      {!isFullscreen && !taskFocusMode && <Navbar />}
 
-      <div className={`flex-1 min-w-0 ${isFullscreen ? 'pl-0 pt-0' : 'pl-0 md:pl-[230px] pt-14 md:pt-0'} flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
+      <div className={`flex-1 min-w-0 ${(isFullscreen || taskFocusMode) ? 'pl-0 pt-0' : 'pl-0 md:pl-[230px] pt-14 md:pt-0'} flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
 
-        {/* TOP BAR / NAVIGATION HEADER */}
-        <div className="min-h-[52px] bg-white border-b border-[#c2c6d6]/60 flex flex-wrap items-center justify-between gap-2 px-4 md:px-8 py-2 md:py-0 shrink-0 z-30">
-          <div className="flex items-center gap-3">
-            <span className="text-[#565e74] hover:text-[#0058be] cursor-pointer text-xs font-semibold" onClick={() => router.push('/project-hub')}>Dự án</span>
-            <span className="text-[#c2c6d6] text-xs">/</span>
-            <span className="text-xs font-bold text-[#0b1c30]">{project.name}</span>
+        {taskFocusMode ? (
+          /* Task Focus Mode: minimal breadcrumb only, table gets the rest of the viewport */
+          <div className="min-h-[44px] bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between gap-2 px-4 shrink-0 z-30">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-[#565e74]">Dự án</span>
+              <span className="text-[#c2c6d6]">/</span>
+              <span className="font-bold text-[#0b1c30]">{project.name}</span>
+              {activePhase !== 'ALL' && (
+                <>
+                  <span className="text-[#c2c6d6]">/</span>
+                  <span className="text-[#0058be] font-semibold">{activePhase}</span>
+                </>
+              )}
+            </div>
+            <button
+              onClick={() => setTaskFocusMode(false)}
+              className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all flex items-center gap-1.5"
+            >
+              <Minimize2 size={13} /> Thu nhỏ
+            </button>
           </div>
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+        ) : (
+        <>
+        {/* TOP BAR / NAVIGATION HEADER - project identity (name/badges) sống duy nhất ở đây, không lặp lại bên dưới */}
+        <div className="min-h-[52px] bg-white border-b border-[#c2c6d6]/60 flex flex-wrap items-center justify-between gap-2 px-4 md:px-8 py-2 md:py-0 shrink-0 z-30">
+          <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+            <span className="text-[#565e74] hover:text-[#0058be] cursor-pointer text-xs font-semibold shrink-0" onClick={() => router.push('/project-hub')}>Dự án</span>
+            <span className="text-[#c2c6d6] text-xs shrink-0">/</span>
+            <span className="text-sm font-bold text-[#0b1c30] truncate">{project.name}</span>
+            {project.customer_name && (
+              <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-bold border border-slate-200 flex items-center gap-1.5 shadow-xs shrink-0">
+                <Building2 size={12} /> {project.customer_name}
+              </span>
+            )}
+            <span className="px-2.5 py-0.5 rounded-full bg-[#eff4ff] text-[#1d4ed8] text-[10px] font-bold uppercase border border-[#0058be]/10 shrink-0">
+              Phase {project.current_phase || '1. Tư vấn'}
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full bg-slate-50 text-[#565e74] text-[10px] font-semibold border border-slate-200 shrink-0">
+              Năm: {project.project_code || 'Chưa cấu hình'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
             {project && (
               <div className="flex items-center gap-2">
                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${project.ai_status === 'NEED_RECHECK'
@@ -4226,18 +4782,30 @@ function ProjectDetailContent() {
               onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
               className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
             >
-              🤖 AI Review
+              <Sparkles size={14} /> AI Review
             </button>
 
-            <button onClick={() => reloadAll()} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
-              ↻ Tải lại
+            <button onClick={() => reloadAll()} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all flex items-center gap-1.5">
+              <RotateCcw size={14} /> Tải lại
             </button>
 
             <button onClick={() => setIsFullscreen(f => !f)} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all">
               {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </button>
+
+            {isProjectManager && (
+              <button
+                onClick={() => setShowEditProjectModal(true)}
+                className="text-xs font-bold px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 shadow-sm transition-all flex items-center gap-1.5"
+              >
+                <Pencil size={14} />
+                Chỉnh sửa dự án
+              </button>
+            )}
           </div>
         </div>
+        </>
+        )}
 
         {/* MAIN CONTAINER */}
         <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-6">
@@ -4247,45 +4815,14 @@ function ProjectDetailContent() {
             </div>
           )}
 
-          {/* Breadcrumbs & Header */}
-          <div className="mb-4">
-
-            <div className="flex justify-between items-end">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h2 className="text-xl font-bold text-[#0b1c30] tracking-tight">{project.name}</h2>
-                  {project.customer_name && (
-                    <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-[11px] font-bold border border-slate-200 flex items-center gap-1.5 shadow-xs">
-                      🏢 {project.customer_name}
-                    </span>
-                  )}
-                  <span className="px-3 py-1 rounded-full bg-[#eff4ff] text-[#1d4ed8] text-[10px] font-bold uppercase border border-[#0058be]/10">
-                    Phase {project.current_phase || '1. Tư vấn'}
-                  </span>
-                </div>
-                <p className="text-[12px] text-[#565e74] mt-1">
-                  Năm: {project.project_code || 'Chưa cấu hình'}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                {isProjectManager && (
-                  <button
-                    onClick={() => setShowEditProjectModal(true)}
-                    className="bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center border border-slate-200 transition-colors shadow-sm"
-                  >
-                    <span className="material-symbols-outlined text-[18px] mr-2">edit</span>
-                    Chỉnh sửa dự án
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
+          {!taskFocusMode && (
+          <>
 
           {/* TAB NAVIGATION */}
           <div className="border-b border-[#c2c6d6]/60 flex space-x-4 sm:space-x-8 overflow-x-auto">
             <button
               onClick={() => router.push(`/project/detail/overview?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">dashboard</span>
@@ -4293,7 +4830,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'tasks' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">task</span>
@@ -4301,7 +4838,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/meetings?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'meetings' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">meeting_room</span>
@@ -4309,7 +4846,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/chats?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'chats' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">chat</span>
@@ -4317,7 +4854,7 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/members?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'members' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">groups</span>
@@ -4326,7 +4863,7 @@ function ProjectDetailContent() {
             {isAdmin() && (
               <button
                 onClick={() => router.push(`/project/detail/audit-logs?id=${id}`)}
-                className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+                className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'audit_logs' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                   }`}
               >
                 <span className="material-symbols-outlined mr-2 text-[18px]">history</span>
@@ -4335,7 +4872,7 @@ function ProjectDetailContent() {
             )}
             <button
               onClick={() => router.push(`/project/detail/resources?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'resources' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'resources' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">folder_open</span>
@@ -4343,13 +4880,15 @@ function ProjectDetailContent() {
             </button>
             <button
               onClick={() => router.push(`/project/detail/prototype?id=${id}`)}
-              className={`px-1 py-3 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'prototype' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
+              className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'prototype' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
                 }`}
             >
               <span className="material-symbols-outlined mr-2 text-[18px]">science</span>
               Prototype
             </button>
           </div>
+          </>
+          )}
 
           {/* MAIN TABS CONTENT AREA */}
           <div className="w-full">
@@ -4439,6 +4978,30 @@ function ProjectDetailContent() {
                     </div>
                   </div>
 
+                  {/* SUB-TAB: Tổng quan / Chi tiết */}
+                  <div className="border-b border-slate-200 flex items-center gap-6">
+                    <button
+                      onClick={() => setOverviewSubTab('summary')}
+                      className={`h-9 text-[13px] transition-all whitespace-nowrap border-b-2 ${overviewSubTab === 'summary'
+                        ? 'text-[#0058be] font-semibold border-[#0058be]'
+                        : 'text-[#565e74] font-medium border-transparent hover:text-[#0b1c30]'
+                        }`}
+                    >
+                      Tổng quan
+                    </button>
+                    <button
+                      onClick={() => setOverviewSubTab('detail')}
+                      className={`h-9 text-[13px] transition-all whitespace-nowrap border-b-2 ${overviewSubTab === 'detail'
+                        ? 'text-[#0058be] font-semibold border-[#0058be]'
+                        : 'text-[#565e74] font-medium border-transparent hover:text-[#0b1c30]'
+                        }`}
+                    >
+                      Chi tiết
+                    </button>
+                  </div>
+
+                  {overviewSubTab === 'summary' && (
+                  <>
                   {/* 5 METRIC CARDS */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                     {/* Thẻ 1: Tổng số task hoàn thành / tổng task */}
@@ -4500,135 +5063,400 @@ function ProjectDetailContent() {
                     </div>
                   </div>
 
-                  {/* BẢNG TỔNG HỢP SUMMARY PROJECT (Theo mẫu Excel) */}
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-6">
-                    <div className="bg-amber-400 px-5 py-3 border-b border-amber-500 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-slate-900 font-bold">table_chart</span>
-                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">SUMMARY PROJECT (BÁO CÁO TỔNG QUAN DỰ ÁN)</h3>
+                  {/* ROW: Tiến độ theo Phase | Phân bổ task theo trạng thái | Khối lượng theo thành viên */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
+                    {/* TIẾN ĐỘ THEO PHASE */}
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider flex items-center gap-2">
+                          <Layers size={14} className="text-[#0058be]" />
+                          Tiến độ theo Phase
+                        </h3>
+                        {overviewPhaseProgress.length > 8 && (
+                          <button onClick={() => setShowAllOverviewPhases(!showAllOverviewPhases)} className="text-[11px] text-[#0058be] hover:underline font-semibold">
+                            {showAllOverviewPhases ? 'Thu gọn' : 'Xem tất cả'}
+                          </button>
+                        )}
                       </div>
-                      <span className="text-xs font-semibold text-slate-800 bg-white/80 px-3 py-1 rounded-full shadow-sm">
-                        Số liệu tự động lọc theo bộ lọc thời gian
-                      </span>
+                      {overviewPhaseProgress.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-6">Chưa có Phase nào.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {(showAllOverviewPhases ? overviewPhaseProgress : overviewPhaseProgress.slice(0, 8)).map(ph => (
+                            <div key={ph.id}>
+                              <div className="flex items-center justify-between text-[12px] mb-1">
+                                <span className="font-semibold text-[#0b1c30] truncate max-w-[55%]" title={ph.name}>{ph.name}</span>
+                                <span className="text-slate-500 shrink-0">{ph.done}/{ph.total} · {ph.percent}%</span>
+                              </div>
+                              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${ph.percent === 100 ? 'bg-emerald-500' : 'bg-[#0058be]'}`} style={{ width: `${ph.percent}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
+                    {/* PHÂN BỔ TASK THEO TRẠNG THÁI */}
+                    <OverviewDonutCard
+                      title="Phân bổ task theo trạng thái"
+                      centerLabel="Tasks"
+                      data={[
+                        { name: 'Hoàn thành', value: overviewStatusDistribution.done, fill: '#10b981' },
+                        { name: 'Đang thực hiện', value: overviewStatusDistribution.inProgress, fill: '#3b82f6' },
+                        { name: 'Chờ xử lý', value: overviewStatusDistribution.waiting, fill: '#cbd5e1' },
+                        { name: 'Trễ hạn', value: overviewStatusDistribution.overdue, fill: '#ef4444' },
+                      ]}
+                    />
+
+                    {/* KHỐI LƯỢNG CÔNG VIỆC THEO THÀNH VIÊN */}
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider flex items-center gap-2">
+                          <Users size={14} className="text-[#0058be]" />
+                          Khối lượng công việc theo thành viên
+                        </h3>
+                        {overviewMemberWorkload.length > 5 && (
+                          <button onClick={() => setShowAllOverviewWorkload(!showAllOverviewWorkload)} className="text-[11px] text-[#0058be] hover:underline font-semibold">
+                            {showAllOverviewWorkload ? 'Thu gọn' : 'Xem tất cả'}
+                          </button>
+                        )}
+                      </div>
+                      {overviewMemberWorkload.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-6">Chưa có thành viên nào được giao task.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-[12px] text-left border-collapse">
+                            <thead>
+                              <tr className="text-slate-400 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-100">
+                                <th className="py-1.5 pr-2">Thành viên</th>
+                                <th className="py-1.5 px-2 text-center">Tổng</th>
+                                <th className="py-1.5 px-2 text-center">Hoàn thành</th>
+                                <th className="py-1.5 px-2 text-center">Đang làm</th>
+                                <th className="py-1.5 pl-2 text-center">Trễ hạn</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {(showAllOverviewWorkload ? overviewMemberWorkload : overviewMemberWorkload.slice(0, 5)).map(m => {
+                                const initials = m.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+                                return (
+                                  <tr key={m.name}>
+                                    <td className="py-2 pr-2">
+                                      <div className="flex items-center gap-1.5">
+                                        <div className="w-5 h-5 rounded-full bg-blue-100 text-[#0058be] flex items-center justify-center text-[9px] font-extrabold shrink-0">{initials}</div>
+                                        <span className="font-semibold text-[#0b1c30] truncate max-w-[110px]" title={m.name}>{m.name}</span>
+                                      </div>
+                                    </td>
+                                    <td className="py-2 px-2 text-center font-bold text-[#0b1c30]">{m.total}</td>
+                                    <td className="py-2 px-2 text-center text-emerald-600 font-semibold">{m.done}</td>
+                                    <td className="py-2 px-2 text-center text-blue-600 font-semibold">{m.inProgress}</td>
+                                    <td className="py-2 pl-2 text-center text-red-600 font-semibold">{m.overdue}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ROW: Task theo Priority | Task theo loại | Hoạt động gần đây | Cần chú ý */}
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-stretch">
+                    <OverviewDonutCard
+                      title="Task theo Priority"
+                      centerLabel="Tasks"
+                      data={[
+                        { name: 'Critical', value: overviewPriorityDistribution.Critical, fill: '#a855f7' },
+                        { name: 'High', value: overviewPriorityDistribution.High, fill: '#f97316' },
+                        { name: 'Normal', value: overviewPriorityDistribution.Normal, fill: '#3b82f6' },
+                        { name: 'Interrupt', value: overviewPriorityDistribution.Interrupt, fill: '#6366f1' },
+                      ]}
+                    />
+
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                      <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Task theo loại</h3>
+                      {overviewSkillDistribution.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có dữ liệu Skill Solution.</p>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {overviewSkillDistribution.map(s => {
+                            const max = overviewSkillDistribution[0]?.value || 1;
+                            return (
+                              <div key={s.name} className="flex items-center gap-2">
+                                <span className="text-[11px] text-slate-600 w-20 shrink-0 truncate" title={s.name}>{s.name}</span>
+                                <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
+                                  <div className="h-full bg-[#0058be] rounded" style={{ width: `${(s.value / max) * 100}%` }} />
+                                </div>
+                                <span className="text-[11px] font-bold text-[#0b1c30] w-6 text-right shrink-0">{s.value}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* HOẠT ĐỘNG GẦN ĐÂY */}
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Hoạt động gần đây</h3>
+                        {overviewActivityItems.length > 0 && (
+                          <button
+                            onClick={() => router.push(`/project/detail/audit-logs?id=${id}`)}
+                            className="text-[11px] text-[#0058be] hover:underline font-semibold"
+                          >
+                            Xem tất cả
+                          </button>
+                        )}
+                      </div>
+                      {overviewActivityItems.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có hoạt động nào.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {(showAllOverviewActivity ? overviewActivityItems : overviewActivityItems.slice(0, 4)).map(a => (
+                            <div key={a.id} className="flex items-start gap-2">
+                              <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-[9px] font-extrabold shrink-0 mt-0.5">
+                                {(a.user_name || '??').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[12px] text-[#0b1c30] leading-snug">
+                                  <span className="font-semibold">{a.user_name}</span>{' '}
+                                  <span className="text-slate-600">{a.description || a.action}</span>
+                                </p>
+                                <p className="text-[10.5px] text-slate-400 mt-0.5 flex items-center gap-1">
+                                  <Clock size={10} /> {formatTimeAgo(a.created_at)}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* CẦN CHÚ Ý */}
+                    <div className="bg-white rounded-xl border border-red-100 shadow-sm p-5 h-full flex flex-col">
+                      <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <AlertTriangle size={14} />
+                        Cần chú ý
+                      </h3>
+                      <div className="space-y-1.5">
+                        <button
+                          onClick={() => setOverviewSubTab('detail')}
+                          className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-red-50/40 hover:bg-red-50 transition-colors text-left"
+                        >
+                          <span className="text-[12px] text-[#0b1c30]">{kpiWarning} task trễ hạn</span>
+                          <ArrowRight size={13} className="text-red-500 shrink-0" />
+                        </button>
+                        <button
+                          onClick={() => setOverviewSubTab('detail')}
+                          className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-red-50/40 hover:bg-red-50 transition-colors text-left"
+                        >
+                          <span className="text-[12px] text-[#0b1c30]">{kpiCriticalThisWeek} task critical trong kỳ</span>
+                          <ArrowRight size={13} className="text-red-500 shrink-0" />
+                        </button>
+                        <div className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-red-50/40">
+                          <span className="text-[12px] text-[#0b1c30]">{overviewUnassignedCount} task chưa assign</span>
+                          <UserX size={13} className="text-red-500 shrink-0" />
+                        </div>
+                        <div className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-red-50/40">
+                          <span className="text-[12px] text-[#0b1c30]">{overviewMembersWithOverdue} thành viên có task trễ</span>
+                          <Users size={13} className="text-red-500 shrink-0" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* TASK GẦN ĐÂY */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+                      <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Task gần đây</h3>
+                      <button
+                        onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
+                        className="text-[11px] text-[#0058be] hover:underline font-semibold flex items-center gap-1"
+                      >
+                        Xem tất cả <ArrowRight size={12} />
+                      </button>
+                    </div>
+                    {overviewRecentTasks.length === 0 ? (
+                      <p className="text-xs text-slate-500 italic text-center py-6">Chưa có task nào.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[12px] text-left border-collapse">
+                          <thead>
+                            <tr className="text-slate-400 uppercase text-[9px] font-extrabold tracking-wider bg-slate-50 border-b border-slate-100">
+                              <th className="px-4 py-2">Task ID</th>
+                              <th className="px-4 py-2">Tên task</th>
+                              <th className="px-4 py-2">Priority</th>
+                              <th className="px-4 py-2">Status</th>
+                              <th className="px-4 py-2">Assigned</th>
+                              <th className="px-4 py-2">Start date</th>
+                              <th className="px-4 py-2">End date (est)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {overviewRecentTasks.map((t: any) => {
+                              const prio = (t.priority || 'Normal').toUpperCase();
+                              return (
+                                <tr key={t.id} className="hover:bg-slate-50/60">
+                                  <td className="px-4 py-2.5 font-mono text-[#0058be] font-semibold whitespace-nowrap">{t.task_code || t.id}</td>
+                                  <td className="px-4 py-2.5 max-w-[280px] truncate" title={t.detail || t.detail_task}>{t.detail || t.detail_task}</td>
+                                  <td className="px-4 py-2.5 whitespace-nowrap">
+                                    <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase ${prio === 'CRITICAL' ? 'bg-purple-100 text-purple-700' :
+                                      prio === 'HIGH' ? 'bg-orange-100 text-orange-700' :
+                                        prio === 'INTERRUPT' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                                      }`}>{prio}</span>
+                                  </td>
+                                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{t.status || 'Waiting'}</td>
+                                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-700">{t.assigned_name || <span className="text-slate-400 italic">Chưa giao</span>}</td>
+                                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-500">{t.start_date ? formatDateToShow(t.start_date) : '—'}</td>
+                                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-500">{t.end_date_est ? formatDateToShow(t.end_date_est) : '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                  </>
+                  )}
+
+                  {overviewSubTab === 'detail' && (
+                  <>
+                  {/* HEADER Báo cáo chi tiết */}
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
+                        <BarChart3 size={16} className="text-[#0058be]" />
+                        Báo cáo chi tiết
+                      </h3>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Kế hoạch so với thực tế, phân tích Implement/Maintenance, nhân sự và các vấn đề cần xử lý</p>
+                    </div>
+                    <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+                      Số liệu tự động lọc theo bộ lọc thời gian
+                    </span>
+                  </div>
+
+                  {/* ROW: Thời gian | Manday | Task | KPI - kế hoạch vs thực tế */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
+                    {(() => {
+                      const durDelta = summaryProjectStats.durationAct.total - summaryProjectStats.durationEst.total;
+                      const mdDelta = summaryProjectStats.mandayAct.total - summaryProjectStats.mandayEst.total;
+                      const mdVariancePct = summaryProjectStats.mandayEst.total > 0
+                        ? Math.round((mdDelta / summaryProjectStats.mandayEst.total) * 100)
+                        : 0;
+                      const DeltaLine = ({ delta, unit, goodIsNegative = true }: { delta: number; unit: string; goodIsNegative?: boolean }) => {
+                        const isGood = goodIsNegative ? delta <= 0 : delta >= 0;
+                        const Icon = delta === 0 ? Minus : (delta > 0 ? ArrowUpRight : ArrowDownRight);
+                        return (
+                          <div className={`mt-auto pt-2 text-[11px] font-semibold flex items-center gap-1 ${delta === 0 ? 'text-slate-400' : isGood ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <Icon size={13} />
+                            Chênh lệch {delta > 0 ? '+' : ''}{delta}{unit}
+                          </div>
+                        );
+                      };
+                      return (
+                        <>
+                          {/* THỜI GIAN */}
+                          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Thời gian (ngày)</h4>
+                            <div className="flex items-center justify-between text-[12.5px] mb-1.5">
+                              <span className="text-slate-500">Kế hoạch</span><span className="font-bold text-[#0b1c30]">{summaryProjectStats.durationEst.total}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[12.5px]">
+                              <span className="text-slate-500">Thực tế</span><span className="font-bold text-[#0b1c30]">{summaryProjectStats.durationAct.total}</span>
+                            </div>
+                            <DeltaLine delta={durDelta} unit=" ngày" />
+                          </div>
+
+                          {/* MANDAY */}
+                          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Manday</h4>
+                            <div className="flex items-center justify-between text-[12.5px] mb-1.5">
+                              <span className="text-slate-500">Kế hoạch</span><span className="font-bold text-[#0b1c30]">{summaryProjectStats.mandayEst.total}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[12.5px]">
+                              <span className="text-slate-500">Thực tế</span><span className="font-bold text-[#0b1c30]">{summaryProjectStats.mandayAct.total}</span>
+                            </div>
+                            <DeltaLine delta={mdVariancePct} unit="%" />
+                          </div>
+
+                          {/* TASK */}
+                          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Task</h4>
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[12px]">
+                              <div className="flex items-center justify-between"><span className="text-slate-500">Tổng</span><span className="font-bold text-[#0b1c30]">{summaryProjectStats.totalTasksCount.total}</span></div>
+                              <div className="flex items-center justify-between"><span className="text-slate-500">Done</span><span className="font-bold text-emerald-600">{kpiDone}</span></div>
+                              <div className="flex items-center justify-between"><span className="text-slate-500">Trễ</span><span className="font-bold text-red-600">{summaryProjectStats.overdueTasksCount.total}</span></div>
+                              <div className="flex items-center justify-between"><span className="text-slate-500">Critical</span><span className="font-bold text-purple-600">{summaryProjectStats.criticalCount.total}</span></div>
+                              <div className="flex items-center justify-between"><span className="text-slate-500">High</span><span className="font-bold text-amber-600">{summaryProjectStats.highCount.total}</span></div>
+                              <div className="flex items-center justify-between"><span className="text-slate-500">Normal</span><span className="font-bold text-blue-600">{summaryProjectStats.normalCount.total}</span></div>
+                            </div>
+                          </div>
+
+                          {/* KPI */}
+                          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">KPI</h4>
+                            <div className="flex items-baseline gap-1 mb-3">
+                              <span className="text-2xl font-bold text-emerald-600">{summaryProjectStats.kpi.total}</span>
+                              <span className="text-[11px] text-slate-400">điểm</span>
+                            </div>
+                            <div className="mt-auto grid grid-cols-2 gap-2 text-[11px]">
+                              <div className="bg-amber-50 rounded-lg px-2.5 py-1.5">
+                                <p className="text-amber-700 font-semibold">Implement</p>
+                                <p className="font-bold text-amber-800">{summaryProjectStats.kpi.imp}</p>
+                              </div>
+                              <div className="bg-blue-50 rounded-lg px-2.5 py-1.5">
+                                <p className="text-blue-700 font-semibold">Maintenance</p>
+                                <p className="font-bold text-blue-800">{summaryProjectStats.kpi.main}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  {/* PHÂN TÍCH THEO GIAI ĐOẠN IMPLEMENT / MAINTENANCE */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                    <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Phân tích theo giai đoạn</h3>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-xs text-left border-collapse">
+                      <table className="w-full text-[12.5px] text-left border-collapse">
                         <thead>
-                          <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-300">
-                            <th className="p-3 border-r border-slate-200 w-12 text-center bg-slate-200/80">NO.</th>
-                            <th className="p-3 border-r border-slate-200 min-w-[180px] bg-slate-200/80">INFOR (THÔNG TIN CHỈ SỐ)</th>
-                            <th className="p-3 border-r border-slate-200 text-center w-32 bg-emerald-100 text-emerald-900">TOTAL (TỔNG)</th>
-                            <th className="p-3 border-r border-slate-200 text-center w-36 bg-amber-100 text-amber-900">IMPLEMENT (TRIỂN KHAI)</th>
-                            <th className="p-3 border-r border-slate-200 text-center w-36 bg-blue-100 text-blue-900">MAINTENANCE (BẢO TRÌ)</th>
-                            <th className="p-3 min-w-[250px] bg-slate-200/80">NOTE (GHI CHÚ / TÊN TASK TRỄ)</th>
+                          <tr className="text-slate-400 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-100">
+                            <th className="py-2 pr-3">Chỉ số</th>
+                            <th className="py-2 px-3 text-center bg-amber-50/60 rounded-t-md">Implement</th>
+                            <th className="py-2 pl-3 text-center bg-blue-50/60 rounded-t-md">Maintenance</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
-                          {/* STT 1: THỜI GIAN */}
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={2}>1</td>
-                            <td className="p-3 border-r border-slate-200">Tổng thời gian ước tính</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-900">{summaryProjectStats.durationEst.total} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationEst.imp} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationEst.main} Ngày</td>
-                            <td className="p-3 text-slate-500 italic text-[11px]" rowSpan={2}>
-                              Tính theo Initiation Start Date và Final Acceptance Date
-                            </td>
-                          </tr>
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 border-r border-slate-200">Tổng thời gian thực hiện thực tế</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-900">{summaryProjectStats.durationAct.total} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationAct.imp} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200">{summaryProjectStats.durationAct.main} Ngày</td>
-                          </tr>
-
-                          {/* STT 2: MANDAYS */}
-                          <tr className="hover:bg-slate-50 bg-slate-50/50">
-                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={2}>2</td>
-                            <td className="p-3 border-r border-slate-200 font-semibold text-blue-900">Tổng Mandays ước tính</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-blue-900">{summaryProjectStats.mandayEst.total} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200 text-amber-900 font-bold">{summaryProjectStats.mandayEst.imp} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200 text-blue-900 font-bold">{summaryProjectStats.mandayEst.main} Ngày</td>
-                            <td className="p-3" rowSpan={2}></td>
-                          </tr>
-                          <tr className="hover:bg-slate-50 bg-slate-50/50">
-                            <td className="p-3 border-r border-slate-200 font-semibold text-blue-900">Tổng Mandays thực tế</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-blue-900">{summaryProjectStats.mandayAct.total} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200 text-amber-900 font-bold">{summaryProjectStats.mandayAct.imp} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200 text-blue-900 font-bold">{summaryProjectStats.mandayAct.main} Ngày</td>
-                          </tr>
-
-                          {/* STT 3: TASK TRỄ */}
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={2}>3</td>
-                            <td className="p-3 border-r border-slate-200 font-semibold text-red-700">Tổng số ngày trễ task</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueDays.total} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueDays.imp} Ngày</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueDays.main} Ngày</td>
-                            <td className="p-3 border-l border-slate-200" rowSpan={2}>
-                              {summaryProjectStats.overdueNotesList.length === 0 ? (
-                                <span className="text-slate-400 italic">Không có task trễ</span>
-                              ) : (
-                                <ul className="space-y-1 text-[11px] text-red-700 font-semibold max-h-24 overflow-y-auto">
-                                  {summaryProjectStats.overdueNotesList.map((item, idx) => (
-                                    <li key={idx} className="truncate" title={item}>{item}</li>
-                                  ))}
-                                </ul>
-                              )}
-                            </td>
-                          </tr>
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 border-r border-slate-200 font-semibold text-red-700">Tổng số task trễ</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueTasksCount.total}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueTasksCount.imp}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-red-600">{summaryProjectStats.overdueTasksCount.main}</td>
-                          </tr>
-
-                          {/* STT 4: KPI */}
-                          <tr className="hover:bg-slate-50 bg-slate-50/50">
-                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50">4</td>
-                            <td className="p-3 border-r border-slate-200 font-semibold text-emerald-800">Tổng KPI</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-emerald-700">{summaryProjectStats.kpi.total}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-emerald-700">{summaryProjectStats.kpi.imp}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-emerald-700">{summaryProjectStats.kpi.main}</td>
-                            <td className="p-3"></td>
-                          </tr>
-
-                          {/* STT 5: PHÂN BỔ PRIORITY */}
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 text-center border-r border-slate-200 font-bold bg-slate-50" rowSpan={4}>5</td>
-                            <td className="p-3 border-r border-slate-200 font-bold">Tổng số tasks</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold">{summaryProjectStats.totalTasksCount.total}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold">{summaryProjectStats.totalTasksCount.imp}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold">{summaryProjectStats.totalTasksCount.main}</td>
-                            <td className="p-3" rowSpan={4}></td>
-                          </tr>
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 border-r border-slate-200 text-rose-700 font-bold">Tổng số tasks Critical</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-rose-600">{summaryProjectStats.criticalCount.total}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-rose-600">{summaryProjectStats.criticalCount.imp}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-rose-600">{summaryProjectStats.criticalCount.main}</td>
-                          </tr>
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 border-r border-slate-200 text-amber-700 font-bold">Tổng số tasks High</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-amber-600">{summaryProjectStats.highCount.total}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-amber-600">{summaryProjectStats.highCount.imp}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-amber-600">{summaryProjectStats.highCount.main}</td>
-                          </tr>
-                          <tr className="hover:bg-slate-50">
-                            <td className="p-3 border-r border-slate-200 text-slate-700 font-bold">Tổng số tasks Normal</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-700">{summaryProjectStats.normalCount.total}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-700">{summaryProjectStats.normalCount.imp}</td>
-                            <td className="p-3 text-center border-r border-slate-200 font-bold text-slate-700">{summaryProjectStats.normalCount.main}</td>
-                          </tr>
+                        <tbody className="divide-y divide-slate-50">
+                          {[
+                            { label: 'Thời gian ước tính (ngày)', imp: summaryProjectStats.durationEst.imp, main: summaryProjectStats.durationEst.main },
+                            { label: 'Thời gian thực tế (ngày)', imp: summaryProjectStats.durationAct.imp, main: summaryProjectStats.durationAct.main },
+                            { label: 'Manday ước tính', imp: summaryProjectStats.mandayEst.imp, main: summaryProjectStats.mandayEst.main },
+                            { label: 'Manday thực tế', imp: summaryProjectStats.mandayAct.imp, main: summaryProjectStats.mandayAct.main },
+                            { label: 'Số ngày trễ', imp: summaryProjectStats.overdueDays.imp, main: summaryProjectStats.overdueDays.main },
+                            { label: 'Số task trễ', imp: summaryProjectStats.overdueTasksCount.imp, main: summaryProjectStats.overdueTasksCount.main },
+                            { label: 'Tổng KPI', imp: summaryProjectStats.kpi.imp, main: summaryProjectStats.kpi.main },
+                            { label: 'Tổng số task', imp: summaryProjectStats.totalTasksCount.imp, main: summaryProjectStats.totalTasksCount.main },
+                            { label: 'Task Critical', imp: summaryProjectStats.criticalCount.imp, main: summaryProjectStats.criticalCount.main },
+                            { label: 'Task High', imp: summaryProjectStats.highCount.imp, main: summaryProjectStats.highCount.main },
+                            { label: 'Task Normal', imp: summaryProjectStats.normalCount.imp, main: summaryProjectStats.normalCount.main },
+                          ].map(row => (
+                            <tr key={row.label}>
+                              <td className="py-2 pr-3 text-slate-600">{row.label}</td>
+                              <td className="py-2 px-3 text-center font-bold text-[#0b1c30] bg-amber-50/30">{row.imp}</td>
+                              <td className="py-2 pl-3 text-center font-bold text-[#0b1c30] bg-blue-50/30">{row.main}</td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
                   </div>
 
-                  {/* CHARTS ROW: 2 columns */}
-                  <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                  {/* PHÂN TÍCH NHÂN SỰ: workload + KPI ranking */}
+                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Phân tích nhân sự</h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 
                     {/* WORKLOAD CHART */}
                     <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[310px] flex flex-col">
@@ -4707,7 +5535,7 @@ function ProjectDetailContent() {
                       <div className="flex items-center justify-between mb-3">
                         <div>
                           <h3 className="text-sm font-bold text-[#0b1c30] flex items-center gap-2">
-                            <span className="material-symbols-outlined text-amber-500 text-[18px]">emoji_events</span>
+                            <Trophy size={16} className="text-amber-500" />
                             Bảng xếp hạng KPI
                           </h3>
                           <p className="text-[11px] text-slate-500 mt-0.5">Tổng điểm KPI Final theo người phụ trách</p>
@@ -4786,20 +5614,22 @@ function ProjectDetailContent() {
                         );
                       })()}
                     </div>
+                  </div>
 
-                    {/* OVERDUE TASKS LIST SECTION */}
-                    <div className="mt-6 bg-white border border-red-200 rounded-xl p-5 shadow-sm flex flex-col">
-                      <div className="flex items-center justify-between border-b border-red-100 pb-3 mb-4 bg-red-50/20 px-3 py-2 rounded-lg">
-                        <h3 className="text-sm font-bold text-red-600 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-[18px]">warning</span>
-                          Danh sách Task trễ hạn ({overdueTasksList.length})
-                        </h3>
-                        <span className="text-[10px] font-semibold text-red-500">
-                          Cần đôn đốc xử lý gấp
-                        </span>
-                      </div>
+                  {/* VẤN ĐỀ CẦN XỬ LÝ: overdue summary + bảng task trễ compact */}
+                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">Vấn đề cần xử lý</h3>
+                  <div className="bg-white border border-red-200 rounded-xl p-5 shadow-sm flex flex-col">
+                    <div className="flex items-center justify-between flex-wrap gap-2 border-b border-red-100 pb-3 mb-4">
+                      <h4 className="text-sm font-bold text-red-600 flex items-center gap-2">
+                        <AlertTriangle size={16} />
+                        Task trễ hạn ({overdueTasksList.length})
+                      </h4>
+                      <span className="text-[11px] font-semibold text-red-500">
+                        Tổng {summaryProjectStats.overdueDays.total} ngày trễ · Implement {summaryProjectStats.overdueDays.imp} · Maintenance {summaryProjectStats.overdueDays.main}
+                      </span>
+                    </div>
 
-                      {overdueTasksList.length === 0 ? (
+                    {overdueTasksList.length === 0 ? (
                         <p className="text-xs text-slate-500 italic text-center py-6">Không có task trễ hạn.</p>
                       ) : (
                         <div className="max-h-[320px] overflow-y-auto overflow-x-auto custom-scrollbar rounded-lg border border-slate-100">
@@ -4861,196 +5691,455 @@ function ProjectDetailContent() {
                         </div>
                       )}
                     </div>
-
-                  </div>
+                  </>
+                  )}
                 </div>
               )}
 
               {/* TAB: TASKS */}
               {activeMainTab === 'tasks' && (
-                <div className="space-y-6">
+                <div className="space-y-6 -mt-2">
                   {/* Phase Tabs + Search */}
-                  <div className="flex items-center justify-between flex-wrap gap-3">
-                    <div className="flex items-center gap-1 bg-[#eff4ff] border border-[#c2c6d6]/60 rounded-xl p-1 flex-wrap">
-                      {dynamicTabs.map(p => (
-                        <button key={p.key} onClick={() => setActivePhase(p.key)}
-                          className={`px-5 py-2.5 rounded-lg text-[13px] font-bold transition-all flex items-center gap-1.5 ${activePhase === p.key
-                            ? p.key === 'ALL'
-                              ? 'bg-[#0058be] text-white shadow-sm'
-                              : 'bg-white text-[#0058be] shadow-sm'
-                            : 'text-[#565e74] hover:text-[#0058be]'
+                  <div className="flex items-center justify-between flex-nowrap gap-2">
+                    <div ref={phaseNavContainerRef} className="flex items-center gap-4 h-9 flex-nowrap overflow-hidden flex-1 min-w-0">
+                      {/* Master: luôn hiện, không tính vào cơ chế overflow */}
+                      <div className="relative flex items-center gap-1 shrink-0 h-9">
+                        <button onClick={() => setActivePhase('ALL')}
+                          className={`h-9 text-[13px] transition-all whitespace-nowrap border-b-2 ${activePhase === 'ALL'
+                            ? 'text-[#0058be] font-semibold border-[#0058be]'
+                            : 'text-[#565e74] font-medium border-transparent hover:text-[#0b1c30]'
                             }`}>
-                          <span>{p.label}</span>
-                          {activePhase === p.key && !p.is_master && (
-                            <span className="flex items-center gap-1 shrink-0">
-                              <span
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOpenAIReviewDrawer('PHASE', p.id!, p.label);
-                                }}
-                                className="text-indigo-600 hover:text-indigo-800 transition-colors p-0.5 rounded cursor-pointer text-[10px]"
-                                title="AI Check Giai Đoạn"
-                              >
-                                🤖
-                              </span>
-                              <span
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setEditingPhaseId(p.id);
-                                  setEditingPhaseName(p.label);
-                                  setShowRenameModal(true);
-                                }}
-                                className="text-amber-500 hover:text-amber-700 transition-colors p-0.5 rounded cursor-pointer text-[10px]"
-                                title="Đổi tên phase"
-                              >
-                                ✏️
-                              </span>
-                              <span
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeletePhase(p.id!, p.label);
-                                }}
-                                className="text-red-500 hover:text-red-700 transition-colors p-0.5 rounded cursor-pointer text-[10px]"
-                                title="Xóa phase"
-                              >
-                                🗑️
-                              </span>
-                            </span>
-                          )}
+                          Master
                         </button>
+                      </div>
+                      {visibleRealPhaseTabs.map(p => (
+                        <div key={p.key} className="relative group/phase flex items-center gap-1 shrink-0 h-9">
+                          <button onClick={() => setActivePhase(p.key)}
+                            title={p.label}
+                            className={`h-9 max-w-[160px] truncate text-[13px] transition-all whitespace-nowrap border-b-2 ${activePhase === p.key
+                              ? 'text-[#0058be] font-semibold border-[#0058be]'
+                              : 'text-[#565e74] font-medium border-transparent hover:text-[#0b1c30]'
+                              }`}>
+                            {p.label}
+                          </button>
+                          {activePhase === p.key && !p.is_master && (
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const key = `phase-${p.id}`;
+                                  setHeaderMenuAnchorEl(e.currentTarget);
+                                  setOpenHeaderMenu(openHeaderMenu === key ? null : key);
+                                }}
+                                className={`flex items-center justify-center w-7 h-7 rounded-full text-slate-400 bg-transparent hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:bg-slate-100 focus-visible:text-slate-600 transition-colors ${openHeaderMenu === `phase-${p.id}` ? 'bg-slate-100 text-slate-600' : ''}`}
+                                title="Thao tác Phase"
+                                aria-label="Thao tác Phase"
+                              >
+                                <MoreHorizontal size={14} />
+                              </button>
+                              <FloatingDropdown
+                                anchorEl={headerMenuAnchorEl}
+                                open={openHeaderMenu === `phase-${p.id}`}
+                                onClose={() => setOpenHeaderMenu(null)}
+                                className="bg-white border border-slate-200 rounded-lg shadow-lg w-[180px] py-1 text-left"
+                              >
+                                <button
+                                  onClick={() => { setOpenHeaderMenu(null); handleOpenAIReviewDrawer('PHASE', p.id!, p.label); }}
+                                  className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                                >
+                                  <Sparkles size={15} className="text-indigo-600" />
+                                  AI Check
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setOpenHeaderMenu(null);
+                                    setEditingPhaseId(p.id);
+                                    setEditingPhaseName(p.label);
+                                    setShowRenameModal(true);
+                                  }}
+                                  className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                                >
+                                  <Pencil size={15} className="text-slate-500" />
+                                  Chỉnh sửa
+                                </button>
+                                <div className="my-1 border-t border-slate-100" />
+                                <button
+                                  onClick={() => { setOpenHeaderMenu(null); handleDeletePhase(p.id!, p.label); }}
+                                  className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-red-600 hover:bg-red-50"
+                                >
+                                  <Trash2 size={15} />
+                                  Xóa Phase
+                                </button>
+                              </FloatingDropdown>
+                            </div>
+                          )}
+                        </div>
                       ))}
-                      <button
-                        onClick={handleOpenTemplateModal}
-                        className="flex items-center justify-center w-8 h-8 rounded-lg text-[#0058be] hover:bg-white hover:shadow-sm transition-all shrink-0"
-                        title="Áp dụng template"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">schema</span>
-                      </button>
+
+                      {overflowRealPhaseTabs.length > 0 && (
+                        <div className="relative shrink-0">
+                          <button
+                            ref={phaseOverflowBtnRef}
+                            onClick={() => setPhaseOverflowOpen(!phaseOverflowOpen)}
+                            className={`h-7 px-2.5 rounded-[8px] text-[12.5px] font-semibold border transition-all flex items-center gap-1 whitespace-nowrap ${phaseOverflowOpen ? 'bg-slate-100 border-slate-300 text-[#0b1c30]' : 'bg-white border-[#D9DEE7] text-[#565e74] hover:bg-slate-50'}`}
+                          >
+                            Phase khác ({overflowRealPhaseTabs.length})
+                            <ChevronDown size={14} />
+                          </button>
+                          <FloatingDropdown
+                            anchorEl={phaseOverflowBtnRef.current}
+                            open={phaseOverflowOpen}
+                            onClose={() => setPhaseOverflowOpen(false)}
+                            className="bg-white border border-slate-200 rounded-lg shadow-lg w-[280px] py-2"
+                          >
+                            <div className="px-3 pb-2">
+                              <div className="relative">
+                                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                  value={phaseOverflowSearch}
+                                  onChange={e => setPhaseOverflowSearch(e.target.value)}
+                                  placeholder="Tìm Phase..."
+                                  className="w-full h-[34px] pl-7 pr-2 text-[12px] border border-slate-200 rounded-md outline-none focus:border-[#0058be]"
+                                />
+                              </div>
+                              <p className="text-[10.5px] text-slate-400 mt-1.5 px-0.5">
+                                Đã ghim {pinnedPhaseIds.length}/{MAX_PINNED_PHASES} Phase — ghim tối đa {MAX_PINNED_PHASES}, bỏ ghim bớt nếu muốn đổi.
+                              </p>
+                            </div>
+                            <div className="max-h-[280px] overflow-auto border-t border-slate-100 py-1">
+                              {realPhases
+                                .filter(p => p.label.toLowerCase().includes(phaseOverflowSearch.trim().toLowerCase()))
+                                .map(p => {
+                                  const isPinned = pinnedPhaseIds.includes(p.id);
+                                  const isActive = activePhase === p.key;
+                                  const atCap = pinnedPhaseIds.length >= MAX_PINNED_PHASES && !isPinned;
+                                  return (
+                                    <div
+                                      key={p.key}
+                                      className={`flex items-center gap-2 px-3 h-9 text-[13px] cursor-pointer hover:bg-slate-50 ${isActive ? 'font-semibold text-[#0058be]' : 'text-[#0b1c30]'}`}
+                                      onClick={() => { setActivePhase(p.key); setPhaseOverflowOpen(false); }}
+                                    >
+                                      <span className="truncate flex-1">{p.label}</span>
+                                      {isActive && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be] shrink-0" />}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); togglePinPhase(p.id); }}
+                                        className={`p-1 rounded hover:bg-slate-200 shrink-0 ${isPinned ? 'text-[#0058be]' : atCap ? 'text-slate-200' : 'text-slate-300'}`}
+                                        title={isPinned ? 'Bỏ ghim Phase' : atCap ? `Đã ghim tối đa ${MAX_PINNED_PHASES} Phase` : 'Ghim Phase'}
+                                      >
+                                        {isPinned ? <Pin size={14} /> : <PinOff size={14} />}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </FloatingDropdown>
+                        </div>
+                      )}
+
+                      {/* + Thêm Phase / Áp dụng template LUÔN hiện ngoài thanh, không bao giờ
+                          rơi vào dropdown "Phase khác" - width của chúng luôn được reserve
+                          trong visiblePhaseCount ở trên. */}
                       <button
                         onClick={() => {
                           setNewPhaseName('');
                           setShowPhaseModal(true);
                         }}
-                        className="px-4 py-2.5 rounded-lg text-[13px] font-bold text-[#0058be] hover:bg-white hover:shadow-sm transition-all flex items-center gap-1 active:scale-95 shrink-0"
+                        className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-[#0058be] hover:bg-slate-100 transition-all flex items-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
                         title="Tạo Phase mới"
                       >
-                        <span className="material-symbols-outlined text-[15px] font-bold">add</span>
+                        <Plus size={14} />
                         Thêm Phase
                       </button>
+                      <div className="w-px h-5 bg-slate-200 mx-1 shrink-0" />
+                      <button
+                        onClick={handleOpenTemplateModal}
+                        className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                        title="Thay cấu trúc Phase và Task hiện tại bằng Project Template"
+                        aria-label="Áp dụng template — thay cấu trúc Phase và Task hiện tại bằng Project Template"
+                      >
+                        <LayoutTemplate size={14} />
+                        Áp dụng template
+                      </button>
+
+                      {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[160px]
+                          giống tab thật) để tính visiblePhaseCount ở trên - không ảnh hưởng layout. */}
+                      <div style={{ position: 'absolute', visibility: 'hidden', height: 0, overflow: 'hidden', whiteSpace: 'nowrap', pointerEvents: 'none' }} aria-hidden="true">
+                        {realPhases.map(p => (
+                          <div
+                            key={p.key}
+                            ref={el => { phaseTabMeasureRefs.current[p.key] = el; }}
+                            className="h-9 max-w-[160px] truncate text-[13px] font-semibold inline-flex items-center gap-1"
+                          >
+                            {p.label}
+                            <span className="w-7 h-7 inline-block" />
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex gap-2 items-center">
-                      <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)}
-                        placeholder="Tìm kiếm nhiệm vụ..."
-                        className="bg-white border border-[#c2c6d6] rounded-lg px-4 py-2.5 text-[13px] text-[#0b1c30] outline-none w-56 focus:border-[#0058be] placeholder-[#727785] transition-colors" />
+                    <div className="flex gap-2 items-center shrink-0">
+                      <div className="relative">
+                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#8b93a3] pointer-events-none" />
+                        <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)}
+                          placeholder="Tìm kiếm..."
+                          className="bg-white border border-[#D9DEE7] rounded-[8px] h-9 pl-8 pr-3 text-[12.5px] text-[#0b1c30] outline-none w-[220px] focus:border-[#0058be] placeholder:text-[12px] placeholder-[#8b93a3] transition-colors" />
+                      </div>
                       {taskSearch && (
                         <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
                       )}
 
-                      {/* + Thêm Group Task */}
-                      <button
-                        onClick={() => {
-                          let defaultPhaseId: number = 0;
-                          if (activePhase !== 'ALL') {
-                            const curPhase = phases.find(p => p.name === activePhase);
-                            if (curPhase) defaultPhaseId = curPhase.id;
-                          }
-                          if (!defaultPhaseId && phases.length > 0) {
-                            const nonMaster = phases.filter(p => !p.is_master);
-                            if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
-                          }
-                          if (!defaultPhaseId) {
-                            alert('Vui lòng tạo Phase trước!');
-                            return;
-                          }
-                          setAddingTaskGroupPhaseId(defaultPhaseId);
-                          setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
-                        }}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[13px] px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">add_box</span>
-                        Thêm Group Task
-                      </button>
+                      {/* Bộ lọc - primary filter UX, dùng chung state với per-column filter */}
+                      <div className="relative">
+                        {(() => {
+                          const activeFilterCount = [priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter].filter(f => f !== 'All').length;
+                          return (
+                            <button
+                              ref={filterPopoverBtnRef}
+                              onClick={() => setFilterPopoverOpen(!filterPopoverOpen)}
+                              className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap ${
+                                activeFilterCount > 0
+                                  ? 'bg-blue-50 border-blue-200 text-[#0058be]'
+                                  : 'bg-white border-[#D9DEE7] text-[#565e74] hover:bg-slate-50'
+                              }`}
+                              title="Bộ lọc"
+                            >
+                              <Filter size={15} />
+                              Bộ lọc
+                              {activeFilterCount > 0 && (
+                                <span className="bg-[#0058be] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{activeFilterCount}</span>
+                              )}
+                            </button>
+                          );
+                        })()}
+                        <FloatingDropdown
+                          anchorEl={filterPopoverBtnRef.current}
+                          open={filterPopoverOpen}
+                          onClose={() => setFilterPopoverOpen(false)}
+                          className="bg-white border border-slate-200 rounded-lg shadow-lg w-[280px] py-2.5"
+                        >
+                          <div className="px-3.5 pb-1.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bộ lọc</span>
+                          </div>
+                          {[
+                            { label: 'Priority', value: priorityFilter, set: setPriorityFilter, options: ['All', 'Normal', 'High', 'Critical', 'Interrupt'] },
+                            { label: 'Status', value: statusFilter, set: setStatusFilter, options: ['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'] },
+                            { label: 'Assigned', value: assignedFilter, set: setAssignedFilter, options: ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()] },
+                            { label: 'Support', value: supportFilter, set: setSupportFilter, options: ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()] },
+                            { label: 'Skill Solution', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
+                            { label: 'Skill Vendor', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
+                          ].map(f => (
+                            <div key={f.label} className="px-3.5 py-1.5 flex items-center justify-between gap-2">
+                              <span className="text-[12.5px] font-medium text-[#0b1c30]">{f.label}</span>
+                              <select
+                                value={f.value}
+                                onChange={e => f.set(e.target.value)}
+                                className="text-[12px] border border-slate-200 rounded-md px-2 py-1 outline-none focus:border-[#0058be] bg-white text-[#0b1c30] max-w-[140px]"
+                              >
+                                {f.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                              </select>
+                            </div>
+                          ))}
+                          <div className="px-3.5 pt-1.5 mt-1 border-t border-slate-100">
+                            <button
+                              onClick={() => {
+                                setPriorityFilter('All'); setStatusFilter('All'); setAssignedFilter('All');
+                                setSupportFilter('All'); setSkillSolutionFilter('All'); setSkillVendorFilter('All');
+                              }}
+                              className="text-[11px] font-semibold text-[#0058be] hover:underline flex items-center gap-1 pt-1"
+                            >
+                              <RotateCcw size={13} />
+                              Đặt lại
+                            </button>
+                          </div>
+                        </FloatingDropdown>
+                      </div>
 
-                      {/* + Thêm task */}
-                      <button
-                        onClick={() => {
-                          // Find group tasks in current active phase
-                          const currentPhaseGroups = activePhase === 'ALL'
-                            ? taskGroups
-                            : taskGroups.filter(g => {
-                              const ph = phases.find(p => p.id === g.phase_id);
-                              return ph && ph.name === activePhase;
-                            });
-                          if (currentPhaseGroups.length === 0) {
-                            alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
-                            return;
-                          }
-                          const targetGroup = currentPhaseGroups[0];
-                          setAddingTaskGroupId(targetGroup.id);
-                          setAddingTaskParentCode(null);
-                          const dynamicCols = getDynamicColumns();
-                          const initialForm: Record<string, string> = {};
-                          dynamicCols.forEach(col => { initialForm[col] = ''; });
-                          const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                          if (statusCol) initialForm[statusCol] = 'Waiting';
-                          setNewForm(initialForm);
-                        }}
-                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-bold text-[13px] px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">add</span>
-                        Thêm task
-                      </button>
-
-                      {/* Cột hiển thị */}
-                      <div className="relative" ref={columnMenuRef}>
+                      {/* Cột (cột hiển thị + thứ tự + độ rộng + ghim + mật độ hàng) */}
+                      <div className="relative">
                         <button
+                          ref={columnMenuBtnRef}
                           onClick={() => setColumnMenuOpen(!columnMenuOpen)}
-                          className={`px-3 py-2.5 rounded-lg text-[13px] font-bold border transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap ${
+                          className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap ${
                             hiddenColumns.length > 0
                               ? 'bg-blue-50 border-blue-200 text-[#0058be]'
-                              : 'bg-white border-[#c2c6d6] text-[#565e74] hover:bg-slate-50'
+                              : 'bg-white border-[#D9DEE7] text-[#565e74] hover:bg-slate-50'
                           }`}
-                          title="Chọn cột hiển thị"
+                          title="Tuỳ chỉnh cột của bảng"
                         >
-                          <span className="material-symbols-outlined text-[16px]">view_column</span>
-                          Cột hiển thị
+                          <Columns3 size={15} />
+                          Cột
                           {hiddenColumns.length > 0 && (
                             <span className="bg-[#0058be] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{hiddenColumns.length}</span>
                           )}
+                          <ChevronDown size={15} />
                         </button>
-                        {columnMenuOpen && (
-                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-30 w-64 max-h-96 overflow-auto">
-                            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 sticky top-0 bg-white">
+                        <FloatingDropdown
+                          anchorEl={columnMenuBtnRef.current}
+                          open={columnMenuOpen}
+                          onClose={() => setColumnMenuOpen(false)}
+                          align="right"
+                          className="bg-white border border-slate-200 rounded-lg shadow-lg w-[300px] max-h-[28rem] overflow-auto"
+                        >
+                            <div className="px-3.5 pt-3 pb-2.5">
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cột hiển thị</span>
+                              <div className="relative mt-2">
+                                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                  value={columnSearch}
+                                  onChange={e => setColumnSearch(e.target.value)}
+                                  placeholder="Tìm cột..."
+                                  className="w-full h-[34px] pl-7 pr-2 text-[12px] border border-slate-200 rounded-md outline-none focus:border-[#0058be]"
+                                />
+                              </div>
+                            </div>
+                            <div className="py-1 border-t border-slate-100">
+                              {TASK_COLUMNS.filter(col => col.toLowerCase().includes(columnSearch.trim().toLowerCase())).map(col => {
+                                const locked = LOCKED_COLUMNS.includes(col);
+                                const checked = !hiddenColumns.includes(col);
+                                return (
+                                  <label
+                                    key={col}
+                                    className={`flex items-center gap-2.5 px-3.5 h-8 text-[12px] ${locked ? 'text-slate-400 cursor-not-allowed' : 'text-[#0b1c30] hover:bg-slate-50 cursor-pointer'}`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={locked}
+                                      onChange={() => toggleColumnVisibility(col)}
+                                      className="accent-[#0058be]"
+                                    />
+                                    {col}
+                                    {locked && <Lock size={11} className="text-slate-300 ml-auto" />}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            <div className="px-3.5 py-3 border-t border-slate-100">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mật độ hàng</span>
+                              <div className="flex items-center gap-0.5 mt-2 bg-slate-100 rounded-[8px] p-0.5">
+                                {([['compact', 'Gọn'], ['normal', 'Vừa'], ['spacious', 'Rộng']] as const).map(([val, label]) => (
+                                  <button
+                                    key={val}
+                                    type="button"
+                                    onClick={() => setRowDensity(val)}
+                                    className={`flex-1 h-7 rounded-[6px] text-[12px] font-medium transition-all ${rowDensity === val ? 'bg-white text-[#0058be] font-semibold shadow-sm' : 'text-[#565e74] hover:text-[#0b1c30]'}`}
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="px-3.5 py-2.5 border-t border-slate-100">
                               <button
                                 onClick={resetColumnVisibility}
-                                className="text-[11px] font-semibold text-[#0058be] hover:underline"
+                                className="text-[11px] font-semibold text-[#0058be] hover:underline flex items-center gap-1"
                               >
+                                <RotateCcw size={13} />
                                 Khôi phục mặc định
                               </button>
                             </div>
-                            {TASK_COLUMNS.map(col => {
-                              const locked = LOCKED_COLUMNS.includes(col);
-                              const checked = !hiddenColumns.includes(col);
-                              return (
-                                <label
-                                  key={col}
-                                  className={`flex items-center gap-2 px-3 py-1.5 text-[12px] ${locked ? 'text-slate-400 cursor-not-allowed' : 'text-[#0b1c30] hover:bg-slate-50 cursor-pointer'}`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    disabled={locked}
-                                    onChange={() => toggleColumnVisibility(col)}
-                                    className="accent-[#0058be]"
-                                  />
-                                  {col}
-                                  {locked && <span className="text-[9px] text-slate-300 ml-auto">bắt buộc</span>}
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
+                        </FloatingDropdown>
+                      </div>
+
+                      {/* + Thêm task (split button: main = thêm task, dropdown = thêm task / thêm group task) */}
+                      <div className="relative flex">
+                        <button
+                          onClick={() => {
+                            // Find group tasks in current active phase
+                            const currentPhaseGroups = activePhase === 'ALL'
+                              ? taskGroups
+                              : taskGroups.filter(g => {
+                                const ph = phases.find(p => p.id === g.phase_id);
+                                return ph && ph.name === activePhase;
+                              });
+                            if (currentPhaseGroups.length === 0) {
+                              alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
+                              return;
+                            }
+                            const targetGroup = currentPhaseGroups[0];
+                            setAddingTaskGroupId(targetGroup.id);
+                            setAddingTaskParentCode(null);
+                            const dynamicCols = getDynamicColumns();
+                            const initialForm: Record<string, string> = {};
+                            dynamicCols.forEach(col => { initialForm[col] = ''; });
+                            const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                            if (statusCol) initialForm[statusCol] = 'Waiting';
+                            setNewForm(initialForm);
+                          }}
+                          className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-semibold text-[13px] h-9 pl-3.5 pr-3 rounded-l-[8px] shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
+                        >
+                          <Plus size={16} />
+                          Thêm task
+                        </button>
+                        <button
+                          ref={addTaskMenuBtnRef}
+                          onClick={() => setAddTaskMenuOpen(!addTaskMenuOpen)}
+                          className="bg-[#0058be] hover:bg-[#0058be]/95 text-white h-9 w-8 flex items-center justify-center rounded-r-[8px] shadow-sm transition-all border-l border-white/20 active:scale-95"
+                          title="Thêm task / Thêm Group Task"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                        <FloatingDropdown
+                          anchorEl={addTaskMenuBtnRef.current}
+                          open={addTaskMenuOpen}
+                          onClose={() => setAddTaskMenuOpen(false)}
+                          align="right"
+                          className="bg-white border border-slate-200 rounded-lg shadow-lg w-[200px] py-1"
+                        >
+                            <button
+                              onClick={() => {
+                                setAddTaskMenuOpen(false);
+                                const currentPhaseGroups = activePhase === 'ALL'
+                                  ? taskGroups
+                                  : taskGroups.filter(g => {
+                                    const ph = phases.find(p => p.id === g.phase_id);
+                                    return ph && ph.name === activePhase;
+                                  });
+                                if (currentPhaseGroups.length === 0) {
+                                  alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
+                                  return;
+                                }
+                                const targetGroup = currentPhaseGroups[0];
+                                setAddingTaskGroupId(targetGroup.id);
+                                setAddingTaskParentCode(null);
+                                const dynamicCols = getDynamicColumns();
+                                const initialForm: Record<string, string> = {};
+                                dynamicCols.forEach(col => { initialForm[col] = ''; });
+                                const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                                if (statusCol) initialForm[statusCol] = 'Waiting';
+                                setNewForm(initialForm);
+                              }}
+                              className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
+                            >
+                              <Plus size={16} className="text-[#0058be]" />
+                              Thêm task
+                            </button>
+                            <button
+                              onClick={() => {
+                                setAddTaskMenuOpen(false);
+                                let defaultPhaseId: number = 0;
+                                if (activePhase !== 'ALL') {
+                                  const curPhase = phases.find(p => p.name === activePhase);
+                                  if (curPhase) defaultPhaseId = curPhase.id;
+                                }
+                                if (!defaultPhaseId && phases.length > 0) {
+                                  const nonMaster = phases.filter(p => !p.is_master);
+                                  if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
+                                }
+                                if (!defaultPhaseId) {
+                                  alert('Vui lòng tạo Phase trước!');
+                                  return;
+                                }
+                                setAddingTaskGroupPhaseId(defaultPhaseId);
+                                setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                              }}
+                              className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
+                            >
+                              <FolderPlus size={16} className="text-indigo-600" />
+                              Thêm Group Task
+                            </button>
+                        </FloatingDropdown>
                       </div>
                     </div>
                   </div>
@@ -5059,90 +6148,163 @@ function ProjectDetailContent() {
                   <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
                     <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
                       <table className="w-full text-xs min-w-max border-collapse">
-                        <thead className="sticky top-0 z-20 bg-[#f8f9ff] border-b-2 border-[#c2c6d6]" style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }}>
+                        <thead className="sticky top-0 z-20 bg-[#FAFBFC] border-b border-[#E3E7EE]" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
                           <tr>
-                            <th className="text-center px-2 py-3.5 text-[11px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]" style={{ minWidth: '130px', width: '130px' }}>THAO TÁC</th>
+                            <th className="text-center px-2 py-3 bg-[#FAFBFC] sticky left-0 z-[16]" style={{ minWidth: `${ACTION_COL_WIDTH}px`, width: `${ACTION_COL_WIDTH}px` }}></th>
                             {getDynamicColumns().map((col) => {
-                              let widthStyle = {};
                               const colUpper = col.toUpperCase();
-                              if (colUpper.includes('DETAIL TASK') || colUpper === 'TASK' || colUpper === 'DESCRIPTION') {
-                                widthStyle = { minWidth: '350px', width: '350px' };
-                              } else if (colUpper.includes('ID')) {
-                                widthStyle = { minWidth: '80px' };
-                              } else {
-                                widthStyle = { minWidth: '110px' };
-                              }
+                              const width = getColumnWidth(col);
+                              const isPinned = pinnedColumns.includes(col);
+                              const canPin = col === 'TASK ID' || col === 'DETAIL TASK';
+                              const colFilterActive =
+                                (colUpper === 'PRIORITY' && priorityFilter !== 'All') ||
+                                (colUpper === 'STATUS' && statusFilter !== 'All') ||
+                                (colUpper === 'ASSIGNED' && assignedFilter !== 'All') ||
+                                (colUpper === 'SUPPORT' && supportFilter !== 'All') ||
+                                (colUpper === 'SKILL SOLUTION' && skillSolutionFilter !== 'All') ||
+                                (colUpper === 'SKILL VENDOR' && skillVendorFilter !== 'All');
                               return (
                                 <th
                                   key={col}
-                                  className="text-left px-4 py-3.5 text-[11px] font-bold text-[#565e74] uppercase tracking-wider bg-[#f8f9ff]"
-                                  style={widthStyle}
+                                  className={`text-left py-3 text-[10.5px] font-semibold text-[#6b7280] uppercase tracking-wide bg-[#FAFBFC] group/th relative ${isPinned ? 'sticky z-[15]' : ''} ${draggingColumn && draggingColumn !== col ? 'bg-blue-50/60' : ''}`}
+                                  style={{ minWidth: width, width, ...(isPinned ? { left: getPinnedLeftOffset(col) } : {}) }}
+                                  onDragOver={(e) => { if (draggingColumn) e.preventDefault(); }}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    if (draggingColumn) reorderColumn(draggingColumn, col);
+                                    setDraggingColumn(null);
+                                  }}
                                 >
-                                  <div className="flex items-center gap-2">
-                                    <span>{col}</span>
+                                  <div className="flex items-center gap-1.5 pl-3 pr-1">
+                                    <span
+                                      draggable
+                                      onDragStart={() => setDraggingColumn(col)}
+                                      onDragEnd={() => setDraggingColumn(null)}
+                                      className="cursor-grab active:cursor-grabbing select-none"
+                                      title="Kéo để đổi thứ tự cột"
+                                    >
+                                      {colUpper === 'MANDAY EST' ? <span title="Manday EST">MD</span> : col}
+                                    </span>
+                                    {colFilterActive && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]" />}
+
+                                    {/* Header menu: pin/unpin + hide column */}
+                                    <div className="relative ml-auto">
+                                      <button
+                                        type="button"
+                                        draggable={false}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const key = `col-${col}`;
+                                          setHeaderMenuAnchorEl(e.currentTarget);
+                                          setOpenHeaderMenu(openHeaderMenu === key ? null : key);
+                                        }}
+                                        className={`p-0.5 rounded hover:bg-slate-200 text-slate-400 opacity-0 group-hover/th:opacity-100 transition-opacity ${openHeaderMenu === `col-${col}` ? 'opacity-100 bg-slate-200' : ''}`}
+                                      >
+                                        <MoreHorizontal size={13} />
+                                      </button>
+                                      <FloatingDropdown
+                                        anchorEl={headerMenuAnchorEl}
+                                        open={openHeaderMenu === `col-${col}`}
+                                        onClose={() => setOpenHeaderMenu(null)}
+                                        align="right"
+                                        className="bg-white border border-slate-200 rounded-lg shadow-lg w-[170px] py-1 text-left normal-case"
+                                      >
+                                        {canPin && (
+                                          <button
+                                            onClick={() => { setOpenHeaderMenu(null); togglePinColumn(col); }}
+                                            className="w-full h-8 px-3 flex items-center gap-2 text-[12.5px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                                          >
+                                            <Lock size={13} className="text-slate-500" />
+                                            {isPinned ? 'Bỏ ghim' : 'Ghim bên trái'}
+                                          </button>
+                                        )}
+                                        {!LOCKED_COLUMNS.includes(col) && (
+                                          <button
+                                            onClick={() => { setOpenHeaderMenu(null); toggleColumnVisibility(col); }}
+                                            className="w-full h-8 px-3 flex items-center gap-2 text-[12.5px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                                          >
+                                            <Columns3 size={13} className="text-slate-500" />
+                                            Ẩn cột
+                                          </button>
+                                        )}
+                                      </FloatingDropdown>
+                                    </div>
+
                                     {colUpper === 'PRIORITY' && (
                                       <div className="relative" ref={priorityFilterRef}>
                                         <button
                                           onClick={() => setPriorityDropdownOpen(!priorityDropdownOpen)}
-                                          className={`p-1 rounded-md hover:bg-slate-200 ${priorityFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
+                                          className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${priorityFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}
                                         >
-                                          <span className="material-symbols-outlined text-base">filter_list</span>
+                                          <Filter size={13} />
                                         </button>
-                                        {priorityDropdownOpen && (
-                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 w-32">
-                                            {['All', 'Normal', 'High', 'Critical', 'Interrupt'].map(opt => (
-                                              <button
-                                                key={opt}
-                                                onClick={() => { setPriorityFilter(opt); setPriorityDropdownOpen(false); }}
-                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${priorityFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
-                                              >
-                                                {opt}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        )}
+                                        <FloatingDropdown
+                                          anchorEl={priorityFilterRef.current}
+                                          open={priorityDropdownOpen}
+                                          onClose={() => setPriorityDropdownOpen(false)}
+                                          align="right"
+                                          className="bg-white border border-slate-200 rounded-md shadow-lg w-32"
+                                        >
+                                          {['All', 'Normal', 'High', 'Critical', 'Interrupt'].map(opt => (
+                                            <button
+                                              key={opt}
+                                              onClick={() => { setPriorityFilter(opt); setPriorityDropdownOpen(false); }}
+                                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${priorityFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
+                                            >
+                                              {opt}
+                                            </button>
+                                          ))}
+                                        </FloatingDropdown>
                                       </div>
                                     )}
                                     {colUpper === 'STATUS' && (
                                       <div className="relative" ref={statusFilterRef}>
                                         <button
                                           onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
-                                          className={`p-1 rounded-md hover:bg-slate-200 ${statusFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}
+                                          className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${statusFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}
                                         >
-                                          <span className="material-symbols-outlined text-base">filter_list</span>
+                                          <Filter size={13} />
                                         </button>
-                                        {statusDropdownOpen && (
-                                          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-32">
-                                            {['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'].map(opt => (
-                                              <button
-                                                key={opt}
-                                                onClick={() => { setStatusFilter(opt); setStatusDropdownOpen(false); }}
-                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${statusFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
-                                              >
-                                                {opt}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        )}
+                                        <FloatingDropdown
+                                          anchorEl={statusFilterRef.current}
+                                          open={statusDropdownOpen}
+                                          onClose={() => setStatusDropdownOpen(false)}
+                                          align="right"
+                                          className="bg-white border border-slate-200 rounded-md shadow-lg w-32"
+                                        >
+                                          {['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'].map(opt => (
+                                            <button
+                                              key={opt}
+                                              onClick={() => { setStatusFilter(opt); setStatusDropdownOpen(false); }}
+                                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 ${statusFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}
+                                            >
+                                              {opt}
+                                            </button>
+                                          ))}
+                                        </FloatingDropdown>
                                       </div>
                                     )}
                                     {colUpper === 'ASSIGNED' && (() => {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={assignedFilterRef}>
-                                          <button onClick={() => setAssignedDropdownOpen(!assignedDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${assignedFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
-                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          <button onClick={() => setAssignedDropdownOpen(!assignedDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${assignedFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}>
+                                            <Filter size={13} />
                                           </button>
-                                          {assignedDropdownOpen && (
-                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-44 max-h-60 overflow-y-auto">
-                                              {opts.map(opt => (
-                                                <button key={opt} onClick={() => { setAssignedFilter(opt); setAssignedDropdownOpen(false); }}
-                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${assignedFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
-                                                  {opt}
-                                                </button>
-                                              ))}
-                                            </div>
-                                          )}
+                                          <FloatingDropdown
+                                            anchorEl={assignedFilterRef.current}
+                                            open={assignedDropdownOpen}
+                                            onClose={() => setAssignedDropdownOpen(false)}
+                                            align="right"
+                                            className="bg-white border border-slate-200 rounded-md shadow-lg w-44 max-h-60 overflow-y-auto"
+                                          >
+                                            {opts.map(opt => (
+                                              <button key={opt} onClick={() => { setAssignedFilter(opt); setAssignedDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${assignedFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                {opt}
+                                              </button>
+                                            ))}
+                                          </FloatingDropdown>
                                         </div>
                                       );
                                     })()}
@@ -5150,19 +6312,23 @@ function ProjectDetailContent() {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={supportFilterRef}>
-                                          <button onClick={() => setSupportDropdownOpen(!supportDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${supportFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
-                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          <button onClick={() => setSupportDropdownOpen(!supportDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${supportFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}>
+                                            <Filter size={13} />
                                           </button>
-                                          {supportDropdownOpen && (
-                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-44 max-h-60 overflow-y-auto">
-                                              {opts.map(opt => (
-                                                <button key={opt} onClick={() => { setSupportFilter(opt); setSupportDropdownOpen(false); }}
-                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${supportFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
-                                                  {opt}
-                                                </button>
-                                              ))}
-                                            </div>
-                                          )}
+                                          <FloatingDropdown
+                                            anchorEl={supportFilterRef.current}
+                                            open={supportDropdownOpen}
+                                            onClose={() => setSupportDropdownOpen(false)}
+                                            align="right"
+                                            className="bg-white border border-slate-200 rounded-md shadow-lg w-44 max-h-60 overflow-y-auto"
+                                          >
+                                            {opts.map(opt => (
+                                              <button key={opt} onClick={() => { setSupportFilter(opt); setSupportDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${supportFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                {opt}
+                                              </button>
+                                            ))}
+                                          </FloatingDropdown>
                                         </div>
                                       );
                                     })()}
@@ -5170,19 +6336,23 @@ function ProjectDetailContent() {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={skillSolutionFilterRef}>
-                                          <button onClick={() => setSkillSolutionDropdownOpen(!skillSolutionDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${skillSolutionFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
-                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          <button onClick={() => setSkillSolutionDropdownOpen(!skillSolutionDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${skillSolutionFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}>
+                                            <Filter size={13} />
                                           </button>
-                                          {skillSolutionDropdownOpen && (
-                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-48 max-h-60 overflow-y-auto">
-                                              {opts.map(opt => (
-                                                <button key={opt} onClick={() => { setSkillSolutionFilter(opt); setSkillSolutionDropdownOpen(false); }}
-                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillSolutionFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
-                                                  {opt}
-                                                </button>
-                                              ))}
-                                            </div>
-                                          )}
+                                          <FloatingDropdown
+                                            anchorEl={skillSolutionFilterRef.current}
+                                            open={skillSolutionDropdownOpen}
+                                            onClose={() => setSkillSolutionDropdownOpen(false)}
+                                            align="right"
+                                            className="bg-white border border-slate-200 rounded-md shadow-lg w-48 max-h-60 overflow-y-auto"
+                                          >
+                                            {opts.map(opt => (
+                                              <button key={opt} onClick={() => { setSkillSolutionFilter(opt); setSkillSolutionDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillSolutionFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                {opt}
+                                              </button>
+                                            ))}
+                                          </FloatingDropdown>
                                         </div>
                                       );
                                     })()}
@@ -5190,23 +6360,57 @@ function ProjectDetailContent() {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={skillVendorFilterRef}>
-                                          <button onClick={() => setSkillVendorDropdownOpen(!skillVendorDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 ${skillVendorFilter !== 'All' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}>
-                                            <span className="material-symbols-outlined text-base">filter_list</span>
+                                          <button onClick={() => setSkillVendorDropdownOpen(!skillVendorDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${skillVendorFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}>
+                                            <Filter size={13} />
                                           </button>
-                                          {skillVendorDropdownOpen && (
-                                            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-50 w-48 max-h-60 overflow-y-auto">
-                                              {opts.map(opt => (
-                                                <button key={opt} onClick={() => { setSkillVendorFilter(opt); setSkillVendorDropdownOpen(false); }}
-                                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillVendorFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
-                                                  {opt}
-                                                </button>
-                                              ))}
-                                            </div>
-                                          )}
+                                          <FloatingDropdown
+                                            anchorEl={skillVendorFilterRef.current}
+                                            open={skillVendorDropdownOpen}
+                                            onClose={() => setSkillVendorDropdownOpen(false)}
+                                            align="right"
+                                            className="bg-white border border-slate-200 rounded-md shadow-lg w-48 max-h-60 overflow-y-auto"
+                                          >
+                                            {opts.map(opt => (
+                                              <button key={opt} onClick={() => { setSkillVendorFilter(opt); setSkillVendorDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillVendorFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                {opt}
+                                              </button>
+                                            ))}
+                                          </FloatingDropdown>
                                         </div>
                                       );
                                     })()}
                                   </div>
+                                  {/* Resize handle */}
+                                  <div
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      resizingColumnRef.current = { col, startX: e.clientX, startWidth: width };
+                                      const onMove = (ev: MouseEvent) => {
+                                        const ctx = resizingColumnRef.current;
+                                        if (!ctx) return;
+                                        const minW = colUpper.includes('DETAIL TASK') ? 280 : MIN_COLUMN_WIDTH;
+                                        const next = Math.max(minW, ctx.startWidth + (ev.clientX - ctx.startX));
+                                        setColumnWidths(prev => ({ ...prev, [ctx.col]: next }));
+                                      };
+                                      const onUp = () => {
+                                        resizingColumnRef.current = null;
+                                        document.removeEventListener('mousemove', onMove);
+                                        document.removeEventListener('mouseup', onUp);
+                                      };
+                                      document.addEventListener('mousemove', onMove);
+                                      document.addEventListener('mouseup', onUp);
+                                    }}
+                                    onDoubleClick={() => {
+                                      setColumnWidths(prev => {
+                                        const next = { ...prev };
+                                        delete next[col];
+                                        return next;
+                                      });
+                                    }}
+                                    className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-[#0058be]/40 select-none"
+                                    title="Kéo để đổi độ rộng, double-click để reset"
+                                  />
                                 </th>
                               );
                             })}
@@ -5218,6 +6422,17 @@ function ProjectDetailContent() {
                       </table>
                     </div>
                   </div>
+
+                  {!taskFocusMode && (
+                    <button
+                      onClick={() => setTaskFocusMode(true)}
+                      className="fixed bottom-6 right-6 z-40 flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-slate-200 shadow-lg text-[#0b1c30] text-[12.5px] font-semibold px-3.5 py-2 rounded-full transition-all"
+                      title="Mở rộng bảng"
+                    >
+                      <Expand size={14} />
+                      Mở rộng bảng
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -7669,24 +8884,24 @@ function ProjectDetailContent() {
                   className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-[#0058be] transition-colors"
                   title="AI Check Task"
                 >
-                  <span className="text-[16px]">🤖</span>
+                  <Sparkles size={16} />
                 </button>
                 <button
                   onClick={() => handleDuplicateTask(selectedTask.task_group_id, selectedTask.id)}
                   className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-[#0058be] transition-colors"
                   title="Nhân bản Task"
                 >
-                  <span className="text-[16px]">📄</span>
+                  <Copy size={16} />
                 </button>
                 <button
                   onClick={() => { setSelectedTask(null); setTaskToDelete(selectedTask.id); }}
                   className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-slate-500 hover:text-red-600 transition-colors"
                   title="Xóa Task"
                 >
-                  <span className="text-[16px]">🗑️</span>
+                  <Trash2 size={16} />
                 </button>
                 <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
-                  <span className="material-symbols-outlined text-[20px]">close</span>
+                  <X size={18} />
                 </button>
               </div>
             </div>
@@ -8030,7 +9245,7 @@ function ProjectDetailContent() {
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-amber-500 mb-4">
-                <span className="material-symbols-outlined text-[28px]">edit</span>
+                <Pencil size={24} />
                 <h3 className="text-base font-bold text-[#0b1c30]">Đổi tên Phase</h3>
               </div>
               <div>
