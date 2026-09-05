@@ -37,6 +37,14 @@ export const isAdmin = () => {
   return r === 'super_admin' || r === 'leader';
 };
 
+// super_admin, leader, or member — excludes viewer. Used for features a
+// Member also needs (e.g. connecting their own Zalo account), not just
+// management-tier ones.
+export const isMemberOrAbove = () => {
+  const r = getRole();
+  return r === 'super_admin' || r === 'leader' || r === 'member';
+};
+
 // Kept for backward compatibility — maps to isAdmin().
 export const isGroupA = isAdmin;
 export const logout = () => {

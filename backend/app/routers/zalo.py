@@ -15,7 +15,7 @@ from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloDemoRequest, ZaloConversationSummary
-from ..utils.auth import get_current_user, require_manager
+from ..utils.auth import get_current_user, require_zalo_user
 from ..config import settings
 from ..services import zalo as zalo_service
 from ..services import zalo_task_parser
@@ -193,7 +193,7 @@ def _insert_message(
 @router.get("/status")
 def zalo_status(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     account = _account_for_user(db, current_user)
     worker = (
@@ -216,7 +216,7 @@ def zalo_status(
 def zalo_import_session(
     payload: ImportSessionRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     account = _account_for_user(db, current_user)
     if not account:
@@ -243,7 +243,7 @@ def zalo_import_session(
 @router.post("/disconnect")
 def zalo_disconnect(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     account = _account_for_user(db, current_user)
     if account:
@@ -260,7 +260,7 @@ def zalo_disconnect(
 @router.get("/groups/available")
 def list_available_groups(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """All Zalo groups the caller's own connected account is currently a
     member of, from the sidecar's in-memory cache (populated on login) —
@@ -285,7 +285,7 @@ def list_available_groups(
 @router.get("/conversations")
 def list_conversations(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     account = _require_account_for_user(db, current_user)
     rows = (
@@ -318,7 +318,7 @@ def link_conversation_project(
     conversation_id: int,
     payload: LinkProjectRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Links (or unlinks, when project_id is null) a conversation to a
     project. Once linked, incoming messages matching the /task syntax in
@@ -345,7 +345,7 @@ def link_conversation_project(
 @router.post("/conversations/refresh-names")
 def refresh_conversation_names(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Backfill names for conversations that were created before the
     sidecar's group/friend name cache was ready (or before this feature
@@ -372,7 +372,7 @@ def refresh_conversation_names(
 def suggested_task_mentions(
     conversation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Real Zalo group roster, cross-referenced against known members —
     tells the admin exactly which names will resolve (linked=true) and
@@ -427,7 +427,7 @@ def suggested_task_mentions(
 def list_project_members_for_task_assignment(
     conversation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Assignee list for the "+ Task" form — this project's own member list
     (project_members), NOT a live Zalo group-roster fetch. A roster fetch
@@ -471,7 +471,7 @@ def create_task_via_form(
     conversation_id: int,
     payload: CreateTaskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """The "+ Task" form — a direct alternative to the /task text command:
     title/assignee/manday/deadline picked in the UI, no @mention parsing.
@@ -586,7 +586,7 @@ def remind_unlinked_member(
     conversation_id: int,
     payload: RemindUnlinkedRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """For a Zalo group member whose display name doesn't match any known
     Member yet — can't auto-fill an assignee, so instead of a task form,
@@ -651,7 +651,7 @@ def list_project_tasks(
     status: str = "done",  # "done" | "assigned" | "all"
     range: str = "all",     # "today" | "yesterday" | "7d" | "all"
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Tasks in the project this conversation is linked to — feeds the
     "Task trong dự án" modal (filter by status + recency) and the
@@ -733,7 +733,7 @@ def set_task_demo_skip(
     task_id: int,
     payload: SetDemoSkipRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Marks (or unmarks) a task as "không cần xem demo" — some Done tasks
     genuinely don't need one; this hides the request nag without deleting
@@ -769,7 +769,7 @@ def request_demo(
     conversation_id: int,
     payload: RequestDemoRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """"Yêu cầu xem demo" — sends a real Zalo message tagging the assignee
     of a Done task, asking them to demo it at the chosen time."""
@@ -839,7 +839,7 @@ def get_conversation_messages(
     after_id: Optional[int] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     account = _require_account_for_user(db, current_user)
     conv = (
@@ -939,7 +939,7 @@ def get_conversation_summaries(
     conversation_id: int,
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     account = _require_account_for_user(db, current_user)
     conv = (
@@ -964,7 +964,7 @@ def get_conversation_summaries(
 def summarize_conversation_now(
     conversation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Manual trigger — summarizes messages since the last summary (or since
     ZALO_SUMMARY_INTERVAL_SECONDS ago if none yet) right now, bypassing the
@@ -1002,7 +1002,7 @@ def send_to_conversation(
     conversation_id: int,
     payload: SendMessageRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     account = _require_account_for_user(db, current_user)
     conv = (
@@ -1042,7 +1042,7 @@ def send_to_conversation(
 def send_to_new_thread(
     payload: SendToThreadRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Phase-1 test-panel helper: send the first message to a Zalo thread id
     typed in by hand (there is no reliable "browse all conversations" API —

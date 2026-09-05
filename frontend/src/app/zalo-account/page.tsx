@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
-import { isAdmin } from '@/lib/auth';
+import { isMemberOrAbove } from '@/lib/auth';
 import {
   getZaloStatus,
   importZaloSession,
@@ -59,7 +59,7 @@ export default function ZaloAccountPage() {
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin()) {
+    if (!isMemberOrAbove()) {
       router.push('/dashboard/overview');
     } else {
       setAuthorized(true);
