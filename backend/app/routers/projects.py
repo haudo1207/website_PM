@@ -35,7 +35,6 @@ from ..utils.access import (
     can_access_project,
     has_full_project_access,
     project_query_for_user,
-    project_query_for_user_broad,
     require_project,
     require_route_project_access,
     user_scope,
@@ -240,24 +239,20 @@ def list_projects(
     current_user=Depends(get_current_user)
 ):
     # Issue 2 — Customer filter:
-    # When the caller explicitly narrows by customer (customer_id preferred,
-    # customer_name fallback), the Project scope is widened to the
-    # "broad" variant so a multi-Workspace Leader can see every project of
-    # that Customer across every Workspace they've been granted. This is the
-    # same pattern already used by `/all-tasks-global` for team-wide KPI
-    # totals — awareness of a project's existence (and its dashboard cards)
-    # does NOT bypass the stricter can_access_project() gate that still
-    # governs opening a specific project's internals (Phụ Workspace projects
-    # remain assignment-only for that step).
+    # The Project list always uses `project_query_for_user` (strict) so the
+    # list and `can_access_project` (the detail gate) agree — every project
+    # shown to a Leader in this list is one they can open. BUG 2 fix aligned
+    # the two scopes after the Customer-filter branch was found to widen the
+    # list via `_broad` while the detail stayed strict.
     customer_filter_active = bool(
         (customer_id and customer_id > 0)
         or (customer and customer.strip() and customer.strip().lower() != "all")
     )
-    base_query = (
-        project_query_for_user_broad(db, current_user)
-        if customer_filter_active
-        else project_query_for_user(db, current_user)
-    )
+    # BUG 2 fix: always use the strict project_query_for_user so the list
+    # visibility matches the detail access scope. We keep the
+    # `customer_filter_active` boolean above only because the search filter
+    # and the customer-name branch below use it as documentation.
+    base_query = project_query_for_user(db, current_user)
     q = base_query.options(joinedload(Project.customer))
     target_b = (business or business_unit or "").strip().lower()
     if target_b and target_b != "all":
@@ -320,16 +315,36 @@ def list_projects(
     if year:
         q = q.filter(Project.year == year)
 
-    # Filter: search
+    # Filter: search — now also matches Project.customer_name so users can find
+    # Projects by typing their Customer name (e.g. "PCDaNang") in the search box.
     if search and search.strip():
         kw = f"%{search.strip()}%"
-        q = q.filter(or_(Project.name.ilike(kw), Project.code.ilike(kw), Project.description.ilike(kw)))
+        q = q.filter(or_(Project.name.ilike(kw), Project.code.ilike(kw), Project.description.ilike(kw), Project.customer_name.ilike(kw)))
 
     # Filter: customer — Issue 2. customer_id (relational) wins over
     # customer_name (legacy/display). When neither is supplied we keep the
     # existing name-based fuzzy match for the legacy dropdown.
+    #
+    # BUG 1 fix: confirmed legacy rows can have customer_id IS NULL while
+    # customer_name still matches the selected Customer. The relational match
+    # alone silently drops them. To keep the relational ID authoritative
+    # while supporting the confirmed legacy pattern, the customer_id branch
+    # now ORs in a name match against the chosen Customer's own name (looked
+    # up by ID, not by user-supplied string — avoids name-collision risk).
     if customer_id and customer_id > 0:
-        q = q.filter(Project.customer_id == int(customer_id))
+        cid = int(customer_id)
+        cust_row = db.query(Customer).filter(Customer.id == cid).first()
+        if cust_row is not None and cust_row.name:
+            cust_name = cust_row.name.strip()
+            q = q.filter(or_(
+                Project.customer_id == cid,
+                Project.customer_name.ilike(cust_name),
+            ))
+        else:
+            # Defensive fallback — should not happen since the customer row
+            # exists by definition when an ID is supplied. Keep the original
+            # behaviour rather than broadening to a name-only filter.
+            q = q.filter(Project.customer_id == cid)
     elif customer and customer.strip() and customer.strip().lower() != "all":
         q = q.filter(Project.customer_name.ilike(f"%{customer.strip()}%"))
 
