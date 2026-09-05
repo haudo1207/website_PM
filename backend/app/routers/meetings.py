@@ -11,7 +11,7 @@ from ..models.meeting import Meeting, MeetingMember
 from ..models.project import Project
 from ..models.member import Member
 from ..utils.auth import get_current_user
-from ..utils.access import ALL_SCOPE, project_query_for_user, require_project, require_route_project_access, user_scope
+from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_query_for_user, require_project, require_route_project_access, user_scope
 from ..utils.audit_service import AuditService
 
 logger = logging.getLogger("meetings")
@@ -98,7 +98,22 @@ def parse_n8n_markdown_summary(text: str) -> dict:
         'recommended_tasks': recommended_tasks
     }
 
-def meeting_to_dict(m: Meeting) -> dict:
+def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
+    # Whether the CALLER (not just any admin) can edit/delete/sync this
+    # meeting — super_admin/leader globally, or a member/viewer whose
+    # project_members role for m.project_id is PM/Leader. Purely a UI hint:
+    # require_route_project_access re-checks this server-side on every
+    # write regardless of what this flag says, so a stale/omitted value
+    # here (db/current_user not passed) just means the UI is conservative,
+    # never a permission bypass.
+    can_manage = False
+    if current_user is not None:
+        role = getattr(current_user, "role", None)
+        if role in WRITE_ROLES:
+            can_manage = True
+        elif db is not None and m.project_id:
+            can_manage = has_full_project_access(db, current_user, m.project_id)
+
     # Calculate duration
     duration = None
     if m.start_time and m.end_time:
@@ -209,7 +224,14 @@ def meeting_to_dict(m: Meeting) -> dict:
     if isinstance(m.ai_summary, dict) and "custom_members" in m.ai_summary and isinstance(m.ai_summary["custom_members"], list):
         custom_members = m.ai_summary["custom_members"]
 
-    final_members = db_members if db_members else custom_members
+    # Union, not either/or: custom_members (free-text external guests, no
+    # member_id) must still show up alongside real MeetingMember rows —
+    # previously a meeting with ANY real member silently dropped every
+    # custom_members entry. Dedup by display_name in case the same person
+    # was later also added as a real member.
+    db_member_names = {mb.get("display_name") for mb in db_members}
+    custom_only = [cm for cm in custom_members if cm.get("display_name") not in db_member_names]
+    final_members = db_members + custom_only
 
     host_name = m.creator.display_name if m.creator else "Host mkt.szone"
     if not final_members:
@@ -221,6 +243,7 @@ def meeting_to_dict(m: Meeting) -> dict:
 
     return {
         "id": m.id,
+        "can_manage": can_manage,
         "title": m.title,
         "description": m.description,
         "platform": m.platform,
@@ -329,7 +352,7 @@ def list_meetings(
     # its scheduled date relative to others). id is monotonic on insert, so
     # this is also immune to clock skew.
     meetings = q.order_by(Meeting.id.desc()).all()
-    result = [meeting_to_dict(m) for m in meetings]
+    result = [meeting_to_dict(m, db=db, current_user=current_user) for m in meetings]
 
     if mine:
         member = None
@@ -537,7 +560,7 @@ def get_meeting_insights(
 
 # ─── GET ONE ─────────────────────────────────────────────
 @router.get("/{id}")
-def get_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     from ..models.meeting_project import MeetingProject
     m = db.query(Meeting).options(
         joinedload(Meeting.project),
@@ -547,7 +570,7 @@ def get_meeting(id: int, db: Session = Depends(get_db), _=Depends(get_current_us
     ).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── CREATE ──────────────────────────────────────────────
 @router.post("")
@@ -773,7 +796,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     except Exception as e:
         logger.warning(f"Failed to send Zalo notification for meeting {m.id}: {e}")
 
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── UPDATE ──────────────────────────────────────────────
 @router.put("/{id}")
@@ -944,11 +967,11 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
         except Exception as e:
             logger.warning(f"Failed to sync rescheduled time to Google Calendar for meeting {m.id}: {e}")
 
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── UPDATE TRANSCRIPT (Rule 03) ────────────────────────
 @router.post("/{id}/transcript")
-def update_transcript(id: int, body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def update_transcript(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
@@ -963,7 +986,7 @@ def update_transcript(id: int, body: dict, db: Session = Depends(get_db), _=Depe
         joinedload(Meeting.members).joinedload(MeetingMember.member)
     ).filter(Meeting.id == id).first()
 
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── DELETE ──────────────────────────────────────────────
 @router.delete("/{id}")
@@ -1035,7 +1058,7 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
         joinedload(Meeting.members).joinedload(MeetingMember.member)
     ).filter(Meeting.id == id).first()
 
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── REMOVE MEMBER ───────────────────────────────────────
 @router.delete("/{id}/members/{member_id}")
@@ -1073,7 +1096,7 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
         joinedload(Meeting.members).joinedload(MeetingMember.member)
     ).filter(Meeting.id == id).first()
 
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── SYNC MEETING (Zoom / Google Meet) ───────────────────
 @router.post("/{id}/sync")
@@ -1154,7 +1177,7 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
     except Exception as e:
         logger.warning(f"Failed to send Telegram notification for synced meeting {m.id}: {e}")
 
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 
 # ─── GOOGLE OAUTH — Connect/Disconnect/Status ───────────
@@ -1424,7 +1447,7 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
 
 # ─── MEETING INTELLIGENCE: SCORE / FEEDBACK / AI COPILOT / INSIGHTS ───
 @router.post("/{id}/recalculate-score")
-def recalculate_score(id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def recalculate_score(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     from ..services.meeting_score_engine import recalculate_meeting_score
     m = db.query(Meeting).options(
         joinedload(Meeting.project),
@@ -1436,7 +1459,7 @@ def recalculate_score(id: int, db: Session = Depends(get_db), _=Depends(get_curr
     recalculate_meeting_score(m, db)
     db.commit()
     db.refresh(m)
-    return {"success": True, "data": meeting_to_dict(m)}
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 
 @router.post("/{id}/feedback")

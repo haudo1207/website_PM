@@ -29,7 +29,6 @@ from ..utils.access import (
     ROLE_LEADER,
     ALL_SCOPE,
 )
-from ..utils.project_progress import get_progress_pct_for_phase
 
 router = APIRouter(prefix="/system-audit", tags=["system-audit"], dependencies=[Depends(require_audit_user)])
 
@@ -719,6 +718,50 @@ def _aggregate_team_comparison(
         except ValueError:
             parsed_end = None
 
+    # ── Fiscal weeks divisor for KPI% calculation ──────────────────────
+    # Reuse the same CYCLE_TEMPLATE the KPI page uses. When a start_date
+    # and end_date are provided we count how many fiscal weeks the window
+    # spans. For quick-filters that already map to a single fiscal week
+    # the caller sends Mon→Sun which always falls inside one fiscal week
+    # → weeks_divisor = 1.  For full fiscal months the caller sends the
+    # CYCLE_TEMPLATE start/end → weeks_divisor = template weeks (4 or 5).
+    # For a full year or no filter → 52.
+    CYCLE_TEMPLATE = {
+        1:  ("-12-22", "-01-18", -1, 0, 4),
+        2:  ("-01-19", "-02-22",  0, 0, 5),
+        3:  ("-02-23", "-03-22",  0, 0, 4),
+        4:  ("-03-23", "-04-19",  0, 0, 4),
+        5:  ("-04-20", "-05-24",  0, 0, 5),
+        6:  ("-05-25", "-06-21",  0, 0, 4),
+        7:  ("-06-22", "-07-19",  0, 0, 4),
+        8:  ("-07-20", "-08-23",  0, 0, 5),
+        9:  ("-08-24", "-09-20",  0, 0, 4),
+        10: ("-09-21", "-10-25",  0, 0, 5),
+        11: ("-10-26", "-11-22",  0, 0, 4),
+        12: ("-11-23", "-12-20",  0, 0, 4),
+    }
+
+    weeks_divisor = 52  # default: full year
+    if parsed_start and parsed_end:
+        # Try to match the window to a known fiscal month
+        matched = False
+        year_ref = parsed_start.year
+        for m, (s_md, e_md, s_yo, e_yo, weeks) in CYCLE_TEMPLATE.items():
+            cycle_start = datetime.strptime(f"{year_ref + s_yo}{s_md}", "%Y-%m-%d")
+            cycle_end = datetime.strptime(f"{year_ref + e_yo}{e_md}", "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
+            if abs((parsed_start - cycle_start).total_seconds()) < 86400 and \
+               abs((parsed_end - cycle_end).total_seconds()) < 86400:
+                weeks_divisor = weeks
+                matched = True
+                break
+        if not matched:
+            # Check if the window spans ~7 days (a single week)
+            day_span = (parsed_end - parsed_start).days + 1
+            if day_span <= 7:
+                weeks_divisor = 1
+
     # 1. Canonical Leaders (active portal users with role=leader).
     leaders = (
         db.query(User)
@@ -886,21 +929,60 @@ def _aggregate_team_comparison(
     )
     done_expr = case((Task.status.in_(["Done", "done"]), 1), else_=0)
 
-    # Time-range window clause: a task belongs to the window if its
-    # `end_date_est` (preferred), else its `start_date`, else its
-    # `created_at`, falls inside [parsed_start, parsed_end]. When no window
-    # is provided we skip the clause entirely (preserves existing
-    # behaviour).
+    # Time-range window clause: a task belongs to the window if ANY of
+    # these conditions are true:
+    #   1. Task assigned during the selected period (start_date or created_at
+    #      falls within [parsed_start, parsed_end])
+    #   2. Task deadline falls within the selected period (end_date_est
+    #      falls within [parsed_start, parsed_end])
+    #   3. Task is overdue relative to the selected period (end_date_est
+    #      < parsed_end AND status not Done/Cancel)
+    # When no window is provided we skip the clause entirely (preserves
+    # existing behaviour).
     time_filters = []
     if parsed_start is not None or parsed_end is not None:
-        # Coalesce to the most informative date the task has.
-        task_date_expr = sql_func.coalesce(
-            Task.end_date_est, Task.start_date, Task.created_at
-        )
-        if parsed_start is not None:
-            time_filters.append(task_date_expr >= parsed_start)
+        # Build OR conditions for task inclusion
+        or_conditions = []
+        
+        # Condition 1: Task assigned during the period
+        if parsed_start is not None and parsed_end is not None:
+            or_conditions.append(
+                (Task.start_date.between(parsed_start, parsed_end)) |
+                (Task.created_at.between(parsed_start, parsed_end))
+            )
+        elif parsed_start is not None:
+            or_conditions.append(
+                (Task.start_date >= parsed_start) |
+                (Task.created_at >= parsed_start)
+            )
+        elif parsed_end is not None:
+            or_conditions.append(
+                (Task.start_date <= parsed_end) |
+                (Task.created_at <= parsed_end)
+            )
+        
+        # Condition 2: Task deadline falls within the period
+        if parsed_start is not None and parsed_end is not None:
+            or_conditions.append(
+                Task.end_date_est.between(parsed_start, parsed_end)
+            )
+        elif parsed_start is not None:
+            or_conditions.append(Task.end_date_est >= parsed_start)
+        elif parsed_end is not None:
+            or_conditions.append(Task.end_date_est <= parsed_end)
+        
+        # Condition 3: Task is overdue relative to the period
         if parsed_end is not None:
-            time_filters.append(task_date_expr <= parsed_end)
+            or_conditions.append(
+                (Task.end_date_est < parsed_end) &
+                (Task.end_date_est.isnot(None)) &
+                (Task.status.notin_(["Done", "done", "Cancel", "cancel"]))
+            )
+        
+        # Combine with OR - task matches if ANY condition is true
+        if or_conditions:
+            from sqlalchemy import or_
+            time_filters.append(or_(*or_conditions))
 
     member_rows = (
         db.query(
@@ -943,6 +1025,45 @@ def _aggregate_team_comparison(
     if time_filters:
         support_rows = support_rows.filter(*time_filters)
     support_rows = support_rows.all()
+
+    # 8b. Period KPI aggregation — ONLY Done tasks whose end_date_actual
+    #     falls inside the selected period. This is the source of truth for
+    #     workload KPI% classification (separate from the OR-based task
+    #     visibility filter above).
+    per_member_period_kpi: dict[int, float] = {}
+    if parsed_start and parsed_end:
+        kpi_period_filter = [
+            Task.status.in_(["Done", "done"]),
+            Task.end_date_actual.isnot(None),
+            Task.end_date_actual >= parsed_start.date(),
+            Task.end_date_actual <= parsed_end.date(),
+        ]
+        assigned_period_kpi = (
+            db.query(
+                Task.assigned_id.label("member_id"),
+                sql_func.sum(Task.kpi_assigned).label("period_kpi"),
+            )
+            .filter(Task.assigned_id.in_(team_member_ids), *kpi_period_filter)
+            .group_by(Task.assigned_id)
+            .all()
+        )
+        support_period_kpi = (
+            db.query(
+                Task.support_id.label("member_id"),
+                sql_func.sum(Task.kpi_support).label("period_kpi"),
+            )
+            .filter(
+                Task.support_id.in_(team_member_ids),
+                Task.support_id != Task.assigned_id,
+                *kpi_period_filter,
+            )
+            .group_by(Task.support_id)
+            .all()
+        )
+        for mid, kpi in assigned_period_kpi:
+            per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
+        for mid, kpi in support_period_kpi:
+            per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
 
     # 9. Project rollup: which projects touch this team? We need this both
     #    for the team-level KPI/manday context AND for Section 3's
@@ -1098,12 +1219,13 @@ def _aggregate_team_comparison(
             ps["manday_est"] = float(md_est or 0)
             ps["manday_actual"] = float(md_actual or 0)
             ps["kpi"] = float(kpi or 0)
-            # Issue 3 — Project Progress is now the configured Master Phase
-            # percentage (single source of truth). The task-based percentage
-            # is still computed separately as `task_completion_pct` so existing
-            # dashboards that intentionally surface task-completion aren't
-            # broken.
-            ps["progress_pct"] = round(get_progress_pct_for_phase(db, p.current_phase), 2)
+            # New requirement: Project Progress = Completed MD / Total Task MD × 100
+            # This replaces the previous Master Phase percentage calculation.
+            # Progress is based on manday_actual (completed work) vs manday_est
+            # (planned work) for tasks within the filtered period.
+            md_est_val = float(md_est or 0)
+            md_actual_val = float(md_actual or 0)
+            ps["progress_pct"] = round((md_actual_val / md_est_val) * 100, 2) if md_est_val > 0 else 0
             ps["task_completion_pct"] = round((done_n / total_n) * 100, 1) if total_n > 0 else 0
             ps["timeline_pct"] = round(((total_n - overdue_n) / total_n) * 100, 1) if total_n > 0 else 0
             ps["health"] = _team_health(done_n, total_n, overdue_n)
@@ -1164,6 +1286,10 @@ def _aggregate_team_comparison(
                 "manday_actual": round(a_md_actual + s_md_actual, 2),
                 "kpi": round(a_kpi + s_kpi, 2),
                 "progress_pct": round((dn / tot) * 100, 1) if tot > 0 else 0,
+                # Period KPI: KPI from Done tasks whose end_date_actual falls
+                # inside the selected period. Used for workload KPI% classification.
+                "period_kpi": round(per_member_period_kpi.get(m.id, 0.0), 2),
+                "kpi_pct": round(per_member_period_kpi.get(m.id, 0.0) / weeks_divisor, 2) if weeks_divisor > 0 else 0.0,
             })
 
             agg_total += tot
@@ -1208,6 +1334,10 @@ def _aggregate_team_comparison(
         # is unreliable; we use the data_scope on the Leader account).
         workspace_name = li["data_scope"] if li["data_scope"] != ALL_SCOPE else "All"
 
+        # Leader's individual KPI (from their own tasks, NOT team aggregate)
+        leader_period_kpi = per_member_period_kpi.get(leader_member_id, 0.0)
+        leader_kpi_pct = round(leader_period_kpi / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
+
         teams_out.append({
             "leader_user_id": li["user_id"],
             "leader_member_id": leader_member_id,
@@ -1230,13 +1360,36 @@ def _aggregate_team_comparison(
             "in_progress": agg_inprog,
             "health": _team_health(agg_done, agg_total, agg_overdue),
             "projects": team_projects,
+            # Leader's individual workload KPI (own tasks only)
+            "leader_period_kpi": round(leader_period_kpi, 2),
+            "leader_kpi_pct": leader_kpi_pct,
         })
 
     # Stable ordering: highest KPI first, then most members.
     teams_out.sort(key=lambda t: (-t["kpi"], -t["member_count"], t["leader_name"]))
 
+    # Load workload settings for the frontend to use in classification
+    from ..models.workload_setting import WorkloadSetting
+    ws_rows = (
+        db.query(WorkloadSetting)
+        .filter(WorkloadSetting.is_active == True)
+        .order_by(WorkloadSetting.sort_order.asc())
+        .all()
+    )
+    workload_settings = [
+        {
+            "status_key": r.status_key,
+            "status_label": r.status_label,
+            "min_kpi": float(r.min_kpi) if r.min_kpi is not None else None,
+            "max_kpi": float(r.max_kpi) if r.max_kpi is not None else None,
+        }
+        for r in ws_rows
+    ]
+
     return {
         "workspace": workspace_label,
         "workspace_filter": ws_filter or "all",
         "teams": teams_out,
+        "weeks_divisor": weeks_divisor,
+        "workload_settings": workload_settings,
     }

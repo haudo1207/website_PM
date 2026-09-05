@@ -27,18 +27,44 @@ Lưu ý: Không viết thêm bất kỳ lời dẫn hay kết luận nào, chỉ
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+// This route has no auth of its own (plain Next.js handler, no cookie/token
+// check) — anyone who can reach it could read or overwrite the shared AI
+// prompt template. requireAdmin() forwards the caller's cookie/authorization
+// header to the FastAPI backend's own /users/me (already behind
+// get_current_user) and only proceeds for super_admin/leader, matching the
+// role check the UI already relies on (PromptSettingsModal is only rendered
+// for canManage) — this makes it a real server-side check, not just a
+// hidden button.
+async function requireAdmin(request: Request): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const backendUrl = process.env.BACKEND_INTERNAL_URL || 'http://backend:8000';
+  const forwardHeaders = new Headers();
+  const cookie = request.headers.get('cookie');
+  if (cookie) forwardHeaders.set('cookie', cookie);
+  const auth = request.headers.get('authorization');
+  if (auth) forwardHeaders.set('authorization', auth);
+
+  try {
+    const res = await fetch(`${backendUrl}/api/users/me`, { headers: forwardHeaders });
+    if (!res.ok) return { ok: false, status: 401, error: 'Chưa đăng nhập.' };
+    const me = await res.json();
+    if (me?.role !== 'super_admin' && me?.role !== 'leader') {
+      return { ok: false, status: 403, error: 'Yêu cầu quyền quản lý, bạn không có quyền thực hiện thao tác này!' };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, status: 401, error: 'Không thể xác thực người dùng.' };
+  }
+}
+
 function getGeminiApiKey(): string | undefined {
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
   if (process.env.AI_API_KEY) return process.env.AI_API_KEY;
-  
+
   try {
     const envPaths = [
       path.join(process.cwd(), '.env'),
       path.join(process.cwd(), '..', '.env'),
       path.join(process.cwd(), 'frontend', '.env'),
-      '/home/portalkpi/website_PM/.env',
-      'd:\\PM_ProjectManager\\.env',
-      'd:\\PM_ProjectManager\\frontend\\.env'
     ];
     for (const envPath of envPaths) {
       if (fs.existsSync(envPath)) {
@@ -63,7 +89,11 @@ function getGeminiApiKey(): string | undefined {
   return undefined;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) {
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+  }
   try {
     let promptTemplate = DEFAULT_PROMPT;
     
@@ -86,6 +116,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) {
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+  }
   try {
     const body = await request.json();
     const { promptTemplate } = body;

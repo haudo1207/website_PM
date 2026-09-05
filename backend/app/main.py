@@ -16,6 +16,7 @@ from .routers import project_documents as project_documents_router
 from .routers import ai_skills as ai_skills_router
 from .routers import ai_sessions as ai_sessions_router
 from .routers import public_share as public_share_router
+from .routers import workload_settings as workload_settings_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -29,6 +30,7 @@ from .models import notification as notification_model
 from .models import workspace_access as workspace_access_model
 from .models import telegram_connection as telegram_connection_model
 from .models import zalo as zalo_model
+from .models import workload_setting as workload_setting_model
 from sqlalchemy import text
 
 def apply_schema_updates():
@@ -645,6 +647,21 @@ def apply_schema_updates():
             "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS ai_tasks JSON"
         ))
 
+        # ── Workload Settings: configurable thresholds for Section 4 ────
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS workload_settings (
+                id SERIAL PRIMARY KEY,
+                status_key VARCHAR(30) UNIQUE NOT NULL,
+                status_label VARCHAR(100) NOT NULL,
+                min_kpi NUMERIC(10, 2),
+                max_kpi NUMERIC(10, 2),
+                sort_order INTEGER DEFAULT 0,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
         # ── Master Phase configured Project Progress (Issue 3) ───────────
         # Settings → Danh mục hệ thống → Giai đoạn dự án is the single source
         # of truth for Project Progress. The progress_pct column stores the
@@ -1180,6 +1197,19 @@ def init_db_defaults():
                 ))
             print("[*] Seeded initial Performance KPI rules")
 
+        # Seed Workload Settings if table empty
+        from .models.workload_setting import WorkloadSetting
+        if db.query(WorkloadSetting).count() == 0:
+            default_workload = [
+                {"status_key": "not_working", "status_label": "Không làm việc", "min_kpi": None,   "max_kpi": Decimal("49.99"), "sort_order": 0},
+                {"status_key": "capacity",    "status_label": "Còn capacity",   "min_kpi": Decimal("50"),   "max_kpi": Decimal("89.99"), "sort_order": 1},
+                {"status_key": "normal",      "status_label": "Bình thường",    "min_kpi": Decimal("90"),   "max_kpi": Decimal("120"),   "sort_order": 2},
+                {"status_key": "overload",    "status_label": "Quá tải",        "min_kpi": Decimal("120.01"), "max_kpi": None,            "sort_order": 3},
+            ]
+            for w in default_workload:
+                db.add(WorkloadSetting(**w))
+            print("[*] Seeded default workload settings")
+
         # Seed Master Phases if table empty
         from app.models.master_phase import MasterPhase
         if db.query(MasterPhase).count() == 0:
@@ -1353,6 +1383,7 @@ app.include_router(system_audit.router,         prefix="/api")
 app.include_router(notifications_router.router, prefix="/api/notifications")
 app.include_router(telegram_router.router,      prefix="/api/telegram")
 app.include_router(zalo_router.router,          prefix="/api/zalo")
+app.include_router(workload_settings_router.router, prefix="/api/workload-settings")
 app.include_router(ai_skills_router.router,     prefix="/api")
 app.include_router(ai_sessions_router.router,   prefix="/api")
 app.include_router(public_share_router.router,  prefix="/api")
