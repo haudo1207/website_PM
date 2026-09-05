@@ -492,7 +492,7 @@ export default function ZaloAccountPage() {
             <div>
               <h1 className="text-xl font-extrabold text-slate-900">Tài khoản Zalo giao task</h1>
               <p className="text-sm text-slate-500 mt-0.5">
-                Kết nối 1 tài khoản Zalo dùng chung, gán hội thoại vào dự án, giao task và yêu cầu xem demo trực tiếp từ Zalo.
+                Kết nối tài khoản Zalo của riêng bạn, gán hội thoại vào dự án, giao task và yêu cầu xem demo trực tiếp từ Zalo.
               </p>
             </div>
           </div>

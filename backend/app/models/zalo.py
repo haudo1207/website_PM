@@ -5,13 +5,14 @@ from ..database import Base
 
 
 class ZaloAccount(Base):
-    """A shared Zalo account connected to the app (login via cookie import,
-    no QR). Phase 1 only ever has one active row, but the schema allows more
-    later without a migration.
+    """A Zalo account connected to the app (login via cookie import, no
+    QR), owned by exactly one Leader/Admin — each Leader connects and
+    manages their own account/session, never sees another Leader's.
     """
     __tablename__ = "zalo_accounts"
 
     id           = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     label        = Column(String(100), nullable=False, default="Zalo giao task")
     phone        = Column(String(30), nullable=True)
     zalo_uid     = Column(String(50), nullable=True)
@@ -22,6 +23,7 @@ class ZaloAccount(Base):
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
     updated_at   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    owner        = relationship("User", foreign_keys=[owner_user_id], lazy="select")
     conversations = relationship("ZaloConversation", back_populates="account", cascade="all, delete-orphan")
 
 

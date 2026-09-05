@@ -22,21 +22,44 @@ const PORT = Number(process.env.PORT || 8090);
 const FASTAPI_URL = (process.env.FASTAPI_URL || "http://backend:8000").replace(/\/+$/, "");
 const INTERNAL_TOKEN = process.env.ZALO_WORKER_INTERNAL_TOKEN || "";
 const AUTH_STORE_DIR = process.env.ZALO_ZCA_AUTH_STORE_DIR || path.join(__dirname, "artifacts", "zca-auth");
-const AUTH_FILE = path.join(AUTH_STORE_DIR, "account.json");
 
 console.log("===============================================");
 console.log("Starting Zalo Worker (zca-js persistent sidecar)");
-console.log(`Auth store: ${AUTH_FILE}`);
+console.log(`Auth store: ${AUTH_STORE_DIR} (one file per account)`);
 console.log(`Backend:    ${FASTAPI_URL}`);
 console.log("===============================================");
 
-/** @type {import("zca-js").API | null} */
-let api = null;
-let listenerConnected = false;
-let lastLoginAt = null;
-let lastError = null;
-let reconnecting = false;
-let consecutiveReconnectFailures = 0;
+// ── Per-account session state ───────────────────────────────────
+// Each Leader owns a fully independent Zalo login: its own zca-js `api`
+// instance, its own saved-auth file, its own group/friend name caches, and
+// its own reconnect bookkeeping. Everything that used to be a single
+// module-level variable is now a field on one of these, keyed by
+// account_id (the ZaloAccount.id the backend assigned) in the `sessions`
+// map below.
+class SessionState {
+  constructor(accountId) {
+    this.accountId = String(accountId);
+    /** @type {import("zca-js").API | null} */
+    this.api = null;
+    this.listenerConnected = false;
+    this.lastLoginAt = null;
+    this.lastError = null;
+    this.reconnecting = false;
+    this.consecutiveReconnectFailures = 0;
+    this.groupNameCache = new Map(); // group_id -> name
+    this.friendNameCache = new Map(); // user_id -> name
+    this.authFilePath = path.join(AUTH_STORE_DIR, `${this.accountId}.json`);
+  }
+}
+
+/** @type {Map<string, SessionState>} */
+const sessions = new Map();
+
+function getOrCreateSession(accountId) {
+  const key = String(accountId);
+  if (!sessions.has(key)) sessions.set(key, new SessionState(key));
+  return sessions.get(key);
+}
 
 // zca-js's own retryOnClose only retries codes/counts the SERVER told it to
 // (ctx.settings.features.socket.{close_and_retry_codes,retries}) — plenty of
@@ -44,26 +67,27 @@ let consecutiveReconnectFailures = 0;
 // just gives up silently, permanently, with the listener dead until someone
 // notices. This is our own watchdog on top: any "closed" we didn't cause
 // ourselves triggers a full re-login (fresh Zalo instance + listener) from
-// the saved auth file, same as a container restart would do.
-function scheduleReconnect() {
-  if (reconnecting) return;
-  reconnecting = true;
+// the saved auth file, same as a container restart would do. Scoped to one
+// session — each account reconnects independently of every other.
+function scheduleReconnect(session) {
+  if (session.reconnecting) return;
+  session.reconnecting = true;
   setTimeout(async () => {
-    const saved = loadSavedAuth();
+    const saved = loadSavedAuth(session);
     if (!saved) {
-      console.warn("[reconnect] no saved auth on disk — cannot auto-reconnect, needs a fresh /session/import.");
-      reconnecting = false;
+      console.warn(`[reconnect:${session.accountId}] no saved auth on disk — cannot auto-reconnect, needs a fresh /session/import.`);
+      session.reconnecting = false;
       return;
     }
     try {
-      console.log("[reconnect] attempting full re-login after listener closed...");
-      await loginWithAuth(saved);
-      console.log("[reconnect] succeeded.");
-      reconnecting = false;
+      console.log(`[reconnect:${session.accountId}] attempting full re-login after listener closed...`);
+      await loginWithAuth(session, saved);
+      console.log(`[reconnect:${session.accountId}] succeeded.`);
+      session.reconnecting = false;
     } catch (err) {
-      consecutiveReconnectFailures += 1;
-      lastError = err.message || String(err);
-      console.error(`[reconnect] failed (attempt ${consecutiveReconnectFailures}), retrying in 5s:`, lastError);
+      session.consecutiveReconnectFailures += 1;
+      session.lastError = err.message || String(err);
+      console.error(`[reconnect:${session.accountId}] failed (attempt ${session.consecutiveReconnectFailures}), retrying in 5s:`, session.lastError);
       // After a few STRAIGHT failures re-logging in with the SAME saved
       // cookies, the session is provably dead (not a transient blip) —
       // stop reporting logged_in:true from /status, which was actively
@@ -72,35 +96,35 @@ function scheduleReconnect() {
       // /session/import (re-login via the extension) can recover from
       // here; keep retrying in the background in case Zalo's side
       // self-heals, but don't claim to be connected while it doesn't.
-      if (consecutiveReconnectFailures >= 3 && api) {
-        console.error("[reconnect] giving up on the current session after repeated failures — marking disconnected until a fresh /session/import.");
-        api = null;
-        listenerConnected = false;
+      if (session.consecutiveReconnectFailures >= 3 && session.api) {
+        console.error(`[reconnect:${session.accountId}] giving up on the current session after repeated failures — marking disconnected until a fresh /session/import.`);
+        session.api = null;
+        session.listenerConnected = false;
       }
-      reconnecting = false;
-      scheduleReconnect();
+      session.reconnecting = false;
+      scheduleReconnect(session);
     }
   }, 5000);
 }
 
-// ── Auth file (cookie + stable imei) ────────────────────────────
+// ── Auth file (cookie + stable imei) — one per account ──────────
 function ensureAuthDir() {
   fs.mkdirSync(AUTH_STORE_DIR, { recursive: true });
 }
 
-function loadSavedAuth() {
+function loadSavedAuth(session) {
   try {
-    if (!fs.existsSync(AUTH_FILE)) return null;
-    return JSON.parse(fs.readFileSync(AUTH_FILE, "utf-8"));
+    if (!fs.existsSync(session.authFilePath)) return null;
+    return JSON.parse(fs.readFileSync(session.authFilePath, "utf-8"));
   } catch (err) {
-    console.error("Failed to read saved auth file:", err.message);
+    console.error(`[${session.accountId}] Failed to read saved auth file:`, err.message);
     return null;
   }
 }
 
-function saveAuth(auth) {
+function saveAuth(session, auth) {
   ensureAuthDir();
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), { mode: 0o600 });
+  fs.writeFileSync(session.authFilePath, JSON.stringify(auth, null, 2), { mode: 0o600 });
 }
 
 // Extension sends cookies in a shape close to, but not identical to, the
@@ -129,11 +153,9 @@ function toZcaCookies(rawCookies) {
 // reference implementation (CrawlDataLinkedin) resolves names via a
 // separate `getAllGroups()` + `getGroupInfo()` (and `getAllFriends()` for
 // DMs) lookup, caches them, and falls back to the sender's display name for
-// DMs, NEVER showing a bare "Conversation {id}". Mirrored here.
-let groupNameCache = new Map(); // group_id -> name
-let friendNameCache = new Map(); // user_id -> name
-
-async function refreshGroupNames(zaloApi) {
+// DMs, NEVER showing a bare "Conversation {id}". Mirrored here, cached
+// per-session so one account's groups never leak into another's names.
+async function refreshGroupNames(session, zaloApi) {
   try {
     const allGroups = await zaloApi.getAllGroups();
     const groupIds = Object.keys(allGroups?.gridVerMap || {});
@@ -142,38 +164,38 @@ async function refreshGroupNames(zaloApi) {
       try {
         const info = await zaloApi.getGroupInfo(chunk);
         for (const [gid, g] of Object.entries(info?.gridInfoMap || {})) {
-          if (g?.name) groupNameCache.set(gid, g.name);
+          if (g?.name) session.groupNameCache.set(gid, g.name);
         }
       } catch (err) {
-        console.warn("[zca-groups] getGroupInfo chunk failed:", err.message);
+        console.warn(`[zca-groups:${session.accountId}] getGroupInfo chunk failed:`, err.message);
       }
     }
-    console.log(`[zca-groups] cached ${groupNameCache.size} group name(s) from ${groupIds.length} group id(s)`);
+    console.log(`[zca-groups:${session.accountId}] cached ${session.groupNameCache.size} group name(s) from ${groupIds.length} group id(s)`);
   } catch (err) {
-    console.warn("[zca-groups] getAllGroups failed:", err.message);
+    console.warn(`[zca-groups:${session.accountId}] getAllGroups failed:`, err.message);
   }
   try {
     const friends = await zaloApi.getAllFriends();
     for (const f of friends || []) {
       const id = f?.userId;
       const name = f?.zaloName || f?.displayName;
-      if (id && name) friendNameCache.set(id, name);
+      if (id && name) session.friendNameCache.set(id, name);
     }
-    console.log(`[zca-groups] cached ${friendNameCache.size} friend name(s)`);
+    console.log(`[zca-groups:${session.accountId}] cached ${session.friendNameCache.size} friend name(s)`);
   } catch (err) {
-    console.warn("[zca-groups] getAllFriends failed:", err.message);
+    console.warn(`[zca-groups:${session.accountId}] getAllFriends failed:`, err.message);
   }
 }
 
-async function resolveConversationName(zaloApi, threadId, isGroup, fallbackSenderName) {
-  const cache = isGroup ? groupNameCache : friendNameCache;
+async function resolveConversationName(session, zaloApi, threadId, isGroup, fallbackSenderName) {
+  const cache = isGroup ? session.groupNameCache : session.friendNameCache;
   if (cache.has(threadId)) return cache.get(threadId);
 
   if (!isGroup) {
     // DM: not a cached friend (e.g. a stranger) — the sender IS the other
     // party, so their display name from the message itself is the name.
     if (fallbackSenderName) {
-      friendNameCache.set(threadId, fallbackSenderName);
+      session.friendNameCache.set(threadId, fallbackSenderName);
       return fallbackSenderName;
     }
     return `Người dùng ${threadId}`;
@@ -185,11 +207,11 @@ async function resolveConversationName(zaloApi, threadId, isGroup, fallbackSende
     const info = await zaloApi.getGroupInfo([threadId]);
     const g = info?.gridInfoMap?.[threadId];
     if (g?.name) {
-      groupNameCache.set(threadId, g.name);
+      session.groupNameCache.set(threadId, g.name);
       return g.name;
     }
   } catch (err) {
-    console.warn(`[zca-groups] lazy getGroupInfo(${threadId}) failed:`, err.message);
+    console.warn(`[zca-groups:${session.accountId}] lazy getGroupInfo(${threadId}) failed:`, err.message);
   }
   return `Nhóm ${threadId}`;
 }
@@ -203,29 +225,29 @@ async function resolveConversationName(zaloApi, threadId, isGroup, fallbackSende
 // going stale means reconnects (and the on-connect backfill) now happen
 // rarely — a message can still slip through a brief unnoticed gap even
 // while `listener_connected` stays true throughout.
-function requestGroupBackfill(zaloApi) {
+function requestGroupBackfill(session) {
   try {
-    zaloApi.listener.requestOldMessages(ThreadType.Group, null);
+    session.api?.listener.requestOldMessages(ThreadType.Group, null);
   } catch (err) {
-    console.warn("[listener] requestOldMessages failed:", err.message);
+    console.warn(`[listener:${session.accountId}] requestOldMessages failed:`, err.message);
   }
 }
 
 const BACKFILL_INTERVAL_MS = 15000;
 
-function attachListener(zaloApi) {
+function attachListener(session, zaloApi) {
   zaloApi.listener.on("connected", () => {
-    listenerConnected = true;
-    console.log("[listener] connected");
+    session.listenerConnected = true;
+    console.log(`[listener:${session.accountId}] connected`);
     // 2s delay gives the cipher key exchange (needed to decode the
     // response) time to land right after a fresh connect.
-    setTimeout(() => requestGroupBackfill(zaloApi), 2000);
+    setTimeout(() => requestGroupBackfill(session), 2000);
   });
 
   zaloApi.listener.on("old_messages", async (messages, threadType) => {
-    console.log(`[listener] old_messages backfill — ${messages?.length ?? 0} message(s), type=${threadType}`);
+    console.log(`[listener:${session.accountId}] old_messages backfill — ${messages?.length ?? 0} message(s), type=${threadType}`);
     for (const message of messages || []) {
-      await forwardMessage(message);
+      await forwardMessage(session, message);
     }
   });
 
@@ -237,28 +259,28 @@ function attachListener(zaloApi) {
   // but log it — a message arriving during one of these internal gaps is
   // silently lost, and this is the only trace we'd have of that happening.
   zaloApi.listener.on("disconnected", (code, reason) => {
-    console.warn("[listener] disconnected (zca-js internal retry, may self-heal)", code, reason);
+    console.warn(`[listener:${session.accountId}] disconnected (zca-js internal retry, may self-heal)`, code, reason);
   });
 
   zaloApi.listener.on("closed", (code, reason) => {
-    listenerConnected = false;
-    console.warn("[listener] closed", code, reason, "— zca-js gave up its own retry, scheduling full re-login in 5s");
-    scheduleReconnect();
+    session.listenerConnected = false;
+    console.warn(`[listener:${session.accountId}] closed`, code, reason, "— zca-js gave up its own retry, scheduling full re-login in 5s");
+    scheduleReconnect(session);
   });
 
   zaloApi.listener.on("error", (err) => {
-    console.error("[listener] error", err);
+    console.error(`[listener:${session.accountId}] error`, err);
     // "error" doesn't guarantee a subsequent "closed" fires in every case —
     // scheduleReconnect() is idempotent (the `reconnecting` guard), so it's
     // safe to also arm it here as a belt-and-suspenders measure.
-    scheduleReconnect();
+    scheduleReconnect(session);
   });
 
   zaloApi.listener.on("message", async (message) => {
     console.log(
-      `[listener] raw message event — threadId=${message?.threadId} type=${message?.type} isSelf=${message?.isSelf} contentType=${typeof message?.data?.content}`
+      `[listener:${session.accountId}] raw message event — threadId=${message?.threadId} type=${message?.type} isSelf=${message?.isSelf} contentType=${typeof message?.data?.content}`
     );
-    await forwardMessage(message);
+    await forwardMessage(session, message);
   });
 
   zaloApi.listener.start({ retryOnClose: true });
@@ -270,7 +292,7 @@ function attachListener(zaloApi) {
 // fetched via getGroupChatHistory, wrap the identical raw `data` fields).
 // Safe to call for a message we've already forwarded: the backend dedupes
 // on (conversation_id, source_message_id) and no-ops the repeat.
-async function forwardMessage(message) {
+async function forwardMessage(session, message) {
   try {
     // NOTE: `message.isSelf` means "sent by the currently-logged-in
     // account", from ANY client — not just this app. A message we send
@@ -287,7 +309,7 @@ async function forwardMessage(message) {
 
     const isGroup = message.type === ThreadType.Group;
     const senderName = message.data.dName || "Người dùng Zalo";
-    const name = await resolveConversationName(api, message.threadId, isGroup, isGroup ? null : senderName);
+    const name = await resolveConversationName(session, session.api, message.threadId, isGroup, isGroup ? null : senderName);
 
     // Real Zalo @mentions carry {uid, pos, len} — pos/len point at the
     // exact tagged substring inside content, which is far more reliable
@@ -305,6 +327,7 @@ async function forwardMessage(message) {
     await axios.post(
       `${FASTAPI_URL}/api/zalo/internal/messages`,
       {
+        account_id: session.accountId,
         thread_id: message.threadId,
         is_group: isGroup,
         name,
@@ -321,11 +344,11 @@ async function forwardMessage(message) {
       }
     );
   } catch (err) {
-    console.error("Failed to forward Zalo message to backend:", err.response?.data || err.message);
+    console.error(`[${session.accountId}] Failed to forward Zalo message to backend:`, err.response?.data || err.message);
   }
 }
 
-// ── Poll-fallback ────────────────────────────────────────────────
+// ── Poll-fallback (currently disabled, see startPolling() call site) ────
 // zca-js's real-time listener has been observed going silently stale:
 // `listener_connected` stays true, no "closed"/"error"/"disconnected" event
 // ever fires, yet the "message" event stops arriving for real incoming
@@ -336,37 +359,40 @@ async function forwardMessage(message) {
 const POLL_INTERVAL_MS = Number(process.env.ZALO_POLL_INTERVAL_MS || 20000);
 const POLL_HISTORY_COUNT = 20;
 
-async function pollGroupHistory() {
-  if (!api) return;
+async function pollGroupHistory(session) {
+  if (!session.api) return;
   let groups;
   try {
     const resp = await axios.get(`${FASTAPI_URL}/api/zalo/internal/tracked-groups`, {
+      params: { account_id: session.accountId },
       headers: { "X-Zalo-Worker-Token": INTERNAL_TOKEN },
       timeout: 10000,
     });
     groups = resp.data || [];
   } catch (err) {
-    console.error("[poll] failed to fetch tracked groups:", err.response?.data || err.message);
+    console.error(`[poll:${session.accountId}] failed to fetch tracked groups:`, err.response?.data || err.message);
     return;
   }
 
   for (const { thread_id } of groups) {
     try {
-      const history = await api.getGroupChatHistory(thread_id, POLL_HISTORY_COUNT);
+      const history = await session.api.getGroupChatHistory(thread_id, POLL_HISTORY_COUNT);
       for (const msg of history.groupMsgs || []) {
-        await forwardMessage(msg);
+        await forwardMessage(session, msg);
       }
     } catch (err) {
-      console.error(`[poll] getGroupChatHistory failed for ${thread_id}:`, err.message, err.response?.data || "");
+      console.error(`[poll:${session.accountId}] getGroupChatHistory failed for ${thread_id}:`, err.message, err.response?.data || "");
     }
   }
 }
 
 function startPolling() {
   setInterval(() => {
-    pollGroupHistory().catch((err) => console.error("[poll] unexpected error:", err.message));
+    for (const session of sessions.values()) {
+      pollGroupHistory(session).catch((err) => console.error(`[poll:${session.accountId}] unexpected error:`, err.message));
+    }
   }, POLL_INTERVAL_MS);
-  console.log(`[poll] fallback polling started — every ${POLL_INTERVAL_MS}ms`);
+  console.log(`[poll] fallback polling started — every ${POLL_INTERVAL_MS}ms, all sessions`);
 }
 
 // zca-js swallows the real reason for a login failure: `getLoginInfo()`
@@ -411,6 +437,7 @@ async function loggingFetch(url, options) {
 // rejection (e.g. "session expired", "cookie invalid for this endpoint").
 // This duplicates ~30 lines of zca-js internals because none of them are
 // part of its public API surface (only the `Zalo` class is exported).
+// Purely diagnostic/stateless — not tied to any session.
 function buildZcaCookieJar(zcaCookies) {
   const jar = new CookieJar();
   for (const raw of zcaCookies) {
@@ -454,11 +481,11 @@ async function probeLoginInfo({ zcaCookies, imei, userAgent }) {
   }
 }
 
-async function loginWithAuth({ cookies, imei, userAgent }) {
+async function loginWithAuth(session, { cookies, imei, userAgent }) {
   const zcaCookies = toZcaCookies(cookies);
   const cookieSummary = zcaCookies.map((c) => `${c.name}@${c.domain}`).join(", ");
   console.log(
-    `[zca-login] attempting login — ${zcaCookies.length} cookie(s): [${cookieSummary}], imei=${imei ? imei.slice(0, 8) + "…" : "(empty)"}, userAgent=${userAgent || "(empty)"}`
+    `[zca-login:${session.accountId}] attempting login — ${zcaCookies.length} cookie(s): [${cookieSummary}], imei=${imei ? imei.slice(0, 8) + "…" : "(empty)"}, userAgent=${userAgent || "(empty)"}`
   );
   if (zcaCookies.length === 0) {
     throw new Error("Không có cookie Zalo nào để đăng nhập.");
@@ -479,39 +506,52 @@ async function loginWithAuth({ cookies, imei, userAgent }) {
     // lines logged above (via loggingFetch) carry the actual reason. Log the
     // full stack too, in case this is a different failure than a rejected
     // login (e.g. a code bug in cookie parsing).
-    console.error("[zca-login] login() threw:", err.stack || err.message || err);
+    console.error(`[zca-login:${session.accountId}] login() threw:`, err.stack || err.message || err);
     throw err;
   }
-  console.log("[zca-login] login succeeded");
-  api = newApi;
-  lastLoginAt = new Date().toISOString();
-  lastError = null;
-  consecutiveReconnectFailures = 0;
-  groupNameCache = new Map();
-  friendNameCache = new Map();
-  attachListener(newApi);
+  console.log(`[zca-login:${session.accountId}] login succeeded`);
+  session.api = newApi;
+  session.lastLoginAt = new Date().toISOString();
+  session.lastError = null;
+  session.consecutiveReconnectFailures = 0;
+  session.groupNameCache = new Map();
+  session.friendNameCache = new Map();
+  attachListener(session, newApi);
   // Fire-and-forget — don't make the caller wait on this to know login
   // succeeded; group/friend names populate a few seconds later and any
   // message that arrives before that resolves lazily anyway (see
   // resolveConversationName).
-  refreshGroupNames(newApi).catch((err) => console.warn("[zca-groups] initial refresh failed:", err.message));
+  refreshGroupNames(session, newApi).catch((err) => console.warn(`[zca-groups:${session.accountId}] initial refresh failed:`, err.message));
   return newApi;
 }
 
-// Restore session on container start, so a restart doesn't require the
-// admin to reconnect via the extension every time.
+// Restore every saved session on container start, so a restart doesn't
+// require every connected Leader to reconnect via the extension. Each
+// account's auth file is named `<accountId>.json` under AUTH_STORE_DIR.
 (async function restoreOnStartup() {
-  const saved = loadSavedAuth();
-  if (!saved) {
-    console.log("No saved Zalo session — waiting for /session/import.");
+  ensureAuthDir();
+  let files = [];
+  try {
+    files = fs.readdirSync(AUTH_STORE_DIR).filter((f) => f.endsWith(".json"));
+  } catch (err) {
+    console.warn("Could not read auth store dir:", err.message);
+  }
+  if (files.length === 0) {
+    console.log("No saved Zalo sessions — waiting for /sessions/:accountId/import.");
     return;
   }
-  try {
-    await loginWithAuth(saved);
-    console.log("Restored Zalo session from saved auth file.");
-  } catch (err) {
-    lastError = err.message || String(err);
-    console.warn("Could not restore saved Zalo session (will need a fresh import):", lastError);
+  for (const file of files) {
+    const accountId = file.replace(/\.json$/, "");
+    const session = getOrCreateSession(accountId);
+    const saved = loadSavedAuth(session);
+    if (!saved) continue;
+    try {
+      await loginWithAuth(session, saved);
+      console.log(`[${accountId}] Restored Zalo session from saved auth file.`);
+    } catch (err) {
+      session.lastError = err.message || String(err);
+      console.warn(`[${accountId}] Could not restore saved Zalo session (will need a fresh import):`, session.lastError);
+    }
   }
 })();
 
@@ -529,68 +569,74 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/groups", (_req, res) => {
+app.get("/sessions/:accountId/groups", (req, res) => {
+  const session = getOrCreateSession(req.params.accountId);
   res.json({
-    groups: Object.fromEntries(groupNameCache),
-    friends: Object.fromEntries(friendNameCache),
+    groups: Object.fromEntries(session.groupNameCache),
+    friends: Object.fromEntries(session.friendNameCache),
   });
 });
 
-app.get("/status", (_req, res) => {
+app.get("/sessions/:accountId/status", (req, res) => {
+  const session = getOrCreateSession(req.params.accountId);
   res.json({
-    logged_in: !!api,
-    listener_connected: listenerConnected,
-    last_login_at: lastLoginAt,
-    last_error: lastError,
+    logged_in: !!session.api,
+    listener_connected: session.listenerConnected,
+    last_login_at: session.lastLoginAt,
+    last_error: session.lastError,
   });
 });
 
-app.post("/session/import", async (req, res) => {
+app.post("/sessions/:accountId/import", async (req, res) => {
+  const session = getOrCreateSession(req.params.accountId);
   const { cookies, imei, user_agent } = req.body || {};
   try {
     // Stable imei: reuse the previously saved one if this request didn't
     // send one — Zalo binds session keys to the imei used at issuance, a
     // fresh random imei on every call gets the session rejected.
-    const saved = loadSavedAuth();
-    const finalImei = imei || saved?.imei || `worker-${Date.now()}`;
+    const saved = loadSavedAuth(session);
+    const finalImei = imei || saved?.imei || `worker-${session.accountId}-${Date.now()}`;
 
-    await loginWithAuth({ cookies, imei: finalImei, userAgent: user_agent });
-    saveAuth({ cookies, imei: finalImei, userAgent: user_agent });
+    await loginWithAuth(session, { cookies, imei: finalImei, userAgent: user_agent });
+    saveAuth(session, { cookies, imei: finalImei, userAgent: user_agent });
 
     res.json({ ok: true });
   } catch (err) {
-    lastError = err.message || String(err);
-    console.error("[session/import] failed:", err.stack || lastError);
-    res.status(502).json({ error: lastError });
+    session.lastError = err.message || String(err);
+    console.error(`[session/import:${session.accountId}] failed:`, err.stack || session.lastError);
+    res.status(502).json({ error: session.lastError });
   }
 });
 
-app.post("/session/disconnect", (_req, res) => {
+app.post("/sessions/:accountId/disconnect", (req, res) => {
+  const session = getOrCreateSession(req.params.accountId);
   try {
-    api?.listener?.stop();
+    session.api?.listener?.stop();
   } catch (_err) {
     // ignore
   }
-  api = null;
-  listenerConnected = false;
+  session.api = null;
+  session.listenerConnected = false;
   res.json({ ok: true });
 });
 
-app.get("/debug/group/:threadId", async (req, res) => {
-  if (!api) return res.status(409).json({ error: "Zalo chưa đăng nhập." });
+app.get("/sessions/:accountId/debug/group/:threadId", async (req, res) => {
+  const session = getOrCreateSession(req.params.accountId);
+  if (!session.api) return res.status(409).json({ error: "Zalo chưa đăng nhập." });
   try {
-    const info = await api.getGroupInfo([req.params.threadId]);
+    const info = await session.api.getGroupInfo([req.params.threadId]);
     res.json(info?.gridInfoMap?.[req.params.threadId] || null);
   } catch (err) {
     res.status(502).json({ error: err.message || String(err) });
   }
 });
 
-app.get("/conversations/:threadId/members", async (req, res) => {
-  if (!api) return res.status(409).json({ error: "Zalo chưa đăng nhập." });
+app.get("/sessions/:accountId/conversations/:threadId/members", async (req, res) => {
+  const session = getOrCreateSession(req.params.accountId);
+  if (!session.api) return res.status(409).json({ error: "Zalo chưa đăng nhập." });
   const { threadId } = req.params;
   try {
-    const info = await api.getGroupInfo([threadId]);
+    const info = await session.api.getGroupInfo([threadId]);
     const g = info?.gridInfoMap?.[threadId];
     if (!g) return res.json({ members: [], total_member: 0 });
 
@@ -608,7 +654,7 @@ app.get("/conversations/:threadId/members", async (req, res) => {
         .filter(Boolean);
       const ids = g.memberIds && g.memberIds.length > 0 ? g.memberIds : memVerIds;
       if (ids.length > 0) {
-        const profilesResp = await api.getGroupMembersInfo(ids);
+        const profilesResp = await session.api.getGroupMembersInfo(ids);
         const profiles = profilesResp?.profiles || {};
         members = Object.entries(profiles).map(([uid, p]) => ({
           uid,
@@ -617,15 +663,16 @@ app.get("/conversations/:threadId/members", async (req, res) => {
       }
     }
 
-    res.json({ members, total_member: g.totalMember || memberIds.length || members.length });
+    res.json({ members, total_member: g.totalMember || g.memberIds?.length || members.length });
   } catch (err) {
-    console.error("get group members failed:", err.message || err);
+    console.error(`[${session.accountId}] get group members failed:`, err.message || err);
     res.status(502).json({ error: err.message || String(err) });
   }
 });
 
-app.post("/conversations/:threadId/send", async (req, res) => {
-  if (!api) return res.status(409).json({ error: "Zalo chưa đăng nhập." });
+app.post("/sessions/:accountId/conversations/:threadId/send", async (req, res) => {
+  const session = getOrCreateSession(req.params.accountId);
+  if (!session.api) return res.status(409).json({ error: "Zalo chưa đăng nhập." });
   const { threadId } = req.params;
   const { text, is_group, mentions } = req.body || {};
   if (!text || !String(text).trim()) {
@@ -640,15 +687,15 @@ app.post("/conversations/:threadId/send", async (req, res) => {
     const messagePayload = hasMentions
       ? { msg: String(text), mentions: mentions.map((m) => ({ uid: String(m.uid), pos: Number(m.pos), len: Number(m.len) })) }
       : String(text);
-    const result = await api.sendMessage(
+    const result = await session.api.sendMessage(
       messagePayload,
       threadId,
       is_group ? ThreadType.Group : ThreadType.User
     );
-    const name = await resolveConversationName(api, threadId, !!is_group, null).catch(() => null);
+    const name = await resolveConversationName(session, session.api, threadId, !!is_group, null).catch(() => null);
     res.json({ ok: true, source_message_id: String(result.message?.msgId || ""), name });
   } catch (err) {
-    console.error("send failed:", err.message || err);
+    console.error(`[${session.accountId}] send failed:`, err.message || err);
     res.status(502).json({ error: err.message || String(err) });
   }
 });
@@ -659,12 +706,14 @@ app.listen(PORT, () => {
 
 // Final safety net: a WebSocket can go silently dead (e.g. a dropped TCP
 // connection with no proper close handshake) without "closed" or "error"
-// ever firing. Poll every 2 minutes and reconnect if we're supposed to be
-// logged in but the listener isn't marked connected.
+// ever firing. Poll every 2 minutes and reconnect any session that's
+// supposed to be logged in but whose listener isn't marked connected.
 setInterval(() => {
-  if (api && !listenerConnected && !reconnecting) {
-    console.warn("[watchdog] logged in but listener not connected — triggering reconnect.");
-    scheduleReconnect();
+  for (const session of sessions.values()) {
+    if (session.api && !session.listenerConnected && !session.reconnecting) {
+      console.warn(`[watchdog:${session.accountId}] logged in but listener not connected — triggering reconnect.`);
+      scheduleReconnect(session);
+    }
   }
 }, 120000);
 
@@ -675,20 +724,26 @@ setInterval(() => {
 // this explicit app-level "I'm actively using this session" call — without
 // it, it seems to quietly stop pushing real-time events to this session
 // while the socket itself stays technically open. 90s keeps us comfortably
-// under that ~180s idle_time seen in the login response.
+// under that ~180s idle_time seen in the login response. Runs once for
+// every currently-logged-in session.
 const KEEPALIVE_INTERVAL_MS = 90000;
 setInterval(() => {
-  if (!api) return;
-  api.keepAlive().catch((err) => console.warn("[keepalive] failed:", err.message));
+  for (const session of sessions.values()) {
+    if (!session.api) continue;
+    session.api.keepAlive().catch((err) => console.warn(`[keepalive:${session.accountId}] failed:`, err.message));
+  }
 }, KEEPALIVE_INTERVAL_MS);
 
 // Ongoing safety net, not just on-connect (see requestGroupBackfill above):
 // a real message ("lên ngon rồi" sent from a second device) was confirmed
 // lost even while listener_connected stayed true throughout and no
-// reconnect happened — keepAlive alone doesn't guarantee zero gaps.
+// reconnect happened — keepAlive alone doesn't guarantee zero gaps. Runs
+// once for every currently-connected session.
 setInterval(() => {
-  if (!api || !listenerConnected) return;
-  requestGroupBackfill(api);
+  for (const session of sessions.values()) {
+    if (!session.api || !session.listenerConnected) continue;
+    requestGroupBackfill(session);
+  }
 }, BACKFILL_INTERVAL_MS);
 
 // Disabled: confirmed via [zca-http] logs that Zalo's own server now 404s
