@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin } from '@/lib/auth';
+import { getAvatar, getName, logout, getRole, isAdmin, isSuperAdmin, isMemberOrAbove } from '@/lib/auth';
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getWorkspaces, getMe, getInboxNotifications, markNotificationRead, requestZaloDemo, InboxNotificationItem } from '@/lib/api';
@@ -490,7 +490,7 @@ function NavbarContent() {
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
       </svg>
-    ), show: isAdmin() },
+    ), show: isMemberOrAbove() },
   ].filter(n => n.show !== false);
 
   return (

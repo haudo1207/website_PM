@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -206,15 +206,31 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
     return customers.find(c => c.id === selectedCustomerId) || null;
   }, [customers, selectedCustomerId]);
 
+  // BUG 5 fix: shared Customer→Project matching helper.
+  // Customer identity = id (authoritative) OR matching `customer_name`
+  // (legacy rows where `customer_id` may be NULL but `customer_name`
+  // still carries the Customer's name). Used by both the project list
+  // (customerProjects) and the per-Customer count badge so they stay
+  // consistent. Mirrors the backend `customer_id OR customer_name`
+  // pattern now applied in `/api/projects`.
+  const projectMatchesCustomer = useCallback(
+    (p: any, cust: any): boolean => {
+      if (!p || !cust) return false;
+      if (p.customer_id != null && Number(p.customer_id) === Number(cust.id)) {
+        return true;
+      }
+      const pName = (p.customer_name || '').trim().toLowerCase();
+      const cName = (cust.name || '').trim().toLowerCase();
+      return Boolean(pName) && pName === cName;
+    },
+    [],
+  );
+
   // All projects belonging to the selected customer
   const customerProjects = useMemo(() => {
     if (!selectedCustomerId || !selectedCustomer) return [];
-    const custName = (selectedCustomer.name || '').trim().toLowerCase();
-    return projects.filter(p => 
-      p.customer_id === selectedCustomerId ||
-      (p.customer_name && p.customer_name.trim().toLowerCase() === custName)
-    );
-  }, [projects, selectedCustomerId, selectedCustomer]);
+    return projects.filter(p => projectMatchesCustomer(p, selectedCustomer));
+  }, [projects, selectedCustomerId, selectedCustomer, projectMatchesCustomer]);
 
   // Computed distinct years for selected customer
   const customerYears = useMemo(() => {
@@ -487,8 +503,9 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
               const isSelected = selectedCustomerId === cat.id;
               const isEditing = editingCustomerId === cat.id;
               
-              // Count projects for this customer
-              const pCount = projects.filter(p => p.customer_id === cat.id).length;
+              // Count projects for this customer — BUG 5 fix: use the shared
+              // helper so the badge matches the project list (id OR name).
+              const pCount = projects.filter(p => projectMatchesCustomer(p, cat)).length;
 
               return (
                 <div

@@ -1,7 +1,13 @@
-"""On meeting creation: push the join link to any Zalo group(s) linked to
-the meeting's project(s) — the Zalo counterpart of services/telegram.py's
-send_meeting_notification. Best-effort (never raises) so a delivery failure
-never blocks meeting creation, matching how the existing Telegram call is
+"""On meeting creation: push the join link to the Zalo group(s) the
+meeting's CREATOR personally linked to the meeting's project(s) — the Zalo
+counterpart of services/telegram.py's send_meeting_notification. Scoped to
+the creator's own account on purpose: when several Leaders each connect
+their own Zalo account and separately link the same project to their own
+group, a meeting one of them creates must only notify their own group, not
+every other Leader's unrelated group too. If the creator hasn't linked
+Zalo for this project at all, nothing is sent — no fallback to anyone
+else's account. Best-effort (never raises) so a delivery failure never
+blocks meeting creation, matching how the existing Telegram call is
 wrapped in meetings.py.
 """
 import datetime
@@ -10,6 +16,7 @@ import logging
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from ..models.user import User
 from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage
 from . import zalo as zalo_service
 
@@ -47,21 +54,33 @@ def _meeting_message_lines(meeting) -> list[str]:
 
 
 def notify_zalo_groups_meeting_created(db: Session, meeting) -> int:
-    """Sends the join link to every Zalo group conversation linked
-    (ZaloConversation.project_id) to any of the meeting's project(s).
-    Returns how many groups were actually notified."""
+    """Sends the join link to the Zalo group conversation(s) the meeting's
+    creator personally linked (ZaloConversation.project_id) to any of the
+    meeting's project(s) — scoped to the creator's own ZaloAccount only,
+    never another Leader's. Returns how many groups were actually
+    notified."""
     project_ids = _meeting_project_ids(meeting)
-    if not project_ids:
+    if not project_ids or not zalo_service.is_configured():
         return 0
 
-    account = db.query(ZaloAccount).filter(ZaloAccount.is_active.is_(True)).first()
-    if not account or not zalo_service.is_configured():
+    creator_member_id = getattr(meeting, "created_by", None)
+    if not creator_member_id:
+        return 0
+    creator_user = db.query(User).filter(User.member_id == creator_member_id).first()
+    if not creator_user:
+        return 0
+    creator_account = (
+        db.query(ZaloAccount)
+        .filter(ZaloAccount.owner_user_id == creator_user.id, ZaloAccount.is_active.is_(True))
+        .first()
+    )
+    if not creator_account:
         return 0
 
     conversations = (
         db.query(ZaloConversation)
         .filter(
-            ZaloConversation.account_id == account.id,
+            ZaloConversation.account_id == creator_account.id,
             ZaloConversation.project_id.in_(project_ids),
             ZaloConversation.is_group.is_(True),
         )
@@ -75,7 +94,7 @@ def notify_zalo_groups_meeting_created(db: Session, meeting) -> int:
     sent = 0
     for conv in conversations:
         try:
-            result = zalo_service.send_message(conv.zalo_thread_id, text, conv.is_group)
+            result = zalo_service.send_message(conv.account_id, conv.zalo_thread_id, text, conv.is_group)
         except RuntimeError as e:
             logger.warning("Failed to send meeting notice to Zalo group %s: %s", conv.id, e)
             continue

@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .ai_client import chat_completion_json, AiClientError
-from ..models.zalo import ZaloConversation, ZaloMessage, ZaloConversationSummary
+from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloConversationSummary
 
 logger = logging.getLogger("zalo_summary")
 
@@ -144,7 +144,12 @@ def run_summary_tick(db: Session, interval_seconds: int) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
     created = 0
 
-    conversations = db.query(ZaloConversation).filter(ZaloConversation.is_group.is_(True)).all()
+    conversations = (
+        db.query(ZaloConversation)
+        .join(ZaloAccount, ZaloConversation.account_id == ZaloAccount.id)
+        .filter(ZaloConversation.is_group.is_(True), ZaloAccount.is_active.is_(True))
+        .all()
+    )
     for convo in conversations:
         if not _try_claim_conversation(db, convo.id):
             continue

@@ -2,7 +2,7 @@ import datetime
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -15,7 +15,7 @@ from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloDemoRequest, ZaloConversationSummary
-from ..utils.auth import get_current_user, require_manager
+from ..utils.auth import get_current_user, require_zalo_user
 from ..config import settings
 from ..services import zalo as zalo_service
 from ..services import zalo_task_parser
@@ -85,6 +85,7 @@ class LinkProjectRequest(BaseModel):
 
 
 class InternalMessageRequest(BaseModel):
+    account_id: int
     thread_id: str
     is_group: bool
     name: Optional[str] = None
@@ -100,19 +101,22 @@ class InternalMessageRequest(BaseModel):
 
 
 # ── Helpers ─────────────────────────────────────────────────────
-def _get_active_account(db: Session) -> Optional[ZaloAccount]:
+# Each Leader/Admin owns exactly one ZaloAccount (owner_user_id) — never a
+# shared/singleton row. Every caller-facing endpoint below resolves "my
+# account" through these, so a Leader's calls only ever touch their own
+# conversations/messages, never another Leader's.
+def _account_for_user(db: Session, current_user: User) -> Optional[ZaloAccount]:
     return (
         db.query(ZaloAccount)
-        .filter(ZaloAccount.is_active.is_(True))
-        .order_by(ZaloAccount.id.asc())
+        .filter(ZaloAccount.owner_user_id == current_user.id)
         .first()
     )
 
 
-def _require_active_account(db: Session) -> ZaloAccount:
-    account = _get_active_account(db)
+def _require_account_for_user(db: Session, current_user: User) -> ZaloAccount:
+    account = _account_for_user(db, current_user)
     if not account:
-        raise HTTPException(status_code=404, detail="Chưa có tài khoản Zalo nào được kết nối.")
+        raise HTTPException(status_code=404, detail="Bạn chưa kết nối tài khoản Zalo nào.")
     return account
 
 
@@ -189,10 +193,13 @@ def _insert_message(
 @router.get("/status")
 def zalo_status(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
-    account = _get_active_account(db)
-    worker = zalo_service.get_status()
+    account = _account_for_user(db, current_user)
+    worker = (
+        zalo_service.get_status(account.id) if account
+        else {"logged_in": False, "listener_connected": False, "configured": zalo_service.is_configured()}
+    )
     return {
         "connected": bool(account and worker.get("logged_in")),
         "account": None if not account else {
@@ -209,23 +216,24 @@ def zalo_status(
 def zalo_import_session(
     payload: ImportSessionRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
+    account = _account_for_user(db, current_user)
+    if not account:
+        account = ZaloAccount(owner_user_id=current_user.id, label="Zalo giao task", status="disconnected")
+        db.add(account)
+        db.commit()
+        db.refresh(account)
+
     try:
-        result = zalo_service.import_session(payload.cookies, payload.imei, payload.user_agent)
+        result = zalo_service.import_session(account.id, payload.cookies, payload.imei, payload.user_agent)
     except RuntimeError as exc:
         logger.error("zalo/auth/import-session failed for user_id=%s: %s", current_user.id, exc)
         raise HTTPException(status_code=502, detail=str(exc))
 
-    account = _get_active_account(db)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    if not account:
-        account = ZaloAccount(label="Zalo giao task", status="connected", last_login_at=now)
-        db.add(account)
-    else:
-        account.status = "connected"
-        account.last_login_at = now
-        account.last_error = None
+    account.status = "connected"
+    account.last_login_at = datetime.datetime.now(datetime.timezone.utc)
+    account.last_error = None
     account.zalo_uid = result.get("zalo_uid") or account.zalo_uid
     db.commit()
     db.refresh(account)
@@ -235,14 +243,14 @@ def zalo_import_session(
 @router.post("/disconnect")
 def zalo_disconnect(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
-    account = _get_active_account(db)
-    try:
-        zalo_service.disconnect()
-    except RuntimeError as exc:
-        logger.warning("Zalo worker disconnect call failed (continuing): %s", exc)
+    account = _account_for_user(db, current_user)
     if account:
+        try:
+            zalo_service.disconnect(account.id)
+        except RuntimeError as exc:
+            logger.warning("Zalo worker disconnect call failed (continuing): %s", exc)
         account.status = "disconnected"
         db.commit()
     return {"connected": False}
@@ -252,16 +260,16 @@ def zalo_disconnect(
 @router.get("/groups/available")
 def list_available_groups(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
-    """All Zalo groups the connected account is currently a member of, from
-    the sidecar's in-memory cache (populated on login) — lets the admin pick
-    a group by name instead of hunting for its raw thread id via
-    chat.zalo.me (which also risks bumping the worker's own session, see
-    the "Đổi thiết bị" conflict). Already-tracked groups are flagged so the
-    picker can skip/dim them."""
-    account = _require_active_account(db)
-    snapshot = zalo_service.get_groups()
+    """All Zalo groups the caller's own connected account is currently a
+    member of, from the sidecar's in-memory cache (populated on login) —
+    lets the Leader pick a group by name instead of hunting for its raw
+    thread id via chat.zalo.me (which also risks bumping the worker's own
+    session, see the "Đổi thiết bị" conflict). Already-tracked groups are
+    flagged so the picker can skip/dim them."""
+    account = _require_account_for_user(db, current_user)
+    snapshot = zalo_service.get_groups(account.id)
     groups = snapshot.get("groups") or {}
 
     tracked_ids = {
@@ -277,9 +285,9 @@ def list_available_groups(
 @router.get("/conversations")
 def list_conversations(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     rows = (
         db.query(ZaloConversation)
         .options(joinedload(ZaloConversation.project))
@@ -310,12 +318,12 @@ def link_conversation_project(
     conversation_id: int,
     payload: LinkProjectRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Links (or unlinks, when project_id is null) a conversation to a
     project. Once linked, incoming messages matching the /task syntax in
     that conversation create a Task under that project."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -337,7 +345,7 @@ def link_conversation_project(
 @router.post("/conversations/refresh-names")
 def refresh_conversation_names(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Backfill names for conversations that were created before the
     sidecar's group/friend name cache was ready (or before this feature
@@ -345,8 +353,8 @@ def refresh_conversation_names(
     New conversations resolve their name automatically going forward; this
     is only needed for stale rows already sitting with a placeholder name.
     """
-    account = _require_active_account(db)
-    snapshot = zalo_service.get_groups()
+    account = _require_account_for_user(db, current_user)
+    snapshot = zalo_service.get_groups(account.id)
     groups = snapshot.get("groups") or {}
     friends = snapshot.get("friends") or {}
     updated = 0
@@ -364,7 +372,7 @@ def refresh_conversation_names(
 def suggested_task_mentions(
     conversation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Real Zalo group roster, cross-referenced against known members —
     tells the admin exactly which names will resolve (linked=true) and
@@ -375,7 +383,7 @@ def suggested_task_mentions(
     mapping — always wins), then falls back to full_name/display_name so
     someone whose real name already matches their Zalo display name doesn't
     need to be manually re-entered in /accounts just to show up here."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -386,7 +394,7 @@ def suggested_task_mentions(
     if not conv.is_group:
         return {"members": [], "total_member": 0}
 
-    snapshot = zalo_service.get_conversation_members(conv.zalo_thread_id)
+    snapshot = zalo_service.get_conversation_members(account.id, conv.zalo_thread_id)
     all_members = db.query(Member).all()
     known: dict = {}
     for m in all_members:
@@ -419,7 +427,7 @@ def suggested_task_mentions(
 def list_project_members_for_task_assignment(
     conversation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Assignee list for the "+ Task" form — this project's own member list
     (project_members), NOT a live Zalo group-roster fetch. A roster fetch
@@ -428,7 +436,7 @@ def list_project_members_for_task_assignment(
     always available regardless of Zalo connectivity. Each entry still
     carries zalo_name/zalo_uid so the picker can show "tên Zalo kèm tên
     KPI" and the backend can still send a real tag when one is set."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -463,12 +471,12 @@ def create_task_via_form(
     conversation_id: int,
     payload: CreateTaskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """The "+ Task" form — a direct alternative to the /task text command:
     title/assignee/manday/deadline picked in the UI, no @mention parsing.
     Requires the conversation to already be linked to a project."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -549,7 +557,7 @@ def create_task_via_form(
         if not assigned.zalo_uid:
             reply += "\n\nNhắc bạn cập nhật đúng Tên Zalo trong Hồ sơ cá nhân để nhận tag thật khi giao task qua Zalo nhé"
 
-        result = zalo_service.send_message(conv.zalo_thread_id, reply, conv.is_group, mentions)
+        result = zalo_service.send_message(account.id, conv.zalo_thread_id, reply, conv.is_group, mentions)
         source_message_id = str(result.get("source_message_id") or f"local-{datetime.datetime.now().timestamp()}")
         # Still recorded into our own DB (same as any other outgoing send),
         # so it shows up in the app's chat panel immediately, in sync with
@@ -578,13 +586,13 @@ def remind_unlinked_member(
     conversation_id: int,
     payload: RemindUnlinkedRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """For a Zalo group member whose display name doesn't match any known
     Member yet — can't auto-fill an assignee, so instead of a task form,
     send a real Zalo message asking them to add their Zalo name to their
     profile, with a direct link to the linked project."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -610,7 +618,7 @@ def remind_unlinked_member(
         f"👉 Điền task tại dự án: {project_url}"
     )
     try:
-        result = zalo_service.send_message(conv.zalo_thread_id, text, conv.is_group)
+        result = zalo_service.send_message(account.id, conv.zalo_thread_id, text, conv.is_group)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -643,12 +651,12 @@ def list_project_tasks(
     status: str = "done",  # "done" | "assigned" | "all"
     range: str = "all",     # "today" | "yesterday" | "7d" | "all"
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Tasks in the project this conversation is linked to — feeds the
     "Task trong dự án" modal (filter by status + recency) and the
     "Yêu cầu xem demo" / "Yêu cầu lại" actions on Done tasks."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -725,12 +733,12 @@ def set_task_demo_skip(
     task_id: int,
     payload: SetDemoSkipRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Marks (or unmarks) a task as "không cần xem demo" — some Done tasks
     genuinely don't need one; this hides the request nag without deleting
     any prior request history."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -761,11 +769,11 @@ def request_demo(
     conversation_id: int,
     payload: RequestDemoRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """"Yêu cầu xem demo" — sends a real Zalo message tagging the assignee
     of a Done task, asking them to demo it at the chosen time."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -806,7 +814,7 @@ def request_demo(
         mentions = [{"uid": assigned.zalo_uid, "pos": _utf16_len(prefix_text), "len": _utf16_len(tag_text)}]
 
     try:
-        result = zalo_service.send_message(conv.zalo_thread_id, reply, conv.is_group, mentions)
+        result = zalo_service.send_message(account.id, conv.zalo_thread_id, reply, conv.is_group, mentions)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -831,9 +839,9 @@ def get_conversation_messages(
     after_id: Optional[int] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -893,16 +901,14 @@ def get_project_zalo_summary(
 ):
     """Powers the project detail page's "Tóm tắt nhóm" tab — every Zalo
     group currently linked to this project (ZaloConversation.project_id),
-    each with its recent AI digests, so a PM can see what a group discussed
-    without leaving the project."""
-    account = _get_active_account(db)
-    if not account:
-        return []
-
+    across every connected Leader's own account, each with its recent AI
+    digests, so a PM can see what a group discussed without leaving the
+    project."""
     conversations = (
         db.query(ZaloConversation)
+        .join(ZaloAccount, ZaloConversation.account_id == ZaloAccount.id)
         .filter(
-            ZaloConversation.account_id == account.id,
+            ZaloAccount.is_active.is_(True),
             ZaloConversation.project_id == project_id,
             ZaloConversation.is_group.is_(True),
         )
@@ -933,9 +939,9 @@ def get_conversation_summaries(
     conversation_id: int,
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -958,13 +964,13 @@ def get_conversation_summaries(
 def summarize_conversation_now(
     conversation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Manual trigger — summarizes messages since the last summary (or since
     ZALO_SUMMARY_INTERVAL_SECONDS ago if none yet) right now, bypassing the
     scheduler's wait. Meant for testing/QA, not gated behind the advisory
     lock since it's an explicit one-off action, not a competing scheduler tick."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -996,9 +1002,9 @@ def send_to_conversation(
     conversation_id: int,
     payload: SendMessageRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     conv = (
         db.query(ZaloConversation)
         .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
@@ -1008,7 +1014,7 @@ def send_to_conversation(
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
 
     try:
-        result = zalo_service.send_message(conv.zalo_thread_id, payload.text, conv.is_group, payload.mentions)
+        result = zalo_service.send_message(account.id, conv.zalo_thread_id, payload.text, conv.is_group, payload.mentions)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -1036,18 +1042,18 @@ def send_to_conversation(
 def send_to_new_thread(
     payload: SendToThreadRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_zalo_user),
 ):
     """Phase-1 test-panel helper: send the first message to a Zalo thread id
     typed in by hand (there is no reliable "browse all conversations" API —
     see plan doc), creating the ZaloConversation row on the fly."""
-    account = _require_active_account(db)
+    account = _require_account_for_user(db, current_user)
     thread_id = payload.thread_id.strip()
     if not thread_id:
         raise HTTPException(status_code=400, detail="Thiếu thread_id.")
 
     try:
-        result = zalo_service.send_message(thread_id, payload.text, payload.is_group)
+        result = zalo_service.send_message(account.id, thread_id, payload.text, payload.is_group)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -1064,26 +1070,25 @@ def send_to_new_thread(
 # ── Internal: sidecar polls this to know which groups to back-fill ─────────
 @router.get("/internal/tracked-groups")
 def list_tracked_groups(
+    account_id: int = Query(...),
     db: Session = Depends(get_db),
     x_zalo_worker_token: str = Header(default=None),
 ):
     """Poll-fallback support: zca-js's real-time listener occasionally goes
     silently stale (connected, no errors, but stops firing 'message' events —
-    see server.js's polling loop). The sidecar calls this periodically to
-    know which groups pm-new actually cares about, then pulls each one's
-    recent history via getGroupChatHistory and forwards it through the same
-    /internal/messages endpoint — safe to call repeatedly since messages are
-    deduped there on (conversation_id, source_message_id)."""
+    see server.js's polling loop). The sidecar calls this periodically (once
+    per logged-in session) to know which groups that specific account
+    tracks, then pulls each one's recent history via getGroupChatHistory and
+    forwards it through the same /internal/messages endpoint — safe to call
+    repeatedly since messages are deduped there on (conversation_id,
+    source_message_id)."""
     expected = (settings.ZALO_WORKER_INTERNAL_TOKEN or "").strip()
     if expected and x_zalo_worker_token != expected:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    account = _get_active_account(db)
-    if not account:
-        return []
     rows = (
         db.query(ZaloConversation)
-        .filter(ZaloConversation.account_id == account.id, ZaloConversation.is_group.is_(True))
+        .filter(ZaloConversation.account_id == account_id, ZaloConversation.is_group.is_(True))
         .all()
     )
     return [{"thread_id": c.zalo_thread_id} for c in rows]
@@ -1100,11 +1105,12 @@ def receive_worker_message(
     if expected and x_zalo_worker_token != expected:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    account = _get_active_account(db)
+    account = db.query(ZaloAccount).filter(ZaloAccount.id == payload.account_id).first()
     if not account:
-        # Sidecar is connected but we have no account row (shouldn't happen
-        # in normal flow) — drop silently rather than 500 the worker.
-        return {"ok": False, "reason": "no_active_account"}
+        # Sidecar reports an account id we don't recognize (e.g. a stale
+        # session after the DB row was deleted) — drop silently rather than
+        # 500 the worker.
+        return {"ok": False, "reason": "unknown_account"}
 
     now = datetime.datetime.now(datetime.timezone.utc)
     conv = _upsert_conversation(
@@ -1186,7 +1192,7 @@ def _try_handle_task_command(
     if not reply:
         return
     try:
-        result = zalo_service.send_message(conv.zalo_thread_id, reply, conv.is_group)
+        result = zalo_service.send_message(conv.account_id, conv.zalo_thread_id, reply, conv.is_group)
         source_message_id = str(result.get("source_message_id") or f"local-{datetime.datetime.now().timestamp()}")
         _insert_message(db, conv.id, source_message_id, None, "Bạn", reply, True)
     except RuntimeError as exc:

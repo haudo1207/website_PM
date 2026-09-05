@@ -70,6 +70,17 @@ def require_manager_write(request: Request, user=Depends(get_current_user)):
         raise HTTPException(403, "Yêu cầu quyền quản lý để thực hiện thao tác ghi")
     return user
 
+
+def require_zalo_user(user=Depends(get_current_user)):
+    """Authorises the Zalo integration (tab + its whole API surface).
+
+    super_admin, leader, and member may each connect and own their own
+    Zalo account — Members create meetings and link projects too, so they
+    need the same access as a Leader here. viewer is excluded."""
+    if user.role not in {"super_admin", "leader", "member"}:
+        raise HTTPException(403, "Yêu cầu quyền Member trở lên")
+    return user
+
 # ── Legacy aliases kept for backward compatibility during transition ──
 
 def require_admin(user=Depends(get_current_user)):
