@@ -325,7 +325,7 @@ function ProjectDetailContent() {
   const resizingColumnRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
 
   // Phase navigation: overflow-to-dropdown (never wrap, never horizontal scroll)
-  const MAX_VISIBLE_REAL_PHASES = 7; // + Master = 8 total slots
+  const MAX_VISIBLE_REAL_PHASES = 5; // + Master = 6 total slots (cố định 5-6 phase, tránh chữ dày đặc khi tên phase dài)
   const [pinnedPhaseIds, setPinnedPhaseIds] = useState<number[]>([]);
   const [phaseOverflowOpen, setPhaseOverflowOpen] = useState(false);
   const [phaseOverflowSearch, setPhaseOverflowSearch] = useState('');
@@ -1185,7 +1185,10 @@ function ProjectDetailContent() {
     } catch {}
   }, [id, pinnedPhaseIds]);
 
-  const MAX_PINNED_PHASES = 8;
+  // Ghim nhiều hơn số slot hiển thị trên thanh là vô nghĩa (phase ghim dư vẫn
+  // rơi vào "Phase khác"), nên khoá chung với MAX_VISIBLE_REAL_PHASES thay vì
+  // một con số tách rời - đổi 1 chỗ là đồng bộ cả 2.
+  const MAX_PINNED_PHASES = MAX_VISIBLE_REAL_PHASES;
   const togglePinPhase = (phaseId: number) => {
     setPinnedPhaseIds(prev => {
       if (prev.includes(phaseId)) return prev.filter(x => x !== phaseId);
@@ -4149,7 +4152,7 @@ function ProjectDetailContent() {
           <tr
             id={`tg-row-${group.id}`}
             key={`tg-row-${group.id}`}
-            className="bg-white hover:bg-slate-50/70 border-b border-[#E3E7EE] border-l-2 border-l-indigo-200 group transition-colors"
+            className="bg-indigo-50/50 hover:bg-indigo-50 border-b border-[#E3E7EE] border-l-[3px] border-l-indigo-400 group transition-colors"
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("application/json", JSON.stringify({ type: "group", groupId: group.id, phaseId: group.phase_id }));
@@ -5716,7 +5719,7 @@ function ProjectDetailContent() {
                         <div key={p.key} className="relative group/phase flex items-center gap-1 shrink-0 h-9">
                           <button onClick={() => setActivePhase(p.key)}
                             title={p.label}
-                            className={`h-9 max-w-[160px] truncate text-[13px] transition-all whitespace-nowrap border-b-2 ${activePhase === p.key
+                            className={`h-9 max-w-[110px] truncate text-[13px] transition-all whitespace-nowrap border-b-2 ${activePhase === p.key
                               ? 'text-[#0058be] font-semibold border-[#0058be]'
                               : 'text-[#565e74] font-medium border-transparent hover:text-[#0b1c30]'
                               }`}>
@@ -5863,14 +5866,14 @@ function ProjectDetailContent() {
                         Áp dụng template
                       </button>
 
-                      {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[160px]
+                      {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[110px]
                           giống tab thật) để tính visiblePhaseCount ở trên - không ảnh hưởng layout. */}
                       <div style={{ position: 'absolute', visibility: 'hidden', height: 0, overflow: 'hidden', whiteSpace: 'nowrap', pointerEvents: 'none' }} aria-hidden="true">
                         {realPhases.map(p => (
                           <div
                             key={p.key}
                             ref={el => { phaseTabMeasureRefs.current[p.key] = el; }}
-                            className="h-9 max-w-[160px] truncate text-[13px] font-semibold inline-flex items-center gap-1"
+                            className="h-9 max-w-[110px] truncate text-[13px] font-semibold inline-flex items-center gap-1"
                           >
                             {p.label}
                             <span className="w-7 h-7 inline-block" />

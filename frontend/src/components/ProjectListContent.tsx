@@ -122,6 +122,18 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+  // Nhớ lựa chọn Lưới/Danh sách theo trình duyệt (không cần đồng bộ server).
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('pm_project_list_view');
+      if (saved === 'grid' || saved === 'list') setViewMode(saved);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('pm_project_list_view', viewMode); } catch {}
+  }, [viewMode]);
 
   // Close the per-card "..." menu on any click outside it — the button/dropdown
   // themselves stop propagation, so only genuine outside clicks reach here.
@@ -507,6 +519,31 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                 Chọn trang này
               </label>
             )}
+            <div className="flex items-center gap-0.5 bg-slate-50/20 border border-slate-200 rounded-lg h-[34px] p-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                title="Xem dạng lưới"
+                className={`w-[30px] h-[26px] flex items-center justify-center rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-[#0058be]' : 'text-slate-400 hover:text-slate-600'}`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                  <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                  <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                  <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                title="Xem dạng danh sách"
+                className={`w-[30px] h-[26px] flex items-center justify-center rounded-md transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-[#0058be]' : 'text-slate-400 hover:text-slate-600'}`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            </div>
             <div className="flex items-center gap-2 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px] shrink-0">
               <span className="text-xs text-slate-500 font-semibold">Sắp xếp:</span>
               <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-transparent text-xs font-semibold text-slate-700 outline-none cursor-pointer">
@@ -526,6 +563,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
             </button>
           </div>
 
+          {viewMode === 'grid' && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {paged.map(p => {
               const phaseBadge = getPhaseBadgeStyle(p.current_phase);
@@ -651,6 +689,133 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               );
             })}
           </div>
+          )}
+
+          {viewMode === 'list' && (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b border-slate-200">
+                    {canManage && <th className="px-4 py-2.5 w-8"></th>}
+                    <th className="px-2 py-2.5 w-8"></th>
+                    <th className="px-3 py-2.5 min-w-[220px]">Dự án</th>
+                    <th className="px-3 py-2.5">Giai đoạn</th>
+                    <th className="px-3 py-2.5">Project Manager</th>
+                    <th className="px-3 py-2.5">Technical Lead</th>
+                    <th className="px-3 py-2.5">Sales</th>
+                    <th className="px-3 py-2.5 text-center">Tổng</th>
+                    <th className="px-3 py-2.5 text-center">Hoàn thành</th>
+                    <th className="px-3 py-2.5 text-center">Cảnh báo</th>
+                    <th className="px-3 py-2.5">Thành viên</th>
+                    <th className="px-3 py-2.5 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {paged.map(p => {
+                    const phaseBadge = getPhaseBadgeStyle(p.current_phase);
+                    return (
+                      <tr
+                        key={p.id}
+                        onClick={() => router.push(`/project/detail/overview?id=${p.id}`)}
+                        className="cursor-pointer hover:bg-slate-50/70 transition-colors group"
+                      >
+                        {canManage && (
+                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(p.id)}
+                              onChange={(e) => {
+                                setSelectedIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(x => x !== p.id));
+                              }}
+                              className="w-4 h-4 rounded border-slate-300 cursor-pointer accent-[#0058be]"
+                            />
+                          </td>
+                        )}
+                        <td className="px-2 py-3">
+                          <button
+                            onClick={(e) => handleTogglePin(e, p.id)}
+                            className={`w-6 h-6 flex items-center justify-center rounded-md transition-all shrink-0 cursor-pointer text-sm ${pinnedIds.has(p.id) ? 'bg-amber-50 hover:bg-amber-100' : 'opacity-25 grayscale hover:opacity-70 hover:grayscale-0'}`}
+                            title={pinnedIds.has(p.id) ? 'Bỏ ghim dự án' : 'Ghim dự án lên đầu danh sách'}
+                          >
+                            📌
+                          </button>
+                        </td>
+                        <td className="px-3 py-3 max-w-[280px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[13px] font-bold text-slate-800 group-hover:text-indigo-600 transition-colors truncate" title={p.name}>{p.name}</span>
+                            {p.business && (
+                              <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200">{p.business}</span>
+                            )}
+                          </div>
+                          <p className="text-[11.5px] text-slate-500 truncate italic">{p.customer_name || 'Chưa có khách hàng'} · Năm {p.year || '—'}</p>
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap">
+                          <span className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
+                        </td>
+                        <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[160px] truncate" title={p.pm_name}>{p.pm_name || <span className="text-slate-400 italic font-normal">—</span>}</td>
+                        <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[160px] truncate" title={p.technical_leader_name}>{p.technical_leader_name || <span className="text-slate-400 italic font-normal">—</span>}</td>
+                        <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[140px] truncate" title={p.sales_name}>{p.sales_name || <span className="text-slate-400 italic font-normal">--</span>}</td>
+                        <td className="px-3 py-3 text-center text-[13px] font-bold text-slate-800">{p.task_count ?? 0}</td>
+                        <td className="px-3 py-3 text-center text-[13px] font-bold text-emerald-600">{p.completed_task_count ?? 0}</td>
+                        <td className="px-3 py-3 text-center text-[13px] font-bold text-rose-600">{p.warning_task_count ?? 0}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex -space-x-1.5 overflow-hidden">
+                            {p.members?.slice(0, 3).map((m: any, idx: number) => {
+                              const COLORS = ['bg-blue-600', 'bg-purple-600', 'bg-indigo-600', 'bg-pink-600', 'bg-emerald-600'];
+                              const bg = COLORS[idx % COLORS.length];
+                              return (
+                                <div key={idx} className={`inline-block h-6 w-6 rounded-full ring-2 ring-white ${bg} flex items-center justify-center text-[9px] font-bold text-white uppercase`} title={m.name}>
+                                  {getInitials(m.name)}
+                                </div>
+                              );
+                            })}
+                            {p.members?.length > 3 && (
+                              <div className="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 uppercase" title="Xem thêm thành viên">
+                                +{p.members.length - 3}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                          {canManage && (
+                            <div className="relative">
+                              <button
+                                onClick={() => setMenuOpenId(prev => prev === p.id ? null : p.id)}
+                                className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0 cursor-pointer"
+                                title="Tuỳ chọn dự án"
+                              >
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                  <path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z" />
+                                </svg>
+                              </button>
+                              {menuOpenId === p.id && (
+                                <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
+                                  <button
+                                    onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
+                                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                  >
+                                    ✏️ Chỉnh sửa
+                                  </button>
+                                  <button
+                                    onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
+                                    className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
+                                  >
+                                    🗑 Xóa dự án
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          )}
 
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4 border-t border-slate-200 pt-6">
             {/* Left: Project Count */}
