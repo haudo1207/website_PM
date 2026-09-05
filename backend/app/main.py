@@ -547,6 +547,31 @@ def apply_schema_updates():
             "ON members (zalo_uid) WHERE zalo_uid IS NOT NULL"
         ))
 
+        # ── Zalo: each account is owned by one Leader/Admin (multi-account —
+        # no more single shared account) ──
+        conn.execute(text(
+            "ALTER TABLE zalo_accounts ADD COLUMN IF NOT EXISTS owner_user_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'zalo_accounts_owner_user_id_fkey'
+                      AND conrelid = 'zalo_accounts'::regclass
+                ) THEN
+                    ALTER TABLE zalo_accounts
+                    ADD CONSTRAINT zalo_accounts_owner_user_id_fkey
+                    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_zalo_accounts_owner_user_id ON zalo_accounts (owner_user_id)"
+        ))
+
         # ── Zalo: link a conversation to a project (enables the /task command) ──
         conn.execute(text(
             "ALTER TABLE zalo_conversations ADD COLUMN IF NOT EXISTS project_id INTEGER"
