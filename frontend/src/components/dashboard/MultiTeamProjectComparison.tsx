@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { getMondayToSundayRange, getWeekOfMonth, CYCLE_TEMPLATE, projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
-import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonProject, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse } from '@/lib/api';
+import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonProject, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse, WorkloadSetting } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SvgIcon from '@/components/dashboard/Icons';
 import ProgressBar from '@/components/dashboard/ProgressBar';
@@ -133,6 +133,8 @@ export default function MultiTeamProjectComparison() {
   });
   const teamComparisonData: TeamComparisonResponse | null = teamComparison || null;
   const teamsList: TeamComparisonTeam[] = teamComparisonData?.teams || [];
+  const weeksDivisor: number = teamComparisonData?.weeks_divisor || 52;
+  const workloadSettings: WorkloadSetting[] = teamComparisonData?.workload_settings || [];
 
   // ── Multi-Leader selection state (relocated from System Audit) ─────────
   const [selectedLeaderIds, setSelectedLeaderIds] = useState<number[]>([]);
@@ -183,27 +185,52 @@ export default function MultiTeamProjectComparison() {
   }, [timeWindow.start_date, timeWindow.end_date]);
   const closeTeamDetail = useCallback(() => setDetailTeam(null), []);
 
-  // Section 4 helpers — member workload classification
-  const memberUtil = (m: TeamComparisonMember): number => {
-    if (!m || !m.manday_est || m.manday_est <= 0) return 0;
-    return (m.manday_actual / m.manday_est) * 100;
+  // Section 4 helpers — member workload classification (KPI%-based)
+  // KPI% = period_kpi / weeks_divisor. 100 KPI points per fiscal week = 100%.
+  const memberKpiPct = (m: TeamComparisonMember): number => {
+    return m.kpi_pct ?? 0;
   };
-  const memberStatus = (m: TeamComparisonMember): 'overload' | 'balanced' | 'available' => {
-    const util = memberUtil(m);
-    if (util >= 100) return 'overload';
-    if (util >= 80) return 'balanced';
-    return 'available';
+
+  // Classify using workload_settings from backend, with hardcoded fallback
+  const classifyKpiPct = (pct: number): 'overload' | 'normal' | 'capacity' | 'not_working' => {
+    if (workloadSettings.length === 4) {
+      // Use backend thresholds — sorted by sort_order
+      const sorted = [...workloadSettings].sort((a, b) => (a.min_kpi ?? 0) - (b.min_kpi ?? 0));
+      for (const ws of sorted) {
+        const lo = ws.min_kpi ?? -Infinity;
+        const hi = ws.max_kpi ?? Infinity;
+        if (pct >= lo && pct <= hi) {
+          return ws.status_key as 'overload' | 'normal' | 'capacity' | 'not_working';
+        }
+      }
+    }
+    // Fallback: hardcoded default thresholds
+    if (pct > 120) return 'overload';
+    if (pct >= 90) return 'normal';
+    if (pct >= 50) return 'capacity';
+    return 'not_working';
   };
-  const STATUS_RANK: Record<'overload' | 'balanced' | 'available', number> = {
+
+  const memberStatus = (m: TeamComparisonMember): 'overload' | 'normal' | 'capacity' | 'not_working' => {
+    return classifyKpiPct(memberKpiPct(m));
+  };
+
+  // Leader's individual workload status (from own tasks, NOT team aggregate)
+  const leaderStatus = (t: TeamComparisonTeam): 'overload' | 'normal' | 'capacity' | 'not_working' => {
+    return classifyKpiPct(t.leader_kpi_pct ?? 0);
+  };
+
+  const STATUS_RANK: Record<string, number> = {
     overload: 0,
-    balanced: 1,
-    available: 2,
+    normal: 1,
+    capacity: 2,
+    not_working: 3,
   };
   const memberSortComparator = (a: TeamComparisonMember, b: TeamComparisonMember): number => {
     const sa = memberStatus(a);
     const sb = memberStatus(b);
-    if (sa !== sb) return STATUS_RANK[sa] - STATUS_RANK[sb];
-    return memberUtil(b) - memberUtil(a);
+    if (sa !== sb) return (STATUS_RANK[sa] ?? 9) - (STATUS_RANK[sb] ?? 9);
+    return memberKpiPct(b) - memberKpiPct(a);
   };
 
   return (
@@ -601,7 +628,7 @@ export default function MultiTeamProjectComparison() {
                 4. So sánh Member giữa các Team
               </h3>
               <p className="text-[10px] text-slate-400 mt-0.5">
-                Đánh giá tải của từng Member theo từng Leader — phát hiện Quá tải, Cân bằng, Còn capacity, Trống task — Workspace hiện tại: <strong className="text-[#0058be]">{currentWsLabel}</strong>
+                Đánh giá tải KPI của từng Member theo từng Leader — phát hiện Quá tải, Bình thường, Còn capacity, Không làm việc — Workspace hiện tại: <strong className="text-[#0058be]">{currentWsLabel}</strong>
               </p>
             </div>
           </div>
@@ -628,8 +655,9 @@ export default function MultiTeamProjectComparison() {
                 const totalMembers = teamMembers.length;
                 const emptyMembers = teamMembers.filter(m => (m.total || 0) === 0).length;
                 const overloadedMembers = teamMembers.filter(m => memberStatus(m) === 'overload').length;
-                const balancedMembers = teamMembers.filter(m => memberStatus(m) === 'balanced').length;
-                const availableMembers = teamMembers.filter(m => memberStatus(m) === 'available').length;
+                const normalMembers = teamMembers.filter(m => memberStatus(m) === 'normal').length;
+                const capacityMembers = teamMembers.filter(m => memberStatus(m) === 'capacity').length;
+                const notWorkingMembers = teamMembers.filter(m => memberStatus(m) === 'not_working').length;
                 const sortedMembers = [...teamMembers].sort(memberSortComparator);
                 return (
                   <div key={t.leader_user_id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/30">
@@ -654,12 +682,12 @@ export default function MultiTeamProjectComparison() {
                       </div>
                       <div className="grid grid-cols-4 gap-2 mt-3">
                         <CounterChip label="Members"  value={totalMembers}     tone="slate" />
-                        <CounterChip label="Trống task" value={emptyMembers}     tone="slate" />
-                        <CounterChip label="Còn capacity" value={availableMembers} tone="emerald" />
+                        <CounterChip label="Không làm việc" value={notWorkingMembers} tone="slate" />
+                        <CounterChip label="Còn capacity" value={capacityMembers} tone="emerald" />
                         <CounterChip label="Quá tải" value={overloadedMembers} tone="rose" />
                       </div>
                       <div className="mt-2 text-[9px] text-slate-400 font-semibold uppercase tracking-wider">
-                        Cân bằng: <strong className="text-blue-600">{balancedMembers}</strong>
+                        Bình thường: <strong className="text-blue-600">{normalMembers}</strong>
                       </div>
                     </div>
 
@@ -674,10 +702,13 @@ export default function MultiTeamProjectComparison() {
                               {t.leader_email || '—'}
                             </p>
                           </div>
-                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block"></span>
-                            Leader
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <WorkloadBadge status={leaderStatus(t)} />
+                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block"></span>
+                              Leader
+                            </span>
+                          </div>
                         </div>
                         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
                           <SmallStat label="Done"   value={t.done}        color="text-emerald-600" />
@@ -685,7 +716,7 @@ export default function MultiTeamProjectComparison() {
                           <SmallStat label="Trễ"    value={t.overdue}     color={t.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
                           <SmallStat label="KPI"    value={t.kpi.toFixed(1)} color="text-[#0058be]" />
                           <SmallStat label="Manday" value={`${t.actual_md.toFixed(1)}/${t.plan_md.toFixed(1)}`} />
-                          <SmallStat label="Util"   value={`${t.util.toFixed(1)}%`} color={t.util >= 100 ? 'text-rose-600' : t.util >= 80 ? 'text-emerald-600' : 'text-slate-600'} />
+                          <SmallStat label="KPI%"   value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`} color={(t.leader_kpi_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_kpi_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'} />
                         </div>
                       </div>
 
@@ -696,7 +727,7 @@ export default function MultiTeamProjectComparison() {
                       ) : (
                         sortedMembers.map(m => {
                           const status = memberStatus(m);
-                          const util = memberUtil(m);
+                          const kpiPct = memberKpiPct(m);
                           return (
                             <div key={m.member_id} className="p-3 bg-white border border-slate-200 rounded-lg">
                               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -716,7 +747,7 @@ export default function MultiTeamProjectComparison() {
                                 <SmallStat label="Trễ"    value={m.overdue}     color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
                                 <SmallStat label="KPI"    value={m.kpi.toFixed(1)} color="text-[#0058be]" />
                                 <SmallStat label="Manday" value={`${m.manday_actual.toFixed(1)}/${m.manday_est.toFixed(1)}`} />
-                                <SmallStat label="Util"   value={`${util.toFixed(1)}%`} color={util >= 100 ? 'text-rose-600' : util >= 80 ? 'text-emerald-600' : 'text-slate-600'} />
+                                <SmallStat label="KPI%"   value={`${kpiPct.toFixed(1)}%`} color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'} />
                               </div>
                             </div>
                           );
@@ -883,7 +914,7 @@ function SmallStat({ label, value, color }: { label: string; value: any; color?:
   );
 }
 
-function WorkloadBadge({ status }: { status: 'overload' | 'balanced' | 'available' }) {
+function WorkloadBadge({ status }: { status: 'overload' | 'normal' | 'capacity' | 'not_working' }) {
   if (status === 'overload') {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-800 border-rose-200">
@@ -892,11 +923,19 @@ function WorkloadBadge({ status }: { status: 'overload' | 'balanced' | 'availabl
       </span>
     );
   }
-  if (status === 'balanced') {
+  if (status === 'normal') {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-blue-100 text-blue-800 border-blue-200">
         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block"></span>
-        Cân bằng
+        Bình thường
+      </span>
+    );
+  }
+  if (status === 'not_working') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-600 border-slate-200">
+        <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block"></span>
+        Không làm việc
       </span>
     );
   }

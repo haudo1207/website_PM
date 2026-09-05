@@ -6,6 +6,7 @@ import SystemCategoriesView from '@/components/SystemCategoriesView';
 import KPIsView from '@/components/KPIsView';
 import AIPromptsView from '@/components/AIPromptsView';
 import ProjectTemplatesView from '@/components/ProjectTemplatesView';
+import WorkloadSettingsView from '@/components/WorkloadSettingsView';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin } from '@/lib/auth';
 import {
@@ -46,7 +47,7 @@ import {
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [saved, setSaved] = useState('');
-  const [activeTab, setActiveTab] = useState<'skills' | 'system_categories' | 'kpis' | 'ai_prompts' | 'project_templates'>('skills');
+  const [activeTab, setActiveTab] = useState<'skills' | 'system_categories' | 'kpis' | 'workload' | 'ai_prompts' | 'project_templates'>('skills');
 
   // Member Form
   const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'member', skills: [] as number[], position: '', department: '' });
@@ -357,6 +358,15 @@ export default function SettingsPage() {
               }`}
           >
             Cấu hình KPI
+          </button>
+          <button
+            onClick={() => setActiveTab('workload')}
+            className={`py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap ${activeTab === 'workload'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+          >
+            Quá tải
           </button>
           <button
             onClick={() => setActiveTab('ai_prompts')}
@@ -777,6 +787,10 @@ export default function SettingsPage() {
               onReload={reloadSystemCategories}
               onFlash={flash}
             />
+          )}
+
+          {activeTab === 'workload' && (
+            <WorkloadSettingsView onFlash={flash} />
           )}
 
           {activeTab === 'ai_prompts' && (
