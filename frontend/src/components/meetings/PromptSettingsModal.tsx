@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { X, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react';
-import { getGoogleStatus, getGoogleAuthUrl } from '@/lib/api';
+import { getGoogleStatus, getGoogleAuthUrl, getAiSettings, saveAiSettings } from '@/lib/api';
 
 interface Props { isOpen: boolean; onClose: () => void; }
 
@@ -21,13 +21,12 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
   const fetchSettings = async () => {
     setIsLoading(true); setError(''); setSuccess(false);
     try {
-      const res = await fetch('/api/ai/settings');
-      const data = await res.json();
+      const data = await getAiSettings();
       if (data.success) { setPromptTemplate(data.promptTemplate); setHasApiKey(data.hasApiKey); }
       else setError(data.error || 'Không thể tải cấu hình AI.');
 
       await checkGoogleConnection();
-    } catch (err: any) { setError(err.message || 'Lỗi kết nối.'); }
+    } catch (err: any) { setError(err.response?.data?.error || err.message || 'Lỗi kết nối.'); }
     finally { setIsLoading(false); }
   };
 
@@ -59,11 +58,10 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault(); setIsSaving(true); setError(''); setSuccess(false);
     try {
-      const res = await fetch('/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ promptTemplate }) });
-      const data = await res.json();
+      const data = await saveAiSettings(promptTemplate);
       if (data.success) { setSuccess(true); setTimeout(onClose, 1000); }
       else setError(data.error || 'Lỗi khi lưu.');
-    } catch (err: any) { setError(err.message || 'Lỗi kết nối.'); }
+    } catch (err: any) { setError(err.response?.data?.error || err.message || 'Lỗi kết nối.'); }
     finally { setIsSaving(false); }
   };
 

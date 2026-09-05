@@ -609,6 +609,19 @@ def _is_task_write(request: Request) -> bool:
     return False
 
 
+def _is_meeting_create(request: Request) -> bool:
+    """Check if the request is meeting creation (POST /api/meetings, no id).
+
+    Meeting creation has no project id in its URL — the project is chosen in
+    the JSON body — so this router-level check can't apply the usual
+    "member assigned to this project" gate the way task/document writes do.
+    It lets the request through instead; create_meeting() then calls
+    require_project() itself for whichever project(s) were actually chosen,
+    which 404s if the member doesn't belong to them.
+    """
+    return request.method == "POST" and request.url.path.rstrip("/") == "/api/meetings"
+
+
 def _is_document_write(request: Request) -> bool:
     """Check if the request is a Resources/Documents write (upload, update, delete, star).
 
@@ -620,6 +633,20 @@ def _is_document_write(request: Request) -> bool:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return False
     return re.search(r"/projects/\d+/documents(/.*)?", request.url.path) is not None
+
+
+def _is_meeting_member_write(request: Request) -> bool:
+    """Check if the request adds/removes a meeting participant:
+    POST /api/meetings/{id}/members or DELETE /api/meetings/{id}/members/{member_id}.
+
+    A plain member assigned to the meeting's project may manage who's
+    attending — same "assigned member can write" precedent as Task/Document
+    writes (project_id is already resolved from the meeting's own
+    project_id by require_route_project_access before this runs).
+    """
+    if request.method not in {"POST", "DELETE"}:
+        return False
+    return re.search(r"/meetings/\d+/members(/\d+)?$", request.url.path) is not None
 
 
 def has_full_project_access(db: Session, user, project_id) -> bool:
@@ -756,8 +783,11 @@ def require_route_project_access(
             if project_id is not None and has_full_project_access(db, user, int(project_id)):
                 print("--- ACCESS GRANTED FOR MEMBER (project PM/Leader) ---")
                 return user
-            if (is_task_write_result or _is_document_write(request)) and project_id is not None:
+            if (is_task_write_result or _is_document_write(request) or _is_meeting_member_write(request)) and project_id is not None:
                 print("--- ACCESS GRANTED FOR MEMBER ---")
+                return user
+            if _is_meeting_create(request):
+                print("--- ACCESS GRANTED FOR MEMBER (meeting create) ---")
                 return user
             print("--- ACCESS DENIED FOR MEMBER ---")
             raise HTTPException(403, "Yêu cầu quyền quản lý, bạn không có quyền thực hiện thao tác này!")

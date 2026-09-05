@@ -142,13 +142,19 @@ const getTaskKpiPotentialForMember = (t: any, memberId: any) => {
   return 0;
 };
 
-const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number) => void }) => {
+const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, onApplyQuickFilter, onYearChange, onMonthChange, onWeekChange }: {
+  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number) => void,
+  selectedYear: number | 'all', selectedMonth: number | 'all', selectedWeek: number | 'all', activeQuickFilter: string | null,
+  onApplyQuickFilter: (type: string) => void, onYearChange: (v: number | 'all') => void, onMonthChange: (v: number | 'all') => void, onWeekChange: (v: number | 'all') => void,
+}) => {
   const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
 
   if (!member) return null;
 
   const rawMemberObj = member.rawMember || member;
-  const memberTasks = tasks.filter(t => (t.assigned_id != null && String(t.assigned_id) === String(member.id)) || (t.support_id != null && String(t.support_id) === String(member.id)));
+  // Filter tasks by member AND by the selected period
+  const memberAllTasks = tasks.filter(t => (t.assigned_id != null && String(t.assigned_id) === String(member.id)) || (t.support_id != null && String(t.support_id) === String(member.id)));
+  const memberTasks = memberAllTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
   const openTasks = memberTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel');
   const doneTasks = memberTasks.filter(t => t.status === 'Done' || t.status === 'done');
   const overdueTasks = openTasks.filter(t => calculateDaysLate(t) > 0);
@@ -160,8 +166,14 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
 
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
 
-  const today = new Date();
-  const dateStr = `Tuần ${today.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} - ${new Date(today.getTime() + 6 * 86400000).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
+  // Period label for the header
+  const periodLabel = useMemo(() => {
+    if (activeQuickFilter) return activeQuickFilter;
+    if (selectedWeek !== 'all' && selectedMonth !== 'all' && selectedYear !== 'all') return `Tuần ${selectedWeek} / ${selectedMonth}/${selectedYear}`;
+    if (selectedMonth !== 'all' && selectedYear !== 'all') return `Tháng ${selectedMonth}/${selectedYear}`;
+    if (selectedYear !== 'all') return `Năm ${selectedYear}`;
+    return 'Tất cả';
+  }, [activeQuickFilter, selectedYear, selectedMonth, selectedWeek]);
 
   const totalPossible = openTasks.length + doneTasks.length;
   const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
@@ -193,7 +205,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
             <div>
               <h2 className="text-xl font-extrabold text-[#0b1c30] tracking-tight">{member.name}</h2>
               <p className="text-xs font-semibold text-slate-400 mt-0.5">
-                {(rawMemberObj.team || rawMemberObj.department || 'INFRA').toUpperCase()} · {rawMemberObj.leader_name || 'Khác'} · {dateStr}
+                {(rawMemberObj.team || rawMemberObj.department || 'INFRA').toUpperCase()} · {rawMemberObj.leader_name || 'Khác'} · {periodLabel}
               </p>
             </div>
           </div>
@@ -233,6 +245,43 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate }: { m
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
               <span className="text-lg font-black text-[#0058be] leading-none">{member.kpi?.toFixed(1) || '0.0'}</span>
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI</span>
+            </div>
+          </div>
+
+          {/* 1b. TIME FILTER (synced with Dashboard Overview) */}
+          <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            <span className="text-[10px] font-bold text-slate-500">Kỳ:</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400">Năm:</span>
+              <select value={selectedYear} onChange={e => onYearChange(e.target.value === 'all' ? 'all' : Number(e.target.value))} className="bg-transparent border-none text-[#0058be] font-bold text-[11px] focus:outline-none cursor-pointer">
+                <option value="all">Tất cả</option>
+                {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+              </select>
+            </div>
+            <div className="w-px h-3 bg-slate-200"></div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400">Tháng:</span>
+              <select value={selectedMonth} onChange={e => onMonthChange(e.target.value === 'all' ? 'all' : Number(e.target.value))} className="bg-transparent border-none text-[#0058be] font-bold text-[11px] focus:outline-none cursor-pointer">
+                <option value="all">Tất cả</option>
+                {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+              </select>
+            </div>
+            <div className="w-px h-3 bg-slate-200"></div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400">Tuần:</span>
+              <select value={selectedWeek} onChange={e => onWeekChange(e.target.value === 'all' ? 'all' : Number(e.target.value))} className="bg-transparent border-none text-[#0058be] font-bold text-[11px] focus:outline-none cursor-pointer">
+                <option value="all">Tất cả</option>
+                {[...Array(5)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+              </select>
+            </div>
+            <div className="w-px h-3 bg-slate-200"></div>
+            <div className="flex flex-wrap items-center gap-1">
+              {['Tuần trước', 'Tuần này', 'Tuần tới', 'Tháng trước', 'Tháng này', 'Tháng tới'].map(label => (
+                <button key={label} onClick={() => onApplyQuickFilter(label)}
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${activeQuickFilter === label ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -2581,6 +2630,14 @@ export default function OverviewTab() {
           projects={rawProjects}
           onClose={() => setSelectedMemberModal(null)}
           onNavigate={(projectId) => router.push(`/project/detail/overview?id=${projectId}`)}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          selectedWeek={selectedWeek}
+          activeQuickFilter={activeQuickFilter}
+          onApplyQuickFilter={applyQuickFilter}
+          onYearChange={setSelectedYear}
+          onMonthChange={setSelectedMonth}
+          onWeekChange={setSelectedWeek}
         />
       )}
     </div>

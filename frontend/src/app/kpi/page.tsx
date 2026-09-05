@@ -1,11 +1,276 @@
 'use client';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
-import { isAdmin } from '@/lib/auth';
-import { getMembers, getTeams, getDepartments, getWorkspaces, getMe } from '@/lib/api';
+import { isAdmin, getToken } from '@/lib/auth';
+import { getMembers, getTeams, getDepartments, getWorkspaces, getMe, getProjects } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+import { CYCLE_TEMPLATE, checkTaskInPeriod, calculateDaysLate } from '@/app/dashboard/constants';
+import axios from 'axios';
+
+// ── KPI Member Detail Modal (Year/Month only, one-way sync) ─────────
+const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth }: {
+  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number) => void,
+  initialYear: number, initialMonth: number,
+}) => {
+  const [detailYear, setDetailYear] = useState<number>(initialYear);
+  const [detailMonth, setDetailMonth] = useState<number>(initialMonth);
+  const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
+
+  // Compute fiscal cycle dates for the selected month
+  const fiscalRange = useMemo(() => {
+    const cycle = CYCLE_TEMPLATE[detailMonth];
+    if (!cycle) return null;
+    const s = `${detailYear + cycle.startYo}-${cycle.startMd}`;
+    const e = `${detailYear + cycle.endYo}-${cycle.endMd}`;
+    return { start: s, end: e };
+  }, [detailYear, detailMonth]);
+
+  // Filter tasks by member AND fiscal period
+  const memberAllTasks = tasks.filter(t =>
+    (t.assigned_id != null && String(t.assigned_id) === String(member.id)) ||
+    (t.support_id != null && String(t.support_id) === String(member.id))
+  );
+  const memberTasks = memberAllTasks.filter(t => {
+    if (!fiscalRange) return true;
+    // Use end_date_actual for Done tasks, end_date_est for others
+    const isDone = t.status === 'Done' || t.status === 'done';
+    const dateStr = isDone ? (t.end_date_actual || t.end_date_est) : (t.end_date_est || t.created_at);
+    if (!dateStr) return false;
+    return dateStr >= fiscalRange.start && dateStr <= fiscalRange.end;
+  });
+
+  const openTasks = memberTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel');
+  const doneTasks = memberTasks.filter(t => t.status === 'Done' || t.status === 'done');
+  const overdueTasks = openTasks.filter(t => calculateDaysLate(t) > 0);
+  const criticalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'critical');
+  const highTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'high');
+  const normalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
+  const interruptTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
+
+  // KPI from done tasks in this period
+  const periodKpi = doneTasks.reduce((acc, t) => {
+    const isAssigned = String(t.assigned_id) === String(member.id);
+    return acc + (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0));
+  }, 0);
+
+  const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
+
+  const periodLabel = `Tháng ${detailMonth}/${detailYear}`;
+
+  const filteredTasks = memberTasks.filter(t => {
+    if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && calculateDaysLate(t) > 0;
+    if (taskFilter === 'critical') return (t.priority || '').toLowerCase() === 'critical';
+    if (taskFilter === 'high') return (t.priority || '').toLowerCase() === 'high';
+    return true;
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden">
+      <div onClick={onClose} className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" />
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
+        {/* HEADER */}
+        <div className="sticky top-0 z-20 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-[#0058be] text-white flex items-center justify-center font-black text-lg shadow-sm shrink-0">
+              {member.display_name ? member.display_name.charAt(0).toUpperCase() : 'M'}
+            </div>
+            <div>
+              <h2 className="text-xl font-extrabold text-[#0b1c30] tracking-tight">{member.display_name}</h2>
+              <p className="text-xs font-semibold text-slate-400 mt-0.5">
+                {(member.team || member.department || '').toUpperCase()} · {member.workspace || ''} · {periodLabel}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors flex items-center justify-center font-bold text-sm cursor-pointer shrink-0">✕</button>
+        </div>
+
+        {/* BODY */}
+        <div className="p-6 space-y-6 flex-1">
+          {/* 1. KPI SUMMARY CARDS */}
+          <div className="grid grid-cols-6 gap-2">
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{activeProjects.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Dự án</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0b1c30] leading-none">{memberTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Task kỳ</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-emerald-600 leading-none">{doneTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Done</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-red-600 leading-none">{overdueTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Trễ</span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-purple-700 leading-none">{criticalTasks.length}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Critical</span>
+            </div>
+            <div className="bg-slate-50 border border-blue-200 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0058be] leading-none">{periodKpi.toFixed(1)}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI kỳ</span>
+            </div>
+          </div>
+
+          {/* 2. YEAR/MONTH FILTER (one-way sync from KPI ranking) */}
+          <div className="flex flex-wrap items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5">
+            <span className="text-[10px] font-bold text-slate-500">Kỳ:</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400">Năm:</span>
+              <select value={detailYear} onChange={e => setDetailYear(Number(e.target.value))} className="bg-transparent border-none text-[#0058be] font-bold text-[11px] focus:outline-none cursor-pointer">
+                {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+              </select>
+            </div>
+            <div className="w-px h-3 bg-slate-200"></div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400">Tháng:</span>
+              <select value={detailMonth} onChange={e => setDetailMonth(Number(e.target.value))} className="bg-transparent border-none text-[#0058be] font-bold text-[11px] focus:outline-none cursor-pointer">
+                {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* 3. PRIORITY DISTRIBUTION */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Phân bố priority</h3>
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-purple-50/80 border border-purple-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-purple-700 block">{criticalTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-purple-600 uppercase tracking-wider mt-0.5 block">CRITICAL</span>
+              </div>
+              <div className="bg-orange-50/80 border border-orange-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-orange-700 block">{highTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-orange-600 uppercase tracking-wider mt-0.5 block">HIGH</span>
+              </div>
+              <div className="bg-blue-50/80 border border-blue-100 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-blue-700 block">{normalTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider mt-0.5 block">NORMAL</span>
+              </div>
+              <div className="bg-slate-100/80 border border-slate-200/80 rounded-xl p-3 text-center">
+                <span className="text-base font-black text-slate-700 block">{interruptTasks.length}</span>
+                <span className="text-[9px] font-extrabold text-slate-600 uppercase tracking-wider mt-0.5 block">INTERRUPT</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. PROJECTS */}
+          <div>
+            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Dự án đang tham gia</h3>
+            <div className="space-y-3">
+              {activeProjects.length === 0 ? (
+                <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center text-xs font-semibold text-slate-400">Chưa có dự án nào.</div>
+              ) : (
+                activeProjects.map(p => {
+                  const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
+                  const pDone = pTasks.filter(t => t.status === 'Done' || t.status === 'done');
+                  const pOpen = pTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel').length;
+                  const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
+                  const pKpi = pDone.reduce((acc, t) => {
+                    const isAssigned = String(t.assigned_id) === String(member.id);
+                    return acc + (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0));
+                  }, 0);
+                  return (
+                    <div key={p.id} onClick={() => { onClose(); onNavigate(p.id); }} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{p.name}</h4>
+                        <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">{pOpen} task mở</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-[#0b1c30] block">{pTasks.length}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">TASK</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-emerald-600 block">{pDone.length}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">DONE</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-purple-700 block">{pCritical}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">CRITICAL</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                          <span className="text-xs font-black text-[#0058be] block">{pKpi.toFixed(1)}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">KPI</span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-[#0058be] font-bold text-right">Xem dự án ➔</p>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* 5. TASK TABLE */}
+          <div>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+              <div>
+                <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider">Task trong kỳ</h3>
+                <p className="text-[10px] text-slate-400 font-medium">KPI = SUM(kpi_assigned + kpi_support) cho task Done trong {periodLabel}</p>
+              </div>
+              <div className="flex gap-1">
+                {(['all', 'overdue', 'critical', 'high'] as const).map(filter => (
+                  <button key={filter} onClick={() => setTaskFilter(filter)}
+                    className={`px-3 py-1 rounded-full text-[10px] font-extrabold transition-all cursor-pointer ${taskFilter === filter ? 'bg-[#0058be] text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                    {filter === 'all' ? 'Tất cả' : filter === 'overdue' ? 'Trễ' : filter === 'critical' ? 'Critical' : 'High'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="border border-slate-200 rounded-2xl bg-white shadow-sm max-h-[380px] overflow-auto custom-scrollbar">
+              <table className="w-full text-xs border-separate border-spacing-0">
+                <thead>
+                  <tr className="text-slate-400 uppercase text-[9px] font-extrabold tracking-wider">
+                    <th className="px-4 py-2.5 text-left bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">TASK</th>
+                    <th className="px-4 py-2.5 text-left bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">DỰ ÁN</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">PRIORITY</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">DEADLINE</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">STATUS</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">KPI</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredTasks.length === 0 ? (
+                    <tr><td colSpan={6} className="text-center py-6 text-xs text-slate-400 font-semibold">Không có task nào.</td></tr>
+                  ) : (
+                    filteredTasks.map((t: any) => {
+                      const prio = (t.priority || 'normal').toUpperCase();
+                      const isDone = t.status === 'Done' || t.status === 'done';
+                      const dlStr = t.end_date_est ? t.end_date_est.split('-').reverse().slice(0, 2).join('/') : '-';
+                      const isAssigned = String(t.assigned_id) === String(member.id);
+                      const taskKpi = isDone ? (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0)) : 0;
+                      const proj = projects.find((p: any) => String(p.id) === String(t.project_id));
+                      return (
+                        <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
+                          <td className="px-4 py-3">
+                            <p className="font-bold text-[#0b1c30] text-xs">{t.name || t.detail || '-'}</p>
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 font-medium text-xs">{t.projectName || t.project_name || proj?.name || '-'}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase ${prio === 'CRITICAL' ? 'bg-purple-100 text-purple-700' : prio === 'HIGH' ? 'bg-orange-100 text-orange-700' : prio === 'INTERRUPT' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'}`}>{prio}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center font-bold text-slate-700 text-xs">{dlStr}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${isDone ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{isDone ? 'Done' : 'Đang làm'}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center font-bold text-[#0058be] text-xs">{taskKpi > 0 ? taskKpi.toFixed(1) : '-'}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function KPIPage() {
     const router = useRouter();
@@ -65,6 +330,29 @@ export default function KPIPage() {
         key: "kpi_total",
         direction: "desc",
     });
+
+    // Member Detail modal state
+    const [selectedMemberModal, setSelectedMemberModal] = useState<any>(null);
+
+    // Fetch tasks and projects for Member Detail drill-down
+    const { data: allTasksData } = useQuery({
+        queryKey: ['kpi-all-tasks'],
+        queryFn: async () => {
+            const token = getToken();
+            const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+            const res = await axios.get(`/api/all-tasks-global?_t=${Date.now()}`, config);
+            return res.data || [];
+        },
+        staleTime: 2 * 60_000,
+    });
+    const allTasks: any[] = allTasksData || [];
+
+    const { data: allProjectsData } = useQuery({
+        queryKey: ['kpi-all-projects'],
+        queryFn: () => getProjects(),
+        staleTime: 5 * 60_000,
+    });
+    const allProjects: any[] = allProjectsData || [];
 
     const handleSort = (key: string) => {
     let direction = "asc";
@@ -427,7 +715,7 @@ export default function KPIPage() {
                                         </thead>
                                         <tbody className="divide-y divide-slate-200 border-t border-slate-200">
                                             {sortedMembers.map((m, idx) => (
-                                                <tr key={m.id} className="hover:bg-slate-50/60 transition-colors group divide-x divide-slate-200">
+                                                <tr key={m.id} onClick={() => setSelectedMemberModal(m)} className="hover:bg-slate-50/60 transition-colors group divide-x divide-slate-200 cursor-pointer">
                                                     <td className="px-4 py-3 text-slate-400 font-medium w-12 text-center">{idx + 1}</td>
                                                     <td className="px-4 py-3">
                                                         <div className="flex items-center gap-2.5">
@@ -486,7 +774,7 @@ export default function KPIPage() {
                                                 const kpi_act = m.kpi_total || 0;
                                                 const achieved = kpi_est > 0 ? Math.round((kpi_act / kpi_est) * 100) : 0;
                                                 return (
-                                                    <tr key={m.id} className="hover:bg-slate-50/60 transition-colors group divide-x divide-slate-200">
+                                                    <tr key={m.id} onClick={() => setSelectedMemberModal(m)} className="hover:bg-slate-50/60 transition-colors group divide-x divide-slate-200 cursor-pointer">
                                                         <td className="px-4 py-3 text-slate-400 font-medium w-12 text-center">{idx + 1}</td>
                                                         <td className="px-4 py-3">
                                                             <div className="flex items-center gap-2.5">
@@ -522,6 +810,19 @@ export default function KPIPage() {
                     </div>
                 </div>
             </div>
+
+            {/* KPI MEMBER DETAIL MODAL */}
+            {selectedMemberModal && (
+                <KpiMemberDetailModal
+                    member={selectedMemberModal}
+                    tasks={allTasks}
+                    projects={allProjects}
+                    onClose={() => setSelectedMemberModal(null)}
+                    onNavigate={(projectId) => router.push(`/project/detail/overview?id=${projectId}`)}
+                    initialYear={year ? parseInt(year) : new Date().getFullYear()}
+                    initialMonth={month ? parseInt(month) : new Date().getMonth() + 1}
+                />
+            )}
         </div>
     );
 }
