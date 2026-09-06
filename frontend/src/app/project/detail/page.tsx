@@ -834,14 +834,6 @@ function ProjectDetailContent() {
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
   const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
 
-  // Cột phụ ít dùng - ẩn mặc định cho user CHƯA từng lưu preference (không
-  // đụng tới preference đã lưu của user cũ).
-  const DEFAULT_HIDDEN_COLUMNS = [
-    'KPI RATIO', 'LINK', 'REMARK', 'SEND', 'END DATE EST', 'MD ACTUAL', 'END ACTUAL',
-    'DAYS LATE', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID',
-    'ROOT TASKS', 'NOTES', 'SOLUTION',
-  ];
-
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
 
@@ -1385,7 +1377,10 @@ function ProjectDetailContent() {
         if (legacy) {
           setHiddenColumns(JSON.parse(legacy));
         } else {
-          setHiddenColumns(DEFAULT_HIDDEN_COLUMNS);
+          // Mặc định là hiện ĐỦ cột cho mọi user/project chưa từng lưu
+          // preference - ẩn/ghim cột là lựa chọn riêng của từng người, không
+          // áp default ẩn sẵn lên người khác chưa từng đụng vào.
+          setHiddenColumns([]);
         }
         setColumnOrder(TASK_COLUMNS);
         setColumnWidths({});

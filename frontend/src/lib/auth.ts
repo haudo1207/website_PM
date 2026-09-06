@@ -50,7 +50,15 @@ export const isGroupA = isAdmin;
 export const logout = () => {
   if (typeof window === 'undefined') return;
   accessToken = null;
-  localStorage.clear();
+  // Chỉ xoá đúng identity/auth (role/name/avatar/email) - KHÔNG localStorage.
+  // clear() nữa, vì đó xoá luôn mọi preference UI của user (cột ghim/ẩn/độ
+  // rộng, density, sidebar thu gọn, grid/list project, ghim phase...) chỉ vì
+  // họ bấm Sign out, dù các preference đó vốn không liên quan gì tới phiên
+  // đăng nhập.
+  localStorage.removeItem('role');
+  localStorage.removeItem('name');
+  localStorage.removeItem('avatar');
+  localStorage.removeItem('email');
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
   // Best-effort server-side revocation (works even when the Access JWT is
   // expired — the backend revokes via the HttpOnly refresh cookie).
