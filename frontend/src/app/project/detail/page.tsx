@@ -254,6 +254,11 @@ function ProjectDetailContent() {
   const queryClient = useQueryClient();
   const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const id = searchParams.get('id') || '';
+  // Drill-in from /kpi's "Dự án đang tham gia" list: pre-filter the Tasks
+  // tab to just this one person's own tasks (assignee OR support) — ANDed
+  // alongside the existing Assigned/Support dropdowns (which stay 'All' by
+  // default), so it narrows the list without disabling manual re-filtering.
+  const memberFilterParam = searchParams.get('member') || '';
   // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
   // next.config.js rewrites that path server-side to /project/detail?tab=tasks
   // purely to pick which page component to render; it does NOT change what the
@@ -1690,7 +1695,7 @@ function ProjectDetailContent() {
     const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
       || assignedFilter !== 'All' || supportFilter !== 'All'
       || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
-      || !!searchLower;
+      || !!searchLower || !!memberFilterParam;
     if (!hasActiveFilter) {
       return items;
     }
@@ -1704,7 +1709,8 @@ function ProjectDetailContent() {
       const matchSupport = supportFilter === 'All' || (item.support_name || '') === supportFilter;
       const matchSkillSolution = skillSolutionFilter === 'All' || (item.skill_solution_name || '') === skillSolutionFilter;
       const matchSkillVendor = skillVendorFilter === 'All' || (item.skill_vendor_name || '') === skillVendorFilter;
-      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor;
+      const matchMember = !memberFilterParam || (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam;
+      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
     });
 
     const onlySearch = !priorityFilter.match(/^All$/) === false && !statusFilter.match(/^All$/) === false
@@ -5272,6 +5278,18 @@ function ProjectDetailContent() {
             </div>
             {taskSearch && (
               <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
+            )}
+            {memberFilterParam && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[11px] font-bold text-blue-700 shrink-0">
+                Đang lọc: {memberFilterParam}
+                <button
+                  onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
+                  className="text-blue-400 hover:text-blue-700 cursor-pointer"
+                  title="Bỏ lọc, xem tất cả task"
+                >
+                  ✕
+                </button>
+              </span>
             )}
 
             {/* Bộ lọc - primary filter UX, dùng chung state với per-column filter */}

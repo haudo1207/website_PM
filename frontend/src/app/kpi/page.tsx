@@ -12,12 +12,14 @@ import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from 
 
 // ── KPI Member Detail Modal (Year/Month only, one-way sync) ─────────
 const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth }: {
-  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number) => void,
+  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string) => void,
   initialYear: number, initialMonth: number,
 }) => {
   const [detailYear, setDetailYear] = useState<number>(initialYear);
   const [detailMonth, setDetailMonth] = useState<number>(initialMonth);
   const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
+  const [projectSort, setProjectSort] = useState<'kpi_desc' | 'kpi_asc' | 'task_desc' | 'task_asc' | 'done_desc' | 'done_asc'>('kpi_desc');
+  const memberName = member.display_name || member.full_name || '';
 
   // Compute fiscal cycle dates for the selected month
   const fiscalRange = useMemo(() => {
@@ -57,6 +59,39 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
   }, 0);
 
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
+
+  // Precompute per-project stats once so the "Dự án đang tham gia" list can
+  // be sorted by KPI/task/done count (highest-first or lowest-first).
+  const projectRows = activeProjects.map(p => {
+    const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
+    const pDone = pTasks.filter(t => t.status === 'Done' || t.status === 'done');
+    const pOpen = pTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel').length;
+    const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
+    const pKpi = pDone.reduce((acc, t) => {
+      const isAssigned = String(t.assigned_id) === String(member.id);
+      return acc + (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0));
+    }, 0);
+    return { project: p, pTasks, pDone, pOpen, pCritical, pKpi };
+  });
+  const sortedProjectRows = [...projectRows].sort((a, b) => {
+    switch (projectSort) {
+      case 'kpi_asc': return a.pKpi - b.pKpi;
+      case 'task_desc': return b.pTasks.length - a.pTasks.length;
+      case 'task_asc': return a.pTasks.length - b.pTasks.length;
+      case 'done_desc': return b.pDone.length - a.pDone.length;
+      case 'done_asc': return a.pDone.length - b.pDone.length;
+      case 'kpi_desc':
+      default: return b.pKpi - a.pKpi;
+    }
+  });
+  const PROJECT_SORT_OPTIONS: { value: typeof projectSort; label: string }[] = [
+    { value: 'kpi_desc', label: 'KPI cao nhất' },
+    { value: 'kpi_asc', label: 'KPI thấp nhất' },
+    { value: 'task_desc', label: 'Task nhiều nhất' },
+    { value: 'task_asc', label: 'Task ít nhất' },
+    { value: 'done_desc', label: 'Done nhiều nhất' },
+    { value: 'done_asc', label: 'Done ít nhất' },
+  ];
 
   const periodLabel = `Tháng ${detailMonth}/${detailYear}`;
 
@@ -160,22 +195,27 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
 
           {/* 4. PROJECTS */}
           <div>
-            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Dự án đang tham gia</h3>
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider">Dự án đang tham gia</h3>
+              {activeProjects.length > 0 && (
+                <select
+                  value={projectSort}
+                  onChange={(e) => setProjectSort(e.target.value as typeof projectSort)}
+                  className="text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#0058be] cursor-pointer"
+                >
+                  {PROJECT_SORT_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              )}
+            </div>
             <div className="space-y-3">
               {activeProjects.length === 0 ? (
                 <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center text-xs font-semibold text-slate-400">Chưa có dự án nào.</div>
               ) : (
-                activeProjects.map(p => {
-                  const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
-                  const pDone = pTasks.filter(t => t.status === 'Done' || t.status === 'done');
-                  const pOpen = pTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel').length;
-                  const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
-                  const pKpi = pDone.reduce((acc, t) => {
-                    const isAssigned = String(t.assigned_id) === String(member.id);
-                    return acc + (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0));
-                  }, 0);
+                sortedProjectRows.map(({ project: p, pTasks, pDone, pOpen, pCritical, pKpi }) => {
                   return (
-                    <div key={p.id} onClick={() => { onClose(); onNavigate(p.id); }} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]">
+                    <div key={p.id} onClick={() => { onClose(); onNavigate(p.id, memberName); }} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{p.name}</h4>
                         <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">{pOpen} task mở</span>
@@ -198,7 +238,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">KPI</span>
                         </div>
                       </div>
-                      <p className="text-[10px] text-[#0058be] font-bold text-right">Xem dự án ➔</p>
+                      <p className="text-[10px] text-[#0058be] font-bold text-right">Xem task của bạn trong dự án ➔</p>
                     </div>
                   );
                 })
@@ -246,7 +286,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
                       const taskKpi = isDone ? (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0)) : 0;
                       const proj = projects.find((p: any) => String(p.id) === String(t.project_id));
                       return (
-                        <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
+                        <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id, memberName); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
                           <td className="px-4 py-3">
                             <p className="font-bold text-[#0b1c30] text-xs">{t.name || t.detail || '-'}</p>
                           </td>
@@ -820,7 +860,7 @@ export default function KPIPage() {
                     tasks={allTasks}
                     projects={allProjects}
                     onClose={() => setSelectedMemberModal(null)}
-                    onNavigate={(projectId) => router.push(`/project/detail/overview?id=${projectId}`)}
+                    onNavigate={(projectId, memberName) => router.push(`/project/detail/tasks?id=${projectId}${memberName ? `&member=${encodeURIComponent(memberName)}` : ''}`)}
                     initialYear={year ? parseInt(year) : new Date().getFullYear()}
                     initialMonth={month ? parseInt(month) : new Date().getMonth() + 1}
                 />
