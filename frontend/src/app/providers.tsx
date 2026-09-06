@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { restoreSession } from '@/lib/api';
 import { WorkspaceFilterProvider } from '@/lib/workspaceFilter';
+import { SidebarCollapseProvider } from '@/lib/sidebarCollapse';
 
 function SessionBootstrap({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -53,7 +54,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <WorkspaceFilterProvider>
-        <SessionBootstrap>{children}</SessionBootstrap>
+        <SidebarCollapseProvider>
+          <SessionBootstrap>{children}</SessionBootstrap>
+        </SidebarCollapseProvider>
       </WorkspaceFilterProvider>
     </QueryClientProvider>
   );

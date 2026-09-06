@@ -6,6 +6,7 @@ import MembersView from '@/components/MembersView';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import { useRouter } from 'next/navigation';
 import { isAdmin, isSuperAdmin, isLeader } from '@/lib/auth';
+import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import {
   getAccounts,
   getAvailableMembers,
@@ -76,6 +77,7 @@ const ROLE_OPTIONS = [
 
 export default function AccountsPage() {
   const router = useRouter();
+  const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const isLeaderUser = isLeader();
   const roleOptions = isLeaderUser ? ROLE_OPTIONS.filter(option => LEADER_MANAGED_ROLES.has(option.value)) : ROLE_OPTIONS;
   const canLeaderManageAccount = (account: Account) => !isLeaderUser || LEADER_MANAGED_ROLES.has(account.role);
@@ -416,7 +418,7 @@ export default function AccountsPage() {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] flex flex-col min-h-screen pt-[168px] md:pt-[112px]">
+      <div className={`flex-1 min-w-0 pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} flex flex-col min-h-screen pt-[168px] md:pt-[112px] transition-[padding] duration-200`}>
         {/* Header */}
         <div className="fixed left-0 md:left-[230px] right-0 top-14 md:top-0 z-30 h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 shadow-sm">
           <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Quản lý tài khoản</h2>
