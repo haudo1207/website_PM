@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional, List, Dict, Any
 import datetime
@@ -11,7 +12,7 @@ from ..models.meeting import Meeting, MeetingMember
 from ..models.project import Project
 from ..models.member import Member
 from ..utils.auth import get_current_user
-from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_query_for_user, require_project, require_route_project_access, user_scope
+from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, user_scope
 from ..utils.audit_service import AuditService
 
 logger = logging.getLogger("meetings")
@@ -320,6 +321,7 @@ def list_meetings(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     mine: bool = False,
+    workspace: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -332,7 +334,43 @@ def list_meetings(
     )
     if user_scope(current_user) != ALL_SCOPE:
         allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
-        q = q.filter(Meeting.project_id.in_(allowed_projects))
+        # Visible when it has no project at all (general/company-wide meeting),
+        # its primary project is in scope, OR any of its extra linked projects
+        # (meeting_projects) is in scope — matching require_route_project_access.
+        meetings_via_extra = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id.in_(allowed_projects))
+        conditions = [
+            Meeting.project_id.is_(None),
+            Meeting.project_id.in_(allowed_projects),
+            Meeting.id.in_(meetings_via_extra),
+        ]
+        # A member with a narrow (single/few) Workspace scope who's been added
+        # as a participant or is the creator must still see the meeting, even
+        # if its project(s) sit outside their Workspace — same "membership
+        # overrides Workspace" rule project_query_for_user() already applies.
+        member_id = getattr(current_user, "member_id", None)
+        if member_id:
+            my_meetings = db.query(MeetingMember.meeting_id).filter(MeetingMember.member_id == member_id)
+            conditions.append(Meeting.id.in_(my_meetings))
+            conditions.append(Meeting.created_by == member_id)
+        q = q.filter(or_(*conditions))
+
+    # Workspace switcher (Navbar) — same UI-narrowing filter Dashboard/KPI/
+    # Project Hub apply: a super_admin browsing "one company at a time" also
+    # narrows Meetings instead of always seeing every company's meetings.
+    # A general/no-project meeting stays visible under every Workspace, same
+    # as an "All"-scope project would. Only meaningful for ALL_SCOPE callers —
+    # a Workspace-scoped Member/Leader/Viewer is already locked to their own
+    # Workspace(s) above (with the membership override applied), so applying
+    # this on top of that would wrongly hide a meeting they're a participant
+    # of but that belongs to a different Workspace.
+    if workspace and workspace.lower() != ALL_SCOPE and user_scope(current_user) == ALL_SCOPE:
+        ws_projects = db.query(Project.id).filter(or_(*project_belongs_to_workspace(db, {workspace})))
+        meetings_via_extra_ws = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id.in_(ws_projects))
+        q = q.filter(or_(
+            Meeting.project_id.is_(None),
+            Meeting.project_id.in_(ws_projects),
+            Meeting.id.in_(meetings_via_extra_ws),
+        ))
 
     if project_id is not None:
         q = q.filter(Meeting.project_id == project_id)
@@ -427,6 +465,7 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
 def get_meeting_insights(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    workspace: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -443,7 +482,27 @@ def get_meeting_insights(
     )
     if user_scope(current_user) != ALL_SCOPE:
         allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
-        q = q.filter(Meeting.project_id.in_(allowed_projects))
+        meetings_via_extra = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id.in_(allowed_projects))
+        conditions = [
+            Meeting.project_id.is_(None),
+            Meeting.project_id.in_(allowed_projects),
+            Meeting.id.in_(meetings_via_extra),
+        ]
+        member_id = getattr(current_user, "member_id", None)
+        if member_id:
+            my_meetings = db.query(MeetingMember.meeting_id).filter(MeetingMember.member_id == member_id)
+            conditions.append(Meeting.id.in_(my_meetings))
+            conditions.append(Meeting.created_by == member_id)
+        q = q.filter(or_(*conditions))
+
+    if workspace and workspace.lower() != ALL_SCOPE and user_scope(current_user) == ALL_SCOPE:
+        ws_projects = db.query(Project.id).filter(or_(*project_belongs_to_workspace(db, {workspace})))
+        meetings_via_extra_ws = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id.in_(ws_projects))
+        q = q.filter(or_(
+            Meeting.project_id.is_(None),
+            Meeting.project_id.in_(ws_projects),
+            Meeting.id.in_(meetings_via_extra_ws),
+        ))
 
     today = datetime.date.today()
     fd = parse_date(from_date) if from_date else today - datetime.timedelta(days=7)

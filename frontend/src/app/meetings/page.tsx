@@ -17,6 +17,7 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
 import { isAdmin, getRole } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 // Deterministic color per project (no color field on Project yet — same
 // project.id/name always hashes to the same palette entry, so week-grid
@@ -63,6 +64,11 @@ function MeetingsPageContent() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { collapsed: sidebarCollapsed } = useSidebarCollapse();
+  // Navbar's Workspace switcher (shared with Dashboard/KPI/Project Hub) — a
+  // super_admin browsing "one company at a time" narrows Meetings the same
+  // way. Leader/Member/Viewer are already pinned server-side to their own
+  // Workspace, so this stays a no-op for them.
+  const { workspaceCode } = useWorkspaceFilter();
 
   const [canManage, setCanManage] = useState(false);
   // Members may create meetings for projects they belong to (backend enforces
@@ -186,9 +192,9 @@ function MeetingsPageContent() {
   }, []);
 
   const { data: meetingsData, isLoading, refetch: fetchMeetings } = useQuery({
-    queryKey: ['meetings'],
+    queryKey: ['meetings', workspaceCode],
     queryFn: async () => {
-      const data = await getMeetings();
+      const data = await getMeetings({ workspace: workspaceCode || undefined });
       if (data && data.success && Array.isArray(data.data)) return data.data;
       if (Array.isArray(data)) return data;
       return [];
@@ -198,9 +204,9 @@ function MeetingsPageContent() {
   const meetings: any[] = meetingsData || [];
 
   const { data: myMeetingsData, isLoading: isMyMeetingsLoading, refetch: fetchMyMeetings } = useQuery({
-    queryKey: ['meetings', 'mine'],
+    queryKey: ['meetings', 'mine', workspaceCode],
     queryFn: async () => {
-      const data = await getMeetings({ mine: true });
+      const data = await getMeetings({ mine: true, workspace: workspaceCode || undefined });
       if (data && data.success && Array.isArray(data.data)) return data.data;
       if (Array.isArray(data)) return data;
       return [];
@@ -211,9 +217,9 @@ function MeetingsPageContent() {
   const myMeetings: any[] = myMeetingsData || [];
 
   const { data: insightsData } = useQuery({
-    queryKey: ['meeting-insights'],
+    queryKey: ['meeting-insights', workspaceCode],
     queryFn: async () => {
-      const data = await getMeetingInsights();
+      const data = await getMeetingInsights({ workspace: workspaceCode || undefined });
       return data?.data || null;
     },
     staleTime: 2 * 60_000,
@@ -415,33 +421,37 @@ function MeetingsPageContent() {
     }
   };
 
-  // Stats
-  const totalMeetings = meetings.length;
-  const doneMeetings = meetings.filter(m => String(m.status || '').toUpperCase() === 'ĐÃ DIỄN RA' || String(m.status || '').toUpperCase() === 'DONE' || String(m.status || '').toUpperCase() === 'COMPLETED' || Boolean(m.executive_summary)).length;
-  const upcomingMeetings = meetings.filter(m => String(m.status || '').toUpperCase() === 'UPCOMING' || String(m.status || '').toUpperCase() === 'SẮP TỚI').length;
-  const totalTasksPushed = meetings.reduce((acc, m) => acc + (Array.isArray(m.recommended_tasks) ? m.recommended_tasks.length : (m.ai_summary ? 3 : 0)), 0);
+  // Stats — scoped to the meetings actually visible on the active tab: the
+  // search/project/person/platform/month/quick filters on Danh sách cuộc họp,
+  // "my meetings" on Calendar cá nhân, and the full team list on Calendar
+  // Team (which has no filter UI of its own).
+  const statsMeetings = activeTab === 'personal' ? myMeetings : activeTab === 'list' ? filteredMeetings : meetings;
+  const totalMeetings = statsMeetings.length;
+  const doneMeetings = statsMeetings.filter(m => String(m.status || '').toUpperCase() === 'ĐÃ DIỄN RA' || String(m.status || '').toUpperCase() === 'DONE' || String(m.status || '').toUpperCase() === 'COMPLETED' || Boolean(m.executive_summary)).length;
+  const upcomingMeetings = statsMeetings.filter(m => String(m.status || '').toUpperCase() === 'UPCOMING' || String(m.status || '').toUpperCase() === 'SẮP TỚI').length;
+  const totalTasksPushed = statsMeetings.reduce((acc, m) => acc + (Array.isArray(m.recommended_tasks) ? m.recommended_tasks.length : (m.ai_summary ? 3 : 0)), 0);
 
-  const totalHours = meetings.reduce((sum, m) => sum + (typeof m.duration === 'number' ? m.duration / 60 : 1), 0);
-  const uniquePeopleCount = new Set(meetings.flatMap(m => (m.members || []).map((mm: any) => mm.display_name))).size;
+  const totalHours = statsMeetings.reduce((sum, m) => sum + (typeof m.duration === 'number' ? m.duration / 60 : 1), 0);
+  const uniquePeopleCount = new Set(statsMeetings.flatMap(m => (m.members || []).map((mm: any) => mm.display_name))).size;
   const avgHoursPerPerson = uniquePeopleCount > 0 ? totalHours / uniquePeopleCount : 0;
 
-  const allRecommendedTasks = meetings.flatMap(m => (m.recommended_tasks || m.ai_summary?.recommended_tasks || []) as any[]);
+  const allRecommendedTasks = statsMeetings.flatMap(m => (m.recommended_tasks || m.ai_summary?.recommended_tasks || []) as any[]);
   const syncedTasksCount = allRecommendedTasks.filter(t => t.imported_task_id).length;
   const kpiTaskSyncPct = allRecommendedTasks.length > 0 ? Math.round((syncedTasksCount / allRecommendedTasks.length) * 100) : 100;
 
-  const meetingsWithFollowthrough = meetings.filter(m => m.score_followthrough !== null && m.score_followthrough !== undefined);
+  const meetingsWithFollowthrough = statsMeetings.filter(m => m.score_followthrough !== null && m.score_followthrough !== undefined);
   const avgFollowthroughPct = meetingsWithFollowthrough.length > 0
     ? Math.round((meetingsWithFollowthrough.reduce((s, m) => s + (m.score_followthrough || 0), 0) / (meetingsWithFollowthrough.length * 20)) * 100)
     : 0;
 
-  const meetingsWithScore = meetings.filter(m => m.score_total !== null && m.score_total !== undefined);
+  const meetingsWithScore = statsMeetings.filter(m => m.score_total !== null && m.score_total !== undefined);
   const overallQualityScore = meetingsWithScore.length > 0
     ? Math.round(meetingsWithScore.reduce((s, m) => s + m.score_total, 0) / meetingsWithScore.length)
     : 0;
-  const pctPrepared = meetings.length > 0
-    ? Math.round((meetings.filter(m => m.objective && m.agenda).length / meetings.length) * 100)
+  const pctPrepared = statsMeetings.length > 0
+    ? Math.round((statsMeetings.filter(m => m.objective && m.agenda).length / statsMeetings.length) * 100)
     : 0;
-  const meetingsWithExecution = meetings.filter(m => m.score_execution !== null && m.score_execution !== undefined);
+  const meetingsWithExecution = statsMeetings.filter(m => m.score_execution !== null && m.score_execution !== undefined);
   const pctOnTime = meetingsWithExecution.length > 0
     ? Math.round((meetingsWithExecution.reduce((s, m) => s + m.score_execution, 0) / (meetingsWithExecution.length * 15)) * 100)
     : 0;
@@ -656,6 +666,39 @@ function MeetingsPageContent() {
           {/* TAB 1: DANH SÁCH CUỘC HỌP */}
           {activeTab === 'list' && (
             <div className="space-y-5">
+              <ScoreModelExplainer />
+              <MeetingPlaybook />
+
+              {/* Chart + Alerts */}
+              <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4">
+                <BarChartCard
+                  title="Xu hướng thời lượng họp theo dự án vs nội bộ (7 ngày)"
+                  data={insightsData?.weekly_series || []}
+                  bars={[{ key: 'project', name: 'Theo dự án', fill: '#7068f5' }, { key: 'internal', name: 'Nội bộ / vận hành', fill: '#c8c5ff' }]}
+                  xKey="day"
+                />
+                <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-4">
+                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Cần chú ý</h3>
+                  {(insightsData?.alerts || []).length === 0 ? (
+                    <p className="text-[11px] text-[#94a3b8]">Không có cảnh báo trong 7 ngày qua.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(insightsData?.alerts || []).map((a: any, i: number) => (
+                        <div key={i} className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-100">
+                          <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-extrabold shrink-0 ${
+                            a.type === 'overload' ? 'bg-red-100 text-red-600' : a.type === 'outside' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
+                          }`}>{a.count}</div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-bold text-[#0b1c30] leading-tight">{a.title}</p>
+                            <p className="text-[10px] text-[#7d8ba0] mt-0.5">{a.detail}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex flex-col gap-3 bg-white p-3.5 rounded-2xl border border-[#e2e8f0] shadow-2xs">
                 <div className="flex flex-col lg:flex-row gap-3">
                   <div className="relative flex-1 min-w-[200px]">
@@ -717,39 +760,6 @@ function MeetingsPageContent() {
                     >
                       Đặt lại bộ lọc
                     </button>
-                  )}
-                </div>
-              </div>
-
-              <ScoreModelExplainer />
-              <MeetingPlaybook />
-
-              {/* Chart + Alerts */}
-              <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4">
-                <BarChartCard
-                  title="Xu hướng thời lượng họp theo dự án vs nội bộ (7 ngày)"
-                  data={insightsData?.weekly_series || []}
-                  bars={[{ key: 'project', name: 'Theo dự án', fill: '#7068f5' }, { key: 'internal', name: 'Nội bộ / vận hành', fill: '#c8c5ff' }]}
-                  xKey="day"
-                />
-                <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-4">
-                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Cần chú ý</h3>
-                  {(insightsData?.alerts || []).length === 0 ? (
-                    <p className="text-[11px] text-[#94a3b8]">Không có cảnh báo trong 7 ngày qua.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {(insightsData?.alerts || []).map((a: any, i: number) => (
-                        <div key={i} className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-100">
-                          <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-extrabold shrink-0 ${
-                            a.type === 'overload' ? 'bg-red-100 text-red-600' : a.type === 'outside' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
-                          }`}>{a.count}</div>
-                          <div className="min-w-0">
-                            <p className="text-[11px] font-bold text-[#0b1c30] leading-tight">{a.title}</p>
-                            <p className="text-[10px] text-[#7d8ba0] mt-0.5">{a.detail}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                   )}
                 </div>
               </div>
