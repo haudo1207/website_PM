@@ -12,6 +12,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
+import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 
 const getShortName = (name: string) => {
@@ -164,6 +165,16 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
   const normalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
   const interruptTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
 
+  // Recompute KPI from memberTasks (workspace-scoped + period-filtered)
+  // to avoid data-scope mismatch when parent uses rawTasksAll for drilled-in members.
+  const localKpi = useMemo(() => {
+    let k = 0;
+    for (const t of memberTasks) {
+      k += getTaskKpiForMember(t, member.id);
+    }
+    return Math.round(k * 10) / 10;
+  }, [memberTasks, member.id]);
+
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
 
   // Period label for the header
@@ -174,6 +185,31 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
     if (selectedYear !== 'all') return `Năm ${selectedYear}`;
     return 'Tất cả';
   }, [activeQuickFilter, selectedYear, selectedMonth, selectedWeek]);
+
+  // THỜI GIAN BỘ LỌC — number of weeks the selected period represents.
+  // Mirrors the backend `weeks_divisor` calculation in
+  // backend/app/routers/system_audit.py:_aggregate_team_comparison.
+  const filterDuration = useMemo(() => {
+    if (selectedWeek !== 'all' || (activeQuickFilter && activeQuickFilter.startsWith('Tuần'))) {
+      return 1;
+    }
+    if (typeof selectedMonth === 'number') {
+      return MONTH_WEEKS_COUNT[selectedMonth] || 4;
+    }
+    if (typeof selectedYear === 'number') {
+      return 52;
+    }
+    return 52;
+  }, [selectedYear, selectedMonth, selectedWeek, activeQuickFilter]);
+
+  // KPI TRUNG BÌNH = KPI TỔNG / THỜI GIAN BỘ LỌC (displayed as percentage).
+  // Uses localKpi recomputed from memberTasks (workspace-scoped + period-filtered)
+  // to avoid data-scope mismatch when parent uses rawTasksAll for drilled-in members.
+  const kpiTrungBinhText = useMemo(() => {
+    const kpi = typeof localKpi === 'number' ? localKpi : 0;
+    const divisor = filterDuration > 0 ? filterDuration : 1;
+    return `${(kpi / divisor).toFixed(1)}%`;
+  }, [localKpi, filterDuration]);
 
   const totalPossible = openTasks.length + doneTasks.length;
   const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
@@ -239,11 +275,24 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Trễ</span>
             </div>
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
-              <span className="text-lg font-black text-[#0b1c30] leading-none">{memberTasks.length}</span>
-              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">Deadline kỳ</span>
+              <span className="text-lg font-black text-[#0058be] leading-none">{kpiTrungBinhText}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                KPI TRUNG BÌNH
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">KPI trung bình</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">KPI TRUNG BÌNH = KPI TỔNG ÷ THỜI GIAN BỘ LỌC</p>
+                  <p className="text-white/60 mt-1.5">Trong đó:</p>
+                  <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                    <li><b>KPI TỔNG:</b> Tổng KPI từ các task đã hoàn thành (Done) trong kỳ lọc, tính theo kpi_assigned + kpi_support</li>
+                    <li><b>THỜI GIAN BỘ LỌC:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
+                  </ul>
+                  <p className="text-white/50 mt-1.5">Ví dụ: KPI tổng = 574.1, lọc Tuần 1 → 574.1 ÷ 1 = 574.1%</p>
+                </FormulaTooltip>
+              </span>
             </div>
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
-              <span className="text-lg font-black text-[#0058be] leading-none">{member.kpi?.toFixed(1) || '0.0'}</span>
+              <span className="text-lg font-black text-[#0058be] leading-none">{localKpi.toFixed(1)}</span>
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI</span>
             </div>
           </div>
@@ -310,7 +359,21 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
               {/* Tải công việc */}
               <div className="bg-blue-50/40 border border-blue-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
                 <div>
-                  <span className="text-[9px] font-extrabold text-blue-500 uppercase tracking-wider">Tải công việc</span>
+                  <span className="text-[9px] font-extrabold text-blue-500 uppercase tracking-wider flex items-center gap-1">
+                    Tải công việc
+                    <FormulaTooltip align="left">
+                      <p className="font-bold text-white/90 mb-1">Tải công việc</p>
+                      <p className="text-white/80 mb-1">Công thức:</p>
+                      <p className="text-white font-mono">Tải = min(100, round((Task mở ÷ max(5, Tổng task)) × 100))</p>
+                      <p className="text-white/60 mt-1.5">Trong đó:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b>Task mở:</b> Số task chưa hoàn thành (không Done/Hủy) trong kỳ lọc</li>
+                        <li><b>Tổng task:</b> Task mở + Task đã hoàn thành trong kỳ</li>
+                        <li><b>max(5, Tổng task):</b> Nếu tổng task {"<"} 5, dùng 5 làm mẫu số (tránh % quá cao khi ít task)</li>
+                      </ul>
+                      <p className="text-white/50 mt-1.5">Nếu không có task → mặc định 67%. Kết quả capped ở 100%.</p>
+                    </FormulaTooltip>
+                  </span>
                   <p className="text-2xl font-black text-[#0058be] mt-1">{workload}%</p>
                 </div>
                 <p className="text-[10px] text-slate-400 leading-tight mt-3">Tải trung bình — có thể nhận thêm task nếu ưu tiên rõ.</p>
@@ -1292,8 +1355,15 @@ export default function OverviewTab() {
           if (calculateDaysLate(t) > 0) o++;
         }
       });
-      const kpiVal = typeof m.kpi_total === 'number' && m.kpi_total > 0 ? m.kpi_total : k;
-      const mandayVal = typeof m.manday_total === 'number' && m.manday_total > 0 ? m.manday_total : md;
+      // HT (actual) always comes from myTasks — the SAME filtered list Giao
+      // is computed from (Workspace switcher + Tuần/Tháng/Năm period) — so
+      // the two numbers can never drift apart in scope. Previously this
+      // preferred the backend's m.kpi_total/m.manday_total when positive,
+      // but those fields sum ALL of the member's Done tasks company-wide
+      // (every Workspace, month-level at best — no week granularity),
+      // ignoring both the Workspace switcher and any Tuần filter, which
+      // is exactly why HT could show a number far larger than Giao for a
+      // Leader/Member holding Phụ Workspaces or viewing a single week.
       return {
         id: m.id,
         name: m.display_name || m.full_name,
@@ -1303,9 +1373,9 @@ export default function OverviewTab() {
         done: d,
         inProgress: i,
         overdue: o,
-        manday: Math.round(mandayVal * 10) / 10,
+        manday: Math.round(md * 10) / 10,
         mandayPlanned: Math.round(mdPlanned * 10) / 10,
-        kpi: Math.round(kpiVal * 10) / 10,
+        kpi: Math.round(k * 10) / 10,
         kpiPlanned: Math.round(kpiPlanned * 10) / 10,
         mandayByWs,
         rawMember: m
@@ -1507,7 +1577,7 @@ export default function OverviewTab() {
       bonusMatrix: bonM,
       drilledMemberId,
     };
-  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
+  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always
@@ -1668,7 +1738,7 @@ export default function OverviewTab() {
               return (
               <div key={ld.name} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
@@ -1735,7 +1805,7 @@ export default function OverviewTab() {
               return (
               <div key={m.id} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">

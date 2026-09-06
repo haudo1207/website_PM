@@ -116,6 +116,34 @@ class Task(Base):
     # having deleted its demo-request history.
     zalo_demo_skip   = Column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Review workflow — a layer SEPARATE from `status` (status stays the
+    # tenant-configurable free-text lookup it always was, e.g. "Waiting" /
+    # "Review" / a custom name). review_status is our own fixed vocabulary:
+    # None (never entered review) / "pending" / "approved" / "changes_requested".
+    review_status          = Column(String(30), nullable=True)
+    review_requested_at    = Column(DateTime, nullable=True)
+    review_requested_by    = Column(Integer, nullable=True)  # users.id
+    approved_at            = Column(DateTime, nullable=True)
+    approved_by            = Column(Integer, nullable=True)  # users.id
+    change_requested_at    = Column(DateTime, nullable=True)
+    change_requested_by    = Column(Integer, nullable=True)  # users.id
+    change_request_reason  = Column(Text, nullable=True)
+    last_review_action_at  = Column(DateTime, nullable=True)
+
+    # Blocking workflow — layer riêng, ĐỘC LẬP với `status` (giống Review
+    # workflow ở trên). is_blocked là source of truth mới; `status` có thể vẫn
+    # là 1 status tên "Blocked" do tenant tự đặt nhưng không còn là căn cứ
+    # chính. Chưa có bảng task-dependency thật (audit không tìm thấy) nên
+    # blocked_by_task_id chỉ là 1 self-reference đơn giản (task nào đang chặn
+    # task này), KHÔNG phải full dependency graph.
+    is_blocked          = Column(Boolean, nullable=False, default=False, server_default="false")
+    blocked_at          = Column(DateTime, nullable=True)
+    blocked_by          = Column(Integer, nullable=True)  # users.id
+    blocked_reason      = Column(Text, nullable=True)
+    blocked_by_task_id  = Column(Integer, ForeignKey("tasks_v2.id", ondelete="SET NULL"), nullable=True)
+    unblocked_at        = Column(DateTime, nullable=True)
+    unblocked_by        = Column(Integer, nullable=True)  # users.id
+
     # Relationships
     task_group        = relationship("TaskGroup", back_populates="tasks")
     assigned_member   = relationship("Member", foreign_keys=[assigned_id], lazy="select")

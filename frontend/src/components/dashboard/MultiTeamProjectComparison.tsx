@@ -19,6 +19,7 @@ import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonProject,
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SvgIcon from '@/components/dashboard/Icons';
 import ProgressBar from '@/components/dashboard/ProgressBar';
+import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 
 function formatYMD(d: Date): string {
   const y = d.getFullYear();
@@ -292,8 +293,8 @@ export default function MultiTeamProjectComparison() {
                 key={label}
                 onClick={() => applyQuickFilter(label)}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm active:scale-95 ${activeQuickFilter === label
-                    ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
-                    : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
+                  ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
+                  : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
                   }`}
               >
                 {label}
@@ -345,26 +346,71 @@ export default function MultiTeamProjectComparison() {
               <tr className="bg-[#eff4ff]/50 text-slate-500 border-b border-[#c2c6d6]/60 uppercase text-[10px] tracking-wider">
                 <th className="px-4 py-3 text-left font-bold">Leader / Team</th>
                 <th className="px-3 py-3 text-right font-bold">KPI</th>
+                <th className="px-3 py-3 text-right font-bold">KPI TRUNG BÌNH</th>
                 <th className="px-3 py-3 text-right font-bold">Plan MD</th>
                 <th className="px-3 py-3 text-right font-bold">Actual MD</th>
-                <th className="px-3 py-3 text-right font-bold">Util.</th>
-                <th className="px-3 py-3 text-right font-bold">Efficiency</th>
+                <th className="px-3 py-3 text-right font-bold">
+                  <span className="inline-flex items-center gap-0.5 justify-end">
+                    Util.
+                    <FormulaTooltip align="right">
+                      <p className="font-bold text-white/90 mb-1">Utilization (Sử dụng nguồn lực)</p>
+                      <p className="text-white/80 mb-1">Công thức:</p>
+                      <p className="text-white font-mono">UTIL = (Actual MD ÷ Plan MD) × 100%</p>
+                      <p className="text-white/60 mt-1.5">Trong đó:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b>Plan MD:</b> Tổng manday_est từ tất cả task của team (assigned + support)</li>
+                        <li><b>Actual MD:</b> Tổng manday_actual từ tất cả task của team (assigned + support)</li>
+                      </ul>
+                      <p className="text-white/50 mt-1.5">{">="}100%: Quá tải · {">="}80%: Tốt · {"<"}80%: Hiệu suất thấp</p>
+                    </FormulaTooltip>
+                  </span>
+                </th>
+                <th className="px-3 py-3 text-right font-bold">
+                  <span className="inline-flex items-center gap-0.5 justify-end">
+                    Efficiency
+                    <FormulaTooltip align="right">
+                      <p className="font-bold text-white/90 mb-1">Efficiency (Hiệu suất)</p>
+                      <p className="text-white/80 mb-1">Công thức:</p>
+                      <p className="text-white font-mono">EFFICIENCY = (Done ÷ Total) × 100%</p>
+                      <p className="text-white/60 mt-1.5">Trong đó:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b>Done:</b> Số task đã hoàn thành (status = Done) trong team</li>
+                        <li><b>Total:</b> Tổng số task của team (assigned + support, trong kỳ lọc)</li>
+                      </ul>
+                      <p className="text-white/50 mt-1.5">Tỷ lệ task hoàn thành so với tổng task trong kỳ.</p>
+                    </FormulaTooltip>
+                  </span>
+                </th>
                 <th className="px-3 py-3 text-right font-bold">On-time</th>
                 <th className="px-3 py-3 text-right font-bold">Trễ</th>
-                <th className="px-3 py-3 text-center font-bold">Health</th>
+                <th className="px-3 py-3 text-center font-bold">
+                  <span className="inline-flex items-center gap-0.5 justify-center">
+                    Health
+                    <FormulaTooltip align="right">
+                      <p className="font-bold text-white/90 mb-1">Health (Sức khỏe team)</p>
+                      <p className="text-white/80 mb-1">Phân loại dựa trên tỷ lệ task trễ:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b className="text-rose-300">Critical:</b> Task trễ ÷ Tổng task {">="} 30% HOẶC task trễ {">="} 3</li>
+                        <li><b className="text-amber-300">Risk:</b> Task trễ ÷ Tổng task {">="} 10% HOẶC task trễ {">="} 1</li>
+                        <li><b className="text-emerald-300">On Track:</b> Không đạt ngưỡng Critical hay Risk</li>
+                        <li><b className="text-slate-300">N/A:</b> Không có task trong kỳ</li>
+                      </ul>
+                    </FormulaTooltip>
+                  </span>
+                </th>
                 <th className="px-3 py-3 text-center font-bold">Chi tiết</th>
               </tr>
             </thead>
             <tbody>
               {!teamComparisonLoading && teamsList.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-slate-400 font-semibold">
+                  <td colSpan={11} className="text-center py-8 text-slate-400 font-semibold">
                     Workspace hiện tại chưa có Leader nào có thành viên được quản lý.
                   </td>
                 </tr>
               ) : teamComparisonLoading ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-slate-400 font-semibold">
+                  <td colSpan={11} className="text-center py-8 text-slate-400 font-semibold">
                     Đang tải dữ liệu team…
                   </td>
                 </tr>
@@ -383,6 +429,9 @@ export default function MultiTeamProjectComparison() {
                       </div>
                     </td>
                     <td className="px-3 py-3 text-right font-extrabold text-[#0058be]">{t.kpi.toFixed(1)}</td>
+                    <td className="px-3 py-3 text-right font-extrabold text-[#0058be]">
+                      {weeksDivisor > 0 ? `${(t.kpi / weeksDivisor).toFixed(1)}%` : '0.0%'}
+                    </td>
                     <td className="px-3 py-3 text-right font-mono text-slate-700">{t.plan_md.toFixed(1)}</td>
                     <td className="px-3 py-3 text-right font-mono text-slate-700">{t.actual_md.toFixed(1)}</td>
                     <td className="px-3 py-3 text-right">
@@ -422,8 +471,20 @@ export default function MultiTeamProjectComparison() {
           <div className="flex items-center gap-2">
             <SvgIcon name="chart" className="w-4 h-4 text-purple-600" />
             <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider inline-flex items-center gap-1">
                 3. So sánh Project theo nhiều Team
+                <FormulaTooltip align="left">
+                  <p className="font-bold text-white/90 mb-1">So sánh Project theo nhiều Team</p>
+                  <p className="text-white/80 mb-1">Chức năng này so sánh các Project đang được các Team (Leader) phụ trách.</p>
+                  <p className="text-white/60 mt-1.5">Cách tính cho mỗi Project:</p>
+                  <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                    <li><b>Tiến độ (Progress):</b> (manday_actual ÷ manday_est) × 100% — tỷ lệ ngày công thực tế so với dự kiến</li>
+                    <li><b>Timeline:</b> ((Tổng task − Task trễ) ÷ Tổng task) × 100%</li>
+                    <li><b>Task:</b> Task hoàn thành ÷ Tổng task</li>
+                    <li><b>Health:</b> Phân loại theo tỷ lệ task trễ (giống Section 2)</li>
+                  </ul>
+                  <p className="text-white/50 mt-1.5">Chọn nhiều Leader rồi nhấn "So sánh" để xem project cards song song. Project metrics hiển thị toàn bộ task của project (không chỉ task của team).</p>
+                </FormulaTooltip>
               </h3>
               <p className="text-[10px] text-slate-400 mt-0.5">
                 Chọn nhiều Leader để so sánh các Project đang được team phụ trách — Workspace hiện tại: <strong className="text-[#0058be]">{currentWsLabel}</strong>
@@ -451,11 +512,10 @@ export default function MultiTeamProjectComparison() {
                           ? prev.filter(id => id !== t.leader_user_id)
                           : [...prev, t.leader_user_id]);
                       }}
-                      className={`flex items-center gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
-                        checked
+                      className={`flex items-center gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${checked
                           ? 'bg-[#0058be] text-white border-[#0058be] shadow-sm'
                           : 'bg-white text-slate-600 border-slate-200 hover:border-[#0058be]/40 hover:text-[#0058be]'
-                      }`}
+                        }`}
                     >
                       <span className={`flex items-center justify-center w-4 h-4 rounded border ${checked ? 'bg-white border-white' : 'bg-white border-slate-300'}`}>
                         {checked && <span className="material-symbols-outlined text-[12px] text-[#0058be] font-black">check</span>}
@@ -681,7 +741,7 @@ export default function MultiTeamProjectComparison() {
                         </div>
                       </div>
                       <div className="grid grid-cols-4 gap-2 mt-3">
-                        <CounterChip label="Members"  value={totalMembers}     tone="slate" />
+                        <CounterChip label="Members" value={totalMembers} tone="slate" />
                         <CounterChip label="Không làm việc" value={notWorkingMembers} tone="slate" />
                         <CounterChip label="Còn capacity" value={capacityMembers} tone="emerald" />
                         <CounterChip label="Quá tải" value={overloadedMembers} tone="rose" />
@@ -711,12 +771,27 @@ export default function MultiTeamProjectComparison() {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
-                          <SmallStat label="Done"   value={t.done}        color="text-emerald-600" />
-                          <SmallStat label="Doing"  value={t.in_progress} color="text-blue-600" />
-                          <SmallStat label="Trễ"    value={t.overdue}     color={t.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
-                          <SmallStat label="KPI"    value={t.kpi.toFixed(1)} color="text-[#0058be]" />
-                          <SmallStat label="Manday" value={`${t.actual_md.toFixed(1)}/${t.plan_md.toFixed(1)}`} />
-                          <SmallStat label="KPI%"   value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`} color={(t.leader_kpi_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_kpi_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'} />
+                          <SmallStat label="Done" value={t.leader_done ?? t.done} color="text-emerald-600" />
+                          <SmallStat label="Doing" value={t.leader_doing ?? t.in_progress} color="text-blue-600" />
+                          <SmallStat label="Trễ" value={t.leader_overdue ?? t.overdue} color={(t.leader_overdue ?? t.overdue) > 0 ? 'text-rose-600' : 'text-slate-400'} />
+                          <SmallStat label="KPI" value={(t.leader_kpi ?? t.kpi).toFixed(1)} color="text-[#0058be]" />
+                          <SmallStat label="Manday" value={`${(t.leader_manday_actual ?? t.actual_md).toFixed(1)}/${(t.leader_manday_est ?? t.plan_md).toFixed(1)}`} />
+                          <SmallStat label="KPI%"
+                            value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`}
+                            color={(t.leader_kpi_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_kpi_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'}
+                            tooltipContent={<>
+                              <p className="font-bold text-white/90 mb-1">KPI% (Leader)</p>
+                              <p className="text-white/80 mb-1">Công thức:</p>
+                              <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
+                              <p className="text-white/60 mt-1.5">Trong đó:</p>
+                              <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc. Chỉ tính riêng task của Leader (không bao gồm toàn bộ team).</li>
+                                <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
+                              </ul>
+                              <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                              <p className="text-white/40 mt-1 text-[9px]">⚠️ Khác với KPI TRUNG BÌNH: KPI% chỉ tính task Done có end_date_actual trong kỳ, KPI TRUNG BÌNH tính tổng KPI tất cả task trong kỳ.</p>
+                            </>}
+                          />
                         </div>
                       </div>
 
@@ -742,12 +817,26 @@ export default function MultiTeamProjectComparison() {
                                 <WorkloadBadge status={status} />
                               </div>
                               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
-                                <SmallStat label="Done"   value={m.done}        color="text-emerald-600" />
-                                <SmallStat label="Doing"  value={m.in_progress} color="text-blue-600" />
-                                <SmallStat label="Trễ"    value={m.overdue}     color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
-                                <SmallStat label="KPI"    value={m.kpi.toFixed(1)} color="text-[#0058be]" />
+                                <SmallStat label="Done" value={m.done} color="text-emerald-600" />
+                                <SmallStat label="Doing" value={m.in_progress} color="text-blue-600" />
+                                <SmallStat label="Trễ" value={m.overdue} color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
+                                <SmallStat label="KPI" value={m.kpi.toFixed(1)} color="text-[#0058be]" />
                                 <SmallStat label="Manday" value={`${m.manday_actual.toFixed(1)}/${m.manday_est.toFixed(1)}`} />
-                                <SmallStat label="KPI%"   value={`${kpiPct.toFixed(1)}%`} color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'} />
+                                <SmallStat label="KPI%"
+                                  value={`${kpiPct.toFixed(1)}%`}
+                                  color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'}
+                                  tooltipContent={<>
+                                    <p className="font-bold text-white/90 mb-1">KPI% (Thành viên)</p>
+                                    <p className="text-white/80 mb-1">Công thức:</p>
+                                    <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
+                                    <p className="text-white/60 mt-1.5">Trong đó:</p>
+                                    <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                      <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc</li>
+                                      <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
+                                    </ul>
+                                    <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                                  </>}
+                                />
                               </div>
                             </div>
                           );
@@ -905,10 +994,17 @@ function SummaryStat({ label, value, color }: { label: string; value: any; color
   );
 }
 
-function SmallStat({ label, value, color }: { label: string; value: any; color?: string }) {
+function SmallStat({ label, value, color, tooltipContent }: { label: string; value: any; color?: string; tooltipContent?: React.ReactNode }) {
   return (
     <div>
-      <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">{label}</span>
+      <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider flex items-center gap-0.5">
+        {label}
+        {tooltipContent && (
+          <FormulaTooltip align="left">
+            {tooltipContent}
+          </FormulaTooltip>
+        )}
+      </span>
       <span className={`text-[11px] font-extrabold ${color || 'text-slate-700'}`}>{value}</span>
     </div>
   );
@@ -952,8 +1048,8 @@ function CounterChip({ label, value, tone }: { label: string; value: number; ton
     tone === 'rose'
       ? 'bg-rose-50 text-rose-700 border-rose-200'
       : tone === 'emerald'
-      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-      : 'bg-slate-50 text-slate-700 border-slate-200';
+        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        : 'bg-slate-50 text-slate-700 border-slate-200';
   return (
     <div className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-lg border ${toneCls}`}>
       <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{label}</span>

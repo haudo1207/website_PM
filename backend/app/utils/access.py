@@ -4,7 +4,8 @@ from sqlalchemy import or_, func as sql_func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.meeting import Meeting
+from ..models.meeting import Meeting, MeetingMember
+from ..models.meeting_project import MeetingProject
 from ..models.member import Member
 from ..models.phase import Phase
 from ..models.project import Project, project_members
@@ -755,16 +756,46 @@ def require_route_project_access(
             .filter(Task.id == int(params["tid"]))
             .scalar()
         )
+    # A meeting can be linked to more than one project (Meeting.project_id is
+    # the "primary", extras live in meeting_projects) — the generic
+    # project_id-only check below can't express "accessible via ANY of them",
+    # so meetings are authorized here instead and the generic check is
+    # skipped for this request.
+    skip_generic_project_check = False
     if project_id is None and request.url.path.startswith("/api/meetings/") and params.get("id") is not None:
         meeting = db.query(Meeting).filter(Meeting.id == int(params["id"])).first()
-        if meeting and meeting.project_id is None and user_scope(user) != ALL_SCOPE:
-            raise HTTPException(404, "Meeting not found.")
-        project_id = meeting.project_id if meeting else None
-    
+        if meeting:
+            extra_ids = [
+                pid for (pid,) in db.query(MeetingProject.project_id)
+                .filter(MeetingProject.meeting_id == meeting.id).all()
+            ]
+            linked_project_ids = ([meeting.project_id] if meeting.project_id else []) + extra_ids
+            if linked_project_ids and user_scope(user) != ALL_SCOPE:
+                linked_projects = db.query(Project).filter(Project.id.in_(linked_project_ids)).all()
+                has_project_access = any(can_access_project(db, user, p) for p in linked_projects)
+                # Membership overrides Workspace here too: a Workspace-scoped
+                # member added as a participant (or who created the meeting)
+                # must still be able to open it even if its project(s) sit
+                # outside their Workspace — mirrors list_meetings/insights.
+                member_id = getattr(user, "member_id", None)
+                is_participant = bool(member_id) and (
+                    meeting.created_by == member_id
+                    or db.query(MeetingMember.id).filter(
+                        MeetingMember.meeting_id == meeting.id,
+                        MeetingMember.member_id == member_id,
+                    ).first() is not None
+                )
+                if not has_project_access and not is_participant:
+                    raise HTTPException(404, "Meeting not found.")
+            project_id = meeting.project_id
+        else:
+            project_id = None
+        skip_generic_project_check = True
+
     print(f"Project ID: {project_id}")
 
     # Check data scope access if project_id is resolved.
-    if project_id is not None:
+    if project_id is not None and not skip_generic_project_check:
         require_project(db, user, int(project_id))
 
     role = getattr(user, "role", ROLE_MEMBER)

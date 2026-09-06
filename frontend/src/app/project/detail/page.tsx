@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, Fragment, Suspense, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import MeetingCard from '@/components/meetings/MeetingCard';
@@ -28,18 +28,21 @@ import {
   getMembers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks,
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
+  approveTask, requestTaskChanges, requestTaskReview, blockTask, unblockTask,
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup,
   getMe,
   getProjectAuditLogs
 } from '@/lib/api';
 import { isAdmin, isMember, getEmail } from '@/lib/auth';
+import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import {
   Search, Filter, Columns3, Plus, ChevronDown, ChevronRight, MoreHorizontal,
   GripVertical, Pencil, Trash2, Copy, RotateCcw, Lock, Expand, Minimize2, X,
   Bell, Sparkles, Building2, LayoutTemplate, FolderPlus, Pin, PinOff,
   Users, AlertTriangle, Layers, UserX, ArrowRight, Clock,
   ArrowUpRight, ArrowDownRight, Minus, Trophy, BarChart3,
+  Ban, CheckCircle2,
 } from 'lucide-react';
 import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod } from '@/app/dashboard/constants';
 
@@ -182,7 +185,7 @@ function FloatingDropdown({
     <div
       ref={menuRef}
       style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 200 }}
-      className={className}
+      className={`text-[#0b1c30] ${className}`}
     >
       {children}
     </div>,
@@ -248,7 +251,18 @@ function ProjectDetailContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const queryClient = useQueryClient();
+  const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const id = searchParams.get('id') || '';
+  // Drill-in from /kpi's "Dự án đang tham gia" list: pre-filter the Tasks
+  // tab to just this one person's own tasks (assignee OR support) — ANDed
+  // alongside the existing Assigned/Support dropdowns (which stay 'All' by
+  // default), so it narrows the list without disabling manual re-filtering.
+  const memberFilterParam = searchParams.get('member') || '';
+  // Numeric Member.id for that same person — needed to scope an AI Review
+  // to just them (assigned_id/support_id), since memberFilterParam only
+  // carries their display name for string-based table filtering.
+  const memberIdParam = searchParams.get('member_id') || '';
   // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
   // next.config.js rewrites that path server-side to /project/detail?tab=tasks
   // purely to pick which page component to render; it does NOT change what the
@@ -325,7 +339,13 @@ function ProjectDetailContent() {
   const resizingColumnRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
 
   // Phase navigation: overflow-to-dropdown (never wrap, never horizontal scroll)
-  const MAX_VISIBLE_REAL_PHASES = 7; // + Master = 8 total slots
+  // Trần số Phase hiển thị - thuật toán bên dưới (visiblePhaseCount) đo width
+  // thật của container + từng tab và TỰ ĐỘNG chỉ hiện bấy nhiêu Phase vừa 1
+  // hàng (không bao giờ v rớt dòng/che khuất "+ Thêm Phase"/"Áp dụng template"
+  // vì 2 nút này luôn được reserve width). Tăng trần lên 8 để tận dụng khoảng
+  // trống bên phải khi có nhiều Phase ngắn tên; khi phase dài/nhiều hơn 8,
+  // thuật toán tự co lại và đẩy phần dư vào "Phase khác".
+  const MAX_VISIBLE_REAL_PHASES = 8;
   const [pinnedPhaseIds, setPinnedPhaseIds] = useState<number[]>([]);
   const [phaseOverflowOpen, setPhaseOverflowOpen] = useState(false);
   const [phaseOverflowSearch, setPhaseOverflowSearch] = useState('');
@@ -350,13 +370,15 @@ function ProjectDetailContent() {
 
   // AI Review Drawer states
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
-  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK'>('PROJECT');
+  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER'>('PROJECT');
   const [aiDrawerEntityId, setAiDrawerEntityId] = useState<number>(0);
   const [aiDrawerEntityName, setAiDrawerEntityName] = useState<string>('');
+  const [aiDrawerProjectId, setAiDrawerProjectId] = useState<number | undefined>(undefined);
 
-  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK', entityId: number, name = '') => {
+  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER', entityId: number, name = '') => {
     setAiDrawerEntityType(entityType);
     setAiDrawerEntityId(entityId);
+    setAiDrawerProjectId(entityType === 'MEMBER' ? Number(id) : undefined);
 
     let resolvedName = name;
     if (!resolvedName) {
@@ -368,11 +390,17 @@ function ProjectDetailContent() {
       } else if (entityType === 'TASK') {
         const foundTask = items.find(t => t.id === entityId);
         resolvedName = foundTask ? foundTask.detail : 'Task';
+      } else if (entityType === 'MEMBER') {
+        resolvedName = memberFilterParam || 'Thành viên';
       }
     }
 
     setAiDrawerEntityName(resolvedName);
     setIsAIDrawerOpen(true);
+  };
+
+  const handleOpenAIReviewDrawerForContext = () => {
+    handleOpenAIReviewDrawer('PROJECT', Number(id));
   };
 
   const [activePhase, setActivePhase] = useState<string>('ALL');
@@ -392,6 +420,35 @@ function ProjectDetailContent() {
   const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
 
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
+
+  // Leader Review panel (attention queue) - chỉ 1 state mở/đóng, không cần
+  // persistence vì đây là workspace tạm thời, không phải preference dài hạn
+  // như column/density.
+  const [leaderReviewOpen, setLeaderReviewOpen] = useState(false);
+  // Task đang mở trong Leader Review Detail Drawer (read-only, tách biệt khỏi
+  // selectedTask/Task Edit Drawer - xem comment ở handleOpenAttentionTask).
+  const [leaderReviewDetailTask, setLeaderReviewDetailTask] = useState<any>(null);
+  const [leaderReviewMoreMenuOpen, setLeaderReviewMoreMenuOpen] = useState(false);
+  const leaderReviewMoreMenuBtnRef = useRef<HTMLButtonElement>(null);
+  // Selection state DÙNG CHUNG giữa Leader Review panel item và Task Table
+  // row - sống sót qua việc đóng Detail drawer, chỉ clear khi chọn item khác
+  // hoặc đóng hẳn panel (xem handleOpenAttentionTask/closeLeaderReviewPanel).
+  const [selectedAttentionTaskId, setSelectedAttentionTaskId] = useState<number | null>(null);
+  // Task Review workflow (Duyệt/Yêu cầu sửa) - state riêng cho drawer, không
+  // đụng tới drawerForm/selectedTask (đó là Task Edit Drawer, tách biệt hoàn
+  // toàn - xem approveTask/requestTaskChanges trong lib/api.ts).
+  const [reviewActionBusy, setReviewActionBusy] = useState(false);
+  const [confirmingApproveTask, setConfirmingApproveTask] = useState(false);
+  const [requestChangesOpen, setRequestChangesOpen] = useState(false);
+  const [changeRequestReason, setChangeRequestReason] = useState('');
+  // Blocking workflow (Đánh dấu bị chặn/Gỡ chặn) - modal DÙNG CHUNG cho cả 3
+  // nơi kích hoạt: nút trong Task Edit Drawer, nút trong Leader Review Detail
+  // Drawer, và chọn thẳng 1 status chứa "block" từ dropdown Status (statusValue
+  // có giá trị thì confirm sẽ lưu status đó trước khi gọi /block).
+  const [blockActionBusy, setBlockActionBusy] = useState(false);
+  const [blockPrompt, setBlockPrompt] = useState<{ taskId: number; statusValue?: string } | null>(null);
+  const [blockReason, setBlockReason] = useState('');
+  const [blockDependencyTaskId, setBlockDependencyTaskId] = useState('');
   const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
   const [showAllKpi, setShowAllKpi] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -440,6 +497,162 @@ function ProjectDetailContent() {
       }
       return next;
     });
+  };
+
+  // Leader Review panel -> mở Leader Review Detail Drawer (read/review-first,
+  // KHÔNG mở thẳng Task Edit Drawer/selectedTask - 2 drawer tách biệt hoàn
+  // toàn, xem JSX "Leader Review Detail Drawer" bên dưới). Vẫn chuyển về đúng
+  // Phase + mở lại group đang collapse (nếu có) để task hiện ra trong bảng
+  // phía sau, tận dụng state có sẵn (activePhase/collapsedGroups/highlightTaskId).
+  const handleOpenAttentionTask = (task: any) => {
+    if (task.phase_name && task.phase_name !== activePhase) setActivePhase(task.phase_name);
+    if (task.task_group_id) {
+      setCollapsedGroups(prev => {
+        if (!prev.has(task.task_group_id)) return prev;
+        const next = new Set(prev);
+        next.delete(task.task_group_id);
+        return next;
+      });
+    }
+    // selectedAttentionTaskId (KHÔNG dùng highlightTaskId - state đó là flash
+    // tạm thời cho "task vừa tạo", tự clear sau ~2s) là selection state DÙNG
+    // CHUNG giữa panel item và table row, và PHẢI sống sót qua việc đóng
+    // Leader Review Detail Drawer (chỉ clear khi chọn item khác / đóng panel).
+    setSelectedAttentionTaskId(task.id);
+    setLeaderReviewDetailTask(task);
+    setConfirmingApproveTask(false);
+    setRequestChangesOpen(false);
+    setChangeRequestReason('');
+  };
+
+  // Đóng Leader Review panel -> clear luôn selection (yêu cầu: "user đóng
+  // Leader Review panel" là 1 trong các điều kiện clear). KHÔNG clear khi chỉ
+  // đóng Detail drawer (setLeaderReviewDetailTask(null) không đụng tới đây).
+  const closeLeaderReviewPanel = () => {
+    setLeaderReviewOpen(false);
+    setSelectedAttentionTaskId(null);
+  };
+
+  // Task Review workflow - gọi API thật (approve/request-changes), KHÔNG
+  // reload toàn page: cập nhật luôn task đang mở trong drawer từ response, và
+  // refetchTasks() để table/panel/badge count đồng bộ theo (React Query cache,
+  // không phải window.location.reload). Activity log của drawer cũng được
+  // invalidate để "Hoạt động gần đây" phản ánh action vừa làm ngay.
+  const handleApproveTask = async (task: any) => {
+    if (reviewActionBusy) return;
+    setReviewActionBusy(true);
+    try {
+      const updated = await approveTask(task.task_group_id, task.id);
+      setLeaderReviewDetailTask(updated);
+      setConfirmingApproveTask(false);
+      flash('Đã duyệt task thành công!');
+      refetchTasks();
+      queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
+    } catch (err: any) {
+      flash(err.response?.data?.detail || 'Lỗi khi duyệt task.', true);
+    } finally {
+      setReviewActionBusy(false);
+    }
+  };
+
+  const handleRequestTaskChanges = async (task: any) => {
+    const reason = changeRequestReason.trim();
+    if (reason.length < 5) {
+      flash('Vui lòng nhập lý do yêu cầu sửa (tối thiểu 5 ký tự).', true);
+      return;
+    }
+    if (reviewActionBusy) return;
+    setReviewActionBusy(true);
+    try {
+      const updated = await requestTaskChanges(task.task_group_id, task.id, reason);
+      setLeaderReviewDetailTask(updated);
+      setRequestChangesOpen(false);
+      setChangeRequestReason('');
+      flash('Đã gửi yêu cầu sửa task!');
+      refetchTasks();
+      queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
+    } catch (err: any) {
+      flash(err.response?.data?.detail || 'Lỗi khi gửi yêu cầu sửa.', true);
+    } finally {
+      setReviewActionBusy(false);
+    }
+  };
+
+  // Gửi lại review sau khi đã sửa - set thẳng review_status=pending, không
+  // cần vòng qua đổi status ra rồi vào lại "Review" (update_task chỉ tự sync
+  // trên EDGE chuyển status vào Review). Không xoá approved_at/change_request_
+  // reason cũ - đó là lịch sử, vẫn hiển thị mờ trong drawer dù đang pending.
+  const handleRequestTaskReview = async (task: any) => {
+    if (reviewActionBusy) return;
+    setReviewActionBusy(true);
+    try {
+      const updated = await requestTaskReview(task.task_group_id, task.id);
+      setLeaderReviewDetailTask(updated);
+      flash('Đã gửi task để review lại!');
+      refetchTasks();
+      queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
+    } catch (err: any) {
+      flash(err.response?.data?.detail || 'Lỗi khi gửi review.', true);
+    } finally {
+      setReviewActionBusy(false);
+    }
+  };
+
+  // Blocking workflow - dùng chung cho cả Task Edit Drawer (selectedTask) và
+  // Leader Review Detail Drawer (leaderReviewDetailTask); cập nhật state nào
+  // đang mở khớp đúng task đó từ response, không reload toàn page.
+  // Handler cho modal block DÙNG CHUNG (blockPrompt) - task lấy từ items theo
+  // blockPrompt.taskId, không phải tham số riêng, vì modal có thể được mở từ
+  // Task Edit Drawer, Leader Review Detail Drawer, hoặc dropdown Status (lúc
+  // đó blockPrompt.statusValue có giá trị - lưu status đó TRƯỚC khi /block để
+  // cell hiển thị đúng "Blocked" thay vì lý do placeholder chung chung).
+  const handleConfirmBlockTask = async () => {
+    if (!blockPrompt) return;
+    const task = items.find((it: any) => it.id === blockPrompt.taskId);
+    if (!task) { setBlockPrompt(null); return; }
+    const reason = blockReason.trim();
+    if (reason.length < 5) {
+      flash('Vui lòng nhập lý do bị chặn (tối thiểu 5 ký tự).', true);
+      return;
+    }
+    if (blockActionBusy) return;
+    setBlockActionBusy(true);
+    try {
+      if (blockPrompt.statusValue) {
+        await updateTask(task.task_group_id, task.id, { status: blockPrompt.statusValue });
+      }
+      const depId = blockDependencyTaskId ? Number(blockDependencyTaskId) : undefined;
+      const updated = await blockTask(task.task_group_id, task.id, reason, depId);
+      if (selectedTask && selectedTask.id === updated.id) setSelectedTask(updated);
+      if (leaderReviewDetailTask && leaderReviewDetailTask.id === updated.id) setLeaderReviewDetailTask(updated);
+      setBlockPrompt(null);
+      setBlockReason('');
+      setBlockDependencyTaskId('');
+      flash('Đã đánh dấu task bị chặn!');
+      refetchTasks();
+      queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
+    } catch (err: any) {
+      flash(err.response?.data?.detail || 'Lỗi khi đánh dấu bị chặn.', true);
+    } finally {
+      setBlockActionBusy(false);
+    }
+  };
+
+  const handleUnblockTask = async (task: any) => {
+    if (blockActionBusy) return;
+    setBlockActionBusy(true);
+    try {
+      const updated = await unblockTask(task.task_group_id, task.id);
+      if (selectedTask && selectedTask.id === updated.id) setSelectedTask(updated);
+      if (leaderReviewDetailTask && leaderReviewDetailTask.id === updated.id) setLeaderReviewDetailTask(updated);
+      flash('Đã gỡ chặn task!');
+      refetchTasks();
+      queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
+    } catch (err: any) {
+      flash(err.response?.data?.detail || 'Lỗi khi gỡ chặn.', true);
+    } finally {
+      setBlockActionBusy(false);
+    }
   };
 
   const handleOpenAddTaskGroupModal = (group: any = null) => {
@@ -632,12 +845,44 @@ function ProjectDetailContent() {
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
 
-  const getColumnDefaultWidth = (col: string): number => {
-    const colUpper = col.toUpperCase();
-    if (colUpper.includes('DETAIL TASK') || colUpper === 'TASK' || colUpper === 'DESCRIPTION') return 350;
-    if (colUpper.includes('ID')) return 90;
-    return 130;
+  // Column metadata - single source of truth cho width/align theo LOẠI dữ
+  // liệu (số/ngày/status/người/ID ngắn/text dài), thay vì rải rác nhiều nơi
+  // hoặc chia đều mọi cột. defaultWidth chỉ áp dụng cho user MỚI/cột CHƯA có
+  // width đã lưu (getColumnWidth ưu tiên columnWidths[col] trước) - không
+  // đụng tới preference đã resize thủ công của user cũ.
+  type ColumnAlign = 'left' | 'center' | 'right';
+  const COLUMN_META: Record<string, { defaultWidth: number; minWidth: number; align: ColumnAlign }> = {
+    'TASK ID':        { defaultWidth: 112, minWidth: 80,  align: 'left' },
+    'DETAIL TASK':    { defaultWidth: 320, minWidth: 260, align: 'left' },
+    'PRIORITY':       { defaultWidth: 90,  minWidth: 70,  align: 'center' },
+    'MANDAY EST':     { defaultWidth: 72,  minWidth: 60,  align: 'center' },
+    'STATUS':         { defaultWidth: 105, minWidth: 85,  align: 'center' },
+    'START DATE':     { defaultWidth: 108, minWidth: 90,  align: 'center' },
+    'ASSIGNED':       { defaultWidth: 128, minWidth: 90,  align: 'left' },
+    'SUPPORT':        { defaultWidth: 128, minWidth: 90,  align: 'left' },
+    'KPI RATIO':      { defaultWidth: 85,  minWidth: 70,  align: 'center' },
+    'SKILL SOLUTION': { defaultWidth: 160, minWidth: 110, align: 'left' },
+    'SKILL VENDOR':   { defaultWidth: 120, minWidth: 90,  align: 'left' },
+    'LINK':           { defaultWidth: 90,  minWidth: 70,  align: 'left' },
+    'REMARK':         { defaultWidth: 165, minWidth: 110, align: 'left' },
+    'SEND':           { defaultWidth: 90,  minWidth: 70,  align: 'center' },
+    'END DATE EST':   { defaultWidth: 108, minWidth: 90,  align: 'center' },
+    'MD ACTUAL':      { defaultWidth: 72,  minWidth: 60,  align: 'center' },
+    'END ACTUAL':     { defaultWidth: 108, minWidth: 90,  align: 'center' },
+    'DAYS LATE':      { defaultWidth: 78,  minWidth: 60,  align: 'center' },
+    'KPI BASE':       { defaultWidth: 80,  minWidth: 64,  align: 'center' },
+    'KPI PERFORM':    { defaultWidth: 80,  minWidth: 64,  align: 'center' },
+    'KPI OVERTIME':   { defaultWidth: 80,  minWidth: 64,  align: 'center' },
+    'KPI FINAL':      { defaultWidth: 80,  minWidth: 64,  align: 'center' },
+    'SUB ID':         { defaultWidth: 85,  minWidth: 70,  align: 'left' },
+    'ROOT TASKS':     { defaultWidth: 100, minWidth: 80,  align: 'left' },
+    'NOTES':          { defaultWidth: 200, minWidth: 140, align: 'left' },
+    'SOLUTION':       { defaultWidth: 200, minWidth: 140, align: 'left' },
   };
+
+  const getColumnDefaultWidth = (col: string): number => COLUMN_META[col.toUpperCase()]?.defaultWidth ?? 130;
+  const getColumnMinWidth = (col: string): number => COLUMN_META[col.toUpperCase()]?.minWidth ?? MIN_COLUMN_WIDTH;
+  const getColumnAlign = (col: string): ColumnAlign => COLUMN_META[col.toUpperCase()]?.align ?? 'left';
 
   const getColumnWidth = (col: string): number => columnWidths[col] || getColumnDefaultWidth(col);
 
@@ -701,7 +946,7 @@ function ProjectDetailContent() {
   };
 
   const ROW_PAD_Y: Record<'compact' | 'normal' | 'spacious', string> = {
-    compact: 'py-2.5',
+    compact: 'py-2',
     normal: 'py-3.5',
     spacious: 'py-5',
   };
@@ -1185,7 +1430,10 @@ function ProjectDetailContent() {
     } catch {}
   }, [id, pinnedPhaseIds]);
 
-  const MAX_PINNED_PHASES = 8;
+  // Ghim nhiều hơn số slot hiển thị trên thanh là vô nghĩa (phase ghim dư vẫn
+  // rơi vào "Phase khác"), nên khoá chung với MAX_VISIBLE_REAL_PHASES thay vì
+  // một con số tách rời - đổi 1 chỗ là đồng bộ cả 2.
+  const MAX_PINNED_PHASES = MAX_VISIBLE_REAL_PHASES;
   const togglePinPhase = (phaseId: number) => {
     setPinnedPhaseIds(prev => {
       if (prev.includes(phaseId)) return prev.filter(x => x !== phaseId);
@@ -1375,6 +1623,10 @@ function ProjectDetailContent() {
       alert('Tên "Master" là dành riêng cho Phase mặc định!');
       return;
     }
+    if (name.length >= 20) {
+      alert('Tên Phase quá dài! Chỉ được tối đa 19 ký tự.');
+      return;
+    }
     const dup = phases.some(p => p.name.toLowerCase() === name.toLowerCase());
     if (dup) {
       alert('Phase này đã tồn tại trong dự án!');
@@ -1400,6 +1652,10 @@ function ProjectDetailContent() {
     }
     if (name.toLowerCase() === 'master') {
       alert('Tên "Master" là dành riêng cho Phase mặc định!');
+      return;
+    }
+    if (name.length >= 20) {
+      alert('Tên Phase quá dài! Chỉ được tối đa 19 ký tự.');
       return;
     }
     const dup = phases.some(p => p.id !== editingPhaseId && p.name.toLowerCase() === name.toLowerCase());
@@ -1451,7 +1707,7 @@ function ProjectDetailContent() {
     const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
       || assignedFilter !== 'All' || supportFilter !== 'All'
       || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
-      || !!searchLower;
+      || !!searchLower || !!memberFilterParam;
     if (!hasActiveFilter) {
       return items;
     }
@@ -1465,7 +1721,8 @@ function ProjectDetailContent() {
       const matchSupport = supportFilter === 'All' || (item.support_name || '') === supportFilter;
       const matchSkillSolution = skillSolutionFilter === 'All' || (item.skill_solution_name || '') === skillSolutionFilter;
       const matchSkillVendor = skillVendorFilter === 'All' || (item.skill_vendor_name || '') === skillVendorFilter;
-      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor;
+      const matchMember = !memberFilterParam || (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam;
+      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
     });
 
     const onlySearch = !priorityFilter.match(/^All$/) === false && !statusFilter.match(/^All$/) === false
@@ -1702,6 +1959,21 @@ function ProjectDetailContent() {
         payload.manday_est = value ? parseFloat(value) : null;
         break;
       case 'STATUS': {
+        // Chọn 1 status chứa "block" (khác status hiện tại) - bắt nhập lý do
+        // THẬT trước khi lưu, thay vì để backend tự set lý do placeholder
+        // chung chung. Chặn lại save ở đây, mở modal riêng, chỉ lưu status +
+        // gọi /block với lý do thật sau khi user xác nhận.
+        {
+          const sBlockCheck = (value || '').trim().toLowerCase();
+          const wasBlocked = task.is_blocked || (task.status || '').trim().toLowerCase().includes('block');
+          if (sBlockCheck.includes('block') && !wasBlocked) {
+            setEditingCell(null);
+            setBlockReason('');
+            setBlockDependencyTaskId('');
+            setBlockPrompt({ taskId, statusValue: value });
+            return;
+          }
+        }
         payload.status = value;
         const s = (value || '').trim().toLowerCase();
         if (s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish')) {
@@ -1950,6 +2222,7 @@ function ProjectDetailContent() {
     if (s === 'done' || s === 'completed' || s === 'hoàn tất') return { label: 'Done', dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-[#dcfce7] text-[#15803d]' };
     if (s === 'process' || s === 'doing' || s === 'in progress' || s === 'đang xử lý') return { label: 'Process', dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-[#fef9c3] text-[#854d0e]' };
     if (s === 'review') return { label: 'Review', dot: 'bg-blue-500', text: 'text-[#0058be]', bg: 'bg-[#dbeafe] text-[#1d4ed8]' };
+    if (s.includes('block')) return { label: status || 'Blocked', dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50 text-rose-700' };
     if (s === 'pending') return { label: 'Pending', dot: 'bg-slate-400', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
     return { label: status || 'Todo', dot: 'bg-slate-500', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
   };
@@ -2226,6 +2499,75 @@ function ProjectDetailContent() {
   });
   const kpiWarning = overdueTasksList.length;
 
+  // Leader Review - attention queue: tổng hợp task cần leader chú ý từ CHÍNH
+  // `items` (toàn bộ task của project, getAllProjectTasks không phân trang -
+  // xem định nghĩa `items` phía trên) nên count là tổng project thật, không
+  // giới hạn theo Phase/trang đang xem. 4 điều kiện dựa 100% trên field/status
+  // thật đã có sẵn (không field/API mới):
+  //   - Overdue      : calculateDaysLate(task) > 0 (cùng hàm dùng cho cột
+  //                     "Days Late" và overdueTasksList ở trên - đã tự loại
+  //                     Done/Cancel).
+  //   - Blocked       : task.is_blocked === true (layer blocking THẬT, riêng
+  //                     với status - xem backend models/task.py). Fallback
+  //                     status chứa "block" CHỈ khi is_blocked chưa từng được
+  //                     set (legacy trước khi có cột is_blocked/backfill).
+  //   - Review pending: task.review_status === 'pending' (layer review THẬT,
+  //                     riêng với status - xem backend models/task.py). Fallback
+  //                     status chứa "review" CHỈ khi review_status chưa có giá
+  //                     trị (null/undefined) - dữ liệu legacy trước khi có cột
+  //                     review_status/migration backfill chạy.
+  //   - Unassigned    : task.assigned_name rỗng VÀ task chưa Done/Cancel
+  //                     (task xong việc mà không có người phụ trách không có
+  //                     giá trị cảnh báo).
+  // 1 task match nhiều điều kiện vẫn chỉ 1 phần tử (dedupe tự nhiên vì đây là
+  // 1 pass duy nhất trên `items`, không union nhiều mảng con). Sau khi
+  // approve/request-changes, review_status không còn 'pending' nữa nên
+  // needReview tự động false ở lần recompute kế tiếp (refetchTasks) - task chỉ
+  // biến mất khỏi queue nếu KHÔNG còn reason nào khác (overdue/blocked/unassigned).
+  const attentionTasks = useMemo(() => {
+    const rows = items.map((t: any) => {
+      const statusL = (t.status || '').trim().toLowerCase();
+      const isDoneOrCancel = statusL === 'done' || statusL === 'completed' || statusL === 'cancel' || statusL.includes('hoàn') || statusL.includes('finish') || statusL.includes('hủy');
+      const daysLate = calculateDaysLate(t);
+      const overdue = daysLate > 0;
+      const blocked = t.is_blocked === true || (!t.is_blocked && statusL.includes('block'));
+      const blockedDays = blocked && t.blocked_at ? Math.max(0, Math.floor((Date.now() - new Date(t.blocked_at).getTime()) / 86400000)) : 0;
+      const needReview = t.review_status === 'pending' || (!t.review_status && statusL.includes('review'));
+      const unassigned = !isDoneOrCancel && !(t.assigned_name && t.assigned_name.trim());
+      if (!overdue && !blocked && !needReview && !unassigned) return null;
+
+      // Rank ưu tiên xử lý theo yêu cầu: Overdue+Blocked > Overdue+Review >
+      // Blocked > Overdue > Review > Unassigned-only.
+      let rank = 6;
+      if (overdue && blocked) rank = 1;
+      else if (overdue && needReview) rank = 2;
+      else if (blocked) rank = 3;
+      else if (overdue) rank = 4;
+      else if (needReview) rank = 5;
+
+      const priorityL = (t.priority || '').trim().toLowerCase();
+      const priorityWeight = priorityL === 'interrupt' ? 0
+        : (priorityL === 'critical' || priorityL === 'urgent') ? 1
+        : priorityL === 'high' ? 2
+        : (priorityL === 'normal' || priorityL === 'medium') ? 3
+        : 4;
+
+      return { task: t, daysLate, overdue, blocked, blockedDays, needReview, unassigned, rank, priorityWeight };
+    }).filter(Boolean) as Array<{ task: any; daysLate: number; overdue: boolean; blocked: boolean; blockedDays: number; needReview: boolean; unassigned: boolean; rank: number; priorityWeight: number }>;
+
+    rows.sort((a, b) => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      if (a.priorityWeight !== b.priorityWeight) return a.priorityWeight - b.priorityWeight;
+      return b.daysLate - a.daysLate; // trễ nhiều hơn ưu tiên trước
+    });
+    return rows;
+  }, [items]);
+
+  const attentionOverdueCount = attentionTasks.filter(a => a.overdue).length;
+  const attentionBlockedCount = attentionTasks.filter(a => a.blocked).length;
+  const attentionUnassignedCount = attentionTasks.filter(a => a.unassigned).length;
+  const attentionReviewCount = attentionTasks.filter(a => a.needReview).length;
+
   // 5. Critical thực hiện tuần này (Xác định Thứ 2 00:00:00 -> Chủ nhật 23:59:59)
   const { monday: thisWeekMon, sunday: thisWeekSun } = getMondayToSundayRange(new Date());
 
@@ -2361,6 +2703,13 @@ function ProjectDetailContent() {
   // đã làm (field thật trên task, không phải FK sang projectMembers).
   const overviewMemberWorkload = (() => {
     const map: Record<string, { name: string; total: number; done: number; inProgress: number; overdue: number }> = {};
+    // Seed từ TOÀN BỘ member đang tham gia project (kể cả chưa có task nào
+    // trong kỳ đang lọc) - khớp với "Đội ngũ phát triển dự án" bên dưới, để
+    // member không có việc vẫn hiện dòng 0 thay vì biến mất hoàn toàn khỏi bảng.
+    projectMembers.forEach((m: any) => {
+      const name = (m.display_name || '').trim();
+      if (name && !map[name]) map[name] = { name, total: 0, done: 0, inProgress: 0, overdue: 0 };
+    });
     kpiTasks.forEach((t: any) => {
       const name = (t.assigned_name || '').trim();
       if (!name) return;
@@ -2391,6 +2740,25 @@ function ProjectDetailContent() {
     enabled: !!id && activeMainTab === 'overview' && overviewSubTab === 'summary',
   });
   const overviewActivityItems = overviewActivityData?.items || [];
+
+  // Leader Review Detail Drawer - "Cập nhật lần cuối" + "Hoạt động gần đây"
+  // của 1 task. Không có endpoint lọc theo entity_id (getProjectAuditLogs chỉ
+  // nhận module/action/user_id/search/date - xem backend routers/projects.py),
+  // nên tái sử dụng NGUYÊN endpoint đó với module='Task' (giá trị module thật
+  // được ghi khi task được sửa - xem task_groups.py) rồi lọc client-side theo
+  // entity_id === task.id. Giới hạn: chỉ soi trong page_size log "Task" gần
+  // nhất của CẢ project, nên task rất lâu không đổi mà project có nhiều hoạt
+  // động Task khác có thể không tìm thấy log nào - khi đó không hiện dòng
+  // "Cập nhật lần cuối" thay vì fake. Endpoint yêu cầu quyền Manager
+  // (require_manager) nên chỉ gọi khi isAdmin().
+  const { data: taskActivityData } = useQuery({
+    queryKey: ['task-audit-activity', leaderReviewDetailTask?.id],
+    queryFn: () => getProjectAuditLogs(Number(id), { module: 'Task', page: 1, page_size: 40 }),
+    enabled: !!leaderReviewDetailTask && isAdmin(),
+  });
+  const taskActivityLogs = (taskActivityData?.items || []).filter(
+    (l: any) => leaderReviewDetailTask && String(l.entity_id) === String(leaderReviewDetailTask.id)
+  );
 
   const getGroupIndex = (groupId: number) => {
     const group = taskGroups.find(g => g.id === groupId);
@@ -3141,13 +3509,20 @@ function ProjectDetailContent() {
     };
 
     const isHighlighted = task.id === highlightTaskId;
+    // selectedAttentionTaskId: vị trí task tương ứng với item đang chọn ở
+    // Leader Review panel - amber NHẠT cố định (#FFFBEB/#F59E0B), KHÔNG pulse
+    // (khác isHighlighted, vốn là flash tạm thời cho task vừa tạo). Không
+    // dùng đỏ cho selection - đỏ chỉ dành cho overdue/critical (semantic).
+    const isAttentionSelected = task.id === selectedAttentionTaskId;
     const rowBgClass = isHighlighted
       ? "bg-amber-100 ring-2 ring-inset ring-amber-400 animate-pulse"
-      : isSubTask
-        ? "bg-white hover:bg-[#f0f5ff]/60"
-        : "bg-[#f8fafc] hover:bg-[#eef3fb] border-l-[3px] border-l-[#0058be]";
+      : isAttentionSelected
+        ? "bg-[#FFFBEB] border-l-[3px] border-l-[#F59E0B]"
+        : isSubTask
+          ? "bg-white hover:bg-[#f0f5ff]/60"
+          : "bg-[#f8fafc] hover:bg-[#eef3fb] border-l-[3px] border-l-[#0058be]";
 
-    const cellStyle = `px-3 ${rowPadY} border-r border-slate-100/70 last:border-r-0 text-left align-middle text-[12.5px]`;
+    const cellStyle = `px-2 ${rowPadY} border-r border-slate-100/70 last:border-r-0 align-middle text-[12.5px]`;
 
     return (
       <tr
@@ -3741,7 +4116,7 @@ function ProjectDetailContent() {
                   {val}
                 </span>
               ) : (
-                <span className="text-slate-400 italic font-normal text-[11px] select-none">Trống</span>
+                <span className="text-slate-300 font-normal text-[11px] select-none">—</span>
               );
             }
           } else if (colUpper === 'TASK ID') {
@@ -3799,7 +4174,10 @@ function ProjectDetailContent() {
                     └
                   </span>
                 )}
-                <span className={`whitespace-pre-wrap break-words block leading-relaxed pr-4 group-hover/detail:text-[#0058be] transition-colors ${!isSubTask ? 'font-semibold text-[#0b1c30] text-[13px]' : 'text-slate-700 font-normal text-[12.5px]'}`}>
+                <span
+                  className={`whitespace-pre-wrap break-words block leading-relaxed pr-4 line-clamp-2 group-hover/detail:text-[#0058be] transition-colors ${!isSubTask ? 'font-semibold text-[#0b1c30] text-[13px]' : 'text-slate-700 font-normal text-[12.5px]'}`}
+                  title={val}
+                >
                   {val}
                 </span>
               </div>
@@ -3872,7 +4250,7 @@ function ProjectDetailContent() {
               );
             } else {
               cellContent = (
-                <span className="text-slate-400 italic font-normal text-[11px] select-none">Trống</span>
+                <span className="text-slate-300 font-normal text-[11px] select-none">—</span>
               );
             }
           }
@@ -3885,17 +4263,21 @@ function ProjectDetailContent() {
           ];
           const isReadOnly = SYSTEM_COLS.includes(colUpper);
 
+          const align = getColumnAlign(col);
+          const alignClass = align === 'center' ? 'text-center justify-center' : align === 'right' ? 'text-right justify-end' : 'text-left';
           return (
             <td
               key={col}
-              className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-text hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'}`}
+              className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-text hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'} ${colUpper !== 'DETAIL TASK' ? alignClass : ''}`}
               style={{ width: getColumnWidth(col), ...getPinTdStyle(col) }}
               onClick={() => {
                 if (!isReadOnly) handleStartEdit(col, val);
               }}
             >
-              <div className="flex items-center justify-between w-full">
-                {cellContent}
+              <div className={`flex items-center gap-1 w-full min-w-0 ${align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : ''}`}>
+                {colUpper === 'DETAIL TASK' ? cellContent : (
+                  <span className="truncate min-w-0" title={typeof cellContent === 'string' && cellContent ? cellContent : undefined}>{cellContent}</span>
+                )}
                 {!isReadOnly && (
                   <Pencil size={11} className="opacity-0 group-hover:opacity-40 transition-opacity shrink-0 text-slate-500" />
                 )}
@@ -4149,7 +4531,7 @@ function ProjectDetailContent() {
           <tr
             id={`tg-row-${group.id}`}
             key={`tg-row-${group.id}`}
-            className="bg-white hover:bg-slate-50/70 border-b border-[#E3E7EE] border-l-2 border-l-indigo-200 group transition-colors"
+            className="bg-indigo-50/50 hover:bg-indigo-50 border-b border-[#E3E7EE] border-l-[3px] border-l-indigo-400 group transition-colors"
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("application/json", JSON.stringify({ type: "group", groupId: group.id, phaseId: group.phase_id }));
@@ -4398,7 +4780,7 @@ function ProjectDetailContent() {
                 }
 
                 // Display mode with edit icon for END ACTUAL
-                const cellStyle = `px-3 ${rowPadY} text-xs font-bold text-[#1e293b] whitespace-nowrap`;
+                const cellStyle = `px-2 ${rowPadY} text-xs font-bold text-[#1e293b] whitespace-nowrap text-center`;
                 return (
                   <td key={col} className={`${cellStyle} group cursor-pointer hover:bg-indigo-100/60`} onClick={() => setEditingGroupDate(group.id)}>
                     <div className="flex items-center justify-between w-full">
@@ -4407,7 +4789,7 @@ function ProjectDetailContent() {
                           group.end_date_actual_override ? (
                             <strong className="text-indigo-700" title="Ngày đã ghi đè thủ công">{formatDateToShow(group.end_date_actual_override)}</strong>
                           ) : (
-                            val || <span className="text-slate-400 italic">Trống</span>
+                            val || <span className="text-slate-300">—</span>
                           )
                         ) : (
                           <span className="text-slate-400 italic">—</span>
@@ -4549,7 +4931,7 @@ function ProjectDetailContent() {
               }
 
               // Display mode
-              const cellStyle = "px-4 py-2.5 text-xs font-bold text-[#1e293b] whitespace-nowrap";
+              const cellStyle = `px-2 ${rowPadY} text-xs font-bold text-[#1e293b] whitespace-nowrap`;
               let displayContent: React.ReactNode = val || '';
 
               // Status badge
@@ -4600,10 +4982,12 @@ function ProjectDetailContent() {
                 );
               }
 
+              const groupAlign = getColumnAlign(col);
+              const groupAlignClass = groupAlign === 'center' ? 'text-center' : groupAlign === 'right' ? 'text-right' : 'text-left';
               return (
                 <td
                   key={col}
-                  className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'w-[450px] min-w-[320px] whitespace-normal break-words' : ''} ${isEditable ? 'cursor-text hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')}`}
+                  className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'whitespace-normal break-words' : ''} ${isEditable ? 'cursor-text hover:bg-indigo-100/60 group' : (isAuto ? 'text-slate-500 font-mono' : '')} ${colUpper !== 'DETAIL TASK' ? groupAlignClass : ''}`}
                   style={{ width: getColumnWidth(col), ...getPinTdStyle(col) }}
                   onClick={() => {
                     if (isEditable) {
@@ -4612,9 +4996,11 @@ function ProjectDetailContent() {
                     }
                   }}
                 >
-                  <div className="flex items-center justify-between w-full">
-                    {displayContent}
-                    {isEditable && (
+                  <div className={`flex items-center gap-1 w-full min-w-0 ${groupAlign === 'center' ? 'justify-center' : groupAlign === 'right' ? 'justify-end' : ''}`}>
+                    {colUpper === 'DETAIL TASK' ? displayContent : (
+                      <span className="truncate min-w-0" title={typeof displayContent === 'string' && displayContent ? displayContent : undefined}>{displayContent}</span>
+                    )}
+                    {isEditable && colUpper !== 'DETAIL TASK' && (
                       <Pencil size={11} className="opacity-0 group-hover:opacity-40 transition-opacity shrink-0 text-slate-500" />
                     )}
                   </div>
@@ -4712,7 +5098,7 @@ function ProjectDetailContent() {
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden font-body-md" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       {!isFullscreen && !taskFocusMode && <Navbar />}
 
-      <div className={`flex-1 min-w-0 ${(isFullscreen || taskFocusMode) ? 'pl-0 pt-0' : 'pl-0 md:pl-[230px] pt-14 md:pt-0'} flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
+      <div className={`flex-1 min-w-0 ${(isFullscreen || taskFocusMode) ? 'pl-0 pt-0' : `pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} pt-14 md:pt-0`} flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
 
         {taskFocusMode ? (
           /* Task Focus Mode: minimal breadcrumb only, table gets the rest of the viewport */
@@ -4779,7 +5165,7 @@ function ProjectDetailContent() {
             )}
 
             <button
-              onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
+              onClick={handleOpenAIReviewDrawerForContext}
               className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
             >
               <Sparkles size={14} /> AI Review
@@ -4810,7 +5196,11 @@ function ProjectDetailContent() {
         {/* MAIN CONTAINER */}
         <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-6">
           {msg && (
-            <div className={`fixed top-4 right-4 z-50 p-3 rounded-lg text-xs font-semibold shadow-xl border ${msg.e ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+            // z-[100] - PHẢI cao hơn mọi drawer full-screen (Task Edit/Leader
+            // Review Detail/AI Review đều z-50) để toast không bao giờ bị đè
+            // khuất phía sau khi 1 drawer đang mở lúc flash() được gọi (vd
+            // validate lỗi hoặc save thành công mà drawer vẫn ở lại mở).
+            <div className={`fixed top-4 right-4 z-[100] p-3 rounded-lg text-xs font-semibold shadow-xl border ${msg.e ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
             </div>
           )}
@@ -4818,8 +5208,10 @@ function ProjectDetailContent() {
           {!taskFocusMode && (
           <>
 
-          {/* TAB NAVIGATION */}
-          <div className="border-b border-[#c2c6d6]/60 flex space-x-4 sm:space-x-8 overflow-x-auto">
+          {/* TAB NAVIGATION - khi ở Tasks, gộp luôn Search/Bộ lọc/Cột/+Thêm task vào
+              cùng hàng này (bên phải) cho gọn, thay vì có riêng 1 hàng ngay dưới. */}
+          <div className="border-b border-[#c2c6d6]/60 flex items-center justify-between gap-3">
+          <div className="flex space-x-4 sm:space-x-8 overflow-x-auto">
             <button
               onClick={() => router.push(`/project/detail/overview?id=${id}`)}
               className={`px-1 py-2 border-b-2 font-medium flex items-center text-[13px] transition-all whitespace-nowrap shrink-0 ${activeMainTab === 'overview' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#565e74] hover:text-[#0b1c30]'
@@ -4886,6 +5278,286 @@ function ProjectDetailContent() {
               <span className="material-symbols-outlined mr-2 text-[18px]">science</span>
               Prototype
             </button>
+          </div>
+
+          {activeMainTab === 'tasks' && (
+          <div className="flex gap-2 items-center shrink-0 pb-1.5">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#8b93a3] pointer-events-none" />
+              <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)}
+                placeholder="Tìm kiếm..."
+                className="bg-white border border-[#D9DEE7] rounded-[8px] h-9 pl-8 pr-3 text-[12.5px] text-[#0b1c30] outline-none w-[220px] focus:border-[#0058be] placeholder:text-[12px] placeholder-[#8b93a3] transition-colors" />
+            </div>
+            {taskSearch && (
+              <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
+            )}
+            {memberFilterParam && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[11px] font-bold text-blue-700 shrink-0">
+                Đang lọc: {memberFilterParam}
+                <button
+                  onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
+                  className="text-blue-400 hover:text-blue-700 cursor-pointer"
+                  title="Bỏ lọc, xem tất cả task"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {/* Bộ lọc - primary filter UX, dùng chung state với per-column filter */}
+            <div className="relative">
+              {(() => {
+                const activeFilterCount = [priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter].filter(f => f !== 'All').length;
+                return (
+                  <button
+                    ref={filterPopoverBtnRef}
+                    onClick={() => setFilterPopoverOpen(!filterPopoverOpen)}
+                    className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap ${
+                      activeFilterCount > 0
+                        ? 'bg-blue-50 border-blue-200 text-[#0058be]'
+                        : 'bg-white border-[#D9DEE7] text-[#565e74] hover:bg-slate-50'
+                    }`}
+                    title="Bộ lọc"
+                  >
+                    <Filter size={15} />
+                    Bộ lọc
+                    {activeFilterCount > 0 && (
+                      <span className="bg-[#0058be] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{activeFilterCount}</span>
+                    )}
+                  </button>
+                );
+              })()}
+              <FloatingDropdown
+                anchorEl={filterPopoverBtnRef.current}
+                open={filterPopoverOpen}
+                onClose={() => setFilterPopoverOpen(false)}
+                align="right"
+                className="bg-white border border-slate-200 rounded-lg shadow-lg w-[280px] py-2.5"
+              >
+                <div className="px-3.5 pb-1.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bộ lọc</span>
+                </div>
+                {[
+                  { label: 'Priority', value: priorityFilter, set: setPriorityFilter, options: ['All', 'Normal', 'High', 'Critical', 'Interrupt'] },
+                  { label: 'Status', value: statusFilter, set: setStatusFilter, options: ['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'] },
+                  { label: 'Assigned', value: assignedFilter, set: setAssignedFilter, options: ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()] },
+                  { label: 'Support', value: supportFilter, set: setSupportFilter, options: ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()] },
+                  { label: 'Skill Solution', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
+                  { label: 'Skill Vendor', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
+                ].map(f => (
+                  <div key={f.label} className="px-3.5 py-1.5 flex items-center justify-between gap-2">
+                    <span className="text-[12.5px] font-medium text-[#0b1c30]">{f.label}</span>
+                    <select
+                      value={f.value}
+                      onChange={e => f.set(e.target.value)}
+                      className="text-[12px] border border-slate-200 rounded-md px-2 py-1 outline-none focus:border-[#0058be] bg-white text-[#0b1c30] max-w-[140px]"
+                    >
+                      {f.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                ))}
+                <div className="px-3.5 pt-1.5 mt-1 border-t border-slate-100">
+                  <button
+                    onClick={() => {
+                      setPriorityFilter('All'); setStatusFilter('All'); setAssignedFilter('All');
+                      setSupportFilter('All'); setSkillSolutionFilter('All'); setSkillVendorFilter('All');
+                    }}
+                    className="text-[11px] font-semibold text-[#0058be] hover:underline flex items-center gap-1 pt-1"
+                  >
+                    <RotateCcw size={13} />
+                    Đặt lại
+                  </button>
+                </div>
+              </FloatingDropdown>
+            </div>
+
+            {/* Cột (cột hiển thị + thứ tự + độ rộng + ghim + mật độ hàng) */}
+            <div className="relative">
+              <button
+                ref={columnMenuBtnRef}
+                onClick={() => setColumnMenuOpen(!columnMenuOpen)}
+                className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap ${
+                  hiddenColumns.length > 0
+                    ? 'bg-blue-50 border-blue-200 text-[#0058be]'
+                    : 'bg-white border-[#D9DEE7] text-[#565e74] hover:bg-slate-50'
+                }`}
+                title="Tuỳ chỉnh cột của bảng"
+              >
+                <Columns3 size={15} />
+                Cột
+                {hiddenColumns.length > 0 && (
+                  <span className="bg-[#0058be] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{hiddenColumns.length}</span>
+                )}
+                <ChevronDown size={15} />
+              </button>
+              <FloatingDropdown
+                anchorEl={columnMenuBtnRef.current}
+                open={columnMenuOpen}
+                onClose={() => setColumnMenuOpen(false)}
+                align="right"
+                className="bg-white border border-slate-200 rounded-lg shadow-lg w-[300px] max-h-[28rem] overflow-auto"
+              >
+                  <div className="px-3.5 pt-3 pb-2.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cột hiển thị</span>
+                    <div className="relative mt-2">
+                      <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={columnSearch}
+                        onChange={e => setColumnSearch(e.target.value)}
+                        placeholder="Tìm cột..."
+                        className="w-full h-[34px] pl-7 pr-2 text-[12px] border border-slate-200 rounded-md outline-none focus:border-[#0058be]"
+                      />
+                    </div>
+                  </div>
+                  <div className="py-1 border-t border-slate-100">
+                    {TASK_COLUMNS.filter(col => col.toLowerCase().includes(columnSearch.trim().toLowerCase())).map(col => {
+                      const locked = LOCKED_COLUMNS.includes(col);
+                      const checked = !hiddenColumns.includes(col);
+                      return (
+                        <label
+                          key={col}
+                          className={`flex items-center gap-2.5 px-3.5 h-8 text-[12px] ${locked ? 'text-slate-400 cursor-not-allowed' : 'text-[#0b1c30] hover:bg-slate-50 cursor-pointer'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={locked}
+                            onChange={() => toggleColumnVisibility(col)}
+                            className="accent-[#0058be]"
+                          />
+                          {col}
+                          {locked && <Lock size={11} className="text-slate-300 ml-auto" />}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="px-3.5 py-3 border-t border-slate-100">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mật độ hàng</span>
+                    <div className="flex items-center gap-0.5 mt-2 bg-slate-100 rounded-[8px] p-0.5">
+                      {([['compact', 'Gọn'], ['normal', 'Vừa'], ['spacious', 'Rộng']] as const).map(([val, label]) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setRowDensity(val)}
+                          className={`flex-1 h-7 rounded-[6px] text-[12px] font-medium transition-all ${rowDensity === val ? 'bg-white text-[#0058be] font-semibold shadow-sm' : 'text-[#565e74] hover:text-[#0b1c30]'}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="px-3.5 py-2.5 border-t border-slate-100">
+                    <button
+                      onClick={resetColumnVisibility}
+                      className="text-[11px] font-semibold text-[#0058be] hover:underline flex items-center gap-1"
+                    >
+                      <RotateCcw size={13} />
+                      Khôi phục mặc định
+                    </button>
+                  </div>
+              </FloatingDropdown>
+            </div>
+
+            {/* + Thêm task (split button: main = thêm task, dropdown = thêm task / thêm group task) */}
+            <div className="relative flex">
+              <button
+                onClick={() => {
+                  const currentPhaseGroups = activePhase === 'ALL'
+                    ? taskGroups
+                    : taskGroups.filter(g => {
+                      const ph = phases.find(p => p.id === g.phase_id);
+                      return ph && ph.name === activePhase;
+                    });
+                  if (currentPhaseGroups.length === 0) {
+                    alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
+                    return;
+                  }
+                  const targetGroup = currentPhaseGroups[0];
+                  setAddingTaskGroupId(targetGroup.id);
+                  setAddingTaskParentCode(null);
+                  const dynamicCols = getDynamicColumns();
+                  const initialForm: Record<string, string> = {};
+                  dynamicCols.forEach(col => { initialForm[col] = ''; });
+                  const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                  if (statusCol) initialForm[statusCol] = 'Waiting';
+                  setNewForm(initialForm);
+                }}
+                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-semibold text-[13px] h-9 pl-3.5 pr-3 rounded-l-[8px] shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
+              >
+                <Plus size={16} />
+                Thêm task
+              </button>
+              <button
+                ref={addTaskMenuBtnRef}
+                onClick={() => setAddTaskMenuOpen(!addTaskMenuOpen)}
+                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white h-9 w-8 flex items-center justify-center rounded-r-[8px] shadow-sm transition-all border-l border-white/20 active:scale-95"
+                title="Thêm task / Thêm Group Task"
+              >
+                <ChevronDown size={16} />
+              </button>
+              <FloatingDropdown
+                anchorEl={addTaskMenuBtnRef.current}
+                open={addTaskMenuOpen}
+                onClose={() => setAddTaskMenuOpen(false)}
+                align="right"
+                className="bg-white border border-slate-200 rounded-lg shadow-lg w-[200px] py-1"
+              >
+                  <button
+                    onClick={() => {
+                      setAddTaskMenuOpen(false);
+                      const currentPhaseGroups = activePhase === 'ALL'
+                        ? taskGroups
+                        : taskGroups.filter(g => {
+                          const ph = phases.find(p => p.id === g.phase_id);
+                          return ph && ph.name === activePhase;
+                        });
+                      if (currentPhaseGroups.length === 0) {
+                        alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
+                        return;
+                      }
+                      const targetGroup = currentPhaseGroups[0];
+                      setAddingTaskGroupId(targetGroup.id);
+                      setAddingTaskParentCode(null);
+                      const dynamicCols = getDynamicColumns();
+                      const initialForm: Record<string, string> = {};
+                      dynamicCols.forEach(col => { initialForm[col] = ''; });
+                      const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                      if (statusCol) initialForm[statusCol] = 'Waiting';
+                      setNewForm(initialForm);
+                    }}
+                    className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
+                  >
+                    <Plus size={16} className="text-[#0058be]" />
+                    Thêm task
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAddTaskMenuOpen(false);
+                      let defaultPhaseId: number = 0;
+                      if (activePhase !== 'ALL') {
+                        const curPhase = phases.find(p => p.name === activePhase);
+                        if (curPhase) defaultPhaseId = curPhase.id;
+                      }
+                      if (!defaultPhaseId && phases.length > 0) {
+                        const nonMaster = phases.filter(p => !p.is_master);
+                        if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
+                      }
+                      if (!defaultPhaseId) {
+                        alert('Vui lòng tạo Phase trước!');
+                        return;
+                      }
+                      setAddingTaskGroupPhaseId(defaultPhaseId);
+                      setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                    }}
+                    className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
+                  >
+                    <FolderPlus size={16} className="text-indigo-600" />
+                    Thêm Group Task
+                  </button>
+              </FloatingDropdown>
+            </div>
+          </div>
+          )}
           </div>
           </>
           )}
@@ -5116,7 +5788,7 @@ function ProjectDetailContent() {
                           <Users size={14} className="text-[#0058be]" />
                           Khối lượng công việc theo thành viên
                         </h3>
-                        {overviewMemberWorkload.length > 5 && (
+                        {overviewMemberWorkload.length > 8 && (
                           <button onClick={() => setShowAllOverviewWorkload(!showAllOverviewWorkload)} className="text-[11px] text-[#0058be] hover:underline font-semibold">
                             {showAllOverviewWorkload ? 'Thu gọn' : 'Xem tất cả'}
                           </button>
@@ -5137,7 +5809,7 @@ function ProjectDetailContent() {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
-                              {(showAllOverviewWorkload ? overviewMemberWorkload : overviewMemberWorkload.slice(0, 5)).map(m => {
+                              {(showAllOverviewWorkload ? overviewMemberWorkload : overviewMemberWorkload.slice(0, 8)).map(m => {
                                 const initials = m.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
                                 return (
                                   <tr key={m.name}>
@@ -5716,7 +6388,7 @@ function ProjectDetailContent() {
                         <div key={p.key} className="relative group/phase flex items-center gap-1 shrink-0 h-9">
                           <button onClick={() => setActivePhase(p.key)}
                             title={p.label}
-                            className={`h-9 max-w-[160px] truncate text-[13px] transition-all whitespace-nowrap border-b-2 ${activePhase === p.key
+                            className={`h-9 max-w-[110px] truncate text-[13px] transition-all whitespace-nowrap border-b-2 ${activePhase === p.key
                               ? 'text-[#0058be] font-semibold border-[#0058be]'
                               : 'text-[#565e74] font-medium border-transparent hover:text-[#0b1c30]'
                               }`}>
@@ -5863,14 +6535,14 @@ function ProjectDetailContent() {
                         Áp dụng template
                       </button>
 
-                      {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[160px]
+                      {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[110px]
                           giống tab thật) để tính visiblePhaseCount ở trên - không ảnh hưởng layout. */}
                       <div style={{ position: 'absolute', visibility: 'hidden', height: 0, overflow: 'hidden', whiteSpace: 'nowrap', pointerEvents: 'none' }} aria-hidden="true">
                         {realPhases.map(p => (
                           <div
                             key={p.key}
                             ref={el => { phaseTabMeasureRefs.current[p.key] = el; }}
-                            className="h-9 max-w-[160px] truncate text-[13px] font-semibold inline-flex items-center gap-1"
+                            className="h-9 max-w-[110px] truncate text-[13px] font-semibold inline-flex items-center gap-1"
                           >
                             {p.label}
                             <span className="w-7 h-7 inline-block" />
@@ -5878,276 +6550,48 @@ function ProjectDetailContent() {
                         ))}
                       </div>
                     </div>
-                    <div className="flex gap-2 items-center shrink-0">
-                      <div className="relative">
-                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#8b93a3] pointer-events-none" />
-                        <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)}
-                          placeholder="Tìm kiếm..."
-                          className="bg-white border border-[#D9DEE7] rounded-[8px] h-9 pl-8 pr-3 text-[12.5px] text-[#0b1c30] outline-none w-[220px] focus:border-[#0058be] placeholder:text-[12px] placeholder-[#8b93a3] transition-colors" />
-                      </div>
-                      {taskSearch && (
-                        <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
+
+                    {/* Cần chú ý - attention queue (overdue/blocked/unassigned/need
+                        review), mở panel Leader Review bên phải. Compact: icon +
+                        nhãn ngắn + badge số, không dùng câu dài. */}
+                    <button
+                      onClick={() => {
+                        if (leaderReviewOpen) closeLeaderReviewPanel();
+                        else setLeaderReviewOpen(true);
+                      }}
+                      className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap shrink-0 ${
+                        leaderReviewOpen
+                          ? 'bg-amber-100 border-amber-300 text-amber-800'
+                          : attentionTasks.length > 0
+                            ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                            : 'bg-white border-[#D9DEE7] text-[#8b93a3] hover:bg-slate-50'
+                      }`}
+                      title="Leader Review - việc cần chú ý"
+                    >
+                      <AlertTriangle size={15} />
+                      Cần chú ý
+                      {attentionTasks.length > 0 && (
+                        <span className="bg-amber-600 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                          {attentionTasks.length}
+                        </span>
                       )}
-
-                      {/* Bộ lọc - primary filter UX, dùng chung state với per-column filter */}
-                      <div className="relative">
-                        {(() => {
-                          const activeFilterCount = [priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter].filter(f => f !== 'All').length;
-                          return (
-                            <button
-                              ref={filterPopoverBtnRef}
-                              onClick={() => setFilterPopoverOpen(!filterPopoverOpen)}
-                              className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap ${
-                                activeFilterCount > 0
-                                  ? 'bg-blue-50 border-blue-200 text-[#0058be]'
-                                  : 'bg-white border-[#D9DEE7] text-[#565e74] hover:bg-slate-50'
-                              }`}
-                              title="Bộ lọc"
-                            >
-                              <Filter size={15} />
-                              Bộ lọc
-                              {activeFilterCount > 0 && (
-                                <span className="bg-[#0058be] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{activeFilterCount}</span>
-                              )}
-                            </button>
-                          );
-                        })()}
-                        <FloatingDropdown
-                          anchorEl={filterPopoverBtnRef.current}
-                          open={filterPopoverOpen}
-                          onClose={() => setFilterPopoverOpen(false)}
-                          className="bg-white border border-slate-200 rounded-lg shadow-lg w-[280px] py-2.5"
-                        >
-                          <div className="px-3.5 pb-1.5">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bộ lọc</span>
-                          </div>
-                          {[
-                            { label: 'Priority', value: priorityFilter, set: setPriorityFilter, options: ['All', 'Normal', 'High', 'Critical', 'Interrupt'] },
-                            { label: 'Status', value: statusFilter, set: setStatusFilter, options: ['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'] },
-                            { label: 'Assigned', value: assignedFilter, set: setAssignedFilter, options: ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()] },
-                            { label: 'Support', value: supportFilter, set: setSupportFilter, options: ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()] },
-                            { label: 'Skill Solution', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
-                            { label: 'Skill Vendor', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
-                          ].map(f => (
-                            <div key={f.label} className="px-3.5 py-1.5 flex items-center justify-between gap-2">
-                              <span className="text-[12.5px] font-medium text-[#0b1c30]">{f.label}</span>
-                              <select
-                                value={f.value}
-                                onChange={e => f.set(e.target.value)}
-                                className="text-[12px] border border-slate-200 rounded-md px-2 py-1 outline-none focus:border-[#0058be] bg-white text-[#0b1c30] max-w-[140px]"
-                              >
-                                {f.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                              </select>
-                            </div>
-                          ))}
-                          <div className="px-3.5 pt-1.5 mt-1 border-t border-slate-100">
-                            <button
-                              onClick={() => {
-                                setPriorityFilter('All'); setStatusFilter('All'); setAssignedFilter('All');
-                                setSupportFilter('All'); setSkillSolutionFilter('All'); setSkillVendorFilter('All');
-                              }}
-                              className="text-[11px] font-semibold text-[#0058be] hover:underline flex items-center gap-1 pt-1"
-                            >
-                              <RotateCcw size={13} />
-                              Đặt lại
-                            </button>
-                          </div>
-                        </FloatingDropdown>
-                      </div>
-
-                      {/* Cột (cột hiển thị + thứ tự + độ rộng + ghim + mật độ hàng) */}
-                      <div className="relative">
-                        <button
-                          ref={columnMenuBtnRef}
-                          onClick={() => setColumnMenuOpen(!columnMenuOpen)}
-                          className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1 active:scale-95 whitespace-nowrap ${
-                            hiddenColumns.length > 0
-                              ? 'bg-blue-50 border-blue-200 text-[#0058be]'
-                              : 'bg-white border-[#D9DEE7] text-[#565e74] hover:bg-slate-50'
-                          }`}
-                          title="Tuỳ chỉnh cột của bảng"
-                        >
-                          <Columns3 size={15} />
-                          Cột
-                          {hiddenColumns.length > 0 && (
-                            <span className="bg-[#0058be] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{hiddenColumns.length}</span>
-                          )}
-                          <ChevronDown size={15} />
-                        </button>
-                        <FloatingDropdown
-                          anchorEl={columnMenuBtnRef.current}
-                          open={columnMenuOpen}
-                          onClose={() => setColumnMenuOpen(false)}
-                          align="right"
-                          className="bg-white border border-slate-200 rounded-lg shadow-lg w-[300px] max-h-[28rem] overflow-auto"
-                        >
-                            <div className="px-3.5 pt-3 pb-2.5">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cột hiển thị</span>
-                              <div className="relative mt-2">
-                                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                  value={columnSearch}
-                                  onChange={e => setColumnSearch(e.target.value)}
-                                  placeholder="Tìm cột..."
-                                  className="w-full h-[34px] pl-7 pr-2 text-[12px] border border-slate-200 rounded-md outline-none focus:border-[#0058be]"
-                                />
-                              </div>
-                            </div>
-                            <div className="py-1 border-t border-slate-100">
-                              {TASK_COLUMNS.filter(col => col.toLowerCase().includes(columnSearch.trim().toLowerCase())).map(col => {
-                                const locked = LOCKED_COLUMNS.includes(col);
-                                const checked = !hiddenColumns.includes(col);
-                                return (
-                                  <label
-                                    key={col}
-                                    className={`flex items-center gap-2.5 px-3.5 h-8 text-[12px] ${locked ? 'text-slate-400 cursor-not-allowed' : 'text-[#0b1c30] hover:bg-slate-50 cursor-pointer'}`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      disabled={locked}
-                                      onChange={() => toggleColumnVisibility(col)}
-                                      className="accent-[#0058be]"
-                                    />
-                                    {col}
-                                    {locked && <Lock size={11} className="text-slate-300 ml-auto" />}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                            <div className="px-3.5 py-3 border-t border-slate-100">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mật độ hàng</span>
-                              <div className="flex items-center gap-0.5 mt-2 bg-slate-100 rounded-[8px] p-0.5">
-                                {([['compact', 'Gọn'], ['normal', 'Vừa'], ['spacious', 'Rộng']] as const).map(([val, label]) => (
-                                  <button
-                                    key={val}
-                                    type="button"
-                                    onClick={() => setRowDensity(val)}
-                                    className={`flex-1 h-7 rounded-[6px] text-[12px] font-medium transition-all ${rowDensity === val ? 'bg-white text-[#0058be] font-semibold shadow-sm' : 'text-[#565e74] hover:text-[#0b1c30]'}`}
-                                  >
-                                    {label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="px-3.5 py-2.5 border-t border-slate-100">
-                              <button
-                                onClick={resetColumnVisibility}
-                                className="text-[11px] font-semibold text-[#0058be] hover:underline flex items-center gap-1"
-                              >
-                                <RotateCcw size={13} />
-                                Khôi phục mặc định
-                              </button>
-                            </div>
-                        </FloatingDropdown>
-                      </div>
-
-                      {/* + Thêm task (split button: main = thêm task, dropdown = thêm task / thêm group task) */}
-                      <div className="relative flex">
-                        <button
-                          onClick={() => {
-                            // Find group tasks in current active phase
-                            const currentPhaseGroups = activePhase === 'ALL'
-                              ? taskGroups
-                              : taskGroups.filter(g => {
-                                const ph = phases.find(p => p.id === g.phase_id);
-                                return ph && ph.name === activePhase;
-                              });
-                            if (currentPhaseGroups.length === 0) {
-                              alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
-                              return;
-                            }
-                            const targetGroup = currentPhaseGroups[0];
-                            setAddingTaskGroupId(targetGroup.id);
-                            setAddingTaskParentCode(null);
-                            const dynamicCols = getDynamicColumns();
-                            const initialForm: Record<string, string> = {};
-                            dynamicCols.forEach(col => { initialForm[col] = ''; });
-                            const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                            if (statusCol) initialForm[statusCol] = 'Waiting';
-                            setNewForm(initialForm);
-                          }}
-                          className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-semibold text-[13px] h-9 pl-3.5 pr-3 rounded-l-[8px] shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
-                        >
-                          <Plus size={16} />
-                          Thêm task
-                        </button>
-                        <button
-                          ref={addTaskMenuBtnRef}
-                          onClick={() => setAddTaskMenuOpen(!addTaskMenuOpen)}
-                          className="bg-[#0058be] hover:bg-[#0058be]/95 text-white h-9 w-8 flex items-center justify-center rounded-r-[8px] shadow-sm transition-all border-l border-white/20 active:scale-95"
-                          title="Thêm task / Thêm Group Task"
-                        >
-                          <ChevronDown size={16} />
-                        </button>
-                        <FloatingDropdown
-                          anchorEl={addTaskMenuBtnRef.current}
-                          open={addTaskMenuOpen}
-                          onClose={() => setAddTaskMenuOpen(false)}
-                          align="right"
-                          className="bg-white border border-slate-200 rounded-lg shadow-lg w-[200px] py-1"
-                        >
-                            <button
-                              onClick={() => {
-                                setAddTaskMenuOpen(false);
-                                const currentPhaseGroups = activePhase === 'ALL'
-                                  ? taskGroups
-                                  : taskGroups.filter(g => {
-                                    const ph = phases.find(p => p.id === g.phase_id);
-                                    return ph && ph.name === activePhase;
-                                  });
-                                if (currentPhaseGroups.length === 0) {
-                                  alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
-                                  return;
-                                }
-                                const targetGroup = currentPhaseGroups[0];
-                                setAddingTaskGroupId(targetGroup.id);
-                                setAddingTaskParentCode(null);
-                                const dynamicCols = getDynamicColumns();
-                                const initialForm: Record<string, string> = {};
-                                dynamicCols.forEach(col => { initialForm[col] = ''; });
-                                const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                                if (statusCol) initialForm[statusCol] = 'Waiting';
-                                setNewForm(initialForm);
-                              }}
-                              className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
-                            >
-                              <Plus size={16} className="text-[#0058be]" />
-                              Thêm task
-                            </button>
-                            <button
-                              onClick={() => {
-                                setAddTaskMenuOpen(false);
-                                let defaultPhaseId: number = 0;
-                                if (activePhase !== 'ALL') {
-                                  const curPhase = phases.find(p => p.name === activePhase);
-                                  if (curPhase) defaultPhaseId = curPhase.id;
-                                }
-                                if (!defaultPhaseId && phases.length > 0) {
-                                  const nonMaster = phases.filter(p => !p.is_master);
-                                  if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
-                                }
-                                if (!defaultPhaseId) {
-                                  alert('Vui lòng tạo Phase trước!');
-                                  return;
-                                }
-                                setAddingTaskGroupPhaseId(defaultPhaseId);
-                                setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
-                              }}
-                              className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
-                            >
-                              <FolderPlus size={16} className="text-indigo-600" />
-                              Thêm Group Task
-                            </button>
-                        </FloatingDropdown>
-                      </div>
-                    </div>
+                    </button>
                   </div>
 
+                  {/* Task Table | Leader Review panel - table luôn ở flex-1 nên co
+                      lại đúng phần viewport còn lại khi panel mở, không đổi
+                      column width (width cột là inline style theo px cố định,
+                      độc lập với width container cha) và scroll ngang riêng
+                      của table vẫn hoạt động bình thường. */}
+                  <div className="flex items-start gap-4">
                   {/* Task Table */}
-                  <div className="bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
+                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
                     <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
-                      <table className="w-full text-xs min-w-max border-collapse">
+                      {/* table-layout: fixed - bắt buộc để mỗi cột giữ đúng width đã set (kể cả
+                          width mặc định thu gọn cho MD/Priority/Status/KPI Ratio/ngày và width
+                          do user tự resize) thay vì bị auto-layout của trình duyệt kéo giãn ra
+                          để lấp đầy khoảng trống còn lại của bảng. */}
+                      <table className="text-xs min-w-max border-collapse" style={{ tableLayout: 'fixed' }}>
                         <thead className="sticky top-0 z-20 bg-[#FAFBFC] border-b border-[#E3E7EE]" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
                           <tr>
                             <th className="text-center px-2 py-3 bg-[#FAFBFC] sticky left-0 z-[16]" style={{ minWidth: `${ACTION_COL_WIDTH}px`, width: `${ACTION_COL_WIDTH}px` }}></th>
@@ -6166,7 +6610,7 @@ function ProjectDetailContent() {
                               return (
                                 <th
                                   key={col}
-                                  className={`text-left py-3 text-[10.5px] font-semibold text-[#6b7280] uppercase tracking-wide bg-[#FAFBFC] group/th relative ${isPinned ? 'sticky z-[15]' : ''} ${draggingColumn && draggingColumn !== col ? 'bg-blue-50/60' : ''}`}
+                                  className={`text-left py-2 text-[10.5px] font-semibold text-[#6b7280] uppercase tracking-wide bg-[#FAFBFC] group/th relative ${isPinned ? 'sticky z-[15]' : ''} ${draggingColumn && draggingColumn !== col ? 'bg-blue-50/60' : ''}`}
                                   style={{ minWidth: width, width, ...(isPinned ? { left: getPinnedLeftOffset(col) } : {}) }}
                                   onDragOver={(e) => { if (draggingColumn) e.preventDefault(); }}
                                   onDrop={(e) => {
@@ -6175,7 +6619,7 @@ function ProjectDetailContent() {
                                     setDraggingColumn(null);
                                   }}
                                 >
-                                  <div className="flex items-center gap-1.5 pl-3 pr-1">
+                                  <div className="flex items-center gap-1.5 pl-2 pr-1">
                                     <span
                                       draggable
                                       onDragStart={() => setDraggingColumn(col)}
@@ -6187,7 +6631,10 @@ function ProjectDetailContent() {
                                     </span>
                                     {colFilterActive && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]" />}
 
-                                    {/* Header menu: pin/unpin + hide column */}
+                                    {/* Header menu: pin/unpin + hide column - chỉ hiện nút khi có
+                                        ít nhất 1 action (cột vừa locked vừa không pin được thì
+                                        menu sẽ rỗng, ẩn hẳn trigger thay vì mở ra trống). */}
+                                    {(canPin || !LOCKED_COLUMNS.includes(col)) && (
                                     <div className="relative ml-auto">
                                       <button
                                         type="button"
@@ -6229,6 +6676,7 @@ function ProjectDetailContent() {
                                         )}
                                       </FloatingDropdown>
                                     </div>
+                                    )}
 
                                     {colUpper === 'PRIORITY' && (
                                       <div className="relative" ref={priorityFilterRef}>
@@ -6389,7 +6837,7 @@ function ProjectDetailContent() {
                                       const onMove = (ev: MouseEvent) => {
                                         const ctx = resizingColumnRef.current;
                                         if (!ctx) return;
-                                        const minW = colUpper.includes('DETAIL TASK') ? 280 : MIN_COLUMN_WIDTH;
+                                        const minW = getColumnMinWidth(col);
                                         const next = Math.max(minW, ctx.startWidth + (ev.clientX - ctx.startX));
                                         setColumnWidths(prev => ({ ...prev, [ctx.col]: next }));
                                       };
@@ -6421,6 +6869,123 @@ function ProjectDetailContent() {
                         </tbody>
                       </table>
                     </div>
+                  </div>
+
+                  {/* Leader Review panel - desktop (xl+): cạnh table, table co
+                      lại nhường chỗ (flex-1 min-w-0 ở trên). Màn nhỏ hơn: overlay
+                      drawer bên phải + backdrop, không ép table nhỏ lại. */}
+                  {leaderReviewOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 bg-slate-900/30 z-40 xl:hidden"
+                        onClick={closeLeaderReviewPanel}
+                      />
+                      <div
+                        className="w-[85vw] max-w-[360px] xl:w-[340px] xl:max-w-none shrink-0 bg-white border border-[#c2c6d6]/60 rounded-none xl:rounded-xl shadow-2xl xl:shadow-sm flex flex-col fixed xl:static top-0 xl:top-auto right-0 xl:right-auto h-full xl:h-auto xl:max-h-[calc(100vh-260px)] z-50 xl:z-auto overflow-hidden"
+                      >
+                        {/* Header */}
+                        <div className="px-4 py-3 border-b border-[#c2c6d6]/60 flex items-center justify-between shrink-0">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle size={16} className="text-amber-500" />
+                            <h3 className="text-[13.5px] font-bold text-[#0b1c30]">Leader Review</h3>
+                            {attentionTasks.length > 0 && (
+                              <span className="text-[11px] font-semibold text-slate-400">{attentionTasks.length} mục</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={closeLeaderReviewPanel}
+                            className="w-7 h-7 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors"
+                            title="Đóng"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        {attentionTasks.length === 0 ? (
+                          <div className="flex-1 flex flex-col items-center justify-center gap-2 py-12 px-6 text-center">
+                            <CheckCircle2 size={28} className="text-emerald-400" />
+                            <p className="text-[12.5px] text-slate-500">Hiện không có task cần xử lý ưu tiên.</p>
+                          </div>
+                        ) : (
+                          <div className="flex-1 overflow-y-auto">
+                            {/* Summary nhỏ trong panel - KHÔNG đưa ra ngoài table */}
+                            <div className="grid grid-cols-4 gap-1.5 px-4 py-3 border-b border-[#c2c6d6]/60">
+                              {[
+                                { label: 'Quá hạn', value: attentionOverdueCount, color: 'text-rose-600' },
+                                { label: 'Blocked', value: attentionBlockedCount, color: 'text-amber-600' },
+                                { label: 'Chưa assign', value: attentionUnassignedCount, color: 'text-slate-500' },
+                                { label: 'Chờ review', value: attentionReviewCount, color: 'text-blue-600' },
+                              ].map(s => (
+                                <div key={s.label} className="text-center">
+                                  <div className={`text-base font-extrabold ${s.color}`}>{s.value}</div>
+                                  <div className="text-[9.5px] text-slate-400 font-semibold uppercase tracking-wide leading-tight">{s.label}</div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="px-4 pt-3 pb-1">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ưu tiên xử lý</span>
+                            </div>
+
+                            <div className="px-2 pb-3 space-y-1.5">
+                              {attentionTasks.map(a => {
+                                const t = a.task;
+                                const reasonParts: string[] = [];
+                                if (a.overdue) reasonParts.push(`Quá hạn ${a.daysLate} ngày`);
+                                if (a.blocked) reasonParts.push(a.blockedDays > 0 ? `Blocked ${a.blockedDays} ngày` : 'Blocked');
+                                if (a.needReview) reasonParts.push('đang chờ review');
+                                if (a.unassigned) reasonParts.push('chưa có người phụ trách');
+                                const reasonText = reasonParts.slice(0, 2).join(' · ');
+
+                                const primaryBadge = a.overdue
+                                  ? { label: `Quá hạn`, cls: 'bg-rose-50 text-rose-700 border-rose-200', Icon: Clock }
+                                  : a.blocked
+                                    ? { label: 'Blocked', cls: 'bg-amber-50 text-amber-700 border-amber-200', Icon: Ban }
+                                    : a.needReview
+                                      ? { label: 'Review', cls: 'bg-blue-50 text-blue-700 border-blue-200', Icon: CheckCircle2 }
+                                      : { label: 'Chưa assign', cls: 'bg-slate-100 text-slate-600 border-slate-200', Icon: UserX };
+
+                                const isSelected = t.id === selectedAttentionTaskId;
+                                return (
+                                  <button
+                                    key={t.id}
+                                    onClick={() => handleOpenAttentionTask(t)}
+                                    className={`w-full text-left px-2.5 py-2 rounded-lg border transition-colors group ${
+                                      isSelected
+                                        ? 'bg-[#EFF6FF] border-[#BFDBFE] border-l-[3px] border-l-[#2563EB]'
+                                        : 'border-transparent hover:border-slate-200 hover:bg-[#F8FAFC]'
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-2">
+                                      <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${a.overdue ? 'bg-rose-500' : a.blocked ? 'bg-amber-500' : a.needReview ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-[12.5px] font-semibold text-[#0b1c30] truncate group-hover:text-[#0058be]" title={t.detail || ''}>
+                                          {t.detail || t.task_code}
+                                        </div>
+                                        <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                                          {reasonText}
+                                          {t.phase_name ? ` · ${t.phase_name}` : ''}
+                                        </div>
+                                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border ${primaryBadge.cls}`}>
+                                            <primaryBadge.Icon size={10} />
+                                            {primaryBadge.label}
+                                          </span>
+                                          {t.assigned_name && (
+                                            <span className="text-[10.5px] text-slate-500 font-medium truncate">{t.assigned_name}</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                   </div>
 
                   {!taskFocusMode && (
@@ -8862,11 +9427,450 @@ function ProjectDetailContent() {
         entityType={aiDrawerEntityType}
         entityId={aiDrawerEntityId}
         entityName={aiDrawerEntityName}
+        projectId={aiDrawerProjectId}
+        memberTab={memberIdParam ? { memberId: Number(memberIdParam), memberName: memberFilterParam, projectId: Number(id) } : undefined}
         onSuccessCheck={() => {
           reloadAll();
           loadProject();
         }}
       />
+
+      {/* Leader Review Detail Drawer - read/review-first, TÁCH BIỆT hoàn toàn
+          khỏi Task Edit Drawer bên dưới (selectedTask/drawerForm). Chỉ mở khi
+          click item từ Leader Review panel (handleOpenAttentionTask) - click
+          task trực tiếp từ table vẫn setSelectedTask thẳng như cũ, không đổi.
+          Không có input/textarea nào ở đây, chỉ card hiển thị + action thật. */}
+      {leaderReviewDetailTask && (() => {
+        const t = leaderReviewDetailTask;
+        const statusInfo = getStatusInfo(t.status);
+        const lastLog = taskActivityLogs[0];
+        // Tái sử dụng CHÍNH XÁC object đã quyết định task này vào Leader Review
+        // (không tính lại reason bằng logic khác) - nếu task đã rớt khỏi hàng
+        // đợi (vd vừa approve và không còn overdue/blocked/unassigned) thì
+        // attentionInfo sẽ là undefined, hiển thị "không còn cần chú ý".
+        const attentionInfo = attentionTasks.find(a => a.task.id === t.id);
+        const isCritical = ['critical', 'urgent'].includes((t.priority || '').trim().toLowerCase());
+
+        const TONE_BADGE: Record<string, string> = {
+          rose: 'bg-rose-50 text-rose-700 border-rose-200',
+          amber: 'bg-amber-50 text-amber-700 border-amber-200',
+          slate: 'bg-slate-100 text-slate-600 border-slate-200',
+          blue: 'bg-blue-50 text-blue-700 border-blue-200',
+          purple: 'bg-purple-50 text-purple-700 border-purple-200',
+        };
+        const TONE_ICON: Record<string, string> = {
+          rose: 'text-rose-600', amber: 'text-amber-600', slate: 'text-slate-500', blue: 'text-blue-600', purple: 'text-purple-600',
+        };
+
+        const reasons: Array<{ Icon: any; tone: string; label: string; text: string }> = [];
+        if (attentionInfo?.overdue) {
+          const deadlineStr = formatDateToShow(t.end_date_est || '');
+          reasons.push({ Icon: Clock, tone: 'rose', label: 'Overdue', text: `Quá hạn ${attentionInfo.daysLate} ngày${deadlineStr ? ` · deadline ${deadlineStr}` : ''}` });
+        }
+        if (attentionInfo?.blocked) {
+          const blockedParts = [`Blocked ${attentionInfo.blockedDays} ngày`];
+          if (t.blocked_reason) blockedParts.push(`Lý do: ${t.blocked_reason}`);
+          if (t.blocked_by_task) blockedParts.push(`Đang chờ: ${t.blocked_by_task.task_code || t.blocked_by_task.detail}`);
+          reasons.push({ Icon: Ban, tone: 'amber', label: 'Blocked', text: blockedParts.join(' · ') });
+        }
+        if (attentionInfo?.unassigned) reasons.push({ Icon: UserX, tone: 'slate', label: 'Unassigned', text: 'Chưa có người phụ trách' });
+        if (attentionInfo?.needReview) reasons.push({ Icon: CheckCircle2, tone: 'blue', label: 'Review pending', text: 'Đang chờ Leader Review' });
+        if (isCritical) reasons.push({ Icon: AlertTriangle, tone: 'purple', label: 'Critical', text: 'Mức ưu tiên Critical' });
+
+        const isPending = t.review_status === 'pending';
+        const isApproved = t.review_status === 'approved';
+        const isChangesRequested = t.review_status === 'changes_requested';
+        // Duyệt/Yêu cầu sửa dùng ĐÚNG permission gate đã có cho Resources
+        // approve/reject (is_project_leader ở backend) - isProjectManager ở FE
+        // là bản tương đương (Super Admin hoặc PM/Leader của chính project này).
+        const canReview = isProjectManager;
+
+        return (
+          <div className="fixed inset-0 z-50 flex justify-end">
+            <div onClick={() => setLeaderReviewDetailTask(null)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300" />
+            <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
+              {/* Header */}
+              <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-[#fffbeb] to-white">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-amber-50 text-amber-600">
+                    <AlertTriangle size={18} />
+                  </span>
+                  <h3 className="text-sm font-bold text-[#0b1c30]">Task cần chú ý</h3>
+                </div>
+                <button onClick={() => setLeaderReviewDetailTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                {/* Attention badges */}
+                {reasons.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {reasons.map((r, i) => (
+                      <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-bold border ${TONE_BADGE[r.tone]}`}>
+                        <r.Icon size={11} />
+                        {r.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Phase + Task ID */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {t.phase_name && (
+                    <span className="px-2.5 py-0.5 rounded-full bg-[#eff4ff] text-[#1d4ed8] text-[10px] font-bold uppercase border border-[#0058be]/10">
+                      {t.phase_name}
+                    </span>
+                  )}
+                  <span className="font-mono px-2 py-0.5 rounded bg-slate-50 text-slate-600 text-[11px] font-bold border border-slate-200">
+                    {t.task_code || t.task_id}
+                  </span>
+                </div>
+
+                {/* Title */}
+                <div>
+                  <h4 className="text-[15px] font-bold text-[#0b1c30] leading-snug">{t.detail}</h4>
+                  {lastLog && (
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Cập nhật {formatTimeAgo(lastLog.created_at)} · bởi {lastLog.user_name}
+                    </p>
+                  )}
+                </div>
+
+                {/* Tại sao cần chú ý? - render TOÀN BỘ reason thật, dùng đúng
+                    attentionInfo đã tính task này vào Leader Review, không fake. */}
+                <div className="bg-amber-50/60 border border-amber-100 rounded-lg p-3.5">
+                  <div className="text-[11px] font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <AlertTriangle size={13} />
+                    Tại sao cần chú ý?
+                  </div>
+                  {reasons.length === 0 ? (
+                    <p className="text-[12.5px] text-emerald-700 flex items-center gap-1.5">
+                      <CheckCircle2 size={14} /> Task này không còn nằm trong danh sách cần chú ý.
+                    </p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {reasons.map((r, i) => (
+                        <li key={i} className="flex items-start gap-2 text-[12.5px] text-[#0b1c30]">
+                          <r.Icon size={13} className={`mt-0.5 shrink-0 ${TONE_ICON[r.tone]}`} />
+                          <span>{r.text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {/* Review status banner - lịch sử action thật (approved_by/
+                    change_request_reason), không fake. */}
+                {isApproved && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-[12.5px]">
+                    <div className="font-bold text-emerald-800 flex items-center gap-1.5"><CheckCircle2 size={14} /> Đã duyệt</div>
+                    <div className="mt-1 text-emerald-700">
+                      bởi {t.approved_by_name || 'Quản lý'}{t.approved_at ? ` · ${formatTimeAgo(t.approved_at)}` : ''}
+                    </div>
+                  </div>
+                )}
+                {isChangesRequested && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-[12.5px]">
+                    <div className="font-bold text-orange-800 flex items-center gap-1.5"><Ban size={14} /> Đã yêu cầu sửa</div>
+                    {t.change_request_reason && <div className="mt-1 text-orange-800">{t.change_request_reason}</div>}
+                    <div className="mt-1 text-orange-600 text-[11px]">
+                      bởi {t.change_requested_by_name || 'Quản lý'}{t.change_requested_at ? ` · ${formatTimeAgo(t.change_requested_at)}` : ''}
+                    </div>
+                  </div>
+                )}
+                {/* Lịch sử yêu cầu sửa CŨ - vẫn hiện (mờ hơn) ngay cả khi task
+                    đã được gửi lại review (review_status không còn là
+                    'changes_requested' nữa) - KHÔNG xoá field change_request_*
+                    khi request-review, chỉ để leader không mất dấu lần trước. */}
+                {!isChangesRequested && t.change_request_reason && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-[12.5px]">
+                    <div className="font-bold text-slate-500 flex items-center gap-1.5"><Ban size={13} /> Từng bị yêu cầu sửa (đã gửi lại review)</div>
+                    <div className="mt-1 text-slate-500">{t.change_request_reason}</div>
+                    <div className="mt-1 text-slate-400 text-[11px]">
+                      bởi {t.change_requested_by_name || 'Quản lý'}{t.change_requested_at ? ` · ${formatTimeAgo(t.change_requested_at)}` : ''}
+                    </div>
+                  </div>
+                )}
+
+                {/* Blocking banner - is_blocked là lịch sử thật, blocked_reason/
+                    blocked_by_task không bị xoá khi unblock (mirror change_
+                    request_reason ở trên). */}
+                {t.is_blocked && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-[12.5px]">
+                    <div className="font-bold text-amber-800 flex items-center gap-1.5"><Ban size={14} /> Đang bị chặn</div>
+                    {t.blocked_reason && <div className="mt-1 text-amber-800">{t.blocked_reason}</div>}
+                    {t.blocked_by_task && (
+                      <div className="mt-1 text-amber-700">Đang chờ: <span className="font-semibold">{t.blocked_by_task.task_code}</span> - {t.blocked_by_task.detail}</div>
+                    )}
+                    <div className="mt-1 text-amber-600 text-[11px]">
+                      bởi {t.blocked_by_name || 'Một thành viên'}{t.blocked_at ? ` · ${formatTimeAgo(t.blocked_at)}` : ''}
+                    </div>
+                  </div>
+                )}
+                {!t.is_blocked && t.blocked_reason && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-[12.5px]">
+                    <div className="font-bold text-slate-500 flex items-center gap-1.5"><Ban size={13} /> Từng bị chặn (đã gỡ)</div>
+                    <div className="mt-1 text-slate-500">{t.blocked_reason}</div>
+                    <div className="mt-1 text-slate-400 text-[11px]">
+                      Gỡ bởi {t.unblocked_by_name || 'Một thành viên'}{t.unblocked_at ? ` · ${formatTimeAgo(t.unblocked_at)}` : ''}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action phù hợp theo reason/status - TOÀN BỘ khu vực Hành động
+                    (kể cả AI check/Chỉnh sửa/More menu, không chỉ riêng Duyệt/
+                    Yêu cầu sửa) chỉ dành cho Admin/Leader dự án/Super Admin -
+                    member chỉ xem (read-only), theo đúng yêu cầu. Duyệt/Yêu
+                    cầu sửa còn thêm điều kiện review_status THẬT SỰ đang pending. */}
+                <div className="space-y-2">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Hành động</div>
+                  {!canReview ? (
+                    <p className="text-[12px] text-slate-400 italic flex items-center gap-1.5">
+                      <Lock size={12} className="shrink-0" />
+                      Chỉ xem - cần quyền Admin/Leader/Super Admin để thao tác (Duyệt, Yêu cầu sửa, AI check, chỉnh sửa...).
+                    </p>
+                  ) : (
+                  <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isPending && !confirmingApproveTask && !requestChangesOpen && (
+                      <>
+                        <button
+                          onClick={() => setConfirmingApproveTask(true)}
+                          className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors flex items-center gap-1.5"
+                        >
+                          <CheckCircle2 size={14} /> Duyệt
+                        </button>
+                        <button
+                          onClick={() => setRequestChangesOpen(true)}
+                          className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 transition-colors flex items-center gap-1.5"
+                        >
+                          <Ban size={14} /> Yêu cầu sửa
+                        </button>
+                      </>
+                    )}
+                    {(isChangesRequested || isApproved) && !confirmingApproveTask && !requestChangesOpen && (
+                      <button
+                        onClick={() => handleRequestTaskReview(t)}
+                        disabled={reviewActionBusy}
+                        className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
+                      >
+                        <CheckCircle2 size={14} /> {reviewActionBusy ? 'Đang gửi...' : 'Gửi lại để review'}
+                      </button>
+                    )}
+                    {t.is_blocked ? (
+                      <button
+                        onClick={() => handleUnblockTask(t)}
+                        disabled={blockActionBusy}
+                        className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
+                      >
+                        <CheckCircle2 size={14} /> {blockActionBusy ? 'Đang gỡ...' : 'Gỡ chặn'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { setBlockReason(''); setBlockDependencyTaskId(''); setBlockPrompt({ taskId: t.id }); }}
+                        className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors flex items-center gap-1.5"
+                      >
+                        <Ban size={14} /> Đánh dấu bị chặn
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setLeaderReviewDetailTask(null); handleOpenAIReviewDrawer('TASK', t.id, t.detail); }}
+                      className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-colors flex items-center gap-1.5"
+                    >
+                      <Sparkles size={14} /> AI check
+                    </button>
+                    <button
+                      onClick={() => { setLeaderReviewDetailTask(null); setSelectedTask(t); }}
+                      className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 transition-colors flex items-center gap-1.5"
+                    >
+                      <Pencil size={14} /> {attentionInfo?.unassigned ? 'Giao người phụ trách' : 'Chỉnh sửa task'}
+                    </button>
+
+                    {/* More menu - CHỈ secondary task-management actions
+                        (Nhân bản/Xóa), không phải action nổi bật của review. */}
+                    <div className="relative ml-auto">
+                      <button
+                        ref={leaderReviewMoreMenuBtnRef}
+                        onClick={() => setLeaderReviewMoreMenuOpen(o => !o)}
+                        className="h-8 w-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center transition-colors"
+                        title="Thao tác khác"
+                      >
+                        <MoreHorizontal size={16} />
+                      </button>
+                      <FloatingDropdown
+                        anchorEl={leaderReviewMoreMenuBtnRef.current}
+                        open={leaderReviewMoreMenuOpen}
+                        onClose={() => setLeaderReviewMoreMenuOpen(false)}
+                        align="right"
+                        className="bg-white border border-slate-200 rounded-lg shadow-lg w-[190px] py-1 text-left"
+                      >
+                        <button
+                          onClick={() => { setLeaderReviewMoreMenuOpen(false); setLeaderReviewDetailTask(null); handleDuplicateTask(t.task_group_id, t.id); }}
+                          className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                        >
+                          <Copy size={15} className="text-[#0058be]" />
+                          Nhân bản Task
+                        </button>
+                        <button
+                          onClick={() => { setLeaderReviewMoreMenuOpen(false); setLeaderReviewDetailTask(null); setTaskToDelete(t.id); }}
+                          className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-red-600 hover:bg-red-50"
+                        >
+                          <Trash2 size={15} />
+                          Xóa Task
+                        </button>
+                      </FloatingDropdown>
+                    </div>
+                  </div>
+
+                  {/* Confirm Duyệt - inline nhẹ, không dùng window.confirm */}
+                  {confirmingApproveTask && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-center justify-between gap-3">
+                      <span className="text-[12.5px] text-emerald-800 font-medium">Xác nhận duyệt task này? Task sẽ được chuyển sang <b>Done</b>.</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={() => setConfirmingApproveTask(false)} disabled={reviewActionBusy} className="h-7 px-3 rounded-md text-[12px] font-semibold text-slate-600 hover:bg-white transition-colors disabled:opacity-60">
+                          Huỷ
+                        </button>
+                        <button onClick={() => handleApproveTask(t)} disabled={reviewActionBusy} className="h-7 px-3 rounded-md text-[12px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-60">
+                          {reviewActionBusy ? 'Đang xử lý...' : 'Xác nhận duyệt'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Yêu cầu sửa - reason bắt buộc */}
+                  {requestChangesOpen && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 space-y-2">
+                      <div className="text-[12.5px] font-bold text-orange-800">Yêu cầu chỉnh sửa</div>
+                      <textarea
+                        value={changeRequestReason}
+                        onChange={e => setChangeRequestReason(e.target.value)}
+                        placeholder="Nhập lý do yêu cầu sửa (bắt buộc)..."
+                        rows={3}
+                        autoFocus
+                        className="w-full bg-white border border-orange-200 rounded-lg px-3 py-2 text-[12.5px] text-[#0b1c30] focus:outline-none focus:border-orange-400 transition-colors resize-none"
+                      />
+                      {changeRequestReason.trim().length > 0 && changeRequestReason.trim().length < 5 && (
+                        <p className="text-[11px] text-rose-600">Cần tối thiểu 5 ký tự ({changeRequestReason.trim().length}/5).</p>
+                      )}
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => { setRequestChangesOpen(false); setChangeRequestReason(''); }}
+                          disabled={reviewActionBusy}
+                          className="h-7 px-3 rounded-md text-[12px] font-semibold text-slate-600 hover:bg-white transition-colors disabled:opacity-60"
+                        >
+                          Huỷ
+                        </button>
+                        <button
+                          onClick={() => handleRequestTaskChanges(t)}
+                          disabled={reviewActionBusy}
+                          className="h-7 px-3 rounded-md text-[12px] font-semibold bg-orange-600 hover:bg-orange-700 text-white transition-colors disabled:opacity-60"
+                        >
+                          {reviewActionBusy ? 'Đang gửi...' : 'Gửi yêu cầu'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  </>
+                  )}
+                </div>
+
+                {/* Thông tin task - read-only summary */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Status</div>
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold border ${statusInfo.bg} border-current/10`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
+                      {statusInfo.label}
+                    </span>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Priority</div>
+                    <span className={`inline-block px-2.5 py-0.5 rounded-md border text-[11px] font-bold tracking-wide uppercase ${getPriorityStyle(t.priority)}`}>
+                      {t.priority || 'Normal'}
+                    </span>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Assignee</div>
+                    <div className="text-[13px] font-semibold text-[#0b1c30]">
+                      {t.assigned_name || <span className="text-slate-400 font-normal italic">Chưa giao</span>}
+                    </div>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Manday</div>
+                    <div className="text-[13px] font-semibold text-[#0b1c30] font-mono">
+                      {t.manday_est !== null && t.manday_est !== undefined ? `${t.manday_est} MD` : '—'}
+                    </div>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Start</div>
+                    <div className="text-[13px] font-semibold text-[#0b1c30] font-mono">{formatDateToShow(t.start_date || '') || '—'}</div>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Deadline</div>
+                    <div className="text-[13px] font-semibold text-[#0b1c30] font-mono">{formatDateToShow(t.end_date_est || '') || '—'}</div>
+                  </div>
+                </div>
+
+                {/* AI assessment - chỉ hiện nếu AI Check đã thực sự chạy
+                    (ai_status/last_ai_score là field thật trên task, do
+                    /ai-review/check ghi - xem audit). AI không tự approve/
+                    request-changes, chỉ hỗ trợ leader tự quyết định. */}
+                {t.ai_status && t.ai_status !== 'NOT_CHECKED' && (
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">AI Assessment</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${t.ai_status === 'HAS_ISSUE' ? 'bg-rose-500' : t.ai_status === 'GOOD' ? 'bg-emerald-500' : t.ai_status === 'CHECKING' ? 'bg-blue-500 animate-pulse' : 'bg-amber-500'}`} />
+                      <span className="text-[12.5px] font-semibold text-[#0b1c30]">{t.ai_status}</span>
+                      {t.last_ai_score !== null && t.last_ai_score !== undefined && (
+                        <span className="text-[11px] text-slate-500 font-mono">Score: {t.last_ai_score}/100</span>
+                      )}
+                      {t.last_ai_check_at && (
+                        <span className="text-[11px] text-slate-400">· {formatTimeAgo(t.last_ai_check_at)}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Kết quả cần đạt / Checklist / Dependency - KHÔNG có field
+                    tương ứng ở backend (task không có expected_result/checklist/
+                    dependency), nên KHÔNG render các section này thay vì fake. */}
+
+                {/* Hoạt động gần đây - tái sử dụng đúng getProjectAuditLogs, lọc
+                    theo entity_id (xem taskActivityLogs) - chỉ Manager/Admin mới
+                    gọi được endpoint này (require_manager ở backend). */}
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Hoạt động gần đây</div>
+                  {!isAdmin() ? (
+                    <p className="text-xs text-slate-400 italic">Cần quyền Manager để xem lịch sử hoạt động.</p>
+                  ) : taskActivityLogs.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">Chưa có hoạt động nào được ghi nhận gần đây cho task này.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {taskActivityLogs.slice(0, 6).map((l: any) => (
+                        <div key={l.id} className="flex items-start gap-2">
+                          <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-[9px] font-extrabold shrink-0 mt-0.5">
+                            {(l.user_name || '??').split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[12px] text-[#0b1c30] leading-snug">
+                              <span className="font-semibold">{l.user_name}</span>{' '}
+                              <span className="text-slate-600">{l.description || l.action}</span>
+                            </p>
+                            <p className="text-[10.5px] text-slate-400 mt-0.5 flex items-center gap-1">
+                              <Clock size={10} /> {formatTimeAgo(l.created_at)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Task Detail Drawer */}
       {selectedTask && (
@@ -8921,6 +9925,38 @@ function ProjectDetailContent() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none"
                 />
               </div>
+
+              {/* Blocking workflow - is_blocked layer riêng, không phải fake
+                  UI: dùng đúng blockTask/unblockTask API, cùng quyền sửa task
+                  thường (không leader-only như Duyệt/Yêu cầu sửa). */}
+              {selectedTask.is_blocked ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-[12.5px]">
+                  <div className="font-bold text-amber-800 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5"><Ban size={14} /> Task đang bị chặn</span>
+                    <button
+                      onClick={() => handleUnblockTask(selectedTask)}
+                      disabled={blockActionBusy}
+                      className="h-7 px-2.5 rounded-md text-[11.5px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-60"
+                    >
+                      {blockActionBusy ? 'Đang gỡ...' : 'Gỡ chặn'}
+                    </button>
+                  </div>
+                  {selectedTask.blocked_reason && <div className="mt-1.5 text-amber-800">{selectedTask.blocked_reason}</div>}
+                  {selectedTask.blocked_by_task && (
+                    <div className="mt-1 text-amber-700">Đang chờ: <span className="font-semibold">{selectedTask.blocked_by_task.task_code}</span> - {selectedTask.blocked_by_task.detail}</div>
+                  )}
+                  <div className="mt-1 text-amber-600 text-[11px]">
+                    bởi {selectedTask.blocked_by_name || 'Một thành viên'}{selectedTask.blocked_at ? ` · ${formatTimeAgo(selectedTask.blocked_at)}` : ''}
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setBlockReason(''); setBlockDependencyTaskId(''); setBlockPrompt({ taskId: selectedTask.id }); }}
+                  className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors flex items-center gap-1.5 w-fit"
+                >
+                  <Ban size={14} /> Đánh dấu bị chặn
+                </button>
+              )}
 
               {/* Status & Priority */}
               <div className="grid grid-cols-2 gap-x-5 gap-y-4">
@@ -9163,6 +10199,71 @@ function ProjectDetailContent() {
           </div>
         </div>
       )}
+      {/* Modal Đánh dấu bị chặn - DÙNG CHUNG cho Task Edit Drawer, Leader Review
+          Detail Drawer, và dropdown Status chọn thẳng 1 status chứa "block"
+          (blockPrompt.statusValue có giá trị thì confirm sẽ lưu status đó
+          trước khi gọi /block - xem handleConfirmBlockTask). */}
+      {blockPrompt && (() => {
+        const bpTask = items.find((it: any) => it.id === blockPrompt.taskId);
+        if (!bpTask) return null;
+        return (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="p-6 space-y-3">
+                <div className="flex items-center gap-3 text-amber-600">
+                  <Ban size={22} />
+                  <h3 className="text-base font-bold text-[#0b1c30]">Đánh dấu bị chặn</h3>
+                </div>
+                <p className="text-xs text-slate-500 truncate">{bpTask.task_code} - {bpTask.detail}</p>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Lý do bị chặn *</label>
+                  <textarea
+                    value={blockReason}
+                    onChange={e => setBlockReason(e.target.value)}
+                    placeholder="Nhập lý do task bị chặn (bắt buộc)..."
+                    rows={3}
+                    autoFocus
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-amber-400 transition-colors resize-none"
+                  />
+                  {blockReason.trim().length > 0 && blockReason.trim().length < 5 && (
+                    <p className="text-[11px] text-rose-600 mt-1">Cần tối thiểu 5 ký tự ({blockReason.trim().length}/5).</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Task phụ thuộc (không bắt buộc)</label>
+                  <select
+                    value={blockDependencyTaskId}
+                    onChange={e => setBlockDependencyTaskId(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-amber-400"
+                  >
+                    <option value="">-- Không có --</option>
+                    {items.filter((it: any) => it.id !== bpTask.id).map((it: any) => (
+                      <option key={it.id} value={it.id}>{it.task_code} - {(it.detail || '').slice(0, 60)}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  onClick={() => { setBlockPrompt(null); setBlockReason(''); setBlockDependencyTaskId(''); }}
+                  disabled={blockActionBusy}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-60"
+                >
+                  Huỷ
+                </button>
+                <button
+                  onClick={handleConfirmBlockTask}
+                  disabled={blockActionBusy}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 transition-colors shadow-sm disabled:opacity-60"
+                >
+                  {blockActionBusy ? 'Đang lưu...' : 'Đánh dấu bị chặn'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Modal xác nhận xóa task */}
       {taskToDelete !== null && (() => {
         const taskBeingDeleted = items.find(item => item.id === taskToDelete);
@@ -9215,10 +10316,14 @@ function ProjectDetailContent() {
                 <h3 className="text-base font-bold text-[#0b1c30]">Tạo Phase mới</h3>
               </div>
               <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên Phase *</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center justify-between mb-1.5">
+                  <span>Tên Phase *</span>
+                  <span className={newPhaseName.length >= 19 ? 'text-rose-500' : 'text-slate-400'}>{newPhaseName.length}/19</span>
+                </label>
                 <input
                   type="text"
                   required
+                  maxLength={19}
                   value={newPhaseName}
                   onChange={e => setNewPhaseName(e.target.value)}
                   placeholder="VD: 1.Sale/Admin"
@@ -9254,10 +10359,14 @@ function ProjectDetailContent() {
                 <h3 className="text-base font-bold text-[#0b1c30]">Đổi tên Phase</h3>
               </div>
               <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Tên Phase Mới *</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center justify-between mb-1.5">
+                  <span>Tên Phase Mới *</span>
+                  <span className={editingPhaseName.length >= 19 ? 'text-rose-500' : 'text-slate-400'}>{editingPhaseName.length}/19</span>
+                </label>
                 <input
                   type="text"
                   required
+                  maxLength={19}
                   value={editingPhaseName}
                   onChange={e => setEditingPhaseName(e.target.value)}
                   placeholder="VD: 1.Sale/Admin"
@@ -9626,7 +10735,7 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
 function renderRemarkTags(remarkVal: string, settings: any[]) {
   const cleanVal = (remarkVal || '').trim();
   if (!cleanVal || cleanVal.toLowerCase() === 'trống') {
-    return <span className="text-slate-400 italic font-normal text-[11px] select-none">Trống</span>;
+    return <span className="text-slate-300 font-normal text-[11px] select-none">—</span>;
   }
   const parts = cleanVal.split(',').map(p => p.trim()).filter(Boolean);
   return (

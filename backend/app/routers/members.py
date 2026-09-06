@@ -408,6 +408,7 @@ def list_members(
         d['manday_est_total'] = float(md_est_t)
         d['kpi_base_total'] = float(kpi_base_t)
         d['workspace'] = scope_display_name(db, m.user.data_scope) if m.user else None
+        d['workspace_code'] = str(m.user.data_scope or '').strip().lower() if m.user else None
         
         out.append(d)
         

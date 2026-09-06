@@ -341,6 +341,20 @@ export const deleteTask = (groupId: number, taskId: number) =>
   api.delete(`/task-groups/${groupId}/tasks/${taskId}`).then(r => r.data);
 export const duplicateTask = (groupId: number, taskId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/duplicate`).then(r => r.data);
+// Task Review workflow (Leader Review) - review_status layer, separate from
+// task.status. Requires project PM/Leader/Super Admin (is_project_leader).
+export const approveTask = (groupId: number, taskId: number) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/approve`).then(r => r.data);
+export const requestTaskChanges = (groupId: number, taskId: number, reason: string) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/request-changes`, { reason }).then(r => r.data);
+export const requestTaskReview = (groupId: number, taskId: number) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/request-review`).then(r => r.data);
+// Task Blocking workflow (Leader Review) - is_blocked layer, separate from
+// task.status. Same permission as generic task edit (project membership).
+export const blockTask = (groupId: number, taskId: number, reason: string, blockedByTaskId?: number | null) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/block`, { reason, blocked_by_task_id: blockedByTaskId || undefined }).then(r => r.data);
+export const unblockTask = (groupId: number, taskId: number) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/unblock`).then(r => r.data);
 export const moveTask = (groupId: number, taskId: number, targetGroupId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/move`, { target_group_id: targetGroupId }).then(r => r.data);
 export const moveTaskGroup = (phaseId: number, groupId: number, targetPhaseId: number) =>
@@ -454,7 +468,7 @@ export const approveLeaveRequest = (id: number, status: 'Approved' | 'Rejected')
   api.patch(`/leave-requests/${id}/approve`, { status }).then(r => r.data);
 
 // Meetings
-export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string; mine?: boolean }) =>
+export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string; mine?: boolean; workspace?: string }) =>
   api.get('/meetings', { params }).then(r => r.data);
 
 // Project Templates
@@ -483,7 +497,7 @@ export const submitMeetingFeedback = (id: number, data: { helpful: boolean; comm
   api.post(`/meetings/${id}/feedback`, data).then(r => r.data);
 export const generateAiMeetingContent = (data: { title: string; project_name?: string }) =>
   api.post('/meetings/generate-ai-content', data).then(r => r.data);
-export const getMeetingInsights = (params?: { from_date?: string; to_date?: string }) =>
+export const getMeetingInsights = (params?: { from_date?: string; to_date?: string; workspace?: string }) =>
   api.get('/meetings/insights', { params }).then(r => r.data);
 
 // AI prompt settings + transcript summarization — Next.js-local routes
@@ -566,11 +580,14 @@ export const getAIPrompts = (projectId: number) =>
 export const saveAIPrompt = (data: { id?: number; project_id: number; type: string; name: string; prompt_content: string; active?: boolean }) =>
   api.post('/settings/ai-prompts', data).then(r => r.data);
 
-export const triggerAIReview = (entityType: string, entityId: number) =>
-  api.post('/ai-review/check', { entity_type: entityType, entity_id: entityId }).then(r => r.data);
+// projectId is only meaningful (and required backend-side) for entityType
+// 'MEMBER' — a member has no project of their own, so the caller must say
+// which project's tasks to scope the review to.
+export const triggerAIReview = (entityType: string, entityId: number, projectId?: number) =>
+  api.post('/ai-review/check', { entity_type: entityType, entity_id: entityId, project_id: projectId }).then(r => r.data);
 
-export const getAIReviewHistory = (entityType: string, entityId: number) =>
-  api.get('/ai-review/history', { params: { entity_type: entityType, entity_id: entityId } }).then(r => r.data);
+export const getAIReviewHistory = (entityType: string, entityId: number, projectId?: number) =>
+  api.get('/ai-review/history', { params: { entity_type: entityType, entity_id: entityId, project_id: projectId } }).then(r => r.data);
 
 export const getAIReviewLog = (logId: number) =>
   api.get(`/ai-review/logs/${logId}`).then(r => r.data);
@@ -785,6 +802,13 @@ export interface TeamComparisonTeam {
   // Leader's individual workload KPI (own tasks only, NOT team aggregate)
   leader_period_kpi: number;
   leader_kpi_pct: number;
+  // Leader's personal task aggregates (own tasks only, NOT team)
+  leader_done: number;
+  leader_doing: number;
+  leader_overdue: number;
+  leader_kpi: number;
+  leader_manday_est: number;
+  leader_manday_actual: number;
 }
 export interface WorkloadSetting {
   status_key: string;

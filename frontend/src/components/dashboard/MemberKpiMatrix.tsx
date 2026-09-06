@@ -167,7 +167,7 @@ export default function MemberKpiMatrix() {
     ? rawTasksAll.filter((t: any) => scopedProjectIds.has(t.project_id))
     : rawTasksAll;
   const rawMembers: any[] = effectiveWsCode
-    ? rawMembersAll.filter((m: any) => m.workspace === effectiveWsCode || m.workspace === 'All')
+    ? rawMembersAll.filter((m: any) => (m.workspace_code || m.workspace || '').toLowerCase() === effectiveWsCode.toLowerCase() || m.workspace === 'All')
     : rawMembersAll;
 
   const showsMemberCards = String(currentUserRole).toLowerCase() === 'leader';
