@@ -345,6 +345,7 @@ export default function MultiTeamProjectComparison() {
               <tr className="bg-[#eff4ff]/50 text-slate-500 border-b border-[#c2c6d6]/60 uppercase text-[10px] tracking-wider">
                 <th className="px-4 py-3 text-left font-bold">Leader / Team</th>
                 <th className="px-3 py-3 text-right font-bold">KPI</th>
+                <th className="px-3 py-3 text-right font-bold">KPI TRUNG BÌNH</th>
                 <th className="px-3 py-3 text-right font-bold">Plan MD</th>
                 <th className="px-3 py-3 text-right font-bold">Actual MD</th>
                 <th className="px-3 py-3 text-right font-bold">Util.</th>
@@ -358,13 +359,13 @@ export default function MultiTeamProjectComparison() {
             <tbody>
               {!teamComparisonLoading && teamsList.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-slate-400 font-semibold">
+                  <td colSpan={11} className="text-center py-8 text-slate-400 font-semibold">
                     Workspace hiện tại chưa có Leader nào có thành viên được quản lý.
                   </td>
                 </tr>
               ) : teamComparisonLoading ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-slate-400 font-semibold">
+                  <td colSpan={11} className="text-center py-8 text-slate-400 font-semibold">
                     Đang tải dữ liệu team…
                   </td>
                 </tr>
@@ -383,6 +384,9 @@ export default function MultiTeamProjectComparison() {
                       </div>
                     </td>
                     <td className="px-3 py-3 text-right font-extrabold text-[#0058be]">{t.kpi.toFixed(1)}</td>
+                    <td className="px-3 py-3 text-right font-extrabold text-[#0058be]">
+                      {weeksDivisor > 0 ? `${(t.kpi / weeksDivisor).toFixed(1)}%` : '0.0%'}
+                    </td>
                     <td className="px-3 py-3 text-right font-mono text-slate-700">{t.plan_md.toFixed(1)}</td>
                     <td className="px-3 py-3 text-right font-mono text-slate-700">{t.actual_md.toFixed(1)}</td>
                     <td className="px-3 py-3 text-right">
