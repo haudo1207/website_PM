@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, getMe } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
@@ -130,13 +130,9 @@ export default function MeetingDetailModal({
 
   const creatorName = meeting?.creator_name || meeting?.creator?.display_name || meeting?.created_by_name || 'Host mkt.szone';
 
-  const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
-  const isMeetingCreator = !!(meeting?.created_by && currentMemberId && meeting.created_by === currentMemberId);
-
   // Auto fetch projects list when modal opens
   useEffect(() => {
     if (isOpen) {
-      getMe().then(me => setCurrentMemberId(me?.member_id ?? null)).catch(() => setCurrentMemberId(null));
       getProjects().then((res: any) => {
         const items = res?.data || res || [];
         if (Array.isArray(items)) setProjectsList(items);
@@ -827,13 +823,6 @@ export default function MeetingDetailModal({
                     </div>
                   )}
 
-                  {/* Host account reminder — only shown to the meeting creator, since only they need to act as host */}
-                  {isMeetingCreator && rawLink && (
-                    <div className="bg-[#eff6ff] border border-[#bfdbfe] rounded-xl p-3 flex items-start gap-2 text-xs text-[#1e40af]">
-                      <Info size={16} className="text-[#2563eb] shrink-0 mt-0.5" />
-                      <span><span className="font-bold">Lưu ý host:</span> Bạn là người tạo cuộc họp này — hãy đăng nhập Google bằng tài khoản <b>mkt.szone@gmail.com</b> trước khi vào Meet để có quyền duyệt người tham gia phòng chờ.</span>
-                    </div>
-                  )}
                 </div>
 
                 {/* Card 2: Thành viên tham dự */}
