@@ -165,6 +165,16 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
   const normalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
   const interruptTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
 
+  // Recompute KPI from memberTasks (workspace-scoped + period-filtered)
+  // to avoid data-scope mismatch when parent uses rawTasksAll for drilled-in members.
+  const localKpi = useMemo(() => {
+    let k = 0;
+    for (const t of memberTasks) {
+      k += getTaskKpiForMember(t, member.id);
+    }
+    return Math.round(k * 10) / 10;
+  }, [memberTasks, member.id]);
+
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
 
   // Period label for the header
@@ -193,12 +203,13 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
   }, [selectedYear, selectedMonth, selectedWeek, activeQuickFilter]);
 
   // KPI TRUNG BÌNH = KPI TỔNG / THỜI GIAN BỘ LỌC (displayed as percentage).
-  // Reuses member.kpi already computed by the parent's useMemo, no KPI engine duplication.
+  // Uses localKpi recomputed from memberTasks (workspace-scoped + period-filtered)
+  // to avoid data-scope mismatch when parent uses rawTasksAll for drilled-in members.
   const kpiTrungBinhText = useMemo(() => {
-    const kpi = typeof member.kpi === 'number' ? member.kpi : 0;
+    const kpi = typeof localKpi === 'number' ? localKpi : 0;
     const divisor = filterDuration > 0 ? filterDuration : 1;
     return `${(kpi / divisor).toFixed(1)}%`;
-  }, [member.kpi, filterDuration]);
+  }, [localKpi, filterDuration]);
 
   const totalPossible = openTasks.length + doneTasks.length;
   const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
@@ -281,7 +292,7 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
               </span>
             </div>
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
-              <span className="text-lg font-black text-[#0058be] leading-none">{member.kpi?.toFixed(1) || '0.0'}</span>
+              <span className="text-lg font-black text-[#0058be] leading-none">{localKpi.toFixed(1)}</span>
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI</span>
             </div>
           </div>
@@ -1566,7 +1577,7 @@ export default function OverviewTab() {
       bonusMatrix: bonM,
       drilledMemberId,
     };
-  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
+  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always

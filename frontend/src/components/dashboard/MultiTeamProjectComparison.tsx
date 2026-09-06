@@ -293,8 +293,8 @@ export default function MultiTeamProjectComparison() {
                 key={label}
                 onClick={() => applyQuickFilter(label)}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm active:scale-95 ${activeQuickFilter === label
-                    ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
-                    : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
+                  ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
+                  : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
                   }`}
               >
                 {label}
@@ -361,7 +361,7 @@ export default function MultiTeamProjectComparison() {
                         <li><b>Plan MD:</b> Tổng manday_est từ tất cả task của team (assigned + support)</li>
                         <li><b>Actual MD:</b> Tổng manday_actual từ tất cả task của team (assigned + support)</li>
                       </ul>
-                      <p className="text-white/50 mt-1.5">{">="}100%: Quá tải · {">="}80%: Tốt · {"<"}80%: Chưa充分利用</p>
+                      <p className="text-white/50 mt-1.5">{">="}100%: Quá tải · {">="}80%: Tốt · {"<"}80%: Hiệu suất thấp</p>
                     </FormulaTooltip>
                   </span>
                 </th>
@@ -512,11 +512,10 @@ export default function MultiTeamProjectComparison() {
                           ? prev.filter(id => id !== t.leader_user_id)
                           : [...prev, t.leader_user_id]);
                       }}
-                      className={`flex items-center gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
-                        checked
+                      className={`flex items-center gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${checked
                           ? 'bg-[#0058be] text-white border-[#0058be] shadow-sm'
                           : 'bg-white text-slate-600 border-slate-200 hover:border-[#0058be]/40 hover:text-[#0058be]'
-                      }`}
+                        }`}
                     >
                       <span className={`flex items-center justify-center w-4 h-4 rounded border ${checked ? 'bg-white border-white' : 'bg-white border-slate-300'}`}>
                         {checked && <span className="material-symbols-outlined text-[12px] text-[#0058be] font-black">check</span>}
@@ -742,7 +741,7 @@ export default function MultiTeamProjectComparison() {
                         </div>
                       </div>
                       <div className="grid grid-cols-4 gap-2 mt-3">
-                        <CounterChip label="Members"  value={totalMembers}     tone="slate" />
+                        <CounterChip label="Members" value={totalMembers} tone="slate" />
                         <CounterChip label="Không làm việc" value={notWorkingMembers} tone="slate" />
                         <CounterChip label="Còn capacity" value={capacityMembers} tone="emerald" />
                         <CounterChip label="Quá tải" value={overloadedMembers} tone="rose" />
@@ -772,11 +771,11 @@ export default function MultiTeamProjectComparison() {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
-                          <SmallStat label="Done"   value={t.done}        color="text-emerald-600" />
-                          <SmallStat label="Doing"  value={t.in_progress} color="text-blue-600" />
-                          <SmallStat label="Trễ"    value={t.overdue}     color={t.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
-                          <SmallStat label="KPI"    value={t.kpi.toFixed(1)} color="text-[#0058be]" />
-                          <SmallStat label="Manday" value={`${t.actual_md.toFixed(1)}/${t.plan_md.toFixed(1)}`} />
+                          <SmallStat label="Done" value={t.leader_done ?? t.done} color="text-emerald-600" />
+                          <SmallStat label="Doing" value={t.leader_doing ?? t.in_progress} color="text-blue-600" />
+                          <SmallStat label="Trễ" value={t.leader_overdue ?? t.overdue} color={(t.leader_overdue ?? t.overdue) > 0 ? 'text-rose-600' : 'text-slate-400'} />
+                          <SmallStat label="KPI" value={(t.leader_kpi ?? t.kpi).toFixed(1)} color="text-[#0058be]" />
+                          <SmallStat label="Manday" value={`${(t.leader_manday_actual ?? t.actual_md).toFixed(1)}/${(t.leader_manday_est ?? t.plan_md).toFixed(1)}`} />
                           <SmallStat label="KPI%"
                             value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`}
                             color={(t.leader_kpi_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_kpi_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'}
@@ -818,26 +817,26 @@ export default function MultiTeamProjectComparison() {
                                 <WorkloadBadge status={status} />
                               </div>
                               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
-                                <SmallStat label="Done"   value={m.done}        color="text-emerald-600" />
-                                <SmallStat label="Doing"  value={m.in_progress} color="text-blue-600" />
-                                <SmallStat label="Trễ"    value={m.overdue}     color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
-                                <SmallStat label="KPI"    value={m.kpi.toFixed(1)} color="text-[#0058be]" />
+                                <SmallStat label="Done" value={m.done} color="text-emerald-600" />
+                                <SmallStat label="Doing" value={m.in_progress} color="text-blue-600" />
+                                <SmallStat label="Trễ" value={m.overdue} color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
+                                <SmallStat label="KPI" value={m.kpi.toFixed(1)} color="text-[#0058be]" />
                                 <SmallStat label="Manday" value={`${m.manday_actual.toFixed(1)}/${m.manday_est.toFixed(1)}`} />
                                 <SmallStat label="KPI%"
-                                    value={`${kpiPct.toFixed(1)}%`}
-                                    color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'}
-                                    tooltipContent={<>
-                                      <p className="font-bold text-white/90 mb-1">KPI% (Thành viên)</p>
-                                      <p className="text-white/80 mb-1">Công thức:</p>
-                                      <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
-                                      <p className="text-white/60 mt-1.5">Trong đó:</p>
-                                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
-                                        <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc</li>
-                                        <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
-                                      </ul>
-                                      <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
-                                    </>}
-                                  />
+                                  value={`${kpiPct.toFixed(1)}%`}
+                                  color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'}
+                                  tooltipContent={<>
+                                    <p className="font-bold text-white/90 mb-1">KPI% (Thành viên)</p>
+                                    <p className="text-white/80 mb-1">Công thức:</p>
+                                    <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
+                                    <p className="text-white/60 mt-1.5">Trong đó:</p>
+                                    <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                      <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc</li>
+                                      <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
+                                    </ul>
+                                    <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                                  </>}
+                                />
                               </div>
                             </div>
                           );
@@ -1049,8 +1048,8 @@ function CounterChip({ label, value, tone }: { label: string; value: number; ton
     tone === 'rose'
       ? 'bg-rose-50 text-rose-700 border-rose-200'
       : tone === 'emerald'
-      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-      : 'bg-slate-50 text-slate-700 border-slate-200';
+        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        : 'bg-slate-50 text-slate-700 border-slate-200';
   return (
     <div className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-lg border ${toneCls}`}>
       <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{label}</span>
