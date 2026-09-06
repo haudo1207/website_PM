@@ -341,6 +341,14 @@ export const deleteTask = (groupId: number, taskId: number) =>
   api.delete(`/task-groups/${groupId}/tasks/${taskId}`).then(r => r.data);
 export const duplicateTask = (groupId: number, taskId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/duplicate`).then(r => r.data);
+// Task Review workflow (Leader Review) - review_status layer, separate from
+// task.status. Requires project PM/Leader/Super Admin (is_project_leader).
+export const approveTask = (groupId: number, taskId: number) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/approve`).then(r => r.data);
+export const requestTaskChanges = (groupId: number, taskId: number, reason: string) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/request-changes`, { reason }).then(r => r.data);
+export const requestTaskReview = (groupId: number, taskId: number) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/request-review`).then(r => r.data);
 export const moveTask = (groupId: number, taskId: number, targetGroupId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/move`, { target_group_id: targetGroupId }).then(r => r.data);
 export const moveTaskGroup = (phaseId: number, groupId: number, targetPhaseId: number) =>

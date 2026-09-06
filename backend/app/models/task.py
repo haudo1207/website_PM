@@ -116,6 +116,20 @@ class Task(Base):
     # having deleted its demo-request history.
     zalo_demo_skip   = Column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Review workflow — a layer SEPARATE from `status` (status stays the
+    # tenant-configurable free-text lookup it always was, e.g. "Waiting" /
+    # "Review" / a custom name). review_status is our own fixed vocabulary:
+    # None (never entered review) / "pending" / "approved" / "changes_requested".
+    review_status          = Column(String(30), nullable=True)
+    review_requested_at    = Column(DateTime, nullable=True)
+    review_requested_by    = Column(Integer, nullable=True)  # users.id
+    approved_at            = Column(DateTime, nullable=True)
+    approved_by            = Column(Integer, nullable=True)  # users.id
+    change_requested_at    = Column(DateTime, nullable=True)
+    change_requested_by    = Column(Integer, nullable=True)  # users.id
+    change_request_reason  = Column(Text, nullable=True)
+    last_review_action_at  = Column(DateTime, nullable=True)
+
     # Relationships
     task_group        = relationship("TaskGroup", back_populates="tasks")
     assigned_member   = relationship("Member", foreign_keys=[assigned_id], lazy="select")

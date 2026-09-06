@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import { ReactNode, useEffect, useState } from 'react';
 import { isSuperAdmin, isLeader, isMember, isViewer } from '@/lib/auth';
+import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 
 type Tab = 'report' | 'overview' | 'system-audit' | 'kpi-matrix' | 'team-load';
 
@@ -19,6 +20,7 @@ const ALL_TABS: { id: Tab; label: string; path: string }[] = [
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const [allowedTabs, setAllowedTabs] = useState<{ id: Tab; label: string; path: string }[]>([
     { id: 'report', label: 'Report', path: '/dashboard/report' }
   ]);
@@ -104,7 +106,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="h-screen bg-[#f0f2f5] text-[#0b1c30] flex overflow-hidden" style={{ fontFamily: "'Work Sans', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col h-screen overflow-hidden">
+      <div className={`flex-1 min-w-0 pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} pt-14 md:pt-0 flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
         {/* Top Bar */}
         <div className="h-14 bg-white border-b border-[#c2c6d6]/60 flex items-center justify-between px-4 md:px-8 shrink-0 z-30 gap-2">
           <div className="flex items-center gap-3 min-w-0">

@@ -6,6 +6,7 @@ import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin } from '@/lib/api';
 import { isAdmin, getEmail } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import SearchableSelect from './common/SearchableSelect';
 import ProjectFormModal from './ProjectFormModal';
 
@@ -94,6 +95,7 @@ interface ProjectListContentProps {
 export default function ProjectListContent({ lockedWorkspace, renderTabs }: ProjectListContentProps = {}) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const paramCustId = searchParams.get('customer_id');
@@ -400,7 +402,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   return (
     <div className="min-h-screen flex bg-[#f8fafc]" style={{ fontFamily: "'Inter', sans-serif" }}>
       <Navbar />
-      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col min-h-screen">
+      <div className={`flex-1 min-w-0 pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} pt-14 md:pt-0 flex flex-col min-h-screen transition-[padding] duration-200`}>
         <div className="p-4 md:p-8 space-y-6 max-w-[1400px] w-full mx-auto">
           {msg && (
             <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border backdrop-blur-sm transition-all duration-300 transform translate-y-0 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>

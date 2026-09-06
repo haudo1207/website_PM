@@ -62,7 +62,51 @@ def run_migration():
             print(f"Adding columns to 'members' table: {member_additions}")
             conn.execute(text("ALTER TABLE members " + ", ".join(member_additions)))
             conn.commit()
-            
+
+        # Check tasks_v2 table columns (Task Review workflow - approve/request
+        # changes, layer riêng với `status` - xem models/task.py)
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'tasks_v2'"
+        ))
+        existing_task_cols = {row[0] for row in result}
+
+        task_additions = []
+        if "review_status" not in existing_task_cols:
+            task_additions.append("ADD COLUMN review_status VARCHAR(30) NULL")
+        if "review_requested_at" not in existing_task_cols:
+            task_additions.append("ADD COLUMN review_requested_at TIMESTAMP NULL")
+        if "review_requested_by" not in existing_task_cols:
+            task_additions.append("ADD COLUMN review_requested_by INTEGER NULL")
+        if "approved_at" not in existing_task_cols:
+            task_additions.append("ADD COLUMN approved_at TIMESTAMP NULL")
+        if "approved_by" not in existing_task_cols:
+            task_additions.append("ADD COLUMN approved_by INTEGER NULL")
+        if "change_requested_at" not in existing_task_cols:
+            task_additions.append("ADD COLUMN change_requested_at TIMESTAMP NULL")
+        if "change_requested_by" not in existing_task_cols:
+            task_additions.append("ADD COLUMN change_requested_by INTEGER NULL")
+        if "change_request_reason" not in existing_task_cols:
+            task_additions.append("ADD COLUMN change_request_reason TEXT NULL")
+        if "last_review_action_at" not in existing_task_cols:
+            task_additions.append("ADD COLUMN last_review_action_at TIMESTAMP NULL")
+
+        if task_additions:
+            print(f"Adding columns to 'tasks_v2' table: {task_additions}")
+            conn.execute(text("ALTER TABLE tasks_v2 " + ", ".join(task_additions)))
+            conn.commit()
+
+        # Legacy backfill: tasks already sitting on a tenant-custom "Review"
+        # status before review_status existed - treat them as pending exactly
+        # once (idempotent: only touches rows still NULL).
+        backfill = conn.execute(text("""
+            UPDATE tasks_v2 SET review_status = 'pending', review_requested_at = COALESCE(updated_at, created_at, NOW())
+            WHERE review_status IS NULL AND status ILIKE '%review%'
+        """))
+        conn.commit()
+        if backfill.rowcount:
+            print(f"Backfilled review_status='pending' on {backfill.rowcount} legacy task(s).")
+
         print("Database schema migration completed successfully!")
 
 if __name__ == "__main__":

@@ -145,6 +145,27 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
         conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
 
+        # Task Review workflow columns (separate layer from `status` - see
+        # models/task.py comment). review_status: NULL / pending / approved /
+        # changes_requested.
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS review_status VARCHAR(30) NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS review_requested_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS review_requested_by INTEGER NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS approved_by INTEGER NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS change_requested_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS change_requested_by INTEGER NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS change_request_reason TEXT NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS last_review_action_at TIMESTAMP NULL"))
+        # Legacy backfill: tasks already sitting on a tenant-custom "Review"
+        # status before this feature existed have review_status IS NULL -
+        # treat them as pending exactly once (idempotent: only touches rows
+        # that are still NULL, never overwrites an already-set review_status).
+        conn.execute(text("""
+            UPDATE tasks_v2 SET review_status = 'pending', review_requested_at = COALESCE(updated_at, created_at, NOW())
+            WHERE review_status IS NULL AND status ILIKE '%review%'
+        """))
+
         # Add customer_id to projects and sync existing customer_names
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_id INTEGER"))
         conn.execute(text("""

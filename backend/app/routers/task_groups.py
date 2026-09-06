@@ -21,7 +21,9 @@ from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
+from ..models.user import User
 from ..models.project import Project, project_members
+from ..models.notification import Notification
 from ..utils.kpi_engine import recalculate_task, parse_date
 from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
 from ..utils.auth import get_current_user
@@ -542,11 +544,19 @@ def safe_float(val):
         return 0.0
 
 
-def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None):
+def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None, users_map=None):
     assigned_name = None
     support_name = None
     solution_name = None
     vendor_name = None
+
+    def _resolve_user_name(user_id):
+        if not user_id:
+            return None
+        if users_map is not None:
+            return users_map.get(user_id)
+        u = db.query(User).filter(User.id == user_id).first()
+        return u.full_name if u else None
 
     try:
         if t.assigned_id:
@@ -631,6 +641,19 @@ def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None):
         "last_ai_score": getattr(t, "last_ai_score", None),
         "last_review_id": getattr(t, "last_review_id", None),
         "created_at": str(t.created_at) if getattr(t, "created_at", None) else None,
+        # Review workflow - layer riêng, KHÔNG thay thế `status`.
+        "review_status": getattr(t, "review_status", None),
+        "review_requested_at": str(t.review_requested_at) if getattr(t, "review_requested_at", None) else None,
+        "review_requested_by": getattr(t, "review_requested_by", None),
+        "review_requested_by_name": _resolve_user_name(getattr(t, "review_requested_by", None)),
+        "approved_at": str(t.approved_at) if getattr(t, "approved_at", None) else None,
+        "approved_by": getattr(t, "approved_by", None),
+        "approved_by_name": _resolve_user_name(getattr(t, "approved_by", None)),
+        "change_requested_at": str(t.change_requested_at) if getattr(t, "change_requested_at", None) else None,
+        "change_requested_by": getattr(t, "change_requested_by", None),
+        "change_requested_by_name": _resolve_user_name(getattr(t, "change_requested_by", None)),
+        "change_request_reason": getattr(t, "change_request_reason", None),
+        "last_review_action_at": str(t.last_review_action_at) if getattr(t, "last_review_action_at", None) else None,
     }
 
 
@@ -841,6 +864,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
     members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
     groups_map = {g.id: g.name for g in db.query(Group).all()}
     skills_map = {s.id: s.name for s in db.query(Skill).all()}
+    users_map = {u.id: u.full_name for u in db.query(User).all()}
 
     try:
         query = (
@@ -855,7 +879,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
         results = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id).all()
         for task, tg, phase in results:
             try:
-                t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
+                t_dict = serialize_task(task, db, members_map, groups_map, skills_map, users_map)
                 t_dict["task_group_name"] = tg.name
                 t_dict["task_group_status"] = tg.status
                 t_dict["phase_name"] = phase.name
@@ -882,7 +906,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
                             try:
                                 tg = tg_map.get(t.task_group_id)
                                 ph = phase_map.get(tg.phase_id) if tg else None
-                                t_dict = serialize_task(t, db, members_map, groups_map, skills_map)
+                                t_dict = serialize_task(t, db, members_map, groups_map, skills_map, users_map)
                                 t_dict["task_group_name"] = tg.name if tg else ""
                                 t_dict["task_group_status"] = tg.status if tg else "Waiting"
                                 t_dict["phase_name"] = ph.name if ph else ""
@@ -1106,6 +1130,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         "ticket": getattr(task, "ticket", None),
         "remark": getattr(task, "remark", None),
         "notes": getattr(task, "notes", None),
+        "review_status": task.review_status,
     }
 
     # Detail validation
@@ -1147,6 +1172,25 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     # Status
     if "status" in body:
         task.status = body["status"]
+        # Review workflow sync - CHỈ khi status thực sự chuyển VÀO/RA khỏi 1
+        # status chứa "review" (edge, không phải mọi save trong lúc status vẫn
+        # đang là Review) để không reset lịch sử approve/changes_requested đã
+        # có mỗi lần task được sửa. Không tự đổi ngược task.status ở đây -
+        # review_status là layer riêng, độc lập.
+        new_status_l = (task.status or "").strip().lower()
+        old_status_l = (old_dict["status"] or "").strip().lower()
+        entered_review = "review" in new_status_l and "review" not in old_status_l
+        left_review = "review" not in new_status_l and "review" in old_status_l
+        if entered_review and task.review_status != "pending":
+            task.review_status = "pending"
+            task.review_requested_at = datetime.utcnow()
+            task.review_requested_by = getattr(current_user, "id", None)
+            task.last_review_action_at = datetime.utcnow()
+        elif left_review and task.review_status == "pending":
+            # Bị chuyển khỏi Review trước khi ai duyệt/yêu cầu sửa - bỏ cờ
+            # pending (không phải attention nữa) nhưng KHÔNG đụng tới record
+            # approved/changes_requested đã có (đó là lịch sử thật).
+            task.review_status = None
 
     # Dates
     if "start_date" in body:
@@ -1182,8 +1226,13 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     if "support_id" in body:
         task.support_id = body["support_id"]
 
-    # Validate membership
-    if task.assigned_id and project_id:
+    # Validate membership - CHỈ khi request này thực sự đổi assigned_id/
+    # support_id. Trước đây check chạy vô điều kiện trên giá trị HIỆN TẠI của
+    # task, nên 1 task đã gán cho người sau đó bị gỡ khỏi project_members (vd
+    # đổi vai trò, xoá khỏi team) sẽ chặn luôn MỌI update khác của task đó
+    # (kể cả chỉ đổi Status) với lỗi "Assigned member must be a member of this
+    # project." dù người dùng không hề đụng tới field Assigned/Support.
+    if "assigned_id" in body and task.assigned_id and project_id:
         exists = db.execute(
             project_members.select().where(
                 project_members.c.project_id == project_id,
@@ -1193,7 +1242,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         if not exists:
             raise HTTPException(400, "Assigned member must be a member of this project.")
 
-    if task.support_id and project_id:
+    if "support_id" in body and task.support_id and project_id:
         exists = db.execute(
             project_members.select().where(
                 project_members.c.project_id == project_id,
@@ -1292,6 +1341,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         "ticket": getattr(task, "ticket", None),
         "remark": getattr(task, "remark", None),
         "notes": getattr(task, "notes", None),
+        "review_status": task.review_status,
     }
     AuditService.record_diff(
         db=db,
@@ -1315,13 +1365,200 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
             "kpi_ratio_support": "Tỷ lệ KPI Support",
             "ticket": "Mã Ticket",
             "remark": "Ghi chú Remark",
-            "notes": "Ghi chú Note"
+            "notes": "Ghi chú Note",
+            "review_status": "Trạng thái Review",
         }
     )
     db.commit()
 
     if old_dict["status"] != "Done" and task.status == "Done":
         notify_task_done_if_zalo_linked(db, task, project_id)
+
+    return serialize_task(task, db)
+
+
+# ═══════════════════════════════════════════════════════════
+# TASK REVIEW WORKFLOW (Leader Review: approve / request changes)
+# review_status is a layer SEPARATE from `status` (tenant-configurable free
+# text) — see models/task.py. Permission reuses is_project_leader (the same
+# gate already used for approving/rejecting Resources), not a new role.
+# ═══════════════════════════════════════════════════════════
+
+def _notify_assignee(db: Session, task, current_user, message: str, notification_type: str):
+    """Best-effort notify: task.assigned_id is a Member id, Notification.recipient_id
+    is a Users id — resolve the Member's own login account (User.member_id) and
+    skip silently if that Member has no User account (e.g. no login yet)."""
+    if not task.assigned_id:
+        return
+    recipient = db.query(User).filter(User.member_id == task.assigned_id).first()
+    if not recipient or recipient.id == getattr(current_user, "id", None):
+        return
+    try:
+        db.add(Notification(
+            recipient_id=recipient.id,
+            sender_id=getattr(current_user, "id", None),
+            task_id=task.id,
+            message=message,
+            notification_type=notification_type,
+            is_read=False,
+        ))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Error creating review notification for task {task.id}: {e}")
+
+
+@router.post("/task-groups/{gid}/tasks/{tid}/approve")
+def approve_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+
+    if not is_project_leader(db, current_user, project_id):
+        raise HTTPException(403, "Bạn không có quyền duyệt task này.")
+    if task.review_status != "pending":
+        raise HTTPException(400, "Task hiện không ở trạng thái chờ review nên không thể duyệt.")
+
+    old_review_status = task.review_status
+    old_status = task.status
+    now = datetime.utcnow()
+    task.review_status = "approved"
+    task.approved_by = getattr(current_user, "id", None)
+    task.approved_at = now
+    task.last_review_action_at = now
+
+    # Duyệt = leader xác nhận task đã xong -> chuyển thẳng sang Done (theo yêu
+    # cầu business đã chốt), mirror đúng các side-effect mà update_task làm khi
+    # status chuyển sang Done (stamp end_date_actual, recalc KPI/manday của
+    # task + cascade con, cập nhật progress của group, notify Zalo nếu có).
+    became_done = (old_status or "").strip().lower() != "done"
+    if became_done:
+        task.status = "Done"
+        if not task.end_date_actual:
+            task.end_date_actual = date.today()
+
+    db.commit()
+    db.refresh(task)
+
+    if became_done:
+        task = recalculate_task(task, db)
+        if task.task_code:
+            child_tasks = db.query(Task).filter(
+                Task.task_group_id == gid,
+                Task.task_code.like(f"{task.task_code}.%")
+            ).all()
+            for child in sorted(child_tasks, key=lambda c: c.task_code):
+                recalculate_task(child, db)
+        db.flush()
+        if tg:
+            tg.progress = Decimal(str(calc_group_progress(gid, db)))
+            tg = sync_group_dates(tg, db)
+            tg = sync_group_actual_dates(tg, db)
+        db.commit()
+        db.refresh(task)
+
+    actor_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một quản lý")
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Task", entity_type="Task",
+        entity_id=task.id, action="APPROVE", project_id=project_id,
+        field_name="review_status", old_value=old_review_status, new_value="approved",
+        description=f"{actor_name} đã duyệt task '{task.detail}'" + (" và chuyển sang Done" if became_done else ""),
+    )
+    if became_done:
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Task", entity_type="Task",
+            entity_id=task.id, action="UPDATE", project_id=project_id,
+            field_name="status", old_value=old_status, new_value="Done",
+            description=f"{actor_name} đã chuyển trạng thái task '{task.detail}' sang Done (do duyệt review)",
+        )
+    _notify_assignee(db, task, current_user, f"{actor_name} đã duyệt task '{task.detail}'.", "task_review_approved")
+    if became_done:
+        notify_task_done_if_zalo_linked(db, task, project_id)
+
+    return serialize_task(task, db)
+
+
+@router.post("/task-groups/{gid}/tasks/{tid}/request-changes")
+def request_task_changes(gid: int, tid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    reason = (body.get("reason") or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(400, "Vui lòng nhập lý do yêu cầu sửa (tối thiểu 5 ký tự).")
+    if len(reason) > 1000:
+        raise HTTPException(400, "Lý do yêu cầu sửa tối đa 1000 ký tự.")
+
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+
+    if not is_project_leader(db, current_user, project_id):
+        raise HTTPException(403, "Bạn không có quyền yêu cầu sửa task này.")
+    if task.review_status != "pending":
+        raise HTTPException(400, "Task hiện không ở trạng thái chờ review nên không thể yêu cầu sửa.")
+
+    old_review_status = task.review_status
+    now = datetime.utcnow()
+    task.review_status = "changes_requested"
+    task.change_requested_by = getattr(current_user, "id", None)
+    task.change_requested_at = now
+    task.change_request_reason = reason
+    task.last_review_action_at = now
+    db.commit()
+    db.refresh(task)
+
+    actor_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một quản lý")
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Task", entity_type="Task",
+        entity_id=task.id, action="REQUEST_CHANGES", project_id=project_id,
+        field_name="review_status", old_value=old_review_status, new_value="changes_requested",
+        description=f"{actor_name} đã yêu cầu sửa task '{task.detail}': {reason}",
+    )
+    _notify_assignee(db, task, current_user, f"{actor_name} yêu cầu sửa task '{task.detail}': {reason}", "task_review_changes_requested")
+
+    return serialize_task(task, db)
+
+
+@router.post("/task-groups/{gid}/tasks/{tid}/request-review")
+def request_task_review(gid: int, tid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Đưa task vào lại hàng đợi review (review_status='pending') mà KHÔNG cần
+    đổi task.status qua lại (status='Review' -> khác -> lại 'Review') như
+    update_task's edge-detection yêu cầu - trực tiếp hơn cho việc gửi lại
+    review sau khi đã sửa xong theo yêu cầu. KHÔNG xoá approved_at/
+    change_requested_at/change_request_reason cũ - đó là lịch sử, giữ nguyên
+    để hiển thị "từng bị yêu cầu sửa" ngay cả khi đang pending trở lại."""
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+
+    if not is_project_leader(db, current_user, project_id):
+        raise HTTPException(403, "Bạn không có quyền gửi task này để review.")
+    if task.review_status == "pending":
+        raise HTTPException(400, "Task đã đang ở trạng thái chờ review.")
+
+    old_review_status = task.review_status
+    now = datetime.utcnow()
+    task.review_status = "pending"
+    task.review_requested_at = now
+    task.review_requested_by = getattr(current_user, "id", None)
+    task.last_review_action_at = now
+    db.commit()
+    db.refresh(task)
+
+    actor_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một quản lý")
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Task", entity_type="Task",
+        entity_id=task.id, action="REQUEST_REVIEW", project_id=project_id,
+        field_name="review_status", old_value=old_review_status, new_value="pending",
+        description=f"{actor_name} đã gửi lại task '{task.detail}' để review",
+    )
 
     return serialize_task(task, db)
 

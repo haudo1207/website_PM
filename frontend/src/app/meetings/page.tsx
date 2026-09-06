@@ -16,6 +16,7 @@ import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
 import { isAdmin } from '@/lib/auth';
+import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 
 // Deterministic color per project (no color field on Project yet — same
 // project.id/name always hashes to the same palette entry, so week-grid
@@ -61,6 +62,7 @@ function MeetingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { collapsed: sidebarCollapsed } = useSidebarCollapse();
 
   const [canManage, setCanManage] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'calendar' | 'personal'>('list');
@@ -556,7 +558,7 @@ function MeetingsPageContent() {
         </div>
       )}
 
-      <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col h-screen overflow-hidden">
+      <div className={`flex-1 min-w-0 pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} pt-14 md:pt-0 flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
 
         {/* Top Header Bar */}
         <div className="min-h-[56px] bg-white border-b border-[#e2e8f0] flex flex-wrap items-center justify-between gap-2 px-4 md:px-8 py-2 md:py-0 shrink-0 z-30">

@@ -6,9 +6,11 @@ import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
 import { getMembers, getTeams, getDepartments, getWorkspaces, getMe } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 
 export default function KPIPage() {
     const router = useRouter();
+    const { collapsed: sidebarCollapsed } = useSidebarCollapse();
     const [authorized, setAuthorized] = useState(false);
     useEffect(() => { setAuthorized(true); }, []);
     const [activeTab, setActiveTab] = useState<'KPItotal' | 'KPIweek'>('KPItotal');
@@ -197,7 +199,7 @@ export default function KPIPage() {
     return (
         <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] flex" style={{ fontFamily: "'Inter', sans-serif" }}>
             <Navbar />
-            <div className="flex-1 min-w-0 pl-0 md:pl-[230px] pt-14 md:pt-0 flex flex-col min-h-screen">
+            <div className={`flex-1 min-w-0 pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} pt-14 md:pt-0 flex flex-col min-h-screen transition-[padding] duration-200`}>
                 {/* Header */}
                 <div className="h-[56px] bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 sticky top-14 md:top-0 z-30 shadow-sm">
                     <h2 className="text-sm font-bold tracking-wider text-[#0f172a] uppercase">Thống Kê KPI Toàn Dự Án</h2>

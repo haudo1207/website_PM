@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getWorkspaces, getMe, getInboxNotifications, markNotificationRead, requestZaloDemo, InboxNotificationItem } from '@/lib/api';
 import { brand } from '@/lib/brand';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+import { useSidebarCollapse } from '@/lib/sidebarCollapse';
 
 // Rendered once for the desktop sidebar and once for the mobile drawer —
 // both exist in the DOM simultaneously (CSS just hides one via
@@ -374,6 +375,9 @@ function NavbarContent() {
   const [role, setRole] = useState('');
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Chỉ thu gọn sidebar DESKTOP - mobile drawer luôn full (nó là overlay, không
+  // chiếm chỗ layout thường trực nên không cần thu gọn).
+  const { collapsed, toggle: toggleCollapsed } = useSidebarCollapse();
 
   // Shared cache key with Project Hub pages / CustomersProjectsView — the
   // Workspace list is near-static, so navigating between pages (Navbar
@@ -443,25 +447,25 @@ function NavbarContent() {
     if (!fixedWsCode && urlWsCode && urlWsCode !== ctxWorkspaceCode) setWorkspaceCode(urlWsCode);
   }, [fixedWsCode, urlWsCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const renderProjectsLink = (onNavigate?: () => void) => (
-    <Link href="/project-hub" onClick={onNavigate}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+  const renderProjectsLink = (onNavigate?: () => void, compact = false) => (
+    <Link href="/project-hub" onClick={onNavigate} title={compact ? 'Projects' : undefined}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${compact ? 'justify-center' : ''} ${
         path.startsWith('/project-hub') ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
       }`}>
       {projectHubIcon}
-      Projects
+      {!compact && 'Projects'}
     </Link>
   );
 
-  const renderDashboardLink = (onNavigate?: () => void) => (
-    <Link href="/dashboard/overview" onClick={onNavigate}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+  const renderDashboardLink = (onNavigate?: () => void, compact = false) => (
+    <Link href="/dashboard/overview" onClick={onNavigate} title={compact ? 'Dashboard' : undefined}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${compact ? 'justify-center' : ''} ${
         path.startsWith('/dashboard') ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
       }`}>
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
       </svg>
-      Dashboard
+      {!compact && 'Dashboard'}
     </Link>
   );
 
@@ -527,44 +531,67 @@ function NavbarContent() {
 
       {/* Sidebar - Hidden on mobile, visible on md+ */}
       <aside className={`
-        w-[230px] flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-50 overflow-y-auto
+        ${collapsed ? 'w-16' : 'w-[230px]'} flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-50 overflow-y-auto overflow-x-hidden transition-[width] duration-200
         hidden md:flex
       `}>
 
-        {/* Logo */}
+        {/* Logo - khi collapsed, đây là nút DUY NHẤT còn thấy trong khu vực này
+            và bấm vào logo sẽ mở lại sidebar (thay vì 1 nút mũi tên riêng
+            đứng cạnh logo trông rối/xấu ở trạng thái thu gọn). */}
         <div className="p-5 border-b border-slate-800">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
+          <div className={`flex items-center gap-2 ${collapsed ? 'justify-center' : 'justify-between'}`}>
+            <div
+              className={`flex items-center gap-2.5 min-w-0 ${collapsed ? 'cursor-pointer' : ''}`}
+              onClick={collapsed ? toggleCollapsed : undefined}
+              title={collapsed ? 'Mở rộng sidebar' : undefined}
+            >
               <img src={brand.logo} alt={`${brand.name} logo`} className="w-8 h-8 rounded-lg flex-shrink-0 object-cover" />
-              <div className="min-w-0">
-                <div className="text-sm font-extrabold text-white tracking-tight leading-none truncate">{brand.productName}</div>
-                <div className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate">{brand.subtitle}</div>
-              </div>
+              {!collapsed && (
+                <div className="min-w-0">
+                  <div className="text-sm font-extrabold text-white tracking-tight leading-none truncate">{brand.productName}</div>
+                  <div className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate">{brand.subtitle}</div>
+                </div>
+              )}
             </div>
-            {isAdmin() && <NotificationBell variant="sidebar" />}
+            {!collapsed && (
+              <div className="flex items-center gap-1 shrink-0">
+                {isAdmin() && <NotificationBell variant="sidebar" />}
+                <button
+                  onClick={toggleCollapsed}
+                  title="Thu gọn sidebar"
+                  className="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors shrink-0"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Nav Links */}
         <nav className="px-3 py-4 space-y-1 shrink-0">
 
-          <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsSecondaryCount={fixedWsSecondaryCount} onProjectHub={isOnProjectHub} />
+          {!collapsed && (
+            <WorkspaceSwitcher workspaces={workspaces} currentWsCode={currentWsCode} fixedWsCode={fixedWsCode} fixedWsSecondaryCount={fixedWsSecondaryCount} onProjectHub={isOnProjectHub} />
+          )}
 
-          {renderDashboardLink()}
+          {renderDashboardLink(undefined, collapsed)}
 
-          {renderProjectsLink()}
+          {renderProjectsLink(undefined, collapsed)}
 
           {nav.map(n => {
             const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (
-              <Link key={n.href} href={n.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
+              <Link key={n.href} href={n.href} title={collapsed ? n.label : undefined}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${collapsed ? 'justify-center' : ''} ${
                   active
                     ? 'bg-white/10 text-white'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 }`}>
                 {n.icon}
-                {n.label}
+                {!collapsed && n.label}
               </Link>
             );
           })}
@@ -576,26 +603,29 @@ function NavbarContent() {
         <div className="p-3 border-t border-slate-800 space-y-2.5">
           <Link
             href="/profile"
-            className={`flex items-center gap-2.5 -mx-1 px-1 py-1 rounded-lg transition-colors ${
+            title={collapsed ? (name || 'User') : undefined}
+            className={`flex items-center gap-2.5 -mx-1 px-1 py-1 rounded-lg transition-colors ${collapsed ? 'justify-center' : ''} ${
               path === '/profile' ? 'bg-white/10' : 'hover:bg-white/5'
             }`}
           >
             {avatar ? (
-              <img src={avatar} alt={`${name || 'User'} avatar`} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover border border-white/10" />
+              <img src={avatar} alt={`${name || 'User'} avatar`} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase">
+              <div className="w-8 h-8 rounded-full bg-white/10 border border-white/5 flex items-center justify-center text-xs font-bold text-white uppercase shrink-0">
                 {name ? name.substring(0, 2) : 'US'}
               </div>
             )}
-            <div className="truncate flex-grow">
-              <div className="text-[11px] font-bold text-white truncate">{name || 'User'}</div>
-              <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">{
-                role === 'super_admin' ? 'Super Admin' :
-                role === 'leader' ? 'Team Leader' :
-                role === 'viewer' ? 'Viewer' :
-                role || 'Member'
-              }</div>
-            </div>
+            {!collapsed && (
+              <div className="truncate flex-grow">
+                <div className="text-[11px] font-bold text-white truncate">{name || 'User'}</div>
+                <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">{
+                  role === 'super_admin' ? 'Super Admin' :
+                  role === 'leader' ? 'Team Leader' :
+                  role === 'viewer' ? 'Viewer' :
+                  role || 'Member'
+                }</div>
+              </div>
+            )}
           </Link>
 
           {/* Settings — Super Admin only (matches the page's own guard;
@@ -604,36 +634,38 @@ function NavbarContent() {
           {isSuperAdmin() && (
             <Link
               href="/settings"
+              title={collapsed ? 'Settings' : undefined}
               className={`flex items-center justify-center gap-2 w-full py-1.5 rounded-lg text-xs font-semibold transition-all border ${
                 path.startsWith('/settings')
                   ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
                   : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/60'
               }`}
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
-              <span>Settings</span>
+              {!collapsed && <span>Settings</span>}
             </Link>
           )}
 
           <a
             href="/api/extension/ai-tracker"
             download
+            title={collapsed ? 'Tải KPI Prototype' : undefined}
             className="flex items-center justify-center gap-2 w-full py-1.5 rounded-lg text-xs font-semibold transition-all border bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/60"
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 3v12m0 0l-4-4m4 4l4-4" />
             </svg>
-            <span>Tải KPI Prototype</span>
+            {!collapsed && <span>Tải KPI Prototype</span>}
           </a>
 
-          <button onClick={logout}
+          <button onClick={logout} title={collapsed ? 'Sign out' : undefined}
             className="w-full text-center py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/40 text-xs font-semibold text-slate-300 hover:text-red-400 transition-colors border border-slate-700/60">
-            Sign out
+            {collapsed ? '⏻' : 'Sign out'}
           </button>
-          <div className="text-[9px] text-slate-600 text-center">{brand.footer}</div>
+          {!collapsed && <div className="text-[9px] text-slate-600 text-center">{brand.footer}</div>}
         </div>
       </aside>
 
