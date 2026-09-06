@@ -254,6 +254,15 @@ function ProjectDetailContent() {
   const queryClient = useQueryClient();
   const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const id = searchParams.get('id') || '';
+  // Drill-in from /kpi's "Dự án đang tham gia" list: pre-filter the Tasks
+  // tab to just this one person's own tasks (assignee OR support) — ANDed
+  // alongside the existing Assigned/Support dropdowns (which stay 'All' by
+  // default), so it narrows the list without disabling manual re-filtering.
+  const memberFilterParam = searchParams.get('member') || '';
+  // Numeric Member.id for that same person — needed to scope an AI Review
+  // to just them (assigned_id/support_id), since memberFilterParam only
+  // carries their display name for string-based table filtering.
+  const memberIdParam = searchParams.get('member_id') || '';
   // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
   // next.config.js rewrites that path server-side to /project/detail?tab=tasks
   // purely to pick which page component to render; it does NOT change what the
@@ -361,13 +370,15 @@ function ProjectDetailContent() {
 
   // AI Review Drawer states
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
-  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK'>('PROJECT');
+  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER'>('PROJECT');
   const [aiDrawerEntityId, setAiDrawerEntityId] = useState<number>(0);
   const [aiDrawerEntityName, setAiDrawerEntityName] = useState<string>('');
+  const [aiDrawerProjectId, setAiDrawerProjectId] = useState<number | undefined>(undefined);
 
-  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK', entityId: number, name = '') => {
+  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER', entityId: number, name = '') => {
     setAiDrawerEntityType(entityType);
     setAiDrawerEntityId(entityId);
+    setAiDrawerProjectId(entityType === 'MEMBER' ? Number(id) : undefined);
 
     let resolvedName = name;
     if (!resolvedName) {
@@ -379,11 +390,17 @@ function ProjectDetailContent() {
       } else if (entityType === 'TASK') {
         const foundTask = items.find(t => t.id === entityId);
         resolvedName = foundTask ? foundTask.detail : 'Task';
+      } else if (entityType === 'MEMBER') {
+        resolvedName = memberFilterParam || 'Thành viên';
       }
     }
 
     setAiDrawerEntityName(resolvedName);
     setIsAIDrawerOpen(true);
+  };
+
+  const handleOpenAIReviewDrawerForContext = () => {
+    handleOpenAIReviewDrawer('PROJECT', Number(id));
   };
 
   const [activePhase, setActivePhase] = useState<string>('ALL');
@@ -1690,7 +1707,7 @@ function ProjectDetailContent() {
     const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
       || assignedFilter !== 'All' || supportFilter !== 'All'
       || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
-      || !!searchLower;
+      || !!searchLower || !!memberFilterParam;
     if (!hasActiveFilter) {
       return items;
     }
@@ -1704,7 +1721,8 @@ function ProjectDetailContent() {
       const matchSupport = supportFilter === 'All' || (item.support_name || '') === supportFilter;
       const matchSkillSolution = skillSolutionFilter === 'All' || (item.skill_solution_name || '') === skillSolutionFilter;
       const matchSkillVendor = skillVendorFilter === 'All' || (item.skill_vendor_name || '') === skillVendorFilter;
-      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor;
+      const matchMember = !memberFilterParam || (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam;
+      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
     });
 
     const onlySearch = !priorityFilter.match(/^All$/) === false && !statusFilter.match(/^All$/) === false
@@ -5147,7 +5165,7 @@ function ProjectDetailContent() {
             )}
 
             <button
-              onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
+              onClick={handleOpenAIReviewDrawerForContext}
               className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
             >
               <Sparkles size={14} /> AI Review
@@ -5272,6 +5290,18 @@ function ProjectDetailContent() {
             </div>
             {taskSearch && (
               <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
+            )}
+            {memberFilterParam && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[11px] font-bold text-blue-700 shrink-0">
+                Đang lọc: {memberFilterParam}
+                <button
+                  onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
+                  className="text-blue-400 hover:text-blue-700 cursor-pointer"
+                  title="Bỏ lọc, xem tất cả task"
+                >
+                  ✕
+                </button>
+              </span>
             )}
 
             {/* Bộ lọc - primary filter UX, dùng chung state với per-column filter */}
@@ -9397,6 +9427,8 @@ function ProjectDetailContent() {
         entityType={aiDrawerEntityType}
         entityId={aiDrawerEntityId}
         entityName={aiDrawerEntityName}
+        projectId={aiDrawerProjectId}
+        memberTab={memberIdParam ? { memberId: Number(memberIdParam), memberName: memberFilterParam, projectId: Number(id) } : undefined}
         onSuccessCheck={() => {
           reloadAll();
           loadProject();

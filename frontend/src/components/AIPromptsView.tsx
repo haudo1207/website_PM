@@ -27,6 +27,7 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
   const [projectPrompt, setProjectPrompt] = useState<AIPromptData>({ project_id: 0, type: 'PROJECT', name: 'Project Check Prompt', prompt_content: '', active: true });
   const [phasePrompt, setPhasePrompt] = useState<AIPromptData>({ project_id: 0, type: 'PHASE', name: 'Phase Check Prompt', prompt_content: '', active: true });
   const [taskPrompt, setTaskPrompt] = useState<AIPromptData>({ project_id: 0, type: 'TASK', name: 'Task Check Prompt', prompt_content: '', active: true });
+  const [memberPrompt, setMemberPrompt] = useState<AIPromptData>({ project_id: 0, type: 'MEMBER', name: 'Member Check Prompt', prompt_content: '', active: true });
 
   useEffect(() => {
     loadProjects();
@@ -66,10 +67,12 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
         const projP = list.find(p => p.type === 'PROJECT') || { project_id: projectId, type: 'PROJECT', name: 'Project Check Prompt', prompt_content: '', active: true };
         const phaseP = list.find(p => p.type === 'PHASE') || { project_id: projectId, type: 'PHASE', name: 'Phase Check Prompt', prompt_content: '', active: true };
         const taskP = list.find(p => p.type === 'TASK') || { project_id: projectId, type: 'TASK', name: 'Task Check Prompt', prompt_content: '', active: true };
+        const memberP = list.find(p => p.type === 'MEMBER') || { project_id: projectId, type: 'MEMBER', name: 'Member Check Prompt', prompt_content: '', active: true };
 
         setProjectPrompt(projP);
         setPhasePrompt(phaseP);
         setTaskPrompt(taskP);
+        setMemberPrompt(memberP);
       }
     } catch (err) {
       console.error(err);
@@ -79,13 +82,14 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
     }
   };
 
-  const handleSavePrompt = async (type: 'PROJECT' | 'PHASE' | 'TASK') => {
+  const handleSavePrompt = async (type: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER') => {
     if (!selectedProjectId) return;
     setSavingPromptId(type);
-    
+
     let targetPrompt = projectPrompt;
     if (type === 'PHASE') targetPrompt = phasePrompt;
     if (type === 'TASK') targetPrompt = taskPrompt;
+    if (type === 'MEMBER') targetPrompt = memberPrompt;
 
     try {
       const payload = {
@@ -94,7 +98,7 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
       };
       const res = await saveAIPrompt(payload);
       if (res.success) {
-        onFlash(`Đã lưu cấu hình Prompt cấp ${type === 'PROJECT' ? 'Dự án' : type === 'PHASE' ? 'Giai đoạn' : 'Công việc'} thành công!`);
+        onFlash(`Đã lưu cấu hình Prompt cấp ${type === 'PROJECT' ? 'Dự án' : type === 'PHASE' ? 'Giai đoạn' : type === 'TASK' ? 'Công việc' : 'Thành viên'} thành công!`);
         loadPrompts(selectedProjectId);
       }
     } catch (err: any) {
@@ -112,7 +116,7 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
         <div>
           <h1 className="text-xl font-bold text-[#0b1c30] tracking-tight">Cấu hình AI Review Prompts</h1>
           <p className="text-xs text-slate-500 mt-1">
-            Thiết lập Prompt riêng cho từng dự án ở cả 3 cấp độ: Dự án, Giai đoạn và Công việc.
+            Thiết lập Prompt riêng cho từng dự án ở cả 4 cấp độ: Dự án, Giai đoạn, Công việc và Thành viên.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -135,7 +139,7 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
 
       {loadingPrompts ? (
         <div className="grid grid-cols-1 gap-6">
-          {[1, 2, 3].map(i => (
+          {[1, 2, 3, 4].map(i => (
             <div key={i} className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm animate-pulse">
               <div className="h-5 w-48 bg-slate-200 rounded"></div>
               <div className="h-4 w-72 bg-slate-100 rounded"></div>
@@ -308,6 +312,62 @@ export default function AIPromptsView({ onFlash }: AIPromptsViewProps) {
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {savingPromptId === 'TASK' ? 'Đang lưu...' : 'Lưu Task Prompt'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* MEMBER PROMPT */}
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider flex items-center gap-2">
+                  👤 Cấp 4: Member Prompt
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5 font-medium uppercase tracking-wider">
+                  Đánh giá riêng đóng góp của một thành viên trong dự án này (task thực hiện và hỗ trợ)
+                </p>
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={memberPrompt.active}
+                    onChange={e => setMemberPrompt({ ...memberPrompt, active: e.target.checked })}
+                    className="rounded text-blue-600 focus:ring-blue-500 border-slate-300"
+                  />
+                  <span>Hoạt động</span>
+                </label>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên prompt</label>
+                <input
+                  type="text"
+                  value={memberPrompt.name}
+                  onChange={e => setMemberPrompt({ ...memberPrompt, name: e.target.value })}
+                  placeholder="Ví dụ: Đánh giá Thành viên..."
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0b1c30] placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Nội dung prompt</label>
+                <textarea
+                  rows={5}
+                  value={memberPrompt.prompt_content}
+                  onChange={e => setMemberPrompt({ ...memberPrompt, prompt_content: e.target.value })}
+                  placeholder="Nhập prompt đánh giá thành viên..."
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0b1c30] placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => handleSavePrompt('MEMBER')}
+                  disabled={savingPromptId !== null}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {savingPromptId === 'MEMBER' ? 'Đang lưu...' : 'Lưu Member Prompt'}
                 </button>
               </div>
             </div>

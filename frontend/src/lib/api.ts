@@ -580,11 +580,14 @@ export const getAIPrompts = (projectId: number) =>
 export const saveAIPrompt = (data: { id?: number; project_id: number; type: string; name: string; prompt_content: string; active?: boolean }) =>
   api.post('/settings/ai-prompts', data).then(r => r.data);
 
-export const triggerAIReview = (entityType: string, entityId: number) =>
-  api.post('/ai-review/check', { entity_type: entityType, entity_id: entityId }).then(r => r.data);
+// projectId is only meaningful (and required backend-side) for entityType
+// 'MEMBER' — a member has no project of their own, so the caller must say
+// which project's tasks to scope the review to.
+export const triggerAIReview = (entityType: string, entityId: number, projectId?: number) =>
+  api.post('/ai-review/check', { entity_type: entityType, entity_id: entityId, project_id: projectId }).then(r => r.data);
 
-export const getAIReviewHistory = (entityType: string, entityId: number) =>
-  api.get('/ai-review/history', { params: { entity_type: entityType, entity_id: entityId } }).then(r => r.data);
+export const getAIReviewHistory = (entityType: string, entityId: number, projectId?: number) =>
+  api.get('/ai-review/history', { params: { entity_type: entityType, entity_id: entityId, project_id: projectId } }).then(r => r.data);
 
 export const getAIReviewLog = (logId: number) =>
   api.get(`/ai-review/logs/${logId}`).then(r => r.data);
