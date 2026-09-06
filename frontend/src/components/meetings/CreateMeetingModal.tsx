@@ -416,7 +416,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     setError('');
 
     if (!formData.title || !formData.date || !formData.time) {
-      setError('Vui lòng điền đầy đủ thông tin bắt buộc (Tên, Ngày, Giờ)');
+      const missing = [
+        !formData.title && 'Tên',
+        !formData.date && 'Ngày',
+        !formData.time && 'Giờ',
+      ].filter(Boolean);
+      setError(`Vui lòng điền đầy đủ thông tin bắt buộc (${missing.join(', ')})`);
       isSubmittingRef.current = false;
       return;
     }
@@ -791,14 +796,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0 mt-0.5">info</span>
                   <div>
                     <span className="font-bold text-amber-900">Lưu ý khi chọn Zoom:</span> Hệ thống dùng 1 tài khoản Zoom cố định. Tại cùng một khung giờ chỉ khởi tạo được 1 cuộc họp Zoom. Nếu trùng giờ với cuộc họp Zoom khác, sẽ không tạo thêm được link mới (khuyên dùng <b>Google Meet</b>).
-                  </div>
-                </div>
-              )}
-              {formData.platform === 'Google Meet' && (
-                <div className="mt-2 p-3 bg-[#eff6ff] border border-[#bfdbfe] rounded-lg text-[11px] text-[#1e40af] leading-relaxed flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[#2563eb] text-[16px] shrink-0 mt-0.5">info</span>
-                  <div>
-                    <span className="font-bold">Lưu ý host cuộc họp:</span> Link Google Meet dùng tài khoản chung <b>mkt.szone@gmail.com</b>. Người đóng vai trò host (duyệt người tham gia vào phòng chờ) cần đăng nhập Google bằng đúng tài khoản này trước khi bấm vào link, nếu không sẽ không ai duyệt được.
                   </div>
                 </div>
               )}
