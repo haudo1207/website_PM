@@ -468,7 +468,7 @@ export const approveLeaveRequest = (id: number, status: 'Approved' | 'Rejected')
   api.patch(`/leave-requests/${id}/approve`, { status }).then(r => r.data);
 
 // Meetings
-export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string; mine?: boolean }) =>
+export const getMeetings = (params?: { project_id?: number; status?: string; from_date?: string; to_date?: string; mine?: boolean; workspace?: string }) =>
   api.get('/meetings', { params }).then(r => r.data);
 
 // Project Templates
@@ -497,7 +497,7 @@ export const submitMeetingFeedback = (id: number, data: { helpful: boolean; comm
   api.post(`/meetings/${id}/feedback`, data).then(r => r.data);
 export const generateAiMeetingContent = (data: { title: string; project_name?: string }) =>
   api.post('/meetings/generate-ai-content', data).then(r => r.data);
-export const getMeetingInsights = (params?: { from_date?: string; to_date?: string }) =>
+export const getMeetingInsights = (params?: { from_date?: string; to_date?: string; workspace?: string }) =>
   api.get('/meetings/insights', { params }).then(r => r.data);
 
 // AI prompt settings + transcript summarization — Next.js-local routes
@@ -802,6 +802,13 @@ export interface TeamComparisonTeam {
   // Leader's individual workload KPI (own tasks only, NOT team aggregate)
   leader_period_kpi: number;
   leader_kpi_pct: number;
+  // Leader's personal task aggregates (own tasks only, NOT team)
+  leader_done: number;
+  leader_doing: number;
+  leader_overdue: number;
+  leader_kpi: number;
+  leader_manday_est: number;
+  leader_manday_actual: number;
 }
 export interface WorkloadSetting {
   status_key: string;
