@@ -1675,7 +1675,7 @@ export default function OverviewTab() {
               return (
               <div key={ld.name} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
@@ -1742,7 +1742,7 @@ export default function OverviewTab() {
               return (
               <div key={m.id} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
