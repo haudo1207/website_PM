@@ -12,6 +12,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
+import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 
 const getShortName = (name: string) => {
@@ -264,7 +265,20 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
             </div>
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
               <span className="text-lg font-black text-[#0058be] leading-none">{kpiTrungBinhText}</span>
-              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI TRUNG BÌNH</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                KPI TRUNG BÌNH
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">KPI trung bình</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">KPI TRUNG BÌNH = KPI TỔNG ÷ THỜI GIAN BỘ LỌC</p>
+                  <p className="text-white/60 mt-1.5">Trong đó:</p>
+                  <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                    <li><b>KPI TỔNG:</b> Tổng KPI từ các task đã hoàn thành (Done) trong kỳ lọc, tính theo kpi_assigned + kpi_support</li>
+                    <li><b>THỜI GIAN BỘ LỌC:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
+                  </ul>
+                  <p className="text-white/50 mt-1.5">Ví dụ: KPI tổng = 574.1, lọc Tuần 1 → 574.1 ÷ 1 = 574.1%</p>
+                </FormulaTooltip>
+              </span>
             </div>
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
               <span className="text-lg font-black text-[#0058be] leading-none">{member.kpi?.toFixed(1) || '0.0'}</span>
@@ -334,7 +348,21 @@ const MemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, selec
               {/* Tải công việc */}
               <div className="bg-blue-50/40 border border-blue-100 rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
                 <div>
-                  <span className="text-[9px] font-extrabold text-blue-500 uppercase tracking-wider">Tải công việc</span>
+                  <span className="text-[9px] font-extrabold text-blue-500 uppercase tracking-wider flex items-center gap-1">
+                    Tải công việc
+                    <FormulaTooltip align="left">
+                      <p className="font-bold text-white/90 mb-1">Tải công việc</p>
+                      <p className="text-white/80 mb-1">Công thức:</p>
+                      <p className="text-white font-mono">Tải = min(100, round((Task mở ÷ max(5, Tổng task)) × 100))</p>
+                      <p className="text-white/60 mt-1.5">Trong đó:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b>Task mở:</b> Số task chưa hoàn thành (không Done/Hủy) trong kỳ lọc</li>
+                        <li><b>Tổng task:</b> Task mở + Task đã hoàn thành trong kỳ</li>
+                        <li><b>max(5, Tổng task):</b> Nếu tổng task {"<"} 5, dùng 5 làm mẫu số (tránh % quá cao khi ít task)</li>
+                      </ul>
+                      <p className="text-white/50 mt-1.5">Nếu không có task → mặc định 67%. Kết quả capped ở 100%.</p>
+                    </FormulaTooltip>
+                  </span>
                   <p className="text-2xl font-black text-[#0058be] mt-1">{workload}%</p>
                 </div>
                 <p className="text-[10px] text-slate-400 leading-tight mt-3">Tải trung bình — có thể nhận thêm task nếu ưu tiên rõ.</p>

@@ -19,6 +19,7 @@ import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonProject,
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SvgIcon from '@/components/dashboard/Icons';
 import ProgressBar from '@/components/dashboard/ProgressBar';
+import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 
 function formatYMD(d: Date): string {
   const y = d.getFullYear();
@@ -348,11 +349,55 @@ export default function MultiTeamProjectComparison() {
                 <th className="px-3 py-3 text-right font-bold">KPI TRUNG BÌNH</th>
                 <th className="px-3 py-3 text-right font-bold">Plan MD</th>
                 <th className="px-3 py-3 text-right font-bold">Actual MD</th>
-                <th className="px-3 py-3 text-right font-bold">Util.</th>
-                <th className="px-3 py-3 text-right font-bold">Efficiency</th>
+                <th className="px-3 py-3 text-right font-bold">
+                  <span className="inline-flex items-center gap-0.5 justify-end">
+                    Util.
+                    <FormulaTooltip align="right">
+                      <p className="font-bold text-white/90 mb-1">Utilization (Sử dụng nguồn lực)</p>
+                      <p className="text-white/80 mb-1">Công thức:</p>
+                      <p className="text-white font-mono">UTIL = (Actual MD ÷ Plan MD) × 100%</p>
+                      <p className="text-white/60 mt-1.5">Trong đó:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b>Plan MD:</b> Tổng manday_est từ tất cả task của team (assigned + support)</li>
+                        <li><b>Actual MD:</b> Tổng manday_actual từ tất cả task của team (assigned + support)</li>
+                      </ul>
+                      <p className="text-white/50 mt-1.5">{">="}100%: Quá tải · {">="}80%: Tốt · {"<"}80%: Chưa充分利用</p>
+                    </FormulaTooltip>
+                  </span>
+                </th>
+                <th className="px-3 py-3 text-right font-bold">
+                  <span className="inline-flex items-center gap-0.5 justify-end">
+                    Efficiency
+                    <FormulaTooltip align="right">
+                      <p className="font-bold text-white/90 mb-1">Efficiency (Hiệu suất)</p>
+                      <p className="text-white/80 mb-1">Công thức:</p>
+                      <p className="text-white font-mono">EFFICIENCY = (Done ÷ Total) × 100%</p>
+                      <p className="text-white/60 mt-1.5">Trong đó:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b>Done:</b> Số task đã hoàn thành (status = Done) trong team</li>
+                        <li><b>Total:</b> Tổng số task của team (assigned + support, trong kỳ lọc)</li>
+                      </ul>
+                      <p className="text-white/50 mt-1.5">Tỷ lệ task hoàn thành so với tổng task trong kỳ.</p>
+                    </FormulaTooltip>
+                  </span>
+                </th>
                 <th className="px-3 py-3 text-right font-bold">On-time</th>
                 <th className="px-3 py-3 text-right font-bold">Trễ</th>
-                <th className="px-3 py-3 text-center font-bold">Health</th>
+                <th className="px-3 py-3 text-center font-bold">
+                  <span className="inline-flex items-center gap-0.5 justify-center">
+                    Health
+                    <FormulaTooltip align="right">
+                      <p className="font-bold text-white/90 mb-1">Health (Sức khỏe team)</p>
+                      <p className="text-white/80 mb-1">Phân loại dựa trên tỷ lệ task trễ:</p>
+                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                        <li><b className="text-rose-300">Critical:</b> Task trễ ÷ Tổng task {">="} 30% HOẶC task trễ {">="} 3</li>
+                        <li><b className="text-amber-300">Risk:</b> Task trễ ÷ Tổng task {">="} 10% HOẶC task trễ {">="} 1</li>
+                        <li><b className="text-emerald-300">On Track:</b> Không đạt ngưỡng Critical hay Risk</li>
+                        <li><b className="text-slate-300">N/A:</b> Không có task trong kỳ</li>
+                      </ul>
+                    </FormulaTooltip>
+                  </span>
+                </th>
                 <th className="px-3 py-3 text-center font-bold">Chi tiết</th>
               </tr>
             </thead>
@@ -426,8 +471,20 @@ export default function MultiTeamProjectComparison() {
           <div className="flex items-center gap-2">
             <SvgIcon name="chart" className="w-4 h-4 text-purple-600" />
             <div>
-              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider">
+              <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider inline-flex items-center gap-1">
                 3. So sánh Project theo nhiều Team
+                <FormulaTooltip align="left">
+                  <p className="font-bold text-white/90 mb-1">So sánh Project theo nhiều Team</p>
+                  <p className="text-white/80 mb-1">Chức năng này so sánh các Project đang được các Team (Leader) phụ trách.</p>
+                  <p className="text-white/60 mt-1.5">Cách tính cho mỗi Project:</p>
+                  <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                    <li><b>Tiến độ (Progress):</b> (manday_actual ÷ manday_est) × 100% — tỷ lệ ngày công thực tế so với dự kiến</li>
+                    <li><b>Timeline:</b> ((Tổng task − Task trễ) ÷ Tổng task) × 100%</li>
+                    <li><b>Task:</b> Task hoàn thành ÷ Tổng task</li>
+                    <li><b>Health:</b> Phân loại theo tỷ lệ task trễ (giống Section 2)</li>
+                  </ul>
+                  <p className="text-white/50 mt-1.5">Chọn nhiều Leader rồi nhấn "So sánh" để xem project cards song song. Project metrics hiển thị toàn bộ task của project (không chỉ task của team).</p>
+                </FormulaTooltip>
               </h3>
               <p className="text-[10px] text-slate-400 mt-0.5">
                 Chọn nhiều Leader để so sánh các Project đang được team phụ trách — Workspace hiện tại: <strong className="text-[#0058be]">{currentWsLabel}</strong>
@@ -720,7 +777,22 @@ export default function MultiTeamProjectComparison() {
                           <SmallStat label="Trễ"    value={t.overdue}     color={t.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
                           <SmallStat label="KPI"    value={t.kpi.toFixed(1)} color="text-[#0058be]" />
                           <SmallStat label="Manday" value={`${t.actual_md.toFixed(1)}/${t.plan_md.toFixed(1)}`} />
-                          <SmallStat label="KPI%"   value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`} color={(t.leader_kpi_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_kpi_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'} />
+                          <SmallStat label="KPI%"
+                            value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`}
+                            color={(t.leader_kpi_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_kpi_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'}
+                            tooltipContent={<>
+                              <p className="font-bold text-white/90 mb-1">KPI% (Leader)</p>
+                              <p className="text-white/80 mb-1">Công thức:</p>
+                              <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
+                              <p className="text-white/60 mt-1.5">Trong đó:</p>
+                              <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc. Chỉ tính riêng task của Leader (không bao gồm toàn bộ team).</li>
+                                <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
+                              </ul>
+                              <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                              <p className="text-white/40 mt-1 text-[9px]">⚠️ Khác với KPI TRUNG BÌNH: KPI% chỉ tính task Done có end_date_actual trong kỳ, KPI TRUNG BÌNH tính tổng KPI tất cả task trong kỳ.</p>
+                            </>}
+                          />
                         </div>
                       </div>
 
@@ -751,7 +823,21 @@ export default function MultiTeamProjectComparison() {
                                 <SmallStat label="Trễ"    value={m.overdue}     color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
                                 <SmallStat label="KPI"    value={m.kpi.toFixed(1)} color="text-[#0058be]" />
                                 <SmallStat label="Manday" value={`${m.manday_actual.toFixed(1)}/${m.manday_est.toFixed(1)}`} />
-                                <SmallStat label="KPI%"   value={`${kpiPct.toFixed(1)}%`} color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'} />
+                                <SmallStat label="KPI%"
+                                    value={`${kpiPct.toFixed(1)}%`}
+                                    color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'}
+                                    tooltipContent={<>
+                                      <p className="font-bold text-white/90 mb-1">KPI% (Thành viên)</p>
+                                      <p className="text-white/80 mb-1">Công thức:</p>
+                                      <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
+                                      <p className="text-white/60 mt-1.5">Trong đó:</p>
+                                      <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                        <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc</li>
+                                        <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
+                                      </ul>
+                                      <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                                    </>}
+                                  />
                               </div>
                             </div>
                           );
@@ -909,10 +995,17 @@ function SummaryStat({ label, value, color }: { label: string; value: any; color
   );
 }
 
-function SmallStat({ label, value, color }: { label: string; value: any; color?: string }) {
+function SmallStat({ label, value, color, tooltipContent }: { label: string; value: any; color?: string; tooltipContent?: React.ReactNode }) {
   return (
     <div>
-      <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">{label}</span>
+      <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider flex items-center gap-0.5">
+        {label}
+        {tooltipContent && (
+          <FormulaTooltip align="left">
+            {tooltipContent}
+          </FormulaTooltip>
+        )}
+      </span>
       <span className={`text-[11px] font-extrabold ${color || 'text-slate-700'}`}>{value}</span>
     </div>
   );
