@@ -4,20 +4,23 @@ import { triggerAIReview, getAIReviewHistory, getAIReviewLog } from '@/lib/api';
 interface AIReviewDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  entityType: 'PROJECT' | 'PHASE' | 'TASK';
+  entityType: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER';
   entityId: number;
   entityName: string;
   onSuccessCheck?: () => void;
+  // Required for entityType 'MEMBER' only — a member has no project of
+  // their own, so the review must say which project's tasks to scope to.
+  projectId?: number;
 }
 
 interface ReviewLog {
   id: number;
   score: number;
-  ai_status: string;
-  summary_markdown: string;
+  status: string;
+  result_markdown: string;
   issues: string[];
   suggestions: string[];
-  created_at: string;
+  checked_at: string;
   prompt_snapshot?: string;
 }
 
@@ -27,7 +30,8 @@ export default function AIReviewDrawer({
   entityType,
   entityId,
   entityName,
-  onSuccessCheck
+  onSuccessCheck,
+  projectId,
 }: AIReviewDrawerProps) {
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState<ReviewLog[]>([]);
@@ -42,11 +46,11 @@ export default function AIReviewDrawer({
       setSelectedLogId(null);
       setActiveTab('current');
     }
-  }, [isOpen, entityType, entityId]);
+  }, [isOpen, entityType, entityId, projectId]);
 
   const loadHistory = async () => {
     try {
-      const res = await getAIReviewHistory(entityType, entityId);
+      const res = await getAIReviewHistory(entityType, entityId, projectId);
       if (res.success && res.data) {
         setHistory(res.data);
         if (res.data.length > 0) {
@@ -63,7 +67,7 @@ export default function AIReviewDrawer({
   const handleRunCheck = async () => {
     setLoading(true);
     try {
-      const res = await triggerAIReview(entityType, entityId);
+      const res = await triggerAIReview(entityType, entityId, projectId);
       if (res.success && res.data) {
         // Trigger callback to refresh status badges on main page
         if (onSuccessCheck) onSuccessCheck();
@@ -112,7 +116,7 @@ export default function AIReviewDrawer({
           <div>
             <div className="flex items-center gap-2">
               <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-[#0058be] text-white tracking-wider">
-                {entityType === 'PROJECT' ? 'Dự án' : entityType === 'PHASE' ? 'Giai đoạn' : 'Công việc'}
+                {entityType === 'PROJECT' ? 'Dự án' : entityType === 'PHASE' ? 'Giai đoạn' : entityType === 'MEMBER' ? 'Thành viên' : 'Công việc'}
               </span>
               <span className="text-slate-400 text-xs">•</span>
               <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">AI Quality Check</span>
@@ -168,13 +172,13 @@ export default function AIReviewDrawer({
                     <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Trạng thái:</span>
                     {currentLog ? (
                       <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                        currentLog.ai_status === 'GOOD'
+                        currentLog.status === 'GOOD'
                           ? 'bg-emerald-100 text-emerald-800'
-                          : currentLog.ai_status === 'HAS_ISSUE'
+                          : currentLog.status === 'HAS_ISSUE'
                           ? 'bg-rose-100 text-rose-800'
                           : 'bg-amber-100 text-amber-800'
                       }`}>
-                        {currentLog.ai_status}
+                        {currentLog.status}
                       </span>
                     ) : (
                       <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 uppercase tracking-wider">
@@ -183,7 +187,7 @@ export default function AIReviewDrawer({
                     )}
                   </div>
                   <p className="text-[11px] text-slate-400 mt-1 uppercase font-semibold">
-                    {currentLog ? `Lần cuối lúc: ${new Date(currentLog.created_at).toLocaleString('vi-VN')}` : 'Hãy bắt đầu phân tích dữ liệu'}
+                    {currentLog ? `Lần cuối lúc: ${new Date(currentLog.checked_at).toLocaleString('vi-VN')}` : 'Hãy bắt đầu phân tích dữ liệu'}
                   </p>
                 </div>
                 <button
@@ -269,14 +273,14 @@ export default function AIReviewDrawer({
                   )}
 
                   {/* Summary block */}
-                  {currentLog.summary_markdown && (
+                  {currentLog.result_markdown && (
                     <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
                       <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2.5">
                         <span className="material-symbols-outlined text-[16px]">summarize</span>
                         Nhận xét chi tiết từ AI
                       </h4>
                       <div className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed font-medium space-y-2">
-                        {currentLog.summary_markdown}
+                        {currentLog.result_markdown}
                       </div>
                     </div>
                   )}
@@ -323,20 +327,20 @@ export default function AIReviewDrawer({
                       <div>
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                            log.ai_status === 'GOOD'
+                            log.status === 'GOOD'
                               ? 'bg-emerald-100 text-emerald-800'
-                              : log.ai_status === 'HAS_ISSUE'
+                              : log.status === 'HAS_ISSUE'
                               ? 'bg-rose-100 text-rose-800'
                               : 'bg-amber-100 text-amber-800'
                           }`}>
-                            {log.ai_status}
+                            {log.status}
                           </span>
                           <span className="text-xs font-semibold text-slate-700">
                             Điểm: {log.score}/100
                           </span>
                         </div>
                         <span className="text-[10px] text-slate-400 font-medium block mt-1 uppercase">
-                          {new Date(log.created_at).toLocaleString('vi-VN')}
+                          {new Date(log.checked_at).toLocaleString('vi-VN')}
                         </span>
                       </div>
                       <span className="material-symbols-outlined text-slate-400 text-[18px]">

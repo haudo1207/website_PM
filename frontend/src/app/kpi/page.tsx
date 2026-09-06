@@ -12,7 +12,7 @@ import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from 
 
 // ── KPI Member Detail Modal (Year/Month only, one-way sync) ─────────
 const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth }: {
-  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string) => void,
+  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string, memberId?: string | number) => void,
   initialYear: number, initialMonth: number,
 }) => {
   const [detailYear, setDetailYear] = useState<number>(initialYear);
@@ -215,7 +215,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
               ) : (
                 sortedProjectRows.map(({ project: p, pTasks, pDone, pOpen, pCritical, pKpi }) => {
                   return (
-                    <div key={p.id} onClick={() => { onClose(); onNavigate(p.id, memberName); }} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]">
+                    <div key={p.id} onClick={() => { onClose(); onNavigate(p.id, memberName, member.id); }} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{p.name}</h4>
                         <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">{pOpen} task mở</span>
@@ -286,7 +286,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
                       const taskKpi = isDone ? (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0)) : 0;
                       const proj = projects.find((p: any) => String(p.id) === String(t.project_id));
                       return (
-                        <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id, memberName); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
+                        <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id, memberName, member.id); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
                           <td className="px-4 py-3">
                             <p className="font-bold text-[#0b1c30] text-xs">{t.name || t.detail || '-'}</p>
                           </td>
@@ -860,7 +860,7 @@ export default function KPIPage() {
                     tasks={allTasks}
                     projects={allProjects}
                     onClose={() => setSelectedMemberModal(null)}
-                    onNavigate={(projectId, memberName) => router.push(`/project/detail/tasks?id=${projectId}${memberName ? `&member=${encodeURIComponent(memberName)}` : ''}`)}
+                    onNavigate={(projectId, memberName, memberId) => router.push(`/project/detail/tasks?id=${projectId}${memberName ? `&member=${encodeURIComponent(memberName)}` : ''}${memberId != null ? `&member_id=${encodeURIComponent(String(memberId))}` : ''}`)}
                     initialYear={year ? parseInt(year) : new Date().getFullYear()}
                     initialMonth={month ? parseInt(month) : new Date().getMonth() + 1}
                 />

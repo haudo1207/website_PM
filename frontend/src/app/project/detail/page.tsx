@@ -259,6 +259,10 @@ function ProjectDetailContent() {
   // alongside the existing Assigned/Support dropdowns (which stay 'All' by
   // default), so it narrows the list without disabling manual re-filtering.
   const memberFilterParam = searchParams.get('member') || '';
+  // Numeric Member.id for that same person — needed to scope an AI Review
+  // to just them (assigned_id/support_id), since memberFilterParam only
+  // carries their display name for string-based table filtering.
+  const memberIdParam = searchParams.get('member_id') || '';
   // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
   // next.config.js rewrites that path server-side to /project/detail?tab=tasks
   // purely to pick which page component to render; it does NOT change what the
@@ -366,13 +370,15 @@ function ProjectDetailContent() {
 
   // AI Review Drawer states
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
-  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK'>('PROJECT');
+  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER'>('PROJECT');
   const [aiDrawerEntityId, setAiDrawerEntityId] = useState<number>(0);
   const [aiDrawerEntityName, setAiDrawerEntityName] = useState<string>('');
+  const [aiDrawerProjectId, setAiDrawerProjectId] = useState<number | undefined>(undefined);
 
-  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK', entityId: number, name = '') => {
+  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER', entityId: number, name = '') => {
     setAiDrawerEntityType(entityType);
     setAiDrawerEntityId(entityId);
+    setAiDrawerProjectId(entityType === 'MEMBER' ? Number(id) : undefined);
 
     let resolvedName = name;
     if (!resolvedName) {
@@ -384,11 +390,24 @@ function ProjectDetailContent() {
       } else if (entityType === 'TASK') {
         const foundTask = items.find(t => t.id === entityId);
         resolvedName = foundTask ? foundTask.detail : 'Task';
+      } else if (entityType === 'MEMBER') {
+        resolvedName = memberFilterParam || 'Thành viên';
       }
     }
 
     setAiDrawerEntityName(resolvedName);
     setIsAIDrawerOpen(true);
+  };
+
+  // When the Tasks tab is scoped to one person (via /kpi's drill-in), the
+  // toolbar's "AI Review" button should review that person's contribution
+  // to this project, not the whole project.
+  const handleOpenAIReviewDrawerForContext = () => {
+    if (memberIdParam) {
+      handleOpenAIReviewDrawer('MEMBER', Number(memberIdParam), memberFilterParam);
+    } else {
+      handleOpenAIReviewDrawer('PROJECT', Number(id));
+    }
   };
 
   const [activePhase, setActivePhase] = useState<string>('ALL');
@@ -5153,10 +5172,10 @@ function ProjectDetailContent() {
             )}
 
             <button
-              onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
+              onClick={handleOpenAIReviewDrawerForContext}
               className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
             >
-              <Sparkles size={14} /> AI Review
+              <Sparkles size={14} /> AI Review{memberIdParam ? ` · ${memberFilterParam}` : ''}
             </button>
 
             <button onClick={() => reloadAll()} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all flex items-center gap-1.5">
@@ -9415,6 +9434,7 @@ function ProjectDetailContent() {
         entityType={aiDrawerEntityType}
         entityId={aiDrawerEntityId}
         entityName={aiDrawerEntityName}
+        projectId={aiDrawerProjectId}
         onSuccessCheck={() => {
           reloadAll();
           loadProject();
