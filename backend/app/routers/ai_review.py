@@ -62,11 +62,20 @@ def get_or_create_default_prompts(db: Session, project_id: int):
                 "type": "MEMBER",
                 "name": "Member Check Prompt",
                 "prompt_content": (
-                    "Hãy đánh giá đóng góp của riêng thành viên này trong dự án.\n"
+                    "Hãy đánh giá đóng góp của thành viên này trong dự án theo hướng tích cực, khích lệ.\n"
                     "Chỉ dựa trên các task mà thành viên này là người thực hiện (assigned) "
                     "hoặc hỗ trợ (support) — không đánh giá phần việc của người khác.\n"
-                    "Nhận xét về khối lượng công việc, tiến độ hoàn thành, mức độ đúng hạn, "
-                    "và chất lượng/độ rõ ràng của các task đã hoặc đang thực hiện."
+                    "Ưu tiên nêu bật các điểm tốt trước: mức độ hoàn thành, tinh thần trách nhiệm, "
+                    "sự chủ động khi có task được ghi nhận đầy đủ, tiến độ nhìn chung ổn định.\n"
+                    "Việc thành viên đã khai báo/cập nhật task xem như một tín hiệu tích cực cho tiến độ "
+                    "— không xem đây là vấn đề cần nêu ra, không đề cập đến việc khai báo hay số lượng "
+                    "task như một điểm trừ.\n"
+                    "Nếu có điểm chưa tốt, hãy diễn đạt nhẹ nhàng và có phần khéo léo, xem đó như một gợi ý "
+                    "để thành viên hoàn thiện hơn chứ không phải một lỗi lớn — ví dụ có thể nói rằng nhịp độ "
+                    "xử lý một vài task có thể cần thêm chút thời gian để ổn định hơn, hoặc một số việc đang "
+                    "trong quá trình hoàn thiện và sẽ tốt hơn nếu được theo sát thêm một chút. Tránh dùng từ "
+                    "ngữ mang tính phê bình, quy kết hay tạo cảm giác tiêu cực; luôn giữ giọng văn xây dựng, "
+                    "động viên là chính."
                 )
             }
         ]

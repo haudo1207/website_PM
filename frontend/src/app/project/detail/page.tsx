@@ -399,15 +399,8 @@ function ProjectDetailContent() {
     setIsAIDrawerOpen(true);
   };
 
-  // When the Tasks tab is scoped to one person (via /kpi's drill-in), the
-  // toolbar's "AI Review" button should review that person's contribution
-  // to this project, not the whole project.
   const handleOpenAIReviewDrawerForContext = () => {
-    if (memberIdParam) {
-      handleOpenAIReviewDrawer('MEMBER', Number(memberIdParam), memberFilterParam);
-    } else {
-      handleOpenAIReviewDrawer('PROJECT', Number(id));
-    }
+    handleOpenAIReviewDrawer('PROJECT', Number(id));
   };
 
   const [activePhase, setActivePhase] = useState<string>('ALL');
@@ -5175,7 +5168,7 @@ function ProjectDetailContent() {
               onClick={handleOpenAIReviewDrawerForContext}
               className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
             >
-              <Sparkles size={14} /> AI Review{memberIdParam ? ` · ${memberFilterParam}` : ''}
+              <Sparkles size={14} /> AI Review
             </button>
 
             <button onClick={() => reloadAll()} className="text-xs font-bold px-4 py-2 rounded-lg bg-[#eff4ff] border border-[#0058be]/20 hover:bg-[#eff4ff]/80 text-[#0058be] transition-all flex items-center gap-1.5">
@@ -9435,6 +9428,7 @@ function ProjectDetailContent() {
         entityId={aiDrawerEntityId}
         entityName={aiDrawerEntityName}
         projectId={aiDrawerProjectId}
+        memberTab={memberIdParam ? { memberId: Number(memberIdParam), memberName: memberFilterParam, projectId: Number(id) } : undefined}
         onSuccessCheck={() => {
           reloadAll();
           loadProject();
