@@ -349,6 +349,12 @@ export const requestTaskChanges = (groupId: number, taskId: number, reason: stri
   api.post(`/task-groups/${groupId}/tasks/${taskId}/request-changes`, { reason }).then(r => r.data);
 export const requestTaskReview = (groupId: number, taskId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/request-review`).then(r => r.data);
+// Task Blocking workflow (Leader Review) - is_blocked layer, separate from
+// task.status. Same permission as generic task edit (project membership).
+export const blockTask = (groupId: number, taskId: number, reason: string, blockedByTaskId?: number | null) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/block`, { reason, blocked_by_task_id: blockedByTaskId || undefined }).then(r => r.data);
+export const unblockTask = (groupId: number, taskId: number) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/unblock`).then(r => r.data);
 export const moveTask = (groupId: number, taskId: number, targetGroupId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/move`, { target_group_id: targetGroupId }).then(r => r.data);
 export const moveTaskGroup = (phaseId: number, groupId: number, targetPhaseId: number) =>

@@ -107,6 +107,41 @@ def run_migration():
         if backfill.rowcount:
             print(f"Backfilled review_status='pending' on {backfill.rowcount} legacy task(s).")
 
+        # Task Blocking workflow columns (separate layer from `status`, cùng
+        # mô hình với Review workflow ở trên).
+        block_additions = []
+        if "is_blocked" not in existing_task_cols:
+            block_additions.append("ADD COLUMN is_blocked BOOLEAN NOT NULL DEFAULT false")
+        if "blocked_at" not in existing_task_cols:
+            block_additions.append("ADD COLUMN blocked_at TIMESTAMP NULL")
+        if "blocked_by" not in existing_task_cols:
+            block_additions.append("ADD COLUMN blocked_by INTEGER NULL")
+        if "blocked_reason" not in existing_task_cols:
+            block_additions.append("ADD COLUMN blocked_reason TEXT NULL")
+        if "blocked_by_task_id" not in existing_task_cols:
+            block_additions.append("ADD COLUMN blocked_by_task_id INTEGER NULL REFERENCES tasks_v2(id) ON DELETE SET NULL")
+        if "unblocked_at" not in existing_task_cols:
+            block_additions.append("ADD COLUMN unblocked_at TIMESTAMP NULL")
+        if "unblocked_by" not in existing_task_cols:
+            block_additions.append("ADD COLUMN unblocked_by INTEGER NULL")
+
+        if block_additions:
+            print(f"Adding blocking-workflow columns to 'tasks_v2' table: {block_additions}")
+            conn.execute(text("ALTER TABLE tasks_v2 " + ", ".join(block_additions)))
+            conn.commit()
+
+        # Legacy backfill: tasks đã có status tên chứa "block" trước khi có
+        # is_blocked - chỉ backfill 1 LẦN DUY NHẤT (guard bằng blocked_at IS
+        # NULL, không phải is_blocked=false) để không tự block lại 1 task đã
+        # được unblock chủ động qua workflow mới.
+        block_backfill = conn.execute(text("""
+            UPDATE tasks_v2 SET is_blocked = true, blocked_at = COALESCE(updated_at, created_at, NOW())
+            WHERE blocked_at IS NULL AND is_blocked = false AND status ILIKE '%block%'
+        """))
+        conn.commit()
+        if block_backfill.rowcount:
+            print(f"Backfilled is_blocked=true on {block_backfill.rowcount} legacy task(s).")
+
         print("Database schema migration completed successfully!")
 
 if __name__ == "__main__":

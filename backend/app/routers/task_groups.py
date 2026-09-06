@@ -544,7 +544,7 @@ def safe_float(val):
         return 0.0
 
 
-def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None, users_map=None):
+def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None, users_map=None, tasks_map=None):
     assigned_name = None
     support_name = None
     solution_name = None
@@ -557,6 +557,17 @@ def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None, us
             return users_map.get(user_id)
         u = db.query(User).filter(User.id == user_id).first()
         return u.full_name if u else None
+
+    def _resolve_blocking_task(task_id):
+        """blocked_by_task_id chỉ là 1 self-reference đơn giản (chưa có bảng
+        dependency thật) - trả (task_code, detail) để hiển thị 'Đang chờ: Task
+        X', không phải cả object Task đầy đủ."""
+        if not task_id:
+            return None
+        if tasks_map is not None:
+            return tasks_map.get(task_id)
+        bt = db.query(Task).filter(Task.id == task_id).first()
+        return {"task_code": bt.task_code, "detail": bt.detail} if bt else None
 
     try:
         if t.assigned_id:
@@ -654,6 +665,17 @@ def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None, us
         "change_requested_by_name": _resolve_user_name(getattr(t, "change_requested_by", None)),
         "change_request_reason": getattr(t, "change_request_reason", None),
         "last_review_action_at": str(t.last_review_action_at) if getattr(t, "last_review_action_at", None) else None,
+        # Blocking workflow - layer riêng, KHÔNG thay thế `status`.
+        "is_blocked": bool(getattr(t, "is_blocked", False)),
+        "blocked_at": str(t.blocked_at) if getattr(t, "blocked_at", None) else None,
+        "blocked_by": getattr(t, "blocked_by", None),
+        "blocked_by_name": _resolve_user_name(getattr(t, "blocked_by", None)),
+        "blocked_reason": getattr(t, "blocked_reason", None),
+        "blocked_by_task_id": getattr(t, "blocked_by_task_id", None),
+        "blocked_by_task": _resolve_blocking_task(getattr(t, "blocked_by_task_id", None)),
+        "unblocked_at": str(t.unblocked_at) if getattr(t, "unblocked_at", None) else None,
+        "unblocked_by": getattr(t, "unblocked_by", None),
+        "unblocked_by_name": _resolve_user_name(getattr(t, "unblocked_by", None)),
     }
 
 
@@ -865,6 +887,16 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
     groups_map = {g.id: g.name for g in db.query(Group).all()}
     skills_map = {s.id: s.name for s in db.query(Skill).all()}
     users_map = {u.id: u.full_name for u in db.query(User).all()}
+    # blocked_by_task_id resolution - chỉ cần task_code/detail của các task
+    # TRONG CHÍNH project này (blocking self-reference không xuyên project).
+    tasks_map = {
+        row.id: {"task_code": row.task_code, "detail": row.detail}
+        for row in db.query(Task.id, Task.task_code, Task.detail)
+            .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+            .join(Phase, TaskGroup.phase_id == Phase.id)
+            .filter(Phase.project_id == pid)
+            .all()
+    }
 
     try:
         query = (
@@ -879,7 +911,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
         results = query.order_by(Phase.sort_order, TaskGroup.sort_order, Task.sort_order, Task.id).all()
         for task, tg, phase in results:
             try:
-                t_dict = serialize_task(task, db, members_map, groups_map, skills_map, users_map)
+                t_dict = serialize_task(task, db, members_map, groups_map, skills_map, users_map, tasks_map)
                 t_dict["task_group_name"] = tg.name
                 t_dict["task_group_status"] = tg.status
                 t_dict["phase_name"] = phase.name
@@ -906,7 +938,7 @@ def list_all_project_tasks(pid: int, phase_id: int = None, db: Session = Depends
                             try:
                                 tg = tg_map.get(t.task_group_id)
                                 ph = phase_map.get(tg.phase_id) if tg else None
-                                t_dict = serialize_task(t, db, members_map, groups_map, skills_map, users_map)
+                                t_dict = serialize_task(t, db, members_map, groups_map, skills_map, users_map, tasks_map)
                                 t_dict["task_group_name"] = tg.name if tg else ""
                                 t_dict["task_group_status"] = tg.status if tg else "Waiting"
                                 t_dict["phase_name"] = ph.name if ph else ""
@@ -1131,6 +1163,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         "remark": getattr(task, "remark", None),
         "notes": getattr(task, "notes", None),
         "review_status": task.review_status,
+        "is_blocked": task.is_blocked,
     }
 
     # Detail validation
@@ -1191,6 +1224,22 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
             # pending (không phải attention nữa) nhưng KHÔNG đụng tới record
             # approved/changes_requested đã có (đó là lịch sử thật).
             task.review_status = None
+
+        # Blocking workflow sync - cùng mô hình edge-detection với Review ở
+        # trên: chỉ set/clear is_blocked khi status THỰC SỰ chuyển vào/ra khỏi
+        # 1 status chứa "block", không đè lên block/unblock đã làm qua API
+        # riêng (/block, /unblock) nếu status giữ nguyên không đổi.
+        entered_blocked = "block" in new_status_l and "block" not in old_status_l
+        left_blocked = "block" not in new_status_l and "block" in old_status_l
+        if entered_blocked and not task.is_blocked:
+            task.is_blocked = True
+            task.blocked_at = datetime.utcnow()
+            task.blocked_by = getattr(current_user, "id", None)
+            task.blocked_reason = task.blocked_reason or "Chuyển Status sang trạng thái Blocked"
+        elif left_blocked and task.is_blocked:
+            task.is_blocked = False
+            task.unblocked_at = datetime.utcnow()
+            task.unblocked_by = getattr(current_user, "id", None)
 
     # Dates
     if "start_date" in body:
@@ -1342,6 +1391,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         "remark": getattr(task, "remark", None),
         "notes": getattr(task, "notes", None),
         "review_status": task.review_status,
+        "is_blocked": task.is_blocked,
     }
     AuditService.record_diff(
         db=db,
@@ -1367,6 +1417,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
             "remark": "Ghi chú Remark",
             "notes": "Ghi chú Note",
             "review_status": "Trạng thái Review",
+            "is_blocked": "Đang bị chặn",
         }
     )
     db.commit()
@@ -1559,6 +1610,107 @@ def request_task_review(gid: int, tid: int, db: Session = Depends(get_db), curre
         field_name="review_status", old_value=old_review_status, new_value="pending",
         description=f"{actor_name} đã gửi lại task '{task.detail}' để review",
     )
+
+    return serialize_task(task, db)
+
+
+# ═══════════════════════════════════════════════════════════
+# TASK BLOCKING WORKFLOW (Leader Review: block / unblock)
+# is_blocked là layer riêng, tách khỏi `status`. Permission: KHÔNG dùng
+# is_project_leader như Review - block/unblock là hành động "báo cáo trạng
+# thái công việc", cùng cấp quyền với sửa task thường (chỉ router-level
+# require_route_project_access, không role gate thêm) - audit update_task xác
+# nhận nó cũng không có role gate nào ngoài project membership.
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/task-groups/{gid}/tasks/{tid}/block")
+def block_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    reason = (body.get("reason") or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(400, "Vui lòng nhập lý do bị chặn (tối thiểu 5 ký tự).")
+    if len(reason) > 1000:
+        raise HTTPException(400, "Lý do bị chặn tối đa 1000 ký tự.")
+
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+
+    blocked_by_task_id = body.get("blocked_by_task_id")
+    blocking_task = None
+    if blocked_by_task_id:
+        blocking_task = db.query(Task).filter(Task.id == blocked_by_task_id).first()
+        if not blocking_task:
+            raise HTTPException(400, "Task phụ thuộc không tồn tại.")
+        bt_tg = db.query(TaskGroup).filter(TaskGroup.id == blocking_task.task_group_id).first()
+        bt_phase = db.query(Phase).filter(Phase.id == bt_tg.phase_id).first() if bt_tg else None
+        if not bt_phase or bt_phase.project_id != project_id:
+            raise HTTPException(400, "Task phụ thuộc phải thuộc cùng project.")
+        if blocking_task.id == task.id:
+            raise HTTPException(400, "Task không thể phụ thuộc chính nó.")
+
+    old_is_blocked = task.is_blocked
+    now = datetime.utcnow()
+    task.is_blocked = True
+    task.blocked_at = now
+    task.blocked_by = getattr(current_user, "id", None)
+    task.blocked_reason = reason
+    task.blocked_by_task_id = blocking_task.id if blocking_task else None
+    db.commit()
+    db.refresh(task)
+
+    actor_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một thành viên")
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Task", entity_type="Task",
+        entity_id=task.id, action="BLOCK_TASK", project_id=project_id,
+        field_name="is_blocked", old_value=str(old_is_blocked), new_value="True",
+        description=f"{actor_name} đánh dấu task '{task.detail}' bị chặn: {reason}"
+                    + (f" (phụ thuộc task '{blocking_task.detail}')" if blocking_task else ""),
+    )
+    _notify_assignee(db, task, current_user, f"{actor_name} đánh dấu task '{task.detail}' bị chặn: {reason}", "task_blocked")
+    if blocking_task:
+        _notify_assignee(
+            db, blocking_task, current_user,
+            f"Task '{blocking_task.detail}' đang được xem là điều kiện chặn task '{task.detail}' ({actor_name} đánh dấu).",
+            "task_blocking_dependency",
+        )
+
+    return serialize_task(task, db)
+
+
+@router.post("/task-groups/{gid}/tasks/{tid}/unblock")
+def unblock_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+
+    if not task.is_blocked:
+        raise HTTPException(400, "Task hiện không bị block.")
+
+    old_is_blocked = task.is_blocked
+    now = datetime.utcnow()
+    task.is_blocked = False
+    task.unblocked_at = now
+    task.unblocked_by = getattr(current_user, "id", None)
+    # Giữ nguyên blocked_at/blocked_by/blocked_reason/blocked_by_task_id -
+    # đó là lịch sử ("từng bị chặn"), không xoá (mirror change_request_reason
+    # ở Review workflow).
+    db.commit()
+    db.refresh(task)
+
+    actor_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một thành viên")
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Task", entity_type="Task",
+        entity_id=task.id, action="UNBLOCK_TASK", project_id=project_id,
+        field_name="is_blocked", old_value=str(old_is_blocked), new_value="False",
+        description=f"{actor_name} đã gỡ chặn task '{task.detail}'",
+    )
+    _notify_assignee(db, task, current_user, f"{actor_name} đã gỡ chặn task '{task.detail}'.", "task_unblocked")
 
     return serialize_task(task, db)
 

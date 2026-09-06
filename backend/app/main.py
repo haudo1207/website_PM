@@ -166,6 +166,24 @@ def apply_schema_updates():
             WHERE review_status IS NULL AND status ILIKE '%review%'
         """))
 
+        # Task Blocking workflow columns (separate layer from `status`, cùng
+        # mô hình với Review workflow ở trên - xem models/task.py comment).
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT false"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS blocked_by INTEGER NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS blocked_reason TEXT NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS blocked_by_task_id INTEGER NULL REFERENCES tasks_v2(id) ON DELETE SET NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS unblocked_at TIMESTAMP NULL"))
+        conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS unblocked_by INTEGER NULL"))
+        # Legacy backfill: tasks đang có status tên chứa "block" (tenant tự đặt
+        # trước khi có is_blocked) - chỉ backfill 1 LẦN DUY NHẤT (guard bằng
+        # blocked_at IS NULL, không phải is_blocked=false) để không tự block
+        # lại 1 task đã được người dùng chủ động unblock qua workflow mới.
+        conn.execute(text("""
+            UPDATE tasks_v2 SET is_blocked = true, blocked_at = COALESCE(updated_at, created_at, NOW())
+            WHERE blocked_at IS NULL AND is_blocked = false AND status ILIKE '%block%'
+        """))
+
         # Add customer_id to projects and sync existing customer_names
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_id INTEGER"))
         conn.execute(text("""

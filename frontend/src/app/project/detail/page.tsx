@@ -28,7 +28,7 @@ import {
   getMembers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks,
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
-  approveTask, requestTaskChanges, requestTaskReview,
+  approveTask, requestTaskChanges, requestTaskReview, blockTask, unblockTask,
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup,
   getMe,
@@ -424,6 +424,14 @@ function ProjectDetailContent() {
   const [confirmingApproveTask, setConfirmingApproveTask] = useState(false);
   const [requestChangesOpen, setRequestChangesOpen] = useState(false);
   const [changeRequestReason, setChangeRequestReason] = useState('');
+  // Blocking workflow (Đánh dấu bị chặn/Gỡ chặn) - modal DÙNG CHUNG cho cả 3
+  // nơi kích hoạt: nút trong Task Edit Drawer, nút trong Leader Review Detail
+  // Drawer, và chọn thẳng 1 status chứa "block" từ dropdown Status (statusValue
+  // có giá trị thì confirm sẽ lưu status đó trước khi gọi /block).
+  const [blockActionBusy, setBlockActionBusy] = useState(false);
+  const [blockPrompt, setBlockPrompt] = useState<{ taskId: number; statusValue?: string } | null>(null);
+  const [blockReason, setBlockReason] = useState('');
+  const [blockDependencyTaskId, setBlockDependencyTaskId] = useState('');
   const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
   const [showAllKpi, setShowAllKpi] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -570,6 +578,63 @@ function ProjectDetailContent() {
       flash(err.response?.data?.detail || 'Lỗi khi gửi review.', true);
     } finally {
       setReviewActionBusy(false);
+    }
+  };
+
+  // Blocking workflow - dùng chung cho cả Task Edit Drawer (selectedTask) và
+  // Leader Review Detail Drawer (leaderReviewDetailTask); cập nhật state nào
+  // đang mở khớp đúng task đó từ response, không reload toàn page.
+  // Handler cho modal block DÙNG CHUNG (blockPrompt) - task lấy từ items theo
+  // blockPrompt.taskId, không phải tham số riêng, vì modal có thể được mở từ
+  // Task Edit Drawer, Leader Review Detail Drawer, hoặc dropdown Status (lúc
+  // đó blockPrompt.statusValue có giá trị - lưu status đó TRƯỚC khi /block để
+  // cell hiển thị đúng "Blocked" thay vì lý do placeholder chung chung).
+  const handleConfirmBlockTask = async () => {
+    if (!blockPrompt) return;
+    const task = items.find((it: any) => it.id === blockPrompt.taskId);
+    if (!task) { setBlockPrompt(null); return; }
+    const reason = blockReason.trim();
+    if (reason.length < 5) {
+      flash('Vui lòng nhập lý do bị chặn (tối thiểu 5 ký tự).', true);
+      return;
+    }
+    if (blockActionBusy) return;
+    setBlockActionBusy(true);
+    try {
+      if (blockPrompt.statusValue) {
+        await updateTask(task.task_group_id, task.id, { status: blockPrompt.statusValue });
+      }
+      const depId = blockDependencyTaskId ? Number(blockDependencyTaskId) : undefined;
+      const updated = await blockTask(task.task_group_id, task.id, reason, depId);
+      if (selectedTask && selectedTask.id === updated.id) setSelectedTask(updated);
+      if (leaderReviewDetailTask && leaderReviewDetailTask.id === updated.id) setLeaderReviewDetailTask(updated);
+      setBlockPrompt(null);
+      setBlockReason('');
+      setBlockDependencyTaskId('');
+      flash('Đã đánh dấu task bị chặn!');
+      refetchTasks();
+      queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
+    } catch (err: any) {
+      flash(err.response?.data?.detail || 'Lỗi khi đánh dấu bị chặn.', true);
+    } finally {
+      setBlockActionBusy(false);
+    }
+  };
+
+  const handleUnblockTask = async (task: any) => {
+    if (blockActionBusy) return;
+    setBlockActionBusy(true);
+    try {
+      const updated = await unblockTask(task.task_group_id, task.id);
+      if (selectedTask && selectedTask.id === updated.id) setSelectedTask(updated);
+      if (leaderReviewDetailTask && leaderReviewDetailTask.id === updated.id) setLeaderReviewDetailTask(updated);
+      flash('Đã gỡ chặn task!');
+      refetchTasks();
+      queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
+    } catch (err: any) {
+      flash(err.response?.data?.detail || 'Lỗi khi gỡ chặn.', true);
+    } finally {
+      setBlockActionBusy(false);
     }
   };
 
@@ -1876,6 +1941,21 @@ function ProjectDetailContent() {
         payload.manday_est = value ? parseFloat(value) : null;
         break;
       case 'STATUS': {
+        // Chọn 1 status chứa "block" (khác status hiện tại) - bắt nhập lý do
+        // THẬT trước khi lưu, thay vì để backend tự set lý do placeholder
+        // chung chung. Chặn lại save ở đây, mở modal riêng, chỉ lưu status +
+        // gọi /block với lý do thật sau khi user xác nhận.
+        {
+          const sBlockCheck = (value || '').trim().toLowerCase();
+          const wasBlocked = task.is_blocked || (task.status || '').trim().toLowerCase().includes('block');
+          if (sBlockCheck.includes('block') && !wasBlocked) {
+            setEditingCell(null);
+            setBlockReason('');
+            setBlockDependencyTaskId('');
+            setBlockPrompt({ taskId, statusValue: value });
+            return;
+          }
+        }
         payload.status = value;
         const s = (value || '').trim().toLowerCase();
         if (s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish')) {
@@ -2124,6 +2204,7 @@ function ProjectDetailContent() {
     if (s === 'done' || s === 'completed' || s === 'hoàn tất') return { label: 'Done', dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-[#dcfce7] text-[#15803d]' };
     if (s === 'process' || s === 'doing' || s === 'in progress' || s === 'đang xử lý') return { label: 'Process', dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-[#fef9c3] text-[#854d0e]' };
     if (s === 'review') return { label: 'Review', dot: 'bg-blue-500', text: 'text-[#0058be]', bg: 'bg-[#dbeafe] text-[#1d4ed8]' };
+    if (s.includes('block')) return { label: status || 'Blocked', dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50 text-rose-700' };
     if (s === 'pending') return { label: 'Pending', dot: 'bg-slate-400', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
     return { label: status || 'Todo', dot: 'bg-slate-500', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
   };
@@ -2408,9 +2489,10 @@ function ProjectDetailContent() {
   //   - Overdue      : calculateDaysLate(task) > 0 (cùng hàm dùng cho cột
   //                     "Days Late" và overdueTasksList ở trên - đã tự loại
   //                     Done/Cancel).
-  //   - Blocked       : task.status chứa "block" (status là free-text do admin
-  //                     tự đặt tên trong Settings > Statuses, không phải enum
-  //                     cố định - xem getStatusInfo/dbStatuses).
+  //   - Blocked       : task.is_blocked === true (layer blocking THẬT, riêng
+  //                     với status - xem backend models/task.py). Fallback
+  //                     status chứa "block" CHỈ khi is_blocked chưa từng được
+  //                     set (legacy trước khi có cột is_blocked/backfill).
   //   - Review pending: task.review_status === 'pending' (layer review THẬT,
   //                     riêng với status - xem backend models/task.py). Fallback
   //                     status chứa "review" CHỈ khi review_status chưa có giá
@@ -2430,7 +2512,8 @@ function ProjectDetailContent() {
       const isDoneOrCancel = statusL === 'done' || statusL === 'completed' || statusL === 'cancel' || statusL.includes('hoàn') || statusL.includes('finish') || statusL.includes('hủy');
       const daysLate = calculateDaysLate(t);
       const overdue = daysLate > 0;
-      const blocked = statusL.includes('block');
+      const blocked = t.is_blocked === true || (!t.is_blocked && statusL.includes('block'));
+      const blockedDays = blocked && t.blocked_at ? Math.max(0, Math.floor((Date.now() - new Date(t.blocked_at).getTime()) / 86400000)) : 0;
       const needReview = t.review_status === 'pending' || (!t.review_status && statusL.includes('review'));
       const unassigned = !isDoneOrCancel && !(t.assigned_name && t.assigned_name.trim());
       if (!overdue && !blocked && !needReview && !unassigned) return null;
@@ -2451,8 +2534,8 @@ function ProjectDetailContent() {
         : (priorityL === 'normal' || priorityL === 'medium') ? 3
         : 4;
 
-      return { task: t, daysLate, overdue, blocked, needReview, unassigned, rank, priorityWeight };
-    }).filter(Boolean) as Array<{ task: any; daysLate: number; overdue: boolean; blocked: boolean; needReview: boolean; unassigned: boolean; rank: number; priorityWeight: number }>;
+      return { task: t, daysLate, overdue, blocked, blockedDays, needReview, unassigned, rank, priorityWeight };
+    }).filter(Boolean) as Array<{ task: any; daysLate: number; overdue: boolean; blocked: boolean; blockedDays: number; needReview: boolean; unassigned: boolean; rank: number; priorityWeight: number }>;
 
     rows.sort((a, b) => {
       if (a.rank !== b.rank) return a.rank - b.rank;
@@ -6819,7 +6902,7 @@ function ProjectDetailContent() {
                                 const t = a.task;
                                 const reasonParts: string[] = [];
                                 if (a.overdue) reasonParts.push(`Quá hạn ${a.daysLate} ngày`);
-                                if (a.blocked) reasonParts.push('Blocked');
+                                if (a.blocked) reasonParts.push(a.blockedDays > 0 ? `Blocked ${a.blockedDays} ngày` : 'Blocked');
                                 if (a.needReview) reasonParts.push('đang chờ review');
                                 if (a.unassigned) reasonParts.push('chưa có người phụ trách');
                                 const reasonText = reasonParts.slice(0, 2).join(' · ');
@@ -9347,7 +9430,12 @@ function ProjectDetailContent() {
           const deadlineStr = formatDateToShow(t.end_date_est || '');
           reasons.push({ Icon: Clock, tone: 'rose', label: 'Overdue', text: `Quá hạn ${attentionInfo.daysLate} ngày${deadlineStr ? ` · deadline ${deadlineStr}` : ''}` });
         }
-        if (attentionInfo?.blocked) reasons.push({ Icon: Ban, tone: 'amber', label: 'Blocked', text: 'Task đang ở trạng thái Blocked' });
+        if (attentionInfo?.blocked) {
+          const blockedParts = [`Blocked ${attentionInfo.blockedDays} ngày`];
+          if (t.blocked_reason) blockedParts.push(`Lý do: ${t.blocked_reason}`);
+          if (t.blocked_by_task) blockedParts.push(`Đang chờ: ${t.blocked_by_task.task_code || t.blocked_by_task.detail}`);
+          reasons.push({ Icon: Ban, tone: 'amber', label: 'Blocked', text: blockedParts.join(' · ') });
+        }
         if (attentionInfo?.unassigned) reasons.push({ Icon: UserX, tone: 'slate', label: 'Unassigned', text: 'Chưa có người phụ trách' });
         if (attentionInfo?.needReview) reasons.push({ Icon: CheckCircle2, tone: 'blue', label: 'Review pending', text: 'Đang chờ Leader Review' });
         if (isCritical) reasons.push({ Icon: AlertTriangle, tone: 'purple', label: 'Critical', text: 'Mức ưu tiên Critical' });
@@ -9468,6 +9556,31 @@ function ProjectDetailContent() {
                   </div>
                 )}
 
+                {/* Blocking banner - is_blocked là lịch sử thật, blocked_reason/
+                    blocked_by_task không bị xoá khi unblock (mirror change_
+                    request_reason ở trên). */}
+                {t.is_blocked && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-[12.5px]">
+                    <div className="font-bold text-amber-800 flex items-center gap-1.5"><Ban size={14} /> Đang bị chặn</div>
+                    {t.blocked_reason && <div className="mt-1 text-amber-800">{t.blocked_reason}</div>}
+                    {t.blocked_by_task && (
+                      <div className="mt-1 text-amber-700">Đang chờ: <span className="font-semibold">{t.blocked_by_task.task_code}</span> - {t.blocked_by_task.detail}</div>
+                    )}
+                    <div className="mt-1 text-amber-600 text-[11px]">
+                      bởi {t.blocked_by_name || 'Một thành viên'}{t.blocked_at ? ` · ${formatTimeAgo(t.blocked_at)}` : ''}
+                    </div>
+                  </div>
+                )}
+                {!t.is_blocked && t.blocked_reason && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-[12.5px]">
+                    <div className="font-bold text-slate-500 flex items-center gap-1.5"><Ban size={13} /> Từng bị chặn (đã gỡ)</div>
+                    <div className="mt-1 text-slate-500">{t.blocked_reason}</div>
+                    <div className="mt-1 text-slate-400 text-[11px]">
+                      Gỡ bởi {t.unblocked_by_name || 'Một thành viên'}{t.unblocked_at ? ` · ${formatTimeAgo(t.unblocked_at)}` : ''}
+                    </div>
+                  </div>
+                )}
+
                 {/* Action phù hợp theo reason/status - TOÀN BỘ khu vực Hành động
                     (kể cả AI check/Chỉnh sửa/More menu, không chỉ riêng Duyệt/
                     Yêu cầu sửa) chỉ dành cho Admin/Leader dự án/Super Admin -
@@ -9506,6 +9619,22 @@ function ProjectDetailContent() {
                         className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
                       >
                         <CheckCircle2 size={14} /> {reviewActionBusy ? 'Đang gửi...' : 'Gửi lại để review'}
+                      </button>
+                    )}
+                    {t.is_blocked ? (
+                      <button
+                        onClick={() => handleUnblockTask(t)}
+                        disabled={blockActionBusy}
+                        className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
+                      >
+                        <CheckCircle2 size={14} /> {blockActionBusy ? 'Đang gỡ...' : 'Gỡ chặn'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { setBlockReason(''); setBlockDependencyTaskId(''); setBlockPrompt({ taskId: t.id }); }}
+                        className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors flex items-center gap-1.5"
+                      >
+                        <Ban size={14} /> Đánh dấu bị chặn
                       </button>
                     )}
                     <button
@@ -9760,6 +9889,38 @@ function ProjectDetailContent() {
                 />
               </div>
 
+              {/* Blocking workflow - is_blocked layer riêng, không phải fake
+                  UI: dùng đúng blockTask/unblockTask API, cùng quyền sửa task
+                  thường (không leader-only như Duyệt/Yêu cầu sửa). */}
+              {selectedTask.is_blocked ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-[12.5px]">
+                  <div className="font-bold text-amber-800 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5"><Ban size={14} /> Task đang bị chặn</span>
+                    <button
+                      onClick={() => handleUnblockTask(selectedTask)}
+                      disabled={blockActionBusy}
+                      className="h-7 px-2.5 rounded-md text-[11.5px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-60"
+                    >
+                      {blockActionBusy ? 'Đang gỡ...' : 'Gỡ chặn'}
+                    </button>
+                  </div>
+                  {selectedTask.blocked_reason && <div className="mt-1.5 text-amber-800">{selectedTask.blocked_reason}</div>}
+                  {selectedTask.blocked_by_task && (
+                    <div className="mt-1 text-amber-700">Đang chờ: <span className="font-semibold">{selectedTask.blocked_by_task.task_code}</span> - {selectedTask.blocked_by_task.detail}</div>
+                  )}
+                  <div className="mt-1 text-amber-600 text-[11px]">
+                    bởi {selectedTask.blocked_by_name || 'Một thành viên'}{selectedTask.blocked_at ? ` · ${formatTimeAgo(selectedTask.blocked_at)}` : ''}
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setBlockReason(''); setBlockDependencyTaskId(''); setBlockPrompt({ taskId: selectedTask.id }); }}
+                  className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors flex items-center gap-1.5 w-fit"
+                >
+                  <Ban size={14} /> Đánh dấu bị chặn
+                </button>
+              )}
+
               {/* Status & Priority */}
               <div className="grid grid-cols-2 gap-x-5 gap-y-4">
                 <div>
@@ -10001,6 +10162,71 @@ function ProjectDetailContent() {
           </div>
         </div>
       )}
+      {/* Modal Đánh dấu bị chặn - DÙNG CHUNG cho Task Edit Drawer, Leader Review
+          Detail Drawer, và dropdown Status chọn thẳng 1 status chứa "block"
+          (blockPrompt.statusValue có giá trị thì confirm sẽ lưu status đó
+          trước khi gọi /block - xem handleConfirmBlockTask). */}
+      {blockPrompt && (() => {
+        const bpTask = items.find((it: any) => it.id === blockPrompt.taskId);
+        if (!bpTask) return null;
+        return (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="p-6 space-y-3">
+                <div className="flex items-center gap-3 text-amber-600">
+                  <Ban size={22} />
+                  <h3 className="text-base font-bold text-[#0b1c30]">Đánh dấu bị chặn</h3>
+                </div>
+                <p className="text-xs text-slate-500 truncate">{bpTask.task_code} - {bpTask.detail}</p>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Lý do bị chặn *</label>
+                  <textarea
+                    value={blockReason}
+                    onChange={e => setBlockReason(e.target.value)}
+                    placeholder="Nhập lý do task bị chặn (bắt buộc)..."
+                    rows={3}
+                    autoFocus
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-amber-400 transition-colors resize-none"
+                  />
+                  {blockReason.trim().length > 0 && blockReason.trim().length < 5 && (
+                    <p className="text-[11px] text-rose-600 mt-1">Cần tối thiểu 5 ký tự ({blockReason.trim().length}/5).</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Task phụ thuộc (không bắt buộc)</label>
+                  <select
+                    value={blockDependencyTaskId}
+                    onChange={e => setBlockDependencyTaskId(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-amber-400"
+                  >
+                    <option value="">-- Không có --</option>
+                    {items.filter((it: any) => it.id !== bpTask.id).map((it: any) => (
+                      <option key={it.id} value={it.id}>{it.task_code} - {(it.detail || '').slice(0, 60)}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  onClick={() => { setBlockPrompt(null); setBlockReason(''); setBlockDependencyTaskId(''); }}
+                  disabled={blockActionBusy}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-60"
+                >
+                  Huỷ
+                </button>
+                <button
+                  onClick={handleConfirmBlockTask}
+                  disabled={blockActionBusy}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 transition-colors shadow-sm disabled:opacity-60"
+                >
+                  {blockActionBusy ? 'Đang lưu...' : 'Đánh dấu bị chặn'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Modal xác nhận xóa task */}
       {taskToDelete !== null && (() => {
         const taskBeingDeleted = items.find(item => item.id === taskToDelete);
