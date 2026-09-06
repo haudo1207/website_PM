@@ -507,7 +507,11 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
             creator_email=creator_email,
             start_iso=start.isoformat(),
             end_iso=end.isoformat(),
-            attendees_emails=[creator_email] if creator_email else [],
+            # No attendees: adding the creator's own email here is what makes the
+            # event auto-appear on their personal Google Calendar/Gmail (and can
+            # trigger their own account's notification-email settings, which
+            # sendUpdates=none below cannot suppress) — omitted on purpose.
+            attendees_emails=[],
             db=db
         )
         if res.get("meet_link"):
