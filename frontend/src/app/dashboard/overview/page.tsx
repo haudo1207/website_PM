@@ -1292,8 +1292,15 @@ export default function OverviewTab() {
           if (calculateDaysLate(t) > 0) o++;
         }
       });
-      const kpiVal = typeof m.kpi_total === 'number' && m.kpi_total > 0 ? m.kpi_total : k;
-      const mandayVal = typeof m.manday_total === 'number' && m.manday_total > 0 ? m.manday_total : md;
+      // HT (actual) always comes from myTasks — the SAME filtered list Giao
+      // is computed from (Workspace switcher + Tuần/Tháng/Năm period) — so
+      // the two numbers can never drift apart in scope. Previously this
+      // preferred the backend's m.kpi_total/m.manday_total when positive,
+      // but those fields sum ALL of the member's Done tasks company-wide
+      // (every Workspace, month-level at best — no week granularity),
+      // ignoring both the Workspace switcher and any Tuần filter, which
+      // is exactly why HT could show a number far larger than Giao for a
+      // Leader/Member holding Phụ Workspaces or viewing a single week.
       return {
         id: m.id,
         name: m.display_name || m.full_name,
@@ -1303,9 +1310,9 @@ export default function OverviewTab() {
         done: d,
         inProgress: i,
         overdue: o,
-        manday: Math.round(mandayVal * 10) / 10,
+        manday: Math.round(md * 10) / 10,
         mandayPlanned: Math.round(mdPlanned * 10) / 10,
-        kpi: Math.round(kpiVal * 10) / 10,
+        kpi: Math.round(k * 10) / 10,
         kpiPlanned: Math.round(kpiPlanned * 10) / 10,
         mandayByWs,
         rawMember: m
