@@ -557,7 +557,7 @@ def get_meeting_insights(
     ]
     top_people = [
         {"name": name, "hours": round(h, 1), "meetings": per_person_meetings[name]}
-        for name, h in sorted(per_person_hours.items(), key=lambda x: -x[1])[:10]
+        for name, h in sorted(per_person_hours.items(), key=lambda x: -x[1])
     ]
 
     alerts = []

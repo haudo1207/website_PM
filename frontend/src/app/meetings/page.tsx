@@ -96,6 +96,7 @@ function MeetingsPageContent() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
+  const [showAllPeople, setShowAllPeople] = useState(false);
 
   // Scroll-anchor refs for the secondary nav row (mirrors the prototype's
   // Tổng quan/Cuộc họp/Theo nhân sự/Theo dự án/Chất lượng họp tabs, which
@@ -231,6 +232,25 @@ function MeetingsPageContent() {
     return names;
   }, [insightsData]);
 
+  // Switching Workspace changes which projects/people/platforms even exist in
+  // `meetings` — a project/person/platform filter picked under the old
+  // Workspace almost never matches anything in the new one, which used to
+  // just silently show an empty table with no clue why. Reset those (and the
+  // page) back to "All" whenever the Workspace changes; free-text search and
+  // month aren't tied to a specific Workspace's option list, so they're left
+  // alone.
+  const isFirstWorkspaceRender = useRef(true);
+  useEffect(() => {
+    if (isFirstWorkspaceRender.current) {
+      isFirstWorkspaceRender.current = false;
+      return;
+    }
+    setProjectFilter('All');
+    setPersonFilter('All');
+    setPlatformFilter('All');
+    setCurrentPage(1);
+  }, [workspaceCode]);
+
   // Parse URL search params for tab and meeting ID deep linking
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -336,6 +356,43 @@ function MeetingsPageContent() {
     const start = (currentPage - 1) * pageSize;
     return filteredMeetings.slice(start, start + pageSize);
   }, [filteredMeetings, currentPage, pageSize]);
+
+  // "Tải họp theo dự án" / "Nhân sự theo giờ họp" must track the currently
+  // applied search/project/person/platform/month/quick filters — insightsData
+  // comes from a separate backend aggregate over ALL of the caller's meetings
+  // (date-range only) and doesn't know about these table filters, so it was
+  // showing company-wide numbers no matter what the table below was filtered
+  // to. Recomputed here from filteredMeetings instead so both stay in sync.
+  // (overloadedNames intentionally keeps using the unfiltered insightsData —
+  // "quá tải" is a real, absolute signal about a person's total load, not
+  // something that should change depending on today's search text.)
+  const filteredProjectLoad = useMemo(() => {
+    const hoursByProject = new Map<string, number>();
+    filteredMeetings.forEach(m => {
+      const h = typeof m.duration === 'number' ? m.duration / 60 : 1;
+      Array.from(new Set(getMeetingProjectNames(m))).forEach(name => {
+        hoursByProject.set(name, (hoursByProject.get(name) || 0) + h);
+      });
+    });
+    return Array.from(hoursByProject.entries())
+      .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+      .sort((a, b) => b.hours - a.hours);
+  }, [filteredMeetings]);
+
+  const filteredTopPeople = useMemo(() => {
+    const hoursByName = new Map<string, number>();
+    const meetingsByName = new Map<string, number>();
+    filteredMeetings.forEach(m => {
+      const h = typeof m.duration === 'number' ? m.duration / 60 : 1;
+      getMeetingParticipants(m).forEach(p => {
+        hoursByName.set(p.name, (hoursByName.get(p.name) || 0) + h);
+        meetingsByName.set(p.name, (meetingsByName.get(p.name) || 0) + 1);
+      });
+    });
+    return Array.from(hoursByName.entries())
+      .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10, meetings: meetingsByName.get(name) || 0 }))
+      .sort((a, b) => b.hours - a.hours);
+  }, [filteredMeetings]);
 
   const handleOpenEditFromDetail = (m: any) => {
     setCameFromDetail(m);
@@ -925,12 +982,12 @@ function MeetingsPageContent() {
               <div ref={insightSectionRef} className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-4">
                   <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Tải họp theo dự án</h3>
-                  {(insightsData?.project_load || []).length === 0 ? (
+                  {filteredProjectLoad.length === 0 ? (
                     <p className="text-[11px] text-[#94a3b8]">Chưa có dữ liệu.</p>
                   ) : (
                     <div className="space-y-2.5">
-                      {(insightsData?.project_load || []).slice(0, 6).map((p: any) => {
-                        const max = insightsData.project_load[0]?.hours || 1;
+                      {filteredProjectLoad.slice(0, 6).map((p: any) => {
+                        const max = filteredProjectLoad[0]?.hours || 1;
                         return (
                           <div key={p.name} className="grid grid-cols-[1fr_2fr_44px] items-center gap-2.5">
                             <span className="text-[11px] text-[#52627a] truncate">{p.name}</span>
@@ -943,21 +1000,32 @@ function MeetingsPageContent() {
                   )}
                 </div>
                 <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-4">
-                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Top nhân sự theo giờ họp</h3>
-                  {(insightsData?.top_people || []).length === 0 ? (
+                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Nhân sự theo giờ họp</h3>
+                  {filteredTopPeople.length === 0 ? (
                     <p className="text-[11px] text-[#94a3b8]">Chưa có dữ liệu.</p>
                   ) : (
-                    <div className="space-y-2">
-                      {(insightsData?.top_people || []).slice(0, 5).map((p: any) => (
-                        <div key={p.name} className="flex items-center justify-between py-1.5 border-b border-[#edf1f6] last:border-0">
-                          <div>
-                            <p className="text-[11px] font-bold text-[#0b1c30]">{p.name}</p>
-                            <p className="text-[10px] text-[#8492a6]">{p.meetings} cuộc họp</p>
+                    <>
+                      <div className="space-y-2">
+                        {filteredTopPeople.slice(0, showAllPeople ? undefined : 5).map((p: any) => (
+                          <div key={p.name} className="flex items-center justify-between py-1.5 border-b border-[#edf1f6] last:border-0">
+                            <div>
+                              <p className="text-[11px] font-bold text-[#0b1c30]">{p.name}</p>
+                              <p className="text-[10px] text-[#8492a6]">{p.meetings} cuộc họp</p>
+                            </div>
+                            <span className={`text-xs font-extrabold ${p.hours > 8 ? 'text-red-600' : p.hours > 6 ? 'text-amber-600' : 'text-[#0b1c30]'}`}>{p.hours}h</span>
                           </div>
-                          <span className={`text-xs font-extrabold ${p.hours > 8 ? 'text-red-600' : p.hours > 6 ? 'text-amber-600' : 'text-[#0b1c30]'}`}>{p.hours}h</span>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                      {filteredTopPeople.length > 5 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAllPeople(v => !v)}
+                          className="mt-2.5 text-[11px] font-bold text-[#6366f1] hover:underline"
+                        >
+                          {showAllPeople ? 'Thu gọn' : `Xem tất cả (${filteredTopPeople.length})`}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
                 <div ref={qualitySectionRef} className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-4">
