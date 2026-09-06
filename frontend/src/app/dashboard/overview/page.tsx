@@ -1292,8 +1292,15 @@ export default function OverviewTab() {
           if (calculateDaysLate(t) > 0) o++;
         }
       });
-      const kpiVal = typeof m.kpi_total === 'number' && m.kpi_total > 0 ? m.kpi_total : k;
-      const mandayVal = typeof m.manday_total === 'number' && m.manday_total > 0 ? m.manday_total : md;
+      // HT (actual) always comes from myTasks — the SAME filtered list Giao
+      // is computed from (Workspace switcher + Tuần/Tháng/Năm period) — so
+      // the two numbers can never drift apart in scope. Previously this
+      // preferred the backend's m.kpi_total/m.manday_total when positive,
+      // but those fields sum ALL of the member's Done tasks company-wide
+      // (every Workspace, month-level at best — no week granularity),
+      // ignoring both the Workspace switcher and any Tuần filter, which
+      // is exactly why HT could show a number far larger than Giao for a
+      // Leader/Member holding Phụ Workspaces or viewing a single week.
       return {
         id: m.id,
         name: m.display_name || m.full_name,
@@ -1303,9 +1310,9 @@ export default function OverviewTab() {
         done: d,
         inProgress: i,
         overdue: o,
-        manday: Math.round(mandayVal * 10) / 10,
+        manday: Math.round(md * 10) / 10,
         mandayPlanned: Math.round(mdPlanned * 10) / 10,
-        kpi: Math.round(kpiVal * 10) / 10,
+        kpi: Math.round(k * 10) / 10,
         kpiPlanned: Math.round(kpiPlanned * 10) / 10,
         mandayByWs,
         rawMember: m
@@ -1668,7 +1675,7 @@ export default function OverviewTab() {
               return (
               <div key={ld.name} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
@@ -1735,7 +1742,7 @@ export default function OverviewTab() {
               return (
               <div key={m.id} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('owned'); }}
+                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
