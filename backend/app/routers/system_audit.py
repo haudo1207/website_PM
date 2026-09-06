@@ -903,6 +903,10 @@ def _aggregate_team_comparison(
     # 7. Build member-id list across all kept leaders, fetch tasks in one go.
     team_member_ids: set[int] = set()
     for li in leader_info:
+        # Include the leader's own member_id so their personal task data
+        # is included in per_member / per_member_period_kpi aggregations.
+        if li["member_id"] is not None:
+            team_member_ids.add(li["member_id"])
         for m in team_by_leader.get(li["member_id"], []):
             if m.id is not None:
                 team_member_ids.add(m.id)
@@ -1338,6 +1342,27 @@ def _aggregate_team_comparison(
         leader_period_kpi = per_member_period_kpi.get(leader_member_id, 0.0)
         leader_kpi_pct = round(leader_period_kpi / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
 
+        # Leader's personal task aggregates (NOT team aggregate).
+        # These fields allow the frontend Leader card to display the
+        # Leader's own Done/Doing/Overdue/KPI/Manday independently.
+        lm = per_member.get(leader_member_id, {})
+        lm_a_total = lm.get("assigned_total", 0)
+        lm_a_done  = lm.get("assigned_done", 0)
+        lm_a_over  = lm.get("assigned_overdue", 0)
+        lm_a_md_est  = lm.get("assigned_manday_est", 0.0)
+        lm_a_md_act  = lm.get("assigned_manday_actual", 0.0)
+        lm_a_kpi   = lm.get("assigned_kpi", 0.0)
+        lm_s_total = lm.get("support_total", 0)
+        lm_s_done  = lm.get("support_done", 0)
+        lm_s_over  = lm.get("support_overdue", 0)
+        lm_s_md_est  = lm.get("support_manday_est", 0.0)
+        lm_s_md_act  = lm.get("support_manday_actual", 0.0)
+        lm_s_kpi   = lm.get("support_kpi", 0.0)
+        lm_tot = lm_a_total + lm_s_total
+        lm_dn  = lm_a_done + lm_s_done
+        lm_ov  = lm_a_over + lm_s_over
+        lm_inprog = max(lm_tot - lm_dn - lm_ov, 0)
+
         teams_out.append({
             "leader_user_id": li["user_id"],
             "leader_member_id": leader_member_id,
@@ -1363,6 +1388,13 @@ def _aggregate_team_comparison(
             # Leader's individual workload KPI (own tasks only)
             "leader_period_kpi": round(leader_period_kpi, 2),
             "leader_kpi_pct": leader_kpi_pct,
+            # Leader's personal task aggregates (own tasks only, NOT team)
+            "leader_done": lm_dn,
+            "leader_doing": lm_inprog,
+            "leader_overdue": lm_ov,
+            "leader_kpi": round(lm_a_kpi + lm_s_kpi, 2),
+            "leader_manday_est": round(lm_a_md_est + lm_s_md_est, 2),
+            "leader_manday_actual": round(lm_a_md_act + lm_s_md_act, 2),
         })
 
     # Stable ordering: highest KPI first, then most members.

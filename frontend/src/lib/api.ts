@@ -799,6 +799,13 @@ export interface TeamComparisonTeam {
   // Leader's individual workload KPI (own tasks only, NOT team aggregate)
   leader_period_kpi: number;
   leader_kpi_pct: number;
+  // Leader's personal task aggregates (own tasks only, NOT team)
+  leader_done: number;
+  leader_doing: number;
+  leader_overdue: number;
+  leader_kpi: number;
+  leader_manday_est: number;
+  leader_manday_actual: number;
 }
 export interface WorkloadSetting {
   status_key: string;
