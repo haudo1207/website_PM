@@ -710,7 +710,10 @@ export default function MultiTeamProjectComparison() {
             </p>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {teamsList.map(t => {
+              {(appliedLeaderIds.length > 0
+                ? teamsList.filter(t => appliedLeaderIds.includes(t.leader_user_id))
+                : teamsList
+              ).map(t => {
                 const teamMembers = t.members || [];
                 const totalMembers = teamMembers.length;
                 const emptyMembers = teamMembers.filter(m => (m.total || 0) === 0).length;
