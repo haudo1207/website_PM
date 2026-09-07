@@ -44,6 +44,12 @@ class ZaloConversation(Base):
     # When set, messages matching the /task syntax in this conversation
     # create a Task under this project (see services/zalo_task_parser.py).
     project_id    = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Stamped whenever project_id is set (not just created — a conversation
+    # can sit unlinked for a while first). When several different accounts
+    # each link their own view of the SAME real-world group to the same
+    # project, this decides which one "wins" and gets shown — see
+    # get_project_zalo_summary's de-dup by name.
+    project_linked_at = Column(DateTime(timezone=True), nullable=True)
     last_message_at = Column(DateTime(timezone=True), nullable=True)
     last_message_preview = Column(String(500), nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())

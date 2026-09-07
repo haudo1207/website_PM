@@ -643,6 +643,9 @@ def apply_schema_updates():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_zalo_conversations_project_id ON zalo_conversations (project_id)"
         ))
+        conn.execute(text(
+            "ALTER TABLE zalo_conversations ADD COLUMN IF NOT EXISTS project_linked_at TIMESTAMPTZ"
+        ))
 
         # ── Zalo: "Không cần xem demo" — mark a Done task as not needing a
         # demo request, without touching its demo-request history. ──
