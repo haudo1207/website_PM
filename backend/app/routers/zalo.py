@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..database import get_db
@@ -87,6 +88,18 @@ class LinkProjectRequest(BaseModel):
 class TrackGroupRequest(BaseModel):
     thread_id: str
     name: Optional[str] = None
+
+
+class PushZaloTasksRequest(BaseModel):
+    # Each item is {index, detail_task, priority, assigned_name, deadline,
+    # manday_est} — `index` locates the entry inside
+    # ZaloConversationSummary.recommended_tasks (so we can write back
+    # task_code/imported_task_id/pushed_at onto that exact entry), the rest
+    # are the (possibly user-edited) fields to create the Task from. Kept
+    # loose (dicts, not a strict field-by-field model) to match how
+    # recommended_tasks itself is stored/read — see meetings.py's
+    # N8nMeetingSummaryPayload for the same convention.
+    tasks: list[dict]
 
 
 class InternalMessageRequest(BaseModel):
@@ -1105,6 +1118,90 @@ def summarize_conversation_now(
     return _summary_to_dict(row)
 
 
+@router.post("/summaries/{summary_id}/push-tasks")
+def push_zalo_summary_tasks(
+    summary_id: int,
+    payload: PushZaloTasksRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_zalo_user),
+):
+    """Mirrors Meeting Intelligence's POST /meetings/{id}/push-tasks: turns
+    entries from a Zalo summary's `recommended_tasks` into real Task rows.
+    Simpler than the meeting version — a Zalo conversation is already tied
+    to exactly one project (ZaloConversation.project_id), so there's no
+    per-task project/phase/task_group picker, and create_task_direct
+    already defaults those. Not scoped to the caller's own account — the
+    project's "Tóm tắt Zalo" tab is a shared view (same as delete/unlink
+    above), so pushing from it is too."""
+    summary = db.query(ZaloConversationSummary).filter(ZaloConversationSummary.id == summary_id).first()
+    if not summary:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bản tóm tắt.")
+    conv = summary.conversation
+    if not conv or not conv.project_id:
+        raise HTTPException(status_code=400, detail="Nhóm này chưa được gán vào dự án.")
+
+    recommended = list(summary.recommended_tasks or [])
+    results = []
+    any_change = False
+
+    for item in payload.tasks:
+        idx = item.get("index")
+        if idx is None or not isinstance(idx, int) or idx < 0 or idx >= len(recommended):
+            results.append({"index": idx, "ok": False, "error": "Chỉ số task không hợp lệ."})
+            continue
+        entry = recommended[idx]
+        if entry.get("imported_task_id"):
+            results.append({"index": idx, "ok": False, "error": "Task này đã được đẩy vào dự án trước đó."})
+            continue
+
+        title = str(item.get("detail_task") or entry.get("detail_task") or "").strip()
+        if not title:
+            results.append({"index": idx, "ok": False, "error": "Thiếu tên task."})
+            continue
+
+        assigned_name = str(item.get("assigned_name") or entry.get("assigned_name") or "").strip()
+        names = [n.strip() for n in assigned_name.split(",") if n.strip()]
+        members = zalo_task_parser.resolve_mentioned_members(db, names) if names else []
+        if not members:
+            results.append({"index": idx, "ok": False, "error": f"Không tìm thấy thành viên khớp tên '{assigned_name}'."})
+            continue
+
+        deadline_raw = str(item.get("deadline") or entry.get("deadline") or "").strip()
+        deadline = None
+        if deadline_raw:
+            try:
+                deadline = datetime.date.fromisoformat(deadline_raw)
+            except ValueError:
+                deadline = None  # AI free-text dates we can't parse fall back to create_task_direct's default
+
+        try:
+            manday = float(item.get("manday_est") or entry.get("manday_est") or 1.0)
+        except (TypeError, ValueError):
+            manday = 1.0
+
+        task = zalo_task_parser.create_task_direct(
+            db, conv.project_id, title, members[0], manday, deadline,
+            conv.zalo_thread_id, str(item.get("priority") or entry.get("priority") or "Normal"),
+        )
+        if not task:
+            results.append({"index": idx, "ok": False, "error": "Dự án chưa có dữ liệu skill mặc định để tạo task."})
+            continue
+
+        entry["imported_task_id"] = task.id
+        entry["task_code"] = task.task_code
+        entry["pushed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        recommended[idx] = entry
+        any_change = True
+        results.append({"index": idx, "ok": True, "task_id": task.id, "task_code": task.task_code})
+
+    if any_change:
+        summary.recommended_tasks = recommended
+        flag_modified(summary, "recommended_tasks")
+    db.commit()
+    db.refresh(summary)
+    return {"results": results, "summary": _summary_to_dict(summary)}
+
+
 @router.post("/conversations/{conversation_id}/send")
 def send_to_conversation(
     conversation_id: int,
@@ -1219,6 +1316,20 @@ def receive_worker_message(
         # session after the DB row was deleted) — drop silently rather than
         # 500 the worker.
         return {"ok": False, "reason": "unknown_account"}
+
+    # Groups are opt-in via "+ Theo dõi" (see /groups/track) — an account can
+    # belong to 100+ real Zalo groups it has no reason to track here. Only
+    # keep receiving messages for a group once it's been explicitly tracked;
+    # anything else is silently dropped instead of auto-creating noise. DMs
+    # aren't part of that opt-in flow and keep auto-creating as before.
+    if payload.is_group:
+        existing = (
+            db.query(ZaloConversation)
+            .filter(ZaloConversation.account_id == account.id, ZaloConversation.zalo_thread_id == payload.thread_id)
+            .first()
+        )
+        if not existing:
+            return {"ok": True, "reason": "untracked_group_dropped"}
 
     now = datetime.datetime.now(datetime.timezone.utc)
     conv = _upsert_conversation(

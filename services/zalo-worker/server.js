@@ -254,7 +254,13 @@ function requestGroupBackfill(session) {
   }
 }
 
-const BACKFILL_INTERVAL_MS = 15000;
+// requestOldMessages() has no per-group filter (confirmed in zca-js's own
+// source — its 2nd arg is a pagination cursor, not a thread id) — it always
+// returns the most recent batch across EVERY group the account is in. For
+// an account in 100+ groups, a message in a quiet project-linked group can
+// get crowded out of that batch by higher-traffic unrelated groups before
+// the next poll. Polling more often narrows (does not close) that window.
+const BACKFILL_INTERVAL_MS = 5000;
 
 // Bounds one listener callback's runtime — a hung zca-js API call inside it
 // (getGroupInfo/getAllGroups etc. go over the network with no timeout of
