@@ -905,6 +905,12 @@ export interface ZaloRecommendedTask {
   priority: string;
   assigned_name: string;
   deadline: string;
+  manday_est?: number;
+  // Set once pushed via pushZaloSummaryTasks — presence of imported_task_id
+  // means this entry is done and shouldn't be pushed again.
+  imported_task_id?: number;
+  task_code?: string;
+  pushed_at?: string;
 }
 export interface ZaloConversationSummary {
   id: number;
@@ -936,6 +942,18 @@ export const getProjectZaloSummary = (projectId: number) =>
   api.get<ZaloProjectGroupSummary[]>(`/zalo/projects/${projectId}/summary`).then(r => r.data);
 export const deleteZaloSummary = (summaryId: number) =>
   api.delete<{ ok: boolean }>(`/zalo/summaries/${summaryId}`).then(r => r.data);
+export interface ZaloPushTaskItem {
+  index: number;
+  detail_task: string;
+  priority: string;
+  assigned_name: string;
+  deadline: string;
+  manday_est?: number;
+}
+export const pushZaloSummaryTasks = (summaryId: number, tasks: ZaloPushTaskItem[]) =>
+  api.post<{ results: { index: number; ok: boolean; error?: string; task_code?: string }[]; summary: ZaloConversationSummary }>(
+    `/zalo/summaries/${summaryId}/push-tasks`, { tasks }
+  ).then(r => r.data);
 export const unlinkZaloConversationFromProject = (conversationId: number) =>
   api.post<{ ok: boolean }>(`/zalo/conversations/${conversationId}/unlink-project`).then(r => r.data);
 export interface ZaloOutgoingMention { uid: string; pos: number; len: number }

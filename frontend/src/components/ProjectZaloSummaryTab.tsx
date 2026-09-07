@@ -28,9 +28,11 @@ const vnDateLabel = (dateKey: string) => {
 function GroupSummaryDays({
   summaries,
   onDeleted,
+  onUpdated,
 }: {
   summaries: ZaloConversationSummary[];
   onDeleted: (summaryId: number) => void;
+  onUpdated: (updated: ZaloConversationSummary) => void;
 }) {
   const byDay = useMemo(() => {
     const map = new Map<string, ZaloConversationSummary[]>();
@@ -103,7 +105,7 @@ function GroupSummaryDays({
               >
                 <Trash2 size={14} />
               </button>
-              <ZaloSummaryCard s={s} />
+              <ZaloSummaryCard s={s} onUpdated={onUpdated} />
             </div>
           ))}
         </div>
@@ -129,6 +131,16 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
       (old || []).map((g) =>
         g.conversation_id === conversationId
           ? { ...g, summaries: g.summaries.filter((s) => s.id !== summaryId) }
+          : g
+      )
+    );
+  };
+
+  const handleSummaryUpdated = (conversationId: number, updated: ZaloConversationSummary) => {
+    queryClient.setQueryData<ZaloProjectGroupSummary[]>(queryKey, (old) =>
+      (old || []).map((g) =>
+        g.conversation_id === conversationId
+          ? { ...g, summaries: g.summaries.map((s) => (s.id === updated.id ? updated : s)) }
           : g
       )
     );
@@ -263,6 +275,7 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
             <GroupSummaryDays
               summaries={g.summaries}
               onDeleted={(summaryId) => handleDeleted(g.conversation_id, summaryId)}
+              onUpdated={(updated) => handleSummaryUpdated(g.conversation_id, updated)}
             />
           </div>
         </div>
