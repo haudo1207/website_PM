@@ -586,6 +586,16 @@ def apply_schema_updates():
             "ON members (zalo_uid) WHERE zalo_uid IS NOT NULL"
         ))
 
+        # ── Recruitment sync provenance: distinguish Recruitment-sourced
+        # Members from Admin-created Members so the sync cleanup step never
+        # touches a manual row. Default FALSE keeps existing rows safe
+        # (migration is non-destructive — every pre-existing Member, whether
+        # previously created by the old sync or by hand, starts as `manual`).
+        # Newly-sourced Members are stamped TRUE by sync_from_recruitment().
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS is_recruitment_synced BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+
         # ── Zalo: each account is owned by one Leader/Admin (multi-account —
         # no more single shared account) ──
         conn.execute(text(

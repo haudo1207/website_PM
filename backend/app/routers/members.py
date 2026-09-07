@@ -985,18 +985,22 @@ def sync_from_recruitment(
                     d_name = f"{abbr} {last_two}"
                 accepted_display_names.add(d_name.lower())
 
-        # 2. Xóa các ứng viên đã đồng bộ (có cv_link) không còn trạng thái "đã nhận" (accepted) bên Marke
-        synced_members = db.query(Member).filter(Member.cv_link.isnot(None), Member.cv_link != "").all()
+        # 2. Xóa các ứng viên đã đồng bộ (được đánh dấu Recruitment) không còn trạng thái
+        # "đã nhận" (accepted) bên tuyển dụng. Provenance is tracked via the dedicated
+        # `is_recruitment_synced` flag (set when the sync creates a NEW Member), NOT
+        # by `cv_link` — attaching a CV to a manually-created Member no longer makes
+        # that Member eligible for the sync's cleanup step.
+        synced_members = db.query(Member).filter(Member.is_recruitment_synced.is_(True)).all()
         for m in synced_members:
             m_email = str(m.email or "").strip().lower()
             m_display = str(m.display_name or "").strip().lower()
-            
+
             is_still_accepted = False
             if m_email and m_email in accepted_emails:
                 is_still_accepted = True
             elif m_display and m_display in accepted_display_names:
                 is_still_accepted = True
-                
+
             if not is_still_accepted:
                 db.delete(m)
                 deleted_count += 1
@@ -1111,7 +1115,15 @@ def sync_from_recruitment(
                     birth_date=birth_date,
                     cv_link=cv_link or None,
                     leader_name=leader_name,
-                    leader_email=leader_email
+                    leader_email=leader_email,
+                    # Brand-new Member originating from a Recruitment accepted
+                    # candidate — stamp provenance so the cleanup step in step
+                    # 2 above can remove ONLY rows that came from this sync.
+                    # Existing manually-created Members matched by
+                    # email/display_name stay `is_recruitment_synced=False`
+                    # — they update in place but their provenance never
+                    # changes, so the cleanup step never deletes them.
+                    is_recruitment_synced=True,
                 )
                 db.add(member)
                 
