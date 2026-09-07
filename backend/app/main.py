@@ -1528,12 +1528,20 @@ def google_auth_direct_public():
 
 @app.get("/api/meetings/google/callback")
 def google_callback_public(code: str, state: str = None, db: Session = Depends(get_db)):
-    """Handle Google OAuth2 callback and save tokens (Public Route)."""
+    """Handle Google OAuth2 callback and save tokens (Public Route).
+
+    `state` is either "<user_id>" (default/shared-account connect, unchanged
+    legacy behavior) or "<user_id>:<workspace_id>" (workspace-scoped connect,
+    e.g. from GET /api/meetings/google/auth?workspace=infra) — in that case the
+    token is stored as a WorkspaceGoogleAccount override instead of overwriting
+    the shared account, and the global .env is left untouched.
+    """
     import os
     import logging
+    import requests
     from .config import settings
     from google_auth_oauthlib.flow import Flow
-    from .services.meeting_sync import _save_google_tokens
+    from .services.meeting_sync import _save_google_tokens, _save_workspace_google_tokens
     from fastapi.responses import RedirectResponse
 
     logger = logging.getLogger("google_callback")
@@ -1558,7 +1566,35 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
     flow.fetch_token(code=code)
     creds = flow.credentials
 
-    user_id = int(state) if (state and state.isdigit()) else 1
+    user_id = 1
+    workspace_id = None
+    if state:
+        state_parts = state.split(":")
+        if state_parts[0].isdigit():
+            user_id = int(state_parts[0])
+        if len(state_parts) > 1 and state_parts[1].isdigit():
+            workspace_id = int(state_parts[1])
+
+    if workspace_id:
+        google_email = None
+        try:
+            userinfo_resp = requests.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {creds.token}"},
+                timeout=10,
+            )
+            if userinfo_resp.ok:
+                google_email = userinfo_resp.json().get("email")
+        except Exception as e:
+            logger.warning(f"Could not fetch Google userinfo for workspace {workspace_id} connect: {e}")
+
+        _save_workspace_google_tokens(db, workspace_id, {
+            "access_token": creds.token,
+            "refresh_token": creds.refresh_token,
+        }, google_email=google_email)
+
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
+
     _save_google_tokens(db, user_id, {
         "access_token": creds.token,
         "refresh_token": creds.refresh_token,
@@ -1641,9 +1677,23 @@ async def start_zalo_summary_loop():
         import logging
         from .database import BackgroundSessionLocal
         from .services.zalo_summary import run_summary_tick
+        from .routers.settings_router import get_setting
         logger = logging.getLogger("zalo_summary_loop")
         interval = max(settings.ZALO_SUMMARY_INTERVAL_SECONDS, 30)
-        daily_at = settings.ZALO_SUMMARY_DAILY_AT.strip()
+
+        def _current_daily_at():
+            # Re-read on every iteration (not just once at startup) so an
+            # admin changing the time on the Zalo page takes effect on the
+            # next scheduled run — no backend restart needed. Falls back to
+            # the env var default until a Setting row exists.
+            db = BackgroundSessionLocal()
+            try:
+                cfg = get_setting("zalo_summary_config", db) or {}
+                return (cfg.get("daily_at") or settings.ZALO_SUMMARY_DAILY_AT or "").strip()
+            finally:
+                db.close()
+
+        daily_at = await asyncio.to_thread(_current_daily_at)
         if daily_at:
             logger.info(f"Zalo summary loop: daily mode, running at {daily_at} (Asia/Ho_Chi_Minh)")
             await asyncio.sleep(_seconds_until_next_daily_run(daily_at))
@@ -1657,6 +1707,7 @@ async def start_zalo_summary_loop():
                 logger.error(f"Zalo summary tick failed: {e}")
             finally:
                 db.close()
+            daily_at = await asyncio.to_thread(_current_daily_at)
             await asyncio.sleep(_seconds_until_next_daily_run(daily_at) if daily_at else interval)
 
     asyncio.create_task(_loop())

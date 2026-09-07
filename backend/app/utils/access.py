@@ -118,6 +118,16 @@ def business_unit_for_project(db: Session, project, by_code=None, by_name=None) 
     return ws.code if ws else default_scope(db)
 
 
+def workspace_id_for_project(db: Session, project):
+    """Workspace row id a project belongs to (via business_unit_for_project), or None
+    if the project is missing/unresolvable. Used to pick a per-workspace Google
+    account override for meeting creation/sync (see services/meeting_sync.py)."""
+    if not project:
+        return None
+    ws = resolve_workspace(db, business_unit_for_project(db, project))
+    return ws.id if ws else None
+
+
 def user_scope(user) -> str:
     return (getattr(user, "data_scope", None) or default_scope_guard()).strip().lower()
 

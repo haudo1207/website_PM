@@ -487,8 +487,8 @@ export const removeMeetingMember = (id: number, memberId: number) => api.delete(
 export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
 export const generateMeetingLink = (data: { platform: string; title: string; date?: string; time?: string; duration?: string | number }) =>
   api.post('/meetings/generate-link', data).then(r => r.data);
-export const getGoogleStatus = () => api.get('/meetings/google/status').then(r => r.data);
-export const getGoogleAuthUrl = () => api.get('/meetings/google/auth').then(r => r.data);
+export const getGoogleStatus = (workspace?: string) => api.get('/meetings/google/status', { params: workspace ? { workspace } : undefined }).then(r => r.data);
+export const getGoogleAuthUrl = (workspace?: string) => api.get('/meetings/google/auth', { params: workspace ? { workspace } : undefined }).then(r => r.data);
 export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);
 
 // Meeting Intelligence — effectiveness score, feedback, AI copilot, insights
@@ -911,6 +911,10 @@ export const getZaloConversationSummaries = (conversationId: number) =>
   api.get<ZaloConversationSummary[]>(`/zalo/conversations/${conversationId}/summaries`).then(r => r.data);
 export const summarizeZaloConversationNow = (conversationId: number) =>
   api.post<ZaloConversationSummary>(`/zalo/conversations/${conversationId}/summarize-now`).then(r => r.data);
+export const getZaloSummaryConfig = () =>
+  api.get<{ daily_at: string }>('/settings/zalo-summary-config').then(r => r.data);
+export const updateZaloSummaryConfig = (dailyAt: string) =>
+  api.put<{ message: string; daily_at: string }>('/settings/zalo-summary-config', { daily_at: dailyAt }).then(r => r.data);
 export interface ZaloProjectGroupSummary {
   conversation_id: number;
   name: string;
