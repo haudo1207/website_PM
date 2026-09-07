@@ -17,5 +17,7 @@ from .ai_skill import (
     AiSkill, AiSkillAttachment, AiSkillFavorite, AiSkillRecent,
     AiSession, AiSessionAttachment, AiUsageStat,
 )
+from .google_token import GoogleToken
+from .workspace_google_account import WorkspaceGoogleAccount
 
 

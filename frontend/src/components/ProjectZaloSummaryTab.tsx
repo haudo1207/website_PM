@@ -2,8 +2,8 @@
 
 import React, { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle, Trash2 } from 'lucide-react';
-import { getProjectZaloSummary, deleteZaloSummary, ZaloConversationSummary, ZaloProjectGroupSummary } from '@/lib/api';
+import { MessageCircle, Trash2, Unlink } from 'lucide-react';
+import { getProjectZaloSummary, deleteZaloSummary, unlinkZaloConversationFromProject, ZaloConversationSummary, ZaloProjectGroupSummary } from '@/lib/api';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
 
 // Vietnam has no DST, so a fixed Asia/Ho_Chi_Minh format is exact for
@@ -133,6 +133,22 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
     );
   };
 
+  const [unlinkingId, setUnlinkingId] = useState<number | null>(null);
+  const handleUnlink = async (conversationId: number, name: string) => {
+    if (!confirm(`Gỡ nhóm "${name}" khỏi dự án này? (Gán nhầm thì gỡ ra, không xóa dữ liệu hội thoại)`)) return;
+    setUnlinkingId(conversationId);
+    try {
+      await unlinkZaloConversationFromProject(conversationId);
+      queryClient.setQueryData<ZaloProjectGroupSummary[]>(queryKey, (old) =>
+        (old || []).filter((g) => g.conversation_id !== conversationId)
+      );
+    } catch (err: any) {
+      alert('Lỗi gỡ nhóm: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setUnlinkingId(null);
+    }
+  };
+
   if (isLoading) {
     return <div className="text-sm text-slate-400 text-center py-16">Đang tải…</div>;
   }
@@ -159,9 +175,21 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
               <MessageCircle className="w-4 h-4 text-[#0058be] shrink-0" />
               <span className="text-sm font-bold text-slate-800 truncate">{g.name}</span>
             </div>
-            <span className="text-[11px] text-slate-400 shrink-0">
-              {g.last_message_at ? `Tin cuối: ${new Date(g.last_message_at).toLocaleString('vi-VN')}` : 'Chưa có tin nhắn'}
-            </span>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-[11px] text-slate-400">
+                {g.last_message_at ? `Tin cuối: ${new Date(g.last_message_at).toLocaleString('vi-VN')}` : 'Chưa có tin nhắn'}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleUnlink(g.conversation_id, g.name)}
+                disabled={unlinkingId === g.conversation_id}
+                title="Gỡ nhóm này khỏi dự án (gán nhầm)"
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-slate-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors disabled:opacity-50"
+              >
+                <Unlink size={12} />
+                Gỡ nhóm
+              </button>
+            </div>
           </div>
 
           <div className="p-4">

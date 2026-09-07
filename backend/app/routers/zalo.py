@@ -345,6 +345,27 @@ def link_conversation_project(
     return {"conversation_id": conv.id, "project_id": conv.project_id}
 
 
+@router.post("/conversations/{conversation_id}/unlink-project")
+def unlink_conversation_from_project(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_zalo_user),
+):
+    """Removes a conversation's project link — fixing a mistaken assignment
+    (e.g. a project ends up with several groups because one got linked by
+    accident). Unlike link-project, NOT scoped to the caller's own account:
+    the project's "Tóm tắt Zalo" tab is a shared view across every linked
+    account by design, so anyone who can see it should be able to unlink a
+    wrong entry there, not just whoever happens to own that Zalo account."""
+    conv = db.query(ZaloConversation).filter(ZaloConversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv.project_id = None
+    conv.project_linked_at = None
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/conversations/refresh-names")
 def refresh_conversation_names(
     db: Session = Depends(get_db),
