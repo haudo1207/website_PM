@@ -55,11 +55,22 @@ class SessionState {
     // arriving right after) would silently re-log the user back in a few
     // seconds later. Cleared the moment a fresh login succeeds.
     this.manualDisconnect = false;
+    // Which attachListener() call currently "owns" this session's events.
+    // zca-js's own reconnect handling can leave an old listener's socket
+    // alive for a while after we've already attached a fresh one on
+    // reconnect (no "closed" event fires for it, no way to force it shut) —
+    // without this guard, both listeners forward messages concurrently,
+    // and the OLD one resolves group/thread names against session.api
+    // (already pointing at the NEW api by then), misattributing messages
+    // to the wrong conversation. See attachListener's isActiveListener().
+    this.listenerId = 0;
   }
 }
 
 /** @type {Map<string, SessionState>} */
 const sessions = new Map();
+
+let listenerIdCounter = 0;
 
 function getOrCreateSession(accountId) {
   const key = String(accountId);
@@ -246,7 +257,18 @@ function requestGroupBackfill(session) {
 const BACKFILL_INTERVAL_MS = 15000;
 
 function attachListener(session, zaloApi) {
+  // Every handler below closes over `myListenerId` and bails out if this
+  // session has since moved on to a newer listener (reconnect happened,
+  // or a stray socket from a previous login is still emitting) — see the
+  // comment on SessionState.listenerId for why this is necessary.
+  const myListenerId = ++listenerIdCounter;
+  session.listenerId = myListenerId;
+  function isActiveListener() {
+    return session.listenerId === myListenerId;
+  }
+
   zaloApi.listener.on("connected", () => {
+    if (!isActiveListener()) return;
     session.listenerConnected = true;
     console.log(`[listener:${session.accountId}] connected`);
     // 2s delay gives the cipher key exchange (needed to decode the
@@ -255,8 +277,10 @@ function attachListener(session, zaloApi) {
   });
 
   zaloApi.listener.on("old_messages", async (messages, threadType) => {
+    if (!isActiveListener()) return;
     console.log(`[listener:${session.accountId}] old_messages backfill — ${messages?.length ?? 0} message(s), type=${threadType}`);
     for (const message of messages || []) {
+      if (!isActiveListener()) return;
       await forwardMessage(session, message);
     }
   });
@@ -269,16 +293,19 @@ function attachListener(session, zaloApi) {
   // but log it — a message arriving during one of these internal gaps is
   // silently lost, and this is the only trace we'd have of that happening.
   zaloApi.listener.on("disconnected", (code, reason) => {
+    if (!isActiveListener()) return;
     console.warn(`[listener:${session.accountId}] disconnected (zca-js internal retry, may self-heal)`, code, reason);
   });
 
   zaloApi.listener.on("closed", (code, reason) => {
+    if (!isActiveListener()) return;
     session.listenerConnected = false;
     console.warn(`[listener:${session.accountId}] closed`, code, reason, "— zca-js gave up its own retry, scheduling full re-login in 5s");
     scheduleReconnect(session);
   });
 
   zaloApi.listener.on("error", (err) => {
+    if (!isActiveListener()) return;
     console.error(`[listener:${session.accountId}] error`, err);
     // "error" doesn't guarantee a subsequent "closed" fires in every case —
     // scheduleReconnect() is idempotent (the `reconnecting` guard), so it's
@@ -287,6 +314,10 @@ function attachListener(session, zaloApi) {
   });
 
   zaloApi.listener.on("message", async (message) => {
+    if (!isActiveListener()) {
+      console.warn(`[listener:${session.accountId}] dropped message from a stale listener (threadId=${message?.threadId}) — a newer session is already active`);
+      return;
+    }
     console.log(
       `[listener:${session.accountId}] raw message event — threadId=${message?.threadId} type=${message?.type} isSelf=${message?.isSelf} contentType=${typeof message?.data?.content}`
     );
