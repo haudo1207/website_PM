@@ -619,11 +619,15 @@ def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time,
     n8n discovery must not be able to break meeting creation, so any failure
     here is logged and swallowed.
     """
+    # Route by the SAME signal get_workspace_google_access_token uses to pick
+    # the Google account (a connected WorkspaceGoogleAccount override) — not by
+    # workspace code/name. The recording lands in whichever Drive the override
+    # account owns, so the n8n workflow notified must be the one wired to that
+    # SAME account's credentials, regardless of which workspace holds it.
     url = settings.N8N_MEETING_WEBHOOK_URL_DEFAULT
     if workspace_id is not None and db is not None:
-        from ..models.system_category import Workspace
-        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-        if ws and (ws.code or "").strip().lower() == "infra":
+        wga = _load_workspace_google_tokens(db, workspace_id)
+        if wga and wga.refresh_token:
             url = settings.N8N_MEETING_WEBHOOK_URL_INFRA
 
     if not url:
