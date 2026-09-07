@@ -84,6 +84,11 @@ class LinkProjectRequest(BaseModel):
     project_id: Optional[int] = None
 
 
+class TrackGroupRequest(BaseModel):
+    thread_id: str
+    name: Optional[str] = None
+
+
 class InternalMessageRequest(BaseModel):
     account_id: int
     thread_id: str
@@ -280,6 +285,42 @@ def list_available_groups(
         {"thread_id": thread_id, "name": name, "already_tracked": thread_id in tracked_ids}
         for thread_id, name in groups.items()
     ]
+
+
+@router.post("/groups/track")
+def track_group(
+    payload: TrackGroupRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_zalo_user),
+):
+    """Explicitly register a real Zalo group (picked from /groups/available,
+    the same source-of-truth the 'gửi tin nhắn thử' picker already uses
+    correctly) as tracked — creates its ZaloConversation row right away
+    instead of waiting for a message to arrive through it. Makes it show up
+    in 'Hội thoại nhóm' immediately, and the worker's tracked-groups poll
+    (see /internal/tracked-groups) picks it up on its very next tick.
+    Insert-only — never overwrites an existing row's last_message_at/name."""
+    account = _require_account_for_user(db, current_user)
+    thread_id = payload.thread_id.strip()
+    if not thread_id:
+        raise HTTPException(status_code=400, detail="Thiếu thread_id.")
+
+    stmt = pg_insert(ZaloConversation).values(
+        account_id=account.id,
+        zalo_thread_id=thread_id,
+        name=payload.name,
+        is_group=True,
+    ).on_conflict_do_nothing(
+        constraint="uq_zalo_conversations_account_thread",
+    ).returning(ZaloConversation.id)
+    row = db.execute(stmt).first()
+    db.commit()
+    conv_id = row[0] if row else db.query(ZaloConversation.id).filter(
+        ZaloConversation.account_id == account.id,
+        ZaloConversation.zalo_thread_id == thread_id,
+    ).scalar()
+    conv = db.query(ZaloConversation).filter(ZaloConversation.id == conv_id).first()
+    return {"ok": True, "conversation_id": conv.id, "name": conv.name}
 
 
 @router.get("/conversations")
