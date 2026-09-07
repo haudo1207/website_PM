@@ -611,6 +611,15 @@ def apply_schema_updates():
             "CREATE INDEX IF NOT EXISTS ix_zalo_accounts_owner_user_id ON zalo_accounts (owner_user_id)"
         ))
 
+        # ── Task Group: roster of assigned/support member ids (JSON array),
+        # additive-synced from child Tasks + manually editable ──
+        conn.execute(text(
+            "ALTER TABLE task_groups ADD COLUMN IF NOT EXISTS assigned_ids JSON DEFAULT '[]'::json"
+        ))
+        conn.execute(text(
+            "ALTER TABLE task_groups ADD COLUMN IF NOT EXISTS support_ids JSON DEFAULT '[]'::json"
+        ))
+
         # ── Zalo: link a conversation to a project (enables the /task command) ──
         conn.execute(text(
             "ALTER TABLE zalo_conversations ADD COLUMN IF NOT EXISTS project_id INTEGER"
