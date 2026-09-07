@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, ForeignKey, Table
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, Table, Boolean
 from sqlalchemy.orm import relationship
 from ..database import Base
 import datetime
@@ -34,6 +34,14 @@ class Member(Base):
     department      = Column(String(100), nullable=True)
     experience_year = Column(Integer, default=0, nullable=True)
     cv_link         = Column(String(255), nullable=True)
+    # Provenance flag — True ONLY when this Member was created by the
+    # Recruitment sync (`POST /members/sync-from-recruitment`). The flag
+    # distinguishes Recruitment-sourced rows from Admin-created rows so the
+    # sync's deletion step can remove only its own records when an accepted
+    # application lapses, without ever touching a manually-created Member.
+    # Existing rows default to FALSE so the deployment never enters a state
+    # where existing manual Members are misclassified.
+    is_recruitment_synced = Column(Boolean, nullable=False, default=False, server_default="false")
     leader_name     = Column(String(100), nullable=True)
     leader_email    = Column(String(255), nullable=True)
     leader_member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)

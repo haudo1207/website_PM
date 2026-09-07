@@ -586,6 +586,16 @@ def apply_schema_updates():
             "ON members (zalo_uid) WHERE zalo_uid IS NOT NULL"
         ))
 
+        # ── Recruitment sync provenance: distinguish Recruitment-sourced
+        # Members from Admin-created Members so the sync cleanup step never
+        # touches a manual row. Default FALSE keeps existing rows safe
+        # (migration is non-destructive — every pre-existing Member, whether
+        # previously created by the old sync or by hand, starts as `manual`).
+        # Newly-sourced Members are stamped TRUE by sync_from_recruitment().
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS is_recruitment_synced BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+
         # ── Zalo: each account is owned by one Leader/Admin (multi-account —
         # no more single shared account) ──
         conn.execute(text(
@@ -1667,9 +1677,23 @@ async def start_zalo_summary_loop():
         import logging
         from .database import BackgroundSessionLocal
         from .services.zalo_summary import run_summary_tick
+        from .routers.settings_router import get_setting
         logger = logging.getLogger("zalo_summary_loop")
         interval = max(settings.ZALO_SUMMARY_INTERVAL_SECONDS, 30)
-        daily_at = settings.ZALO_SUMMARY_DAILY_AT.strip()
+
+        def _current_daily_at():
+            # Re-read on every iteration (not just once at startup) so an
+            # admin changing the time on the Zalo page takes effect on the
+            # next scheduled run — no backend restart needed. Falls back to
+            # the env var default until a Setting row exists.
+            db = BackgroundSessionLocal()
+            try:
+                cfg = get_setting("zalo_summary_config", db) or {}
+                return (cfg.get("daily_at") or settings.ZALO_SUMMARY_DAILY_AT or "").strip()
+            finally:
+                db.close()
+
+        daily_at = await asyncio.to_thread(_current_daily_at)
         if daily_at:
             logger.info(f"Zalo summary loop: daily mode, running at {daily_at} (Asia/Ho_Chi_Minh)")
             await asyncio.sleep(_seconds_until_next_daily_run(daily_at))
@@ -1683,6 +1707,7 @@ async def start_zalo_summary_loop():
                 logger.error(f"Zalo summary tick failed: {e}")
             finally:
                 db.close()
+            daily_at = await asyncio.to_thread(_current_daily_at)
             await asyncio.sleep(_seconds_until_next_daily_run(daily_at) if daily_at else interval)
 
     asyncio.create_task(_loop())

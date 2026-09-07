@@ -85,6 +85,25 @@ def set_ai(body: dict, db=Depends(get_db), admin=Depends(require_admin)):
     save_setting("ai_config", current, db, user_id=admin.id, log_value=safe_for_log)
     return {"message":"Updated"}
 
+@router.get("/zalo-summary-config")
+def get_zalo_summary_cfg(db=Depends(get_db), _=Depends(get_current_user)):
+    """The daily time-of-day (Asia/Ho_Chi_Minh) the Zalo group AI digest job
+    runs at. Was a fixed env var (ZALO_SUMMARY_DAILY_AT) — now editable from
+    the Zalo page without a redeploy; falls back to the env var default
+    until an admin explicitly changes it."""
+    cfg = get_setting("zalo_summary_config", db) or {}
+    return {"daily_at": cfg.get("daily_at") or app_settings.ZALO_SUMMARY_DAILY_AT or "00:00"}
+
+@router.put("/zalo-summary-config")
+def set_zalo_summary_cfg(body: dict, db=Depends(get_db), admin=Depends(require_admin)):
+    import re
+    daily_at = (body.get("daily_at") or "").strip()
+    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", daily_at):
+        raise HTTPException(400, "Giờ không hợp lệ, định dạng HH:MM (00:00-23:59).")
+    save_setting("zalo_summary_config", {"daily_at": daily_at}, db, user_id=admin.id)
+    return {"message": "Updated", "daily_at": daily_at}
+
+
 @router.get("/ai-models")
 def get_models(db=Depends(get_db), _=Depends(require_admin)):
     cfg = get_setting("ai_config", db) or {}
