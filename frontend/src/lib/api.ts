@@ -355,8 +355,17 @@ export const blockTask = (groupId: number, taskId: number, reason: string, block
   api.post(`/task-groups/${groupId}/tasks/${taskId}/block`, { reason, blocked_by_task_id: blockedByTaskId || undefined }).then(r => r.data);
 export const unblockTask = (groupId: number, taskId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/unblock`).then(r => r.data);
-export const moveTask = (groupId: number, taskId: number, targetGroupId: number) =>
-  api.post(`/task-groups/${groupId}/tasks/${taskId}/move`, { target_group_id: targetGroupId }).then(r => r.data);
+export const moveTask = (
+  groupId: number,
+  taskId: number,
+  targetGroupId: number,
+  position?: { insertAfterTaskId?: number | null; insertBeforeTaskId?: number | null }
+) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/move`, {
+    target_group_id: targetGroupId,
+    insert_after_task_id: position?.insertAfterTaskId || undefined,
+    insert_before_task_id: position?.insertBeforeTaskId || undefined,
+  }).then(r => r.data);
 export const moveTaskGroup = (phaseId: number, groupId: number, targetPhaseId: number) =>
   api.post(`/phases/${phaseId}/task-groups/${groupId}/move`, { target_phase_id: targetPhaseId }).then(r => r.data);
 export const reorderTasks = (groupId: number, order: number[]) =>
@@ -887,6 +896,8 @@ export const getZaloConversations = () =>
 export interface ZaloAvailableGroup { thread_id: string; name: string; already_tracked: boolean }
 export const getZaloAvailableGroups = () =>
   api.get<ZaloAvailableGroup[]>('/zalo/groups/available').then(r => r.data);
+export const trackZaloGroup = (threadId: string, name: string) =>
+  api.post<{ ok: boolean; conversation_id: number; name: string | null }>('/zalo/groups/track', { thread_id: threadId, name }).then(r => r.data);
 export const getZaloConversationMessages = (conversationId: number, afterId?: number) =>
   api.get<ZaloMessage[]>(`/zalo/conversations/${conversationId}/messages`, { params: { after_id: afterId } }).then(r => r.data);
 export interface ZaloRecommendedTask {
