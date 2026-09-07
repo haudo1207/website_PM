@@ -248,20 +248,34 @@ def get_group_index(tg, db) -> int:
     return 1
 
 
-def get_next_task_code(group_index: int, gid: int, db) -> str:
-    """Generate next task_code like '1.3' for group_index=1."""
-    existing = db.query(Task.task_code).filter(Task.task_group_id == gid).all()
+def get_next_code_for_level(level_prefix: str, gid: int, db, exclude_task_id=None) -> str:
+    """Generate the next sequence code at an arbitrary level — level_prefix is
+    '{group_index}.' for root tasks or '{parent_code}.' for subtasks.
+    exclude_task_id skips a task's own (possibly stale) row — needed when
+    moving a task within its own group, where its old code is still sitting
+    in the table under its own identity until the move finishes."""
+    query = db.query(Task.id, Task.task_code).filter(Task.task_group_id == gid)
+    if exclude_task_id is not None:
+        query = query.filter(Task.id != exclude_task_id)
     max_seq = 0
-    prefix = f"{group_index}."
-    for (code,) in existing:
-        if code and code.startswith(prefix):
-            try:
-                seq = int(code[len(prefix):])
-                if seq > max_seq:
-                    max_seq = seq
-            except ValueError:
-                pass
-    return f"{group_index}.{max_seq + 1}"
+    for (_id, code) in query.all():
+        if not code or not code.startswith(level_prefix):
+            continue
+        rest = code[len(level_prefix):]
+        if "." in rest:
+            continue
+        try:
+            seq = int(rest)
+            if seq > max_seq:
+                max_seq = seq
+        except ValueError:
+            pass
+    return f"{level_prefix}{max_seq + 1}"
+
+
+def get_next_task_code(group_index: int, gid: int, db) -> str:
+    """Generate next root-level task_code like '1.3' for group_index=1."""
+    return get_next_code_for_level(f"{group_index}.", gid, db)
 
 
 def get_own_seq(task_code: str):
@@ -316,6 +330,101 @@ def close_gap_after_removal(removed_code: str, gid: int, db: Session):
         ).all()
         for d in descendants:
             d.task_code = f"{new_code}." + d.task_code[len(old_desc_prefix):]
+
+
+def open_gap_for_insertion(level_prefix: str, insert_seq: int, gid: int, db: Session, exclude_task_id=None):
+    """Opposite of close_gap_after_removal: shift the sequence numbers of direct
+    siblings at this level with seq >= insert_seq UP by 1, freeing up `insert_seq`
+    for a new task, cascading the renumbering to every descendant of each shifted
+    sibling. Must process from the HIGHEST sequence down so each vacated slot
+    exists before the next (lower) sibling claims it.
+
+    exclude_task_id skips a task's own (possibly stale) row — needed when
+    moving a task within its own group: its old code is still sitting in the
+    table under its own identity at this point, and would otherwise look like
+    a second task occupying the same slot as whichever sibling now carries
+    that number, corrupting the shift."""
+    query = db.query(Task).filter(
+        Task.task_group_id == gid,
+        Task.task_code.like(f"{level_prefix}%")
+    )
+    if exclude_task_id is not None:
+        query = query.filter(Task.id != exclude_task_id)
+    candidates = query.all()
+
+    siblings = []
+    for t in candidates:
+        rest = (t.task_code or "")[len(level_prefix):]
+        if "." in rest:
+            continue
+        seq = get_own_seq(t.task_code)
+        if seq is not None and seq >= insert_seq:
+            siblings.append((seq, t))
+
+    # Descending order: the highest sibling moves first, freeing its old slot
+    siblings.sort(key=lambda pair: -pair[0])
+
+    for seq, sibling in siblings:
+        old_code = sibling.task_code
+        new_code = f"{level_prefix}{seq + 1}"
+        sibling.task_code = new_code
+        if old_code == new_code:
+            continue
+        old_desc_prefix = f"{old_code}."
+        descendants = db.query(Task).filter(
+            Task.task_group_id == gid,
+            Task.task_code.like(f"{old_desc_prefix}%")
+        ).all()
+        for d in descendants:
+            d.task_code = f"{new_code}." + d.task_code[len(old_desc_prefix):]
+
+
+def resync_group_sort_order(gid: int, db: Session):
+    """Keep sort_order in lockstep with task_code's hierarchical display order
+    (parent, then its own children in order, then the next sibling — exactly
+    what a numeric tuple-compare of the dot-separated segments gives). Some
+    read paths (list_tasks, the project-wide task export) order by sort_order
+    directly instead of re-deriving the tree client-side like the main table
+    does, so it must never drift out of sync after task_code gets shifted by
+    an insert, delete, move, duplicate, or drag-and-drop reorder."""
+    def sort_key(t):
+        parts = []
+        for p in (t.task_code or "").split("."):
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        return parts
+
+    tasks = db.query(Task).filter(Task.task_group_id == gid).all()
+    tasks.sort(key=sort_key)
+    for idx, t in enumerate(tasks):
+        t.sort_order = idx
+
+
+def resolve_insert_seq(level_prefix: str, after_code, before_code):
+    """Turn the frontend's positional hint (insert after/before a given sibling
+    code) into a concrete sequence number at this level. Falls back to "insert
+    as the first item of this level" (seq=1) whenever the hint doesn't actually
+    point at a direct sibling of this level (e.g. it points at the parent row
+    itself, which happens when the user asks to insert above the very first
+    child of a group). Returns None when there's no positional hint at all,
+    meaning "append at the end" — the pre-existing default behavior."""
+    def seq_if_sibling(code):
+        if not code or not code.startswith(level_prefix):
+            return None
+        rest = code[len(level_prefix):]
+        if "." in rest:
+            return None
+        return get_own_seq(code)
+
+    if before_code:
+        seq = seq_if_sibling(before_code)
+        return seq if seq is not None else 1
+    if after_code:
+        seq = seq_if_sibling(after_code)
+        return (seq + 1) if seq is not None else 1
+    return None
 
 
 def serialize_task_group(tg, db, group_index=None, members_map=None):
@@ -1040,10 +1149,22 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     if len(detail) > 500:
         raise HTTPException(400, "Detail task max 500 characters.")
 
-    # Auto task_code based on group_index
+    # Position the new task: at a specific spot if the caller supplied one
+    # (insert_after_code / insert_before_code — set whenever the user picked
+    # "add above/below" a specific row or dropped it between two rows),
+    # otherwise append at the end of this level like before.
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == gid).scalar() or 0
     group_index = get_group_index(tg, db)
-    next_code = get_next_task_code(group_index, gid, db)
+    parent_code = (body.get("parent_code") or "").strip() or None
+    level_prefix = f"{parent_code}." if parent_code else f"{group_index}."
+    insert_after_code = (body.get("insert_after_code") or "").strip() or None
+    insert_before_code = (body.get("insert_before_code") or "").strip() or None
+    insert_seq = resolve_insert_seq(level_prefix, insert_after_code, insert_before_code)
+    if insert_seq is not None:
+        open_gap_for_insertion(level_prefix, insert_seq, gid, db)
+        next_code = f"{level_prefix}{insert_seq}"
+    else:
+        next_code = get_next_code_for_level(level_prefix, gid, db)
 
     # Validate manday_est
     manday_est = body.get("manday_est")
@@ -1085,7 +1206,11 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     if assigned_id and support_id and assigned_id == support_id:
         raise HTTPException(400, "Support cannot be the same as Assigned.")
 
-    task_code = body.get("task_code", next_code)
+    # task_code is always server-computed now (see next_code above) — the
+    # client only supplies positional hints (parent_code / insert_after_code /
+    # insert_before_code), never the code itself, so numbering can't drift out
+    # of sync with the actual position it was inserted at.
+    task_code = next_code
     validate_manday_budget(gid, task_code, manday_est, db)
     ratio_assign, ratio_support = validate_kpi_ratio(
         body.get("kpi_ratio_assign", 100),
@@ -1120,6 +1245,7 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
         task.end_date_actual = date.today()
     db.add(task)
     db.flush()
+    resync_group_sort_order(gid, db)
 
     # Recalculate KPI
     task = recalculate_task(task, db)
@@ -1837,6 +1963,7 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=
     # Close the numbering gap so remaining siblings (and their descendants) stay contiguous
     if removed_code:
         close_gap_after_removal(removed_code, gid, db)
+        resync_group_sort_order(gid, db)
 
     # Update group progress and sync start_date
     if tg:
@@ -1867,7 +1994,12 @@ def duplicate_task(gid: int, tid: int, db: Session = Depends(get_db)):
 
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
     group_index = get_group_index(tg, db) if tg else 1
-    new_code = get_next_task_code(group_index, gid, db)
+    # Duplicate a subtask into the same parent's level, not the group root.
+    parent_code = get_parent_code(original.task_code)
+    level_prefix = f"{parent_code}." if parent_code and db.query(Task).filter(
+        Task.task_group_id == gid, Task.task_code == parent_code
+    ).first() else f"{group_index}."
+    new_code = get_next_code_for_level(level_prefix, gid, db)
     validate_manday_budget(gid, new_code, original.manday_est, db)
 
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == gid).scalar() or 0
@@ -1891,6 +2023,7 @@ def duplicate_task(gid: int, tid: int, db: Session = Depends(get_db)):
     )
     db.add(new_task)
     db.flush()
+    resync_group_sort_order(gid, db)
     new_task = recalculate_task(new_task, db)
     db.commit()
     db.refresh(new_task)
@@ -1899,7 +2032,15 @@ def duplicate_task(gid: int, tid: int, db: Session = Depends(get_db)):
 
 @router.post("/task-groups/{gid}/tasks/{tid}/move")
 def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """Move a task to a different task group. Auto-generates new task_code."""
+    """Move a task — within its own group, to a different group in the same
+    Phase, or to a group in a different Phase entirely (a task's Phase is
+    just whatever Phase its Task Group belongs to, so moving groups already
+    moves Phases). Optionally at a precise root-level position
+    (insert_after_task_id / insert_before_task_id — the DB id, never the
+    mutable display code, of a task in the TARGET group; e.g. picked via the
+    "Move Task" modal's position dropdown, or the row being dropped on during
+    drag-and-drop). Defaults to appending at the end of the target group when
+    no position is given."""
     new_group_id = body.get("target_group_id")
     if not new_group_id:
         raise HTTPException(400, "target_group_id is required.")
@@ -1918,6 +2059,7 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
 
     old_group_id = task.task_group_id
     old_code = task.task_code
+    same_group = new_group_id == old_group_id
 
     # Snapshot the sub-tree before mutating this task's own group/code
     descendants = []
@@ -1927,10 +2069,35 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
             Task.task_code.like(f"{old_code}.%")
         ).all()
 
-    # Auto-generate new task_code for target group (computed while task is still
-    # attached to old_group_id, so it can't accidentally see its own old code)
+    if same_group and old_code:
+        # Free the task's own slot FIRST, via identity (its own row is never
+        # touched by this — only strictly-later siblings shift down), so the
+        # position resolved just below reflects the OTHER tasks' real current
+        # codes rather than a layout that still counts this task's old spot.
+        close_gap_after_removal(old_code, old_group_id, db)
+        db.flush()
+
+    # Position in the target group. Anchors are DB ids, resolved to their
+    # CURRENT code only now (after the same-group gap-close above, if any) —
+    # never trust a code string handed in from before this request started,
+    # since same-group siblings may have just shifted.
     new_group_index = get_group_index(new_group, db)
-    new_task_code = get_next_task_code(new_group_index, new_group_id, db)
+    level_prefix = f"{new_group_index}."
+
+    def anchor_code(anchor_task_id):
+        if not anchor_task_id or anchor_task_id == tid:
+            return None
+        t = db.query(Task).filter(Task.id == anchor_task_id, Task.task_group_id == new_group_id).first()
+        return t.task_code if t else None
+
+    insert_after_code = anchor_code(body.get("insert_after_task_id"))
+    insert_before_code = anchor_code(body.get("insert_before_task_id"))
+    insert_seq = resolve_insert_seq(level_prefix, insert_after_code, insert_before_code)
+    if insert_seq is not None:
+        open_gap_for_insertion(level_prefix, insert_seq, new_group_id, db, exclude_task_id=task.id)
+        new_task_code = f"{level_prefix}{insert_seq}"
+    else:
+        new_task_code = get_next_code_for_level(level_prefix, new_group_id, db, exclude_task_id=task.id)
     validate_manday_budget(new_group_id, new_task_code, task.manday_est, db, exclude_task_id=task.id)
 
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == new_group_id).scalar() or 0
@@ -1948,9 +2115,12 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
 
     db.flush()
 
-    # Close the numbering gap left behind in the source group
-    if old_code:
+    # Cross-group: close the numbering gap left behind in the source group.
+    # Same-group: already closed above, before the new position was resolved.
+    if not same_group and old_code:
         close_gap_after_removal(old_code, old_group_id, db)
+        resync_group_sort_order(old_group_id, db)
+    resync_group_sort_order(new_group_id, db)
 
     # Update progress for both groups
     old_tg = db.query(TaskGroup).filter(TaskGroup.id == old_group_id).first()
@@ -1965,11 +2135,68 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
 
 @router.patch("/task-groups/{gid}/tasks/reorder")
 def reorder_tasks(gid: int, body: dict, db: Session = Depends(get_db)):
-    """Expects body: { "order": [tid1, tid2, tid3, ...] }"""
+    """Expects body: { "order": [tid1, tid2, tid3, ...] } — the full new
+    flattened order of every task in this group (parents and children
+    interleaved as displayed). The frontend renders/sorts tasks by task_code,
+    not sort_order, so a drag-and-drop reorder must renumber task_code to
+    match the new order — otherwise the reorder has no visible effect after
+    reload (sort_order alone silently drifts out of sync with the display)."""
     order = body.get("order", [])
-    for idx, tid in enumerate(order):
-        task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
-        if task:
-            task.sort_order = idx
+    if not order:
+        return {"ok": True}
+
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    group_index = get_group_index(tg, db) if tg else 1
+
+    tasks_by_id = {
+        t.id: t for t in db.query(Task).filter(Task.task_group_id == gid, Task.id.in_(order)).all()
+    }
+    ordered_tasks = [tasks_by_id[tid] for tid in order if tid in tasks_by_id]
+    if not ordered_tasks:
+        return {"ok": True}
+
+    # Nesting doesn't change via this drag — only the relative order of
+    # siblings within each level does. Parentage must be pinned by stable
+    # object identity (task.id) up front, captured from the ORIGINAL codes,
+    # because string prefixes shift as siblings get renumbered below.
+    original_code_by_id = {t.id: t.task_code for t in ordered_tasks}
+    task_by_original_code = {
+        code: t for t in ordered_tasks if (code := original_code_by_id[t.id])
+    }
+    depth_by_id = {
+        t.id: (original_code_by_id[t.id] or "").count(".") for t in ordered_tasks
+    }
+
+    def original_parent_id(t):
+        parent_code = get_parent_code(original_code_by_id[t.id])
+        parent_task = task_by_original_code.get(parent_code)
+        return parent_task.id if parent_task else None
+
+    buckets = {}
+    for t in ordered_tasks:
+        buckets.setdefault(original_parent_id(t), []).append(t)
+
+    new_code_by_id = {}
+
+    def new_prefix_for(pid):
+        if pid is None:
+            return f"{group_index}."
+        return f"{new_code_by_id[pid]}."
+
+    # Process shallowest levels first so a parent's new code is finalized
+    # before its children's bucket computes its new prefix from it.
+    for pid in sorted(buckets.keys(), key=lambda k: depth_by_id[k] if k is not None else -1):
+        prefix = new_prefix_for(pid)
+        for seq, t in enumerate(buckets[pid], start=1):
+            new_code_by_id[t.id] = f"{prefix}{seq}"
+
+    for t in ordered_tasks:
+        new_code = new_code_by_id.get(t.id)
+        if new_code and t.task_code != new_code:
+            t.task_code = new_code
+
+    db.flush()
+    resync_group_sort_order(gid, db)
+
     db.commit()
     return {"ok": True}
