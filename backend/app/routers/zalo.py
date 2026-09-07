@@ -1220,6 +1220,20 @@ def receive_worker_message(
         # 500 the worker.
         return {"ok": False, "reason": "unknown_account"}
 
+    # Groups are opt-in via "+ Theo dõi" (see /groups/track) — an account can
+    # belong to 100+ real Zalo groups it has no reason to track here. Only
+    # keep receiving messages for a group once it's been explicitly tracked;
+    # anything else is silently dropped instead of auto-creating noise. DMs
+    # aren't part of that opt-in flow and keep auto-creating as before.
+    if payload.is_group:
+        existing = (
+            db.query(ZaloConversation)
+            .filter(ZaloConversation.account_id == account.id, ZaloConversation.zalo_thread_id == payload.thread_id)
+            .first()
+        )
+        if not existing:
+            return {"ok": True, "reason": "untracked_group_dropped"}
+
     now = datetime.datetime.now(datetime.timezone.utc)
     conv = _upsert_conversation(
         db, account.id, payload.thread_id, payload.name, payload.is_group, now, payload.content
