@@ -12,6 +12,7 @@ import {
   disconnectZalo,
   getZaloConversations,
   getZaloAvailableGroups,
+  trackZaloGroup,
   getZaloConversationMessages,
   sendZaloMessage,
   sendZaloMessageToThread,
@@ -116,11 +117,30 @@ export default function ZaloAccountPage() {
     refetchInterval: 5000,
   });
 
-  const { data: availableGroups = [] } = useQuery({
+  const { data: availableGroups = [], refetch: refetchAvailableGroups } = useQuery({
     queryKey: ['zalo-available-groups'],
     queryFn: getZaloAvailableGroups,
     enabled: authorized && !!status?.connected,
   });
+
+  // Explicit "pick the real group, start tracking it right now" — instead
+  // of only ever discovering a conversation reactively (whenever a message
+  // happens to arrive through it), which left the user with no way to know
+  // which of the auto-populated "Hội thoại nhóm" entries was the one they
+  // actually cared about testing/using.
+  const [trackingId, setTrackingId] = useState<string | null>(null);
+  const handleTrackGroup = async (threadId: string, name: string) => {
+    setTrackingId(threadId);
+    try {
+      const result = await trackZaloGroup(threadId, name);
+      await Promise.all([refetchAvailableGroups(), refetchConversations()]);
+      setSelectedConversationId(result.conversation_id);
+    } catch (err: any) {
+      alert('Lỗi theo dõi nhóm: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setTrackingId(null);
+    }
+  };
 
   const [refreshingNames, setRefreshingNames] = useState(false);
   const handleRefreshNames = async () => {
@@ -554,6 +574,45 @@ export default function ZaloAccountPage() {
                 <p className="text-sm font-semibold text-amber-800">{zaloWarning}</p>
               </div>
               <button onClick={() => setZaloWarning('')} className="text-amber-600 hover:text-amber-800 text-lg leading-none shrink-0">✕</button>
+            </div>
+          )}
+
+          {/* Explicit group picker — pick the correct real group from Zalo
+              (same source-of-truth as the "gửi tin nhắn thử" picker below)
+              and start tracking it immediately, instead of waiting for a
+              message to reactively create it and hoping it's the right one. */}
+          {status?.connected && (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-sm font-bold text-slate-700">👥 Chọn nhóm Zalo để theo dõi</span>
+                <button onClick={() => refetchAvailableGroups()} className="text-xs font-bold text-slate-500 hover:text-[#0058be]">↻ Tải lại danh sách</button>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">
+                Đây là danh sách nhóm THẬT lấy trực tiếp từ tài khoản Zalo đang kết nối. Chọn đúng nhóm bạn muốn —
+                hệ thống sẽ bắt đầu theo dõi và nhận tin nhắn của nhóm đó ngay, không cần đợi có tin nhắn mới rồi mới tự hiện.
+              </p>
+              {availableGroups.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">Chưa tải được nhóm nào — đợi vài giây sau khi kết nối rồi bấm "Tải lại danh sách".</p>
+              ) : (
+                <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto border border-slate-100 rounded-xl">
+                  {availableGroups.map(g => (
+                    <div key={g.thread_id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="text-sm font-semibold text-slate-800 truncate">{g.name}</span>
+                      {g.already_tracked ? (
+                        <span className="shrink-0 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">✓ Đang theo dõi</span>
+                      ) : (
+                        <button
+                          onClick={() => handleTrackGroup(g.thread_id, g.name)}
+                          disabled={trackingId === g.thread_id}
+                          className="shrink-0 text-[11px] font-bold text-white bg-[#0058be] hover:bg-[#00499e] px-2.5 py-1 rounded-lg disabled:opacity-60"
+                        >
+                          {trackingId === g.thread_id ? 'Đang thêm…' : '+ Theo dõi'}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

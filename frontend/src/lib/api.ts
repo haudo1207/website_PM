@@ -887,6 +887,8 @@ export const getZaloConversations = () =>
 export interface ZaloAvailableGroup { thread_id: string; name: string; already_tracked: boolean }
 export const getZaloAvailableGroups = () =>
   api.get<ZaloAvailableGroup[]>('/zalo/groups/available').then(r => r.data);
+export const trackZaloGroup = (threadId: string, name: string) =>
+  api.post<{ ok: boolean; conversation_id: number; name: string | null }>('/zalo/groups/track', { thread_id: threadId, name }).then(r => r.data);
 export const getZaloConversationMessages = (conversationId: number, afterId?: number) =>
   api.get<ZaloMessage[]>(`/zalo/conversations/${conversationId}/messages`, { params: { after_id: afterId } }).then(r => r.data);
 export interface ZaloRecommendedTask {
