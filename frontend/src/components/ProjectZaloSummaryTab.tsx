@@ -1,10 +1,15 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle, Trash2, Unlink } from 'lucide-react';
-import { getProjectZaloSummary, deleteZaloSummary, unlinkZaloConversationFromProject, ZaloConversationSummary, ZaloProjectGroupSummary } from '@/lib/api';
+import { MessageCircle, Trash2, Unlink, Clock } from 'lucide-react';
+import {
+  getProjectZaloSummary, deleteZaloSummary, unlinkZaloConversationFromProject,
+  getZaloSummaryConfig, updateZaloSummaryConfig,
+  ZaloConversationSummary, ZaloProjectGroupSummary,
+} from '@/lib/api';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
+import { isAdmin } from '@/lib/auth';
 
 // Vietnam has no DST, so a fixed Asia/Ho_Chi_Minh format is exact for
 // bucketing a summary's period_end into "which calendar day is this" —
@@ -149,25 +154,91 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
     }
   };
 
+  // Daily auto-summary time (Asia/Ho_Chi_Minh) — company-wide (applies to
+  // every project's Zalo groups, not just this one), editable by admin
+  // only. Was a fixed env var; now a Setting an admin can change without a
+  // redeploy, and the background job picks it up on its next run.
+  const { data: summaryConfig, refetch: refetchSummaryConfig } = useQuery({
+    queryKey: ['zalo-summary-config'],
+    queryFn: getZaloSummaryConfig,
+  });
+  const [dailyAtDraft, setDailyAtDraft] = useState('');
+  const [savingDailyAt, setSavingDailyAt] = useState(false);
+  useEffect(() => {
+    if (summaryConfig?.daily_at) setDailyAtDraft(summaryConfig.daily_at);
+  }, [summaryConfig?.daily_at]);
+  const handleSaveDailyAt = async () => {
+    setSavingDailyAt(true);
+    try {
+      await updateZaloSummaryConfig(dailyAtDraft);
+      await refetchSummaryConfig();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Lỗi lưu giờ tóm tắt.');
+    } finally {
+      setSavingDailyAt(false);
+    }
+  };
+
+  const dailyAtBar = (
+    <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-2 flex-wrap">
+      <Clock className="w-4 h-4 text-[#0058be] shrink-0" />
+      {isAdmin() ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-slate-500">Tự động tóm tắt mỗi ngày lúc</span>
+          <input
+            type="time"
+            value={dailyAtDraft}
+            onChange={e => setDailyAtDraft(e.target.value)}
+            className="text-xs font-bold border border-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:border-[#0058be]"
+          />
+          <span className="text-xs text-slate-500">(giờ VN, áp dụng cho mọi dự án)</span>
+          {dailyAtDraft !== summaryConfig?.daily_at && (
+            <button
+              type="button"
+              onClick={handleSaveDailyAt}
+              disabled={savingDailyAt}
+              className="text-[11px] font-bold px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-60"
+            >
+              {savingDailyAt ? 'Đang lưu…' : 'Lưu'}
+            </button>
+          )}
+        </div>
+      ) : (
+        <span className="text-xs text-slate-500">
+          Tự động tóm tắt mỗi ngày lúc <b>{summaryConfig?.daily_at || '...'}</b> (giờ VN).
+        </span>
+      )}
+    </div>
+  );
+
   if (isLoading) {
-    return <div className="text-sm text-slate-400 text-center py-16">Đang tải…</div>;
+    return (
+      <div className="space-y-5">
+        {dailyAtBar}
+        <div className="text-sm text-slate-400 text-center py-16">Đang tải…</div>
+      </div>
+    );
   }
 
   if (groups.length === 0) {
     return (
-      <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-        <MessageCircle className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-        <p className="text-sm font-semibold text-slate-600">Chưa có nhóm Zalo nào gán vào dự án này.</p>
-        <p className="text-xs text-slate-400 mt-1.5">
-          Vào <a href="/zalo-account" className="text-[#0058be] font-semibold hover:underline">Tài khoản Zalo giao task</a> để
-          chọn 1 hội thoại nhóm và gán vào dự án này.
-        </p>
+      <div className="space-y-5">
+        {dailyAtBar}
+        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
+          <MessageCircle className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm font-semibold text-slate-600">Chưa có nhóm Zalo nào gán vào dự án này.</p>
+          <p className="text-xs text-slate-400 mt-1.5">
+            Vào <a href="/zalo-account" className="text-[#0058be] font-semibold hover:underline">Tài khoản Zalo giao task</a> để
+            chọn 1 hội thoại nhóm và gán vào dự án này.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-5">
+      {dailyAtBar}
       {groups.map((g) => (
         <div key={g.conversation_id} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
