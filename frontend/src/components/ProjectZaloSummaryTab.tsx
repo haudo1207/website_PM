@@ -18,10 +18,6 @@ const vnDateKey = (iso: string) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date(iso));
 
 const vnDateLabel = (dateKey: string) => {
-  const todayKey = vnDateKey(new Date().toISOString());
-  const yesterdayKey = vnDateKey(new Date(Date.now() - 86400000).toISOString());
-  if (dateKey === todayKey) return 'Hôm nay';
-  if (dateKey === yesterdayKey) return 'Hôm qua';
   const [, m, d] = dateKey.split('-');
   return `${d}/${m}`;
 };
