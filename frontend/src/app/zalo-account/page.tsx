@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
-import { isMemberOrAbove, isAdmin } from '@/lib/auth';
+import { isMemberOrAbove } from '@/lib/auth';
 import {
   getZaloStatus,
   importZaloSession,
@@ -26,8 +26,6 @@ import {
   getProjects,
   getZaloConversationSummaries,
   summarizeZaloConversationNow,
-  getZaloSummaryConfig,
-  updateZaloSummaryConfig,
   ZaloConversation,
   ZaloMessage,
   ZaloSuggestedMember,
@@ -82,31 +80,6 @@ export default function ZaloAccountPage() {
     enabled: authorized,
     refetchInterval: 8000,
   });
-
-  // Daily auto-summary time (Asia/Ho_Chi_Minh) — company-wide, editable by
-  // admin only. Was a fixed env var; now a Setting an admin can change
-  // without a redeploy, and the background job picks it up on its next run.
-  const { data: summaryConfig, refetch: refetchSummaryConfig } = useQuery({
-    queryKey: ['zalo-summary-config'],
-    queryFn: getZaloSummaryConfig,
-    enabled: authorized,
-  });
-  const [dailyAtDraft, setDailyAtDraft] = useState('');
-  const [savingDailyAt, setSavingDailyAt] = useState(false);
-  useEffect(() => {
-    if (summaryConfig?.daily_at) setDailyAtDraft(summaryConfig.daily_at);
-  }, [summaryConfig?.daily_at]);
-  const handleSaveDailyAt = async () => {
-    setSavingDailyAt(true);
-    try {
-      await updateZaloSummaryConfig(dailyAtDraft);
-      await refetchSummaryConfig();
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Lỗi lưu giờ tóm tắt.');
-    } finally {
-      setSavingDailyAt(false);
-    }
-  };
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -956,33 +929,8 @@ export default function ZaloAccountPage() {
               <button onClick={() => setSummaryModalOpen(false)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
             </div>
 
-            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0 flex-wrap">
-              {isAdmin() ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-slate-500">Tự động tóm tắt mỗi ngày lúc</span>
-                  <input
-                    type="time"
-                    value={dailyAtDraft}
-                    onChange={e => setDailyAtDraft(e.target.value)}
-                    className="text-xs font-bold border border-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:border-[#0058be]"
-                  />
-                  <span className="text-[11px] text-slate-500">(giờ VN)</span>
-                  {dailyAtDraft !== summaryConfig?.daily_at && (
-                    <button
-                      onClick={handleSaveDailyAt}
-                      disabled={savingDailyAt}
-                      type="button"
-                      className="text-[11px] font-bold px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-60"
-                    >
-                      {savingDailyAt ? 'Đang lưu…' : 'Lưu'}
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[11px] text-slate-500">
-                  Tự động tóm tắt mỗi ngày lúc <b>{summaryConfig?.daily_at || '...'}</b> (giờ VN).
-                </p>
-              )}
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+              <p className="text-[11px] text-slate-500">Tự động chạy định kỳ theo <code>ZALO_SUMMARY_INTERVAL_SECONDS</code>. Bấm nút bên phải để chạy tóm tắt ngay (test).</p>
               <button onClick={handleSummarizeNow} disabled={summarizingNow} type="button"
                 className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-[#0058be] text-white hover:bg-[#00499e] disabled:opacity-60 whitespace-nowrap">
                 {summarizingNow ? 'Đang tóm tắt…' : '🧠 Tóm tắt ngay'}

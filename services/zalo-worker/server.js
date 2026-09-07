@@ -256,6 +256,24 @@ function requestGroupBackfill(session) {
 
 const BACKFILL_INTERVAL_MS = 15000;
 
+// Bounds one listener callback's runtime — a hung zca-js API call inside it
+// (getGroupInfo/getAllGroups etc. go over the network with no timeout of
+// their own) would otherwise leave that invocation dangling forever. Ported
+// from a reference zca-js multi-account bridge that hit and fixed exactly
+// this ("Problem C"). Logs and drops on timeout instead of crashing the
+// process or blocking anything else — each event's handler call is already
+// independent, this just stops one from leaking indefinitely.
+function withTimeout(fn, timeoutMs = 20000) {
+  return (...args) => {
+    Promise.race([
+      fn(...args),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Event handler timeout")), timeoutMs)),
+    ]).catch((err) => {
+      console.error(`[listener] handler error/timeout: ${err.message}`);
+    });
+  };
+}
+
 function attachListener(session, zaloApi) {
   // Every handler below closes over `myListenerId` and bails out if this
   // session has since moved on to a newer listener (reconnect happened,
@@ -276,14 +294,14 @@ function attachListener(session, zaloApi) {
     setTimeout(() => requestGroupBackfill(session), 2000);
   });
 
-  zaloApi.listener.on("old_messages", async (messages, threadType) => {
+  zaloApi.listener.on("old_messages", withTimeout(async (messages, threadType) => {
     if (!isActiveListener()) return;
     console.log(`[listener:${session.accountId}] old_messages backfill — ${messages?.length ?? 0} message(s), type=${threadType}`);
     for (const message of messages || []) {
       if (!isActiveListener()) return;
       await forwardMessage(session, message);
     }
-  });
+  }, 45000)); // a backfill batch can have many messages — give it more room than a single "message" event
 
   // zca-js fires "disconnected" on EVERY raw WebSocket close, before deciding
   // whether to retry — for many close codes it silently reopens the socket
@@ -313,7 +331,7 @@ function attachListener(session, zaloApi) {
     scheduleReconnect(session);
   });
 
-  zaloApi.listener.on("message", async (message) => {
+  zaloApi.listener.on("message", withTimeout(async (message) => {
     if (!isActiveListener()) {
       console.warn(`[listener:${session.accountId}] dropped message from a stale listener (threadId=${message?.threadId}) — a newer session is already active`);
       return;
@@ -322,7 +340,7 @@ function attachListener(session, zaloApi) {
       `[listener:${session.accountId}] raw message event — threadId=${message?.threadId} type=${message?.type} isSelf=${message?.isSelf} contentType=${typeof message?.data?.content}`
     );
     await forwardMessage(session, message);
-  });
+  }));
 
   zaloApi.listener.start({ retryOnClose: true });
 }
