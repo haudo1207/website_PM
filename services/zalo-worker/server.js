@@ -49,6 +49,12 @@ class SessionState {
     this.groupNameCache = new Map(); // group_id -> name
     this.friendNameCache = new Map(); // user_id -> name
     this.authFilePath = path.join(AUTH_STORE_DIR, `${this.accountId}.json`);
+    // Set by POST /sessions/:accountId/disconnect — tells scheduleReconnect
+    // to back off instead of auto-reviving the session. Without this, a
+    // "closed" event fired by our own listener.stop() call (or a stray one
+    // arriving right after) would silently re-log the user back in a few
+    // seconds later. Cleared the moment a fresh login succeeds.
+    this.manualDisconnect = false;
   }
 }
 
@@ -70,6 +76,10 @@ function getOrCreateSession(accountId) {
 // the saved auth file, same as a container restart would do. Scoped to one
 // session — each account reconnects independently of every other.
 function scheduleReconnect(session) {
+  if (session.manualDisconnect) {
+    console.log(`[reconnect:${session.accountId}] skipping — session was manually disconnected.`);
+    return;
+  }
   if (session.reconnecting) return;
   session.reconnecting = true;
   setTimeout(async () => {
@@ -514,6 +524,7 @@ async function loginWithAuth(session, { cookies, imei, userAgent }) {
   session.lastLoginAt = new Date().toISOString();
   session.lastError = null;
   session.consecutiveReconnectFailures = 0;
+  session.manualDisconnect = false;
   session.groupNameCache = new Map();
   session.friendNameCache = new Map();
   attachListener(session, newApi);
@@ -610,6 +621,12 @@ app.post("/sessions/:accountId/import", async (req, res) => {
 
 app.post("/sessions/:accountId/disconnect", (req, res) => {
   const session = getOrCreateSession(req.params.accountId);
+  // Set BEFORE stopping the listener — stop() can itself fire a "closed"
+  // event, which would otherwise arm scheduleReconnect() and silently log
+  // the user back in ~5s later using the same cookies.
+  session.manualDisconnect = true;
+  session.reconnecting = false;
+  session.consecutiveReconnectFailures = 0;
   try {
     session.api?.listener?.stop();
   } catch (_err) {
@@ -617,6 +634,19 @@ app.post("/sessions/:accountId/disconnect", (req, res) => {
   }
   session.api = null;
   session.listenerConnected = false;
+  // Forget the saved cookies on disk too — otherwise a worker restart
+  // (container rebuild/redeploy/crash) would find this account's auth file
+  // via restoreOnStartup() and silently reconnect it regardless of the
+  // user having disconnected. This is the actual root cause of "disconnect
+  // then it comes back": intent to disconnect only lived in memory before.
+  try {
+    if (fs.existsSync(session.authFilePath)) {
+      fs.unlinkSync(session.authFilePath);
+      console.log(`[${session.accountId}] Deleted saved auth file — will not auto-restore on next restart.`);
+    }
+  } catch (err) {
+    console.warn(`[${session.accountId}] Failed to delete saved auth file:`, err.message);
+  }
   res.json({ ok: true });
 });
 
