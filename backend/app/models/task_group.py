@@ -11,7 +11,7 @@ Rules:
 - Progress = count(task.status='Done') / count(total tasks)
 - Roman Index is derived from sort_order (I, II, III...)
 """
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Numeric, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Numeric, ForeignKey, func, JSON
 from sqlalchemy.orm import relationship
 from ..database import Base
 
@@ -26,9 +26,18 @@ class TaskGroup(Base):
     status        = Column(String(50), default="Waiting")      # Waiting / Process / Done / Cancel
     progress      = Column(Numeric(5, 2), default=0)           # auto-calculated
 
-    # Manday & Dates — editable
+    # Manday & Dates — editable. manday_est is capped at <= 10 by the router
+    # (enforced only on create/update — existing rows saved before this rule
+    # keep whatever value they already had).
     manday_est     = Column(Numeric(5, 2), nullable=True)
     start_date_est = Column(Date, nullable=True)
+
+    # Member ids (of the group's own child Tasks' assigned/support, plus any
+    # manually added) shown as a roster on the Task Group row. Additive: a
+    # child Task's assigned/support member is appended here when set,
+    # deduped, and never auto-removed — manual edits replace the whole list.
+    assigned_ids  = Column(JSON, nullable=True, default=list)
+    support_ids   = Column(JSON, nullable=True, default=list)
 
     # Auto-calculated
     end_date_est   = Column(Date, nullable=True)

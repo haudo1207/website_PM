@@ -415,6 +415,7 @@ function ProjectDetailContent() {
   const [editingCell, setEditingCell] = useState<{ taskId: number, colName: string } | null>(null);
   const [editingGroupDate, setEditingGroupDate] = useState<number | null>(null);
   const [editingGroupRemark, setEditingGroupRemark] = useState<number | null>(null);
+  const [editingGroupPeople, setEditingGroupPeople] = useState<{ groupId: number; field: 'assigned_ids' | 'support_ids' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
   const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
@@ -833,14 +834,6 @@ function ProjectDetailContent() {
   // Các cột bắt buộc khi tạo task mới (xem handleSaveTask) - không cho ẩn vì
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
   const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
-
-  // Cột phụ ít dùng - ẩn mặc định cho user CHƯA từng lưu preference (không
-  // đụng tới preference đã lưu của user cũ).
-  const DEFAULT_HIDDEN_COLUMNS = [
-    'KPI RATIO', 'LINK', 'REMARK', 'SEND', 'END DATE EST', 'MD ACTUAL', 'END ACTUAL',
-    'DAYS LATE', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID',
-    'ROOT TASKS', 'NOTES', 'SOLUTION',
-  ];
 
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
@@ -1385,7 +1378,10 @@ function ProjectDetailContent() {
         if (legacy) {
           setHiddenColumns(JSON.parse(legacy));
         } else {
-          setHiddenColumns(DEFAULT_HIDDEN_COLUMNS);
+          // Mặc định là hiện ĐỦ cột cho mọi user/project chưa từng lưu
+          // preference - ẩn/ghim cột là lựa chọn riêng của từng người, không
+          // áp default ẩn sẵn lên người khác chưa từng đụng vào.
+          setHiddenColumns([]);
         }
         setColumnOrder(TASK_COLUMNS);
         setColumnWidths({});
@@ -1806,6 +1802,8 @@ function ProjectDetailContent() {
       case 'MANDAY ACTUAL': return group.manday_actual != null ? String(group.manday_actual) : '';
       case 'END ACTUAL':
       case 'END DATE ACTUAL': return formatDateToShow(group.end_date_actual || '');
+      case 'ASSIGNED': return (group.assigned_names || []).join(', ');
+      case 'SUPPORT': return (group.support_names || []).join(', ');
       default: return '';
     }
   };
@@ -2158,6 +2156,15 @@ function ProjectDetailContent() {
       });
     } finally {
       isSavingRef.current = false;
+    }
+  };
+
+  const handleSaveGroupPeople = async (group: any, field: 'assigned_ids' | 'support_ids', ids: (string | number)[]) => {
+    try {
+      await updateTaskGroup(group.phase_id, group.id, { [field]: ids.map(Number) });
+      await reloadAll(true);
+    } catch (err: any) {
+      alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -4318,7 +4325,7 @@ function ProjectDetailContent() {
 
     // Columns NOT applicable to Task Group (show as disabled/empty)
     const GROUP_DISABLED_COLS = [
-      'PRIORITY', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
+      'PRIORITY', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
       'TICKET ID', 'SEND', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL',
       'DAYS LATE', 'SUB ID', 'ROOT TASKS', 'SOLUTION', 'NOTES'
     ];
@@ -4700,6 +4707,55 @@ function ProjectDetailContent() {
               if (isDisabled) {
                 return (
                   <td key={col} className="px-4 py-2.5 text-center text-slate-300 text-xs select-none">—</td>
+                );
+              }
+
+              // Roster of Assigned/Support member ids on the group itself —
+              // additive-synced from child Tasks, and manually editable via
+              // a multi-select (dedup'd, never auto-removed).
+              if (colUpper === 'ASSIGNED' || colUpper === 'SUPPORT') {
+                const field: 'assigned_ids' | 'support_ids' = colUpper === 'ASSIGNED' ? 'assigned_ids' : 'support_ids';
+                const names: string[] = colUpper === 'ASSIGNED' ? (group.assigned_names || []) : (group.support_names || []);
+                const ids: number[] = colUpper === 'ASSIGNED' ? (group.assigned_ids || []) : (group.support_ids || []);
+                const isEditingPeople = editingGroupPeople?.groupId === group.id && editingGroupPeople?.field === field;
+
+                if (isEditingPeople) {
+                  return (
+                    <td key={col} className="px-1 py-1 min-w-[180px]" onBlur={(e) => {
+                      const currentTarget = e.currentTarget;
+                      setTimeout(() => {
+                        if (!currentTarget.contains(document.activeElement)) {
+                          setEditingGroupPeople(null);
+                        }
+                      }, 150);
+                    }}>
+                      <SearchableSelect
+                        label="thành viên"
+                        icon=""
+                        isMulti
+                        options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name }))}
+                        value={ids.map(String)}
+                        onChange={(vals: any) => handleSaveGroupPeople(group, field, vals)}
+                        placeholder="Tìm thành viên..."
+                        className="w-full"
+                      />
+                    </td>
+                  );
+                }
+
+                return (
+                  <td
+                    key={col}
+                    className="px-2 py-2 text-xs cursor-pointer hover:bg-indigo-100/60 group"
+                    onClick={() => setEditingGroupPeople({ groupId: group.id, field })}
+                  >
+                    <div className="flex items-center gap-1 w-full min-w-0">
+                      <span className="truncate min-w-0 font-semibold text-[#1e293b]" title={names.join(', ')}>
+                        {names.length > 0 ? names.join(', ') : <span className="text-slate-300 font-normal">—</span>}
+                      </span>
+                      <Pencil size={11} className="opacity-0 group-hover:opacity-40 transition-opacity shrink-0 text-slate-500" />
+                    </div>
+                  </td>
                 );
               }
 

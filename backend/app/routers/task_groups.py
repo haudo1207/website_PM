@@ -192,6 +192,51 @@ def validate_manday_budget(gid: int, task_code: str, manday_est, db: Session, ex
         )
 
 
+MAX_GROUP_MANDAY = 10
+
+
+def validate_group_manday(manday_est) -> None:
+    """Task Group MANDAY EST is capped at <= 10 going forward. Only checked
+    against the incoming value on create/update — existing rows saved before
+    this rule keep whatever value they already had, untouched."""
+    if manday_est is not None and manday_est > MAX_GROUP_MANDAY:
+        raise HTTPException(400, f"Manday EST của Task Group không được vượt quá {MAX_GROUP_MANDAY}.")
+
+
+def validate_member_ids_for_project(ids, project_id: int, db: Session, label: str):
+    """Dedup (preserve order) and confirm every id is a member of this
+    project — mirrors the same check already done for Task assigned_id/
+    support_id in create_task/update_task."""
+    if not ids:
+        return []
+    deduped = list(dict.fromkeys(int(i) for i in ids))
+    if project_id:
+        valid_ids = {
+            row.member_id for row in db.execute(
+                project_members.select().where(
+                    project_members.c.project_id == project_id,
+                    project_members.c.member_id.in_(deduped),
+                )
+            ).all()
+        }
+        invalid = [i for i in deduped if i not in valid_ids]
+        if invalid:
+            raise HTTPException(400, f"{label}: thành viên {invalid} không thuộc dự án này.")
+    return deduped
+
+
+def add_to_group_list(tg, field: str, member_id) -> None:
+    """Append member_id to tg.<field> (a JSON array of member ids) if not
+    already present. Additive only — never removes an existing entry, even
+    if the source task's assignee later changes."""
+    if not member_id:
+        return
+    current = list(getattr(tg, field) or [])
+    if member_id not in current:
+        current.append(member_id)
+        setattr(tg, field, current)
+
+
 def get_group_index(tg, db) -> int:
     """Get 1-based index of this group within its phase (by sort_order)."""
     groups = db.query(TaskGroup).filter(
@@ -273,7 +318,7 @@ def close_gap_after_removal(removed_code: str, gid: int, db: Session):
             d.task_code = f"{new_code}." + d.task_code[len(old_desc_prefix):]
 
 
-def serialize_task_group(tg, db, group_index=None):
+def serialize_task_group(tg, db, group_index=None, members_map=None):
     task_count = 0
     done_count = 0
     try:
@@ -290,6 +335,18 @@ def serialize_task_group(tg, db, group_index=None):
             group_index = get_group_index(tg, db)
         except Exception:
             group_index = 1
+
+    assigned_ids = list(getattr(tg, "assigned_ids", None) or [])
+    support_ids = list(getattr(tg, "support_ids", None) or [])
+
+    def _resolve_names(ids):
+        if not ids:
+            return []
+        if members_map is not None:
+            return [members_map[i] for i in ids if i in members_map]
+        rows = db.query(Member).filter(Member.id.in_(ids)).all()
+        by_id = {m.id: (m.display_name or m.full_name) for m in rows}
+        return [by_id[i] for i in ids if i in by_id]
 
     return {
         "id": tg.id,
@@ -311,6 +368,10 @@ def serialize_task_group(tg, db, group_index=None):
         "task_count": task_count,
         "done_count": done_count,
         "created_at": str(tg.created_at) if getattr(tg, "created_at", None) else None,
+        "assigned_ids": assigned_ids,
+        "support_ids": support_ids,
+        "assigned_names": _resolve_names(assigned_ids),
+        "support_names": _resolve_names(support_ids),
     }
 
 
@@ -318,10 +379,11 @@ def serialize_task_group(tg, db, group_index=None):
 def list_task_groups(phid: int, db: Session = Depends(get_db)):
     try:
         groups = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).order_by(TaskGroup.sort_order, TaskGroup.id).all()
+        members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
         out = []
         for i, g in enumerate(groups):
             try:
-                out.append(serialize_task_group(g, db, i + 1))
+                out.append(serialize_task_group(g, db, i + 1, members_map))
             except Exception as e:
                 print(f"Error serializing task group {getattr(g, 'id', None)}: {e}")
         return out
@@ -345,6 +407,10 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
             manday_est = float(manday_est)
         except (ValueError, TypeError):
             raise HTTPException(400, "Manday EST must be a number.")
+    validate_group_manday(manday_est)
+
+    assigned_ids = validate_member_ids_for_project(body.get("assigned_ids"), phase.project_id, db, "Người thực hiện")
+    support_ids = validate_member_ids_for_project(body.get("support_ids"), phase.project_id, db, "SP")
 
     max_order = db.query(sql_func.max(TaskGroup.sort_order)).filter(TaskGroup.phase_id == phid).scalar() or 0
     tg = TaskGroup(
@@ -355,6 +421,8 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
         manday_est=manday_est,
         sort_order=max_order + 1,
         start_date_est=parse_date(body.get("start_date_est")),
+        assigned_ids=assigned_ids,
+        support_ids=support_ids,
     )
     tg = recalculate_task_group_dates(tg, db)
     db.add(tg)
@@ -399,11 +467,19 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
                 val = float(val)
             except (ValueError, TypeError):
                 raise HTTPException(400, "Manday EST must be a number.")
+        validate_group_manday(val)
         tg.manday_est = val
     if "start_date_est" in body:
         tg.start_date_est = parse_date(body["start_date_est"])
     if "end_date_actual_override" in body:
         tg.end_date_actual_override = parse_date(body["end_date_actual_override"])
+
+    project_id = tg.phase.project_id if tg.phase else None
+    if "assigned_ids" in body:
+        tg.assigned_ids = validate_member_ids_for_project(body["assigned_ids"], project_id, db, "Người thực hiện")
+    if "support_ids" in body:
+        tg.support_ids = validate_member_ids_for_project(body["support_ids"], project_id, db, "SP")
+
     tg = recalculate_task_group_dates(tg, db)
 
     new_status = tg.status
@@ -1059,6 +1135,11 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     tg = sync_group_dates(tg, db, extra_start=task.start_date, extra_end=task.end_date_est)
     tg = sync_group_actual_dates(tg, db)
 
+    # This task's assigned/support member joins the group's roster too
+    # (additive, deduped — never removes an existing entry).
+    add_to_group_list(tg, "assigned_ids", task.assigned_id)
+    add_to_group_list(tg, "support_ids", task.support_id)
+
     # Update group progress
     tg.progress = Decimal(str(calc_group_progress(gid, db)))
 
@@ -1303,6 +1384,12 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
 
     if task.assigned_id and task.support_id and task.assigned_id == task.support_id:
         raise HTTPException(400, "Support cannot be the same as Assigned.")
+
+    # This task's assigned/support member joins the parent group's roster
+    # too (additive, deduped) whenever either was actually touched.
+    if tg and ("assigned_id" in body or "support_id" in body):
+        add_to_group_list(tg, "assigned_ids", task.assigned_id)
+        add_to_group_list(tg, "support_ids", task.support_id)
 
     # KPI Ratio
     if "kpi_ratio_assign" in body or "kpi_ratio_support" in body:
