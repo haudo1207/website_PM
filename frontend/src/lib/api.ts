@@ -911,6 +911,10 @@ export const getZaloConversationSummaries = (conversationId: number) =>
   api.get<ZaloConversationSummary[]>(`/zalo/conversations/${conversationId}/summaries`).then(r => r.data);
 export const summarizeZaloConversationNow = (conversationId: number) =>
   api.post<ZaloConversationSummary>(`/zalo/conversations/${conversationId}/summarize-now`).then(r => r.data);
+export const getZaloSummaryConfig = () =>
+  api.get<{ daily_at: string }>('/settings/zalo-summary-config').then(r => r.data);
+export const updateZaloSummaryConfig = (dailyAt: string) =>
+  api.put<{ message: string; daily_at: string }>('/settings/zalo-summary-config', { daily_at: dailyAt }).then(r => r.data);
 export interface ZaloProjectGroupSummary {
   conversation_id: number;
   name: string;
