@@ -921,6 +921,8 @@ export const getProjectZaloSummary = (projectId: number) =>
   api.get<ZaloProjectGroupSummary[]>(`/zalo/projects/${projectId}/summary`).then(r => r.data);
 export const deleteZaloSummary = (summaryId: number) =>
   api.delete<{ ok: boolean }>(`/zalo/summaries/${summaryId}`).then(r => r.data);
+export const unlinkZaloConversationFromProject = (conversationId: number) =>
+  api.post<{ ok: boolean }>(`/zalo/conversations/${conversationId}/unlink-project`).then(r => r.data);
 export interface ZaloOutgoingMention { uid: string; pos: number; len: number }
 export const sendZaloMessage = (conversationId: number, text: string, mentions?: ZaloOutgoingMention[]) =>
   api.post<{ ok: boolean; source_message_id: string }>(`/zalo/conversations/${conversationId}/send`, { text, mentions }).then(r => r.data);
