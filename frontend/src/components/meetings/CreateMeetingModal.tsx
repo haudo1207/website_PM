@@ -384,7 +384,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         title: formData.title,
         date: formData.date,
         time: formData.time,
-        duration: formData.duration
+        duration: formData.duration,
+        project_id: formData.project_ids[0]
       });
       if (data.success && data.join_url) {
         const fullUrl = data.join_url.startsWith('http') ? data.join_url : `https://${data.join_url}`;
