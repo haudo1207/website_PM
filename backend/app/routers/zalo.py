@@ -336,6 +336,9 @@ def link_conversation_project(
         project = db.query(Project).filter(Project.id == payload.project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="Không tìm thấy dự án.")
+        conv.project_linked_at = datetime.datetime.now(datetime.timezone.utc)
+    else:
+        conv.project_linked_at = None
 
     conv.project_id = payload.project_id
     db.commit()
@@ -903,7 +906,16 @@ def get_project_zalo_summary(
     group currently linked to this project (ZaloConversation.project_id),
     across every connected Leader's own account, each with its recent AI
     digests, so a PM can see what a group discussed without leaving the
-    project."""
+    project.
+
+    De-duped by name: when several people each connect their OWN Zalo
+    account but are all members of the same real-world group, and each
+    independently links "their view" of it to this project, that produces
+    several ZaloConversation rows sharing one display name. Only the one
+    linked to the project FIRST (earliest project_linked_at) is shown —
+    the others stay in the DB (their own summaries are still reachable via
+    the account owner's own /zalo-account page) but don't clutter this
+    shared view with near-duplicate cards."""
     conversations = (
         db.query(ZaloConversation)
         .join(ZaloAccount, ZaloConversation.account_id == ZaloAccount.id)
@@ -915,6 +927,20 @@ def get_project_zalo_summary(
         .order_by(ZaloConversation.name.asc())
         .all()
     )
+
+    def _link_sort_key(c):
+        # Legacy rows linked before project_linked_at existed sort as if
+        # linked at created_at — still deterministic, just not "first" in
+        # the strict sense for those older links.
+        return c.project_linked_at or c.created_at or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+    first_by_name = {}
+    for conv in conversations:
+        key = (conv.name or "").strip().lower()
+        current = first_by_name.get(key)
+        if current is None or _link_sort_key(conv) < _link_sort_key(current):
+            first_by_name[key] = conv
+    conversations = sorted(first_by_name.values(), key=lambda c: (c.name or "").lower())
 
     result = []
     for conv in conversations:
