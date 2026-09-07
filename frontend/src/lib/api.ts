@@ -355,8 +355,17 @@ export const blockTask = (groupId: number, taskId: number, reason: string, block
   api.post(`/task-groups/${groupId}/tasks/${taskId}/block`, { reason, blocked_by_task_id: blockedByTaskId || undefined }).then(r => r.data);
 export const unblockTask = (groupId: number, taskId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/unblock`).then(r => r.data);
-export const moveTask = (groupId: number, taskId: number, targetGroupId: number) =>
-  api.post(`/task-groups/${groupId}/tasks/${taskId}/move`, { target_group_id: targetGroupId }).then(r => r.data);
+export const moveTask = (
+  groupId: number,
+  taskId: number,
+  targetGroupId: number,
+  position?: { insertAfterTaskId?: number | null; insertBeforeTaskId?: number | null }
+) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/move`, {
+    target_group_id: targetGroupId,
+    insert_after_task_id: position?.insertAfterTaskId || undefined,
+    insert_before_task_id: position?.insertBeforeTaskId || undefined,
+  }).then(r => r.data);
 export const moveTaskGroup = (phaseId: number, groupId: number, targetPhaseId: number) =>
   api.post(`/phases/${phaseId}/task-groups/${groupId}/move`, { target_phase_id: targetPhaseId }).then(r => r.data);
 export const reorderTasks = (groupId: number, order: number[]) =>

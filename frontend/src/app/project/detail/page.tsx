@@ -40,7 +40,7 @@ import {
   Search, Filter, Columns3, Plus, ChevronDown, ChevronRight, MoreHorizontal,
   GripVertical, Pencil, Trash2, Copy, RotateCcw, Lock, Expand, Minimize2, X,
   Bell, Sparkles, Building2, LayoutTemplate, FolderPlus, Pin, PinOff,
-  Users, AlertTriangle, Layers, UserX, ArrowRight, Clock,
+  Users, AlertTriangle, Layers, UserX, ArrowRight, ArrowRightLeft, Clock,
   ArrowUpRight, ArrowDownRight, Minus, Trophy, BarChart3,
   Ban, CheckCircle2,
 } from 'lucide-react';
@@ -301,7 +301,16 @@ function ProjectDetailContent() {
   const [addingTaskGroupId, setAddingTaskGroupId] = useState<number | null>(null);
   const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
   const [addingTaskAfterCode, setAddingTaskAfterCode] = useState<string | null>(null);
+  const [addingTaskBeforeCode, setAddingTaskBeforeCode] = useState<string | null>(null);
   const [hoveredSpacerPos, setHoveredSpacerPos] = useState<{ id: string; left: string } | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<number | null>(null);
+  const [draggingTaskGroupId, setDraggingTaskGroupId] = useState<number | null>(null);
+  const [dragOverTaskId, setDragOverTaskId] = useState<number | null>(null);
+  const [movingTask, setMovingTask] = useState<any>(null);
+  const [moveTargetPhaseId, setMoveTargetPhaseId] = useState<number | ''>('');
+  const [moveTargetGroupId, setMoveTargetGroupId] = useState<number | ''>('');
+  const [moveTargetPosition, setMoveTargetPosition] = useState<string>('end');
+  const [savingMoveTask, setSavingMoveTask] = useState(false);
 
   // Task Group CRUD States
   const [showTaskGroupModal, setShowTaskGroupModal] = useState(false);
@@ -771,18 +780,6 @@ function ProjectDetailContent() {
     const idx = code.lastIndexOf('.');
     if (idx === -1) return '';
     return code.substring(0, idx);
-  };
-
-  const getNextSubTaskId = (parentTaskId: string) => {
-    const siblingCodes = items
-      .filter(t => getParentCode(t.task_code) === parentTaskId)
-      .map(t => t.task_code || '');
-    const subtaskNums = siblingCodes.map(c => {
-      const suffix = c.substring(parentTaskId.length + 1);
-      return parseInt(suffix, 10);
-    }).filter(n => !isNaN(n));
-    const nextSubNum = subtaskNums.length > 0 ? Math.max(...subtaskNums) + 1 : 1;
-    return `${parentTaskId}.${nextSubNum}`;
   };
 
   const ACTION_COL_WIDTH = 56;
@@ -2793,23 +2790,33 @@ function ProjectDetailContent() {
     return idx >= 0 ? idx + 1 : 1;
   };
 
-  const getNextRootCodeForGroup = (groupId: number) => {
+  // Best-effort preview only — the backend recomputes the real task_code
+  // authoritatively at save time (see resolve_insert_seq in task_groups.py),
+  // shifting siblings to make room when inserting mid-list. Mirrors that
+  // same logic so the preview matches what will actually be saved.
+  const getTaskIdPreview = (groupId: number, parentCode: string | null) => {
     const groupIdx = getGroupIndex(groupId);
-    const groupTasks = items.filter(t => t.task_group_id === groupId);
-    const prefix = `${groupIdx}.`;
-    const seqs = groupTasks
-      .map(t => {
-        const code = t.task_code || '';
-        if (code.startsWith(prefix)) {
-          const suffix = code.substring(prefix.length);
-          const n = parseInt(suffix, 10);
-          return isNaN(n) ? 0 : n;
-        }
-        return 0;
-      })
-      .filter(n => n > 0);
-    const nextSeq = seqs.length > 0 ? Math.max(...seqs) + 1 : 1;
-    return `${groupIdx}.${nextSeq}`;
+    const levelPrefix = parentCode ? `${parentCode}.` : `${groupIdx}.`;
+    const seqAtLevel = (code: string | null | undefined): number | null => {
+      if (!code || !code.startsWith(levelPrefix)) return null;
+      const rest = code.substring(levelPrefix.length);
+      if (rest.includes('.')) return null;
+      const n = parseInt(rest, 10);
+      return isNaN(n) ? null : n;
+    };
+
+    if (addingTaskBeforeCode) {
+      return `${levelPrefix}${seqAtLevel(addingTaskBeforeCode) ?? 1}`;
+    }
+    if (addingTaskAfterCode) {
+      const s = seqAtLevel(addingTaskAfterCode);
+      return `${levelPrefix}${s !== null ? s + 1 : 1}`;
+    }
+    const maxSeq = items.reduce((max, t) => {
+      const n = seqAtLevel(t.task_code);
+      return n !== null && n > max ? n : max;
+    }, 0);
+    return `${levelPrefix}${maxSeq + 1}`;
   };
 
 
@@ -2822,7 +2829,7 @@ function ProjectDetailContent() {
 
     // TASK ID - automatically generated preview
     if (colUpper === 'TASK ID' || colUpper === 'TASKID' || colUpper === 'ID') {
-      const generatedId = parentCode ? getNextSubTaskId(parentCode) : getNextRootCodeForGroup(groupId);
+      const generatedId = getTaskIdPreview(groupId, parentCode);
       return (
         <td key={col} className="p-1">
           <input
@@ -2868,6 +2875,8 @@ function ProjectDetailContent() {
       } else if (e.key === 'Escape') {
         setAddingTaskGroupId(null);
         setAddingTaskParentCode(null);
+        setAddingTaskAfterCode(null);
+        setAddingTaskBeforeCode(null);
         setNewForm({});
       }
     };
@@ -3120,12 +3129,13 @@ function ProjectDetailContent() {
 
     setSavingTask(true);
     try {
-      const taskCode = addingTaskParentCode
-        ? getNextSubTaskId(addingTaskParentCode)
-        : getNextRootCodeForGroup(addingTaskGroupId);
-
+      // task_code is now assigned server-side from these positional hints —
+      // the backend inserts at the exact spot (not always at the end) and
+      // shifts existing siblings to make room, so numbering never drifts.
       const payload: any = {
-        task_code: taskCode,
+        parent_code: addingTaskParentCode,
+        insert_after_code: addingTaskAfterCode,
+        insert_before_code: addingTaskBeforeCode,
         detail: detailVal,
         priority: priorityVal,
         status: statusVal,
@@ -3160,6 +3170,7 @@ function ProjectDetailContent() {
       setAddingTaskGroupId(null);
       setAddingTaskParentCode(null);
       setAddingTaskAfterCode(null);
+      setAddingTaskBeforeCode(null);
       setNewForm({});
       reloadAll(true);
       flash('Đã thêm nhiệm vụ thành công!');
@@ -3280,27 +3291,63 @@ function ProjectDetailContent() {
     }
   };
 
-  const handleMoveTask = async (groupId: number, taskId: number) => {
-    const otherGroups = taskGroups.filter(g => g.id !== groupId);
-    if (otherGroups.length === 0) {
-      alert('Không có Task Group khác trong dự án này để di chuyển!');
-      return;
-    }
-    const listText = otherGroups.map((g, idx) => `${idx + 1}. ${g.name}`).join('\n');
-    const input = prompt(`Nhập số thứ tự của Task Group muốn di chuyển tới:\n${listText}`);
-    if (input === null) return;
-    const choice = parseInt(input, 10);
-    if (isNaN(choice) || choice < 1 || choice > otherGroups.length) {
-      alert('Lựa chọn không hợp lệ!');
-      return;
-    }
-    const targetGroup = otherGroups[choice - 1];
+  // Root-level tasks of a group, in display order, optionally excluding one
+  // task (the one being moved — irrelevant as a "Sau X" reference point when
+  // the target group is its own current group). Feeds the "Vị trí" dropdown.
+  const getRootTasksOfGroup = (groupId: number | '', excludeTaskId?: number) => {
+    if (groupId === '') return [];
+    return items
+      .filter(t => t.task_group_id === groupId && !getParentCode(t.task_code) && t.id !== excludeTaskId)
+      .sort((a, b) => {
+        const na = parseInt((a.task_code || '').split('.')[1] || '0', 10);
+        const nb = parseInt((b.task_code || '').split('.')[1] || '0', 10);
+        return na - nb;
+      });
+  };
+
+  // Encodes a task's CURRENT position the same way the "Vị trí" dropdown
+  // encodes its options ('start' | `after:${id}`) — lets the modal default to
+  // (and detect no-op reselection of) exactly where the task already is.
+  const computeCurrentPositionValue = (task: any) => {
+    const siblingsIncludingSelf = getRootTasksOfGroup(task.task_group_id);
+    const idx = siblingsIncludingSelf.findIndex(t => t.id === task.id);
+    if (idx <= 0) return 'start';
+    return `after:${siblingsIncludingSelf[idx - 1].id}`;
+  };
+
+  const handleOpenMoveModal = (task: any) => {
+    const currentGroup = taskGroups.find(g => g.id === task.task_group_id);
+    setMovingTask(task);
+    setMoveTargetPhaseId(currentGroup?.phase_id ?? '');
+    setMoveTargetGroupId(task.task_group_id);
+    setMoveTargetPosition(computeCurrentPositionValue(task));
+  };
+
+  const moveHasChanged = !!movingTask && (
+    moveTargetGroupId !== movingTask.task_group_id ||
+    moveTargetPosition !== computeCurrentPositionValue(movingTask)
+  );
+
+  const handleConfirmMoveTask = async () => {
+    if (!movingTask || moveTargetGroupId === '' || !moveHasChanged) return;
+    setSavingMoveTask(true);
     try {
-      await moveTask(groupId, taskId, targetGroup.id);
-      flash(`Đã di chuyển task sang nhóm "${targetGroup.name}" thành công!`);
+      let position: { insertBeforeTaskId?: number; insertAfterTaskId?: number } | undefined;
+      if (moveTargetPosition === 'start') {
+        const first = getRootTasksOfGroup(moveTargetGroupId, movingTask.id)[0];
+        if (first) position = { insertBeforeTaskId: first.id };
+      } else if (moveTargetPosition.startsWith('after:')) {
+        position = { insertAfterTaskId: parseInt(moveTargetPosition.slice('after:'.length), 10) };
+      }
+      const targetGroup = taskGroups.find(g => g.id === moveTargetGroupId);
+      await moveTask(movingTask.task_group_id, movingTask.id, moveTargetGroupId as number, position);
+      flash(`Đã di chuyển task sang "${targetGroup?.name || ''}" thành công!`);
+      setMovingTask(null);
       reloadAll();
     } catch (err: any) {
       alert('Lỗi di chuyển task: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setSavingMoveTask(false);
     }
   };
 
@@ -3367,6 +3414,7 @@ function ProjectDetailContent() {
                 setAddingTaskGroupId(null);
                 setAddingTaskParentCode(null);
                 setAddingTaskAfterCode(null);
+                setAddingTaskBeforeCode(null);
                 setNewForm({});
               }}
               className="bg-gray-400 hover:bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow transition-colors shrink-0 uppercase"
@@ -3457,6 +3505,7 @@ function ProjectDetailContent() {
       const parentCode = afterCode ? (getParentCode(afterCode) || null) : null;
       setAddingTaskParentCode(parentCode);
       setAddingTaskAfterCode(afterCode);
+      setAddingTaskBeforeCode(null);
       const todayStr = toPickerDate(new Date().toISOString());
       const initialForm: Record<string, string> = {};
       dynamicCols.forEach(col => {
@@ -3547,29 +3596,37 @@ function ProjectDetailContent() {
 
     const cellStyle = `px-2 ${rowPadY} border-r border-slate-100/70 last:border-r-0 align-middle text-[12.5px]`;
 
+    const isDragging = draggingTaskId === task.id;
+    const isDragOver = dragOverTaskId === task.id;
+    const isCrossGroupTarget = isDragOver && draggingTaskGroupId !== null && draggingTaskGroupId !== task.task_group_id;
+
     return (
       <tr
         id={`task-row-${task.id}`}
         key={task.id}
-        className={`group relative transition-colors ${rowBgClass}`}
+        draggable
+        className={`group relative transition-colors cursor-grab active:cursor-grabbing ${rowBgClass} ${isDragging ? 'opacity-40' : ''} ${isCrossGroupTarget ? 'ring-2 ring-inset ring-emerald-500 bg-emerald-50' : isDragOver ? 'bg-slate-100' : ''}`}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("application/json", JSON.stringify({ type: "task", taskId: task.id, groupId: task.task_group_id }));
+          setDraggingTaskId(task.id);
+          setDraggingTaskGroupId(task.task_group_id);
         }}
-        onDragEnd={(e) => {
-          const el = document.getElementById(`task-row-${task.id}`);
-          if (el) el.setAttribute('draggable', 'false');
+        onDragEnd={() => {
+          setDraggingTaskId(null);
+          setDraggingTaskGroupId(null);
+          setDragOverTaskId(null);
         }}
         onDragOver={(e) => {
           e.preventDefault();
-          e.currentTarget.classList.add("bg-slate-100");
+          if (dragOverTaskId !== task.id) setDragOverTaskId(task.id);
         }}
-        onDragLeave={(e) => {
-          e.currentTarget.classList.remove("bg-slate-100");
+        onDragLeave={() => {
+          setDragOverTaskId(prev => (prev === task.id ? null : prev));
         }}
         onDrop={async (e) => {
           e.preventDefault();
-          e.currentTarget.classList.remove("bg-slate-100");
+          setDragOverTaskId(null);
           try {
             const raw = e.dataTransfer.getData("application/json");
             if (!raw) return;
@@ -3589,7 +3646,9 @@ function ProjectDetailContent() {
                   reloadAll();
                 }
               } else {
-                await moveTask(data.groupId, data.taskId, task.task_group_id);
+                // Drop lands exactly at this row's position — the dropped task
+                // takes this row's slot and everything from here down shifts.
+                await moveTask(data.groupId, data.taskId, task.task_group_id, { insertBeforeTaskId: task.id });
                 flash(`Đã di chuyển task sang nhóm mới thành công!`);
                 reloadAll();
               }
@@ -3599,27 +3658,9 @@ function ProjectDetailContent() {
           }
         }}
       >
-        {/* Action cell: drag handle luôn hiện, các action còn lại gộp vào menu ⋯ khi hover */}
+        {/* Action cell: cả dòng đều kéo-thả được (giữ chuột trái bất kỳ đâu trên Task) */}
         <td className="px-1 py-2 text-center sticky left-0 z-[11] bg-white" style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
           <div className="flex items-center justify-center gap-1">
-            {/* Drag / Move to another group */}
-            <button
-              type="button"
-              onMouseDown={() => {
-                const el = document.getElementById(`task-row-${task.id}`);
-                if (el) el.setAttribute('draggable', 'true');
-              }}
-              onMouseUp={() => {
-                const el = document.getElementById(`task-row-${task.id}`);
-                if (el) el.setAttribute('draggable', 'false');
-              }}
-              onClick={() => handleMoveTask(task.task_group_id, task.id)}
-              className="flex items-center justify-center w-6 h-6 cursor-grab active:cursor-grabbing hover:bg-slate-200 rounded text-slate-400"
-              title="Kéo hoặc bấm để di chuyển task sang group khác"
-            >
-              <GripVertical size={14} />
-            </button>
-
             {/* More actions menu */}
             <div className="relative">
               <button
@@ -3649,13 +3690,13 @@ function ProjectDetailContent() {
                       setAddingTaskGroupId(task.task_group_id);
                       const parentCode = getParentCode(task.task_code) || null;
                       setAddingTaskParentCode(parentCode);
-                      const prevIdx = tIdx - 1;
-                      if (prevIdx >= 0) {
-                        const prevTask = sortedTasks[prevIdx];
-                        setAddingTaskAfterCode(prevTask.task_code);
-                      } else {
-                        setAddingTaskAfterCode(null);
-                      }
+                      // "Insert above" this task — pin it by this task's own
+                      // code (not the row above), which stays correct even
+                      // when this is the first child of a parent (the row
+                      // above would be the parent itself, at a different
+                      // nesting level, not an actual sibling).
+                      setAddingTaskAfterCode(null);
+                      setAddingTaskBeforeCode(task.task_code);
                       const dynamicCols = getDynamicColumns();
                       const initialForm: Record<string, string> = {};
                       dynamicCols.forEach(col => { initialForm[col] = ''; });
@@ -3685,6 +3726,7 @@ function ProjectDetailContent() {
                       const parentCode = getParentCode(task.task_code) || null;
                       setAddingTaskParentCode(parentCode);
                       setAddingTaskAfterCode(task.task_code);
+                      setAddingTaskBeforeCode(null);
                       const dynamicCols = getDynamicColumns();
                       const initialForm: Record<string, string> = {};
                       dynamicCols.forEach(col => { initialForm[col] = ''; });
@@ -3713,6 +3755,14 @@ function ProjectDetailContent() {
                   >
                     <Copy size={15} className="text-amber-600" />
                     Nhân bản
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setOpenRowMenu(null); handleOpenMoveModal(task); }}
+                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                  >
+                    <ArrowRightLeft size={15} className="text-[#0058be]" />
+                    Di chuyển
                   </button>
                   <div className="my-1 border-t border-slate-100" />
                   <button
@@ -4660,6 +4710,8 @@ function ProjectDetailContent() {
                           setOpenRowMenu(null);
                           setAddingTaskGroupId(group.id);
                           setAddingTaskParentCode(null);
+                          setAddingTaskAfterCode(null);
+                          setAddingTaskBeforeCode(null);
                           const initialForm: Record<string, string> = {};
                           dynamicCols.forEach(col => { initialForm[col] = ''; });
                           if (dynamicCols.find(c => c.toUpperCase() === 'STATUS')) {
@@ -5547,6 +5599,8 @@ function ProjectDetailContent() {
                   const targetGroup = currentPhaseGroups[0];
                   setAddingTaskGroupId(targetGroup.id);
                   setAddingTaskParentCode(null);
+                  setAddingTaskAfterCode(null);
+                  setAddingTaskBeforeCode(null);
                   const dynamicCols = getDynamicColumns();
                   const initialForm: Record<string, string> = {};
                   dynamicCols.forEach(col => { initialForm[col] = ''; });
@@ -5590,6 +5644,8 @@ function ProjectDetailContent() {
                       const targetGroup = currentPhaseGroups[0];
                       setAddingTaskGroupId(targetGroup.id);
                       setAddingTaskParentCode(null);
+                      setAddingTaskAfterCode(null);
+                      setAddingTaskBeforeCode(null);
                       const dynamicCols = getDynamicColumns();
                       const initialForm: Record<string, string> = {};
                       dynamicCols.forEach(col => { initialForm[col] = ''; });
@@ -10377,6 +10433,95 @@ function ProjectDetailContent() {
         </div>
         );
       })()}
+
+      {/* Modal Di chuyển Task — theo cấp Phase → Task Group → Vị trí */}
+      {movingTask !== null && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-[#0b1c30]">Di chuyển Task</h3>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">{movingTask.detail}</p>
+              </div>
+              <button
+                onClick={() => setMovingTask(null)}
+                className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Đến Phase</label>
+                <select
+                  value={moveTargetPhaseId}
+                  onChange={(e) => {
+                    const newPhaseId = e.target.value === '' ? '' : parseInt(e.target.value, 10);
+                    setMoveTargetPhaseId(newPhaseId);
+                    const groupsInPhase = taskGroups.filter(g => g.phase_id === newPhaseId);
+                    const stillValid = groupsInPhase.some(g => g.id === movingTask.task_group_id);
+                    setMoveTargetGroupId(stillValid ? movingTask.task_group_id : (groupsInPhase[0]?.id ?? ''));
+                    setMoveTargetPosition(stillValid ? computeCurrentPositionValue(movingTask) : 'end');
+                  }}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                >
+                  {phases.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Đến Task Group</label>
+                <SearchableSelect
+                  label="Task Group"
+                  icon=""
+                  options={taskGroups.filter(g => g.phase_id === moveTargetPhaseId).map((g: any) => ({ id: g.id, name: g.name }))}
+                  value={moveTargetGroupId === '' ? '' : String(moveTargetGroupId)}
+                  onChange={(val: any) => {
+                    const newGroupId = val === '' ? '' : parseInt(val, 10);
+                    setMoveTargetGroupId(newGroupId);
+                    setMoveTargetPosition(newGroupId === movingTask.task_group_id ? computeCurrentPositionValue(movingTask) : 'end');
+                  }}
+                  placeholder="Chọn Task Group đích..."
+                  className="w-full text-[11px]"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Vị trí</label>
+                <select
+                  value={moveTargetPosition}
+                  onChange={(e) => setMoveTargetPosition(e.target.value)}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                >
+                  <option value="start">Đầu danh sách</option>
+                  {getRootTasksOfGroup(moveTargetGroupId, movingTask.id).map((t: any) => (
+                    <option key={t.id} value={`after:${t.id}`}>
+                      Sau {t.task_code} — {(t.detail || '').slice(0, 40)}
+                    </option>
+                  ))}
+                  <option value="end">Cuối danh sách</option>
+                </select>
+              </div>
+            </div>
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setMovingTask(null)}
+                disabled={savingMoveTask}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleConfirmMoveTask}
+                disabled={savingMoveTask || moveTargetGroupId === '' || !moveHasChanged}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {savingMoveTask ? 'Đang di chuyển...' : 'Di chuyển'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Tạo Phase */}
       {showPhaseModal && (
