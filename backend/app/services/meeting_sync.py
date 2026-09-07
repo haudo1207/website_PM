@@ -12,6 +12,7 @@ import tempfile
 import logging
 import requests
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from ..config import settings
 from ..models.google_token import GoogleToken
@@ -19,6 +20,17 @@ from ..models.workspace_google_account import WorkspaceGoogleAccount
 from ..models.user import User
 
 logger = logging.getLogger("meeting_sync")
+
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _now_vn() -> datetime.datetime:
+    """Naive Vietnam wall-clock 'now' — meeting_date/start_time/end_time are
+    stored as naive Vietnam local values, never UTC. Plain datetime.datetime.now()
+    would silently use the SERVER's OS timezone instead (UTC in this deployment,
+    ~7h behind Vietnam), making just-ended meetings look like they haven't
+    started yet."""
+    return datetime.datetime.now(_VN_TZ).replace(tzinfo=None)
 
 # ═══════════════════════════════════════════════════════════
 # ZOOM — Server-to-Server OAuth + Meeting Creation + Sync
@@ -110,7 +122,7 @@ def sync_zoom_meeting(meeting_url: str, meeting_info: dict) -> dict:
         if meeting_date and start_time:
             start_dt = datetime.datetime.combine(meeting_date, start_time)
             end_dt = start_dt + datetime.timedelta(minutes=duration)
-            if datetime.datetime.now() >= end_dt:
+            if _now_vn() >= end_dt:
                 is_ended = True
     except Exception:
         pass
@@ -1465,7 +1477,7 @@ def auto_sync_all_ended_meetings(db):
     Find all meetings that have ended (by date and end time) and process automatic transcript sync & AI summarization.
     """
     from ..models.meeting import Meeting
-    now = datetime.datetime.now()
+    now = _now_vn()
     today = now.date()
     current_time = now.time()
 

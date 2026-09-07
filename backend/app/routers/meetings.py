@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 import datetime
 import logging
 import re
+from zoneinfo import ZoneInfo
 
 from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
@@ -35,6 +36,18 @@ STATUS_FE_TO_DB = {
 }
 
 
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _now_vn() -> datetime.datetime:
+    """Naive Vietnam wall-clock 'now' — meeting_date/start_time/end_time are
+    always stored as naive Vietnam local values (see create_google_meet_link),
+    never UTC. Plain datetime.datetime.now() would silently use the SERVER's
+    OS timezone instead (UTC in this deployment, ~7h behind Vietnam), making
+    meetings that already started/ended still show as upcoming for hours."""
+    return datetime.datetime.now(_VN_TZ).replace(tzinfo=None)
+
+
 def compute_display_status(m: Meeting) -> str:
     """Meeting status architecture (chốt kiến trúc):
       SẮP TỚI      -> now < start_time
@@ -50,7 +63,9 @@ def compute_display_status(m: Meeting) -> str:
     if m.meeting_date and m.start_time and m.end_time:
         start_dt = datetime.datetime.combine(m.meeting_date, m.start_time)
         end_dt = datetime.datetime.combine(m.meeting_date, m.end_time)
-        now = datetime.datetime.now()
+        if m.end_time < m.start_time:
+            end_dt += datetime.timedelta(days=1)
+        now = _now_vn()
         if now >= end_dt:
             return "ĐÃ KẾT THÚC"
         if now >= start_dt:
@@ -475,8 +490,11 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
             )
     elif "google" in platform.lower() or "meet" in platform.lower():
         try:
-            from ..services.meeting_sync import create_google_meet_link
-            result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
+            from ..services.meeting_sync import create_google_meet_link, notify_n8n_meeting_created
+            proj = db.query(Project).filter(Project.id == body.get("project_id")).first() if body.get("project_id") else None
+            workspace_id = workspace_id_for_project(db, proj)
+            result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
+            notify_n8n_meeting_created(db, result.get("mk_tag"), title, meeting_date, start_time, workspace_id)
             return {"success": True, "join_url": result["join_url"], "platform": "Google Meet"}
         except Exception as e:
             logger.error(f"Generate Google Meet link failed: {e}")

@@ -494,7 +494,7 @@ export const updateTranscript = (id: number, transcript: string) => api.post(`/m
 export const addMeetingMember = (id: number, memberId: number, role?: string) => api.post(`/meetings/${id}/members`, { member_id: memberId, role }).then(r => r.data);
 export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);
 export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
-export const generateMeetingLink = (data: { platform: string; title: string; date?: string; time?: string; duration?: string | number }) =>
+export const generateMeetingLink = (data: { platform: string; title: string; date?: string; time?: string; duration?: string | number; project_id?: number }) =>
   api.post('/meetings/generate-link', data).then(r => r.data);
 export const getGoogleStatus = (workspace?: string) => api.get('/meetings/google/status', { params: workspace ? { workspace } : undefined }).then(r => r.data);
 export const getGoogleAuthUrl = (workspace?: string) => api.get('/meetings/google/auth', { params: workspace ? { workspace } : undefined }).then(r => r.data);
