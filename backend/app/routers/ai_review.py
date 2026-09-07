@@ -21,9 +21,13 @@ router = APIRouter(tags=["ai-review"], dependencies=[Depends(require_admin_write
 
 # Default prompts helper
 def get_or_create_default_prompts(db: Session, project_id: int):
-    # Check if prompts exist for this project
-    prompts = db.query(AIPrompt).filter(AIPrompt.project_id == project_id).all()
-    if not prompts:
+    # Check per-type (not "any exist") so a project created before the
+    # MEMBER level was added still gets that one default seeded in,
+    # instead of being stuck forever with just its original 3.
+    existing_types = {
+        t for (t,) in db.query(AIPrompt.type).filter(AIPrompt.project_id == project_id).all()
+    }
+    if True:
         defaults = [
             {
                 "type": "PROJECT",
@@ -53,24 +57,40 @@ def get_or_create_default_prompts(db: Session, project_id: int):
                     "ước lượng số ngày công (manday), kết quả đầu ra (output/deliverable), "
                     "rủi ro và chỉ số đánh giá hiệu quả công việc (KPI)."
                 )
+            },
+            {
+                "type": "MEMBER",
+                "name": "Member Check Prompt",
+                "prompt_content": (
+                    "Hãy đánh giá đóng góp của thành viên này trong dự án theo hướng tích cực, khích lệ.\n"
+                    "Chỉ dựa trên các task mà thành viên này là người thực hiện (assigned) "
+                    "hoặc hỗ trợ (support) — không đánh giá phần việc của người khác.\n"
+                    "Ưu tiên nêu bật các điểm tốt trước: mức độ hoàn thành, tinh thần trách nhiệm, "
+                    "sự chủ động khi có task được ghi nhận đầy đủ, tiến độ nhìn chung ổn định.\n"
+                    "Việc thành viên đã khai báo/cập nhật task xem như một tín hiệu tích cực cho tiến độ "
+                    "— không xem đây là vấn đề cần nêu ra, không đề cập đến việc khai báo hay số lượng "
+                    "task như một điểm trừ.\n"
+                    "Nếu có điểm chưa tốt, hãy diễn đạt nhẹ nhàng và có phần khéo léo, xem đó như một gợi ý "
+                    "để thành viên hoàn thiện hơn chứ không phải một lỗi lớn — ví dụ có thể nói rằng nhịp độ "
+                    "xử lý một vài task có thể cần thêm chút thời gian để ổn định hơn, hoặc một số việc đang "
+                    "trong quá trình hoàn thiện và sẽ tốt hơn nếu được theo sát thêm một chút. Tránh dùng từ "
+                    "ngữ mang tính phê bình, quy kết hay tạo cảm giác tiêu cực; luôn giữ giọng văn xây dựng, "
+                    "động viên là chính."
+                )
             }
         ]
-        created_prompts = []
-        for d in defaults:
-            p = AIPrompt(
+        missing = [d for d in defaults if d["type"] not in existing_types]
+        for d in missing:
+            db.add(AIPrompt(
                 project_id=project_id,
                 type=d["type"],
                 name=d["name"],
                 prompt_content=d["prompt_content"],
                 active=True
-            )
-            db.add(p)
-            created_prompts.append(p)
-        db.commit()
-        for p in created_prompts:
-            db.refresh(p)
-        return created_prompts
-    return prompts
+            ))
+        if missing:
+            db.commit()
+    return db.query(AIPrompt).filter(AIPrompt.project_id == project_id).all()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -110,8 +130,8 @@ def create_or_update_prompt(body: dict, db: Session = Depends(get_db), current_u
     if not project_id or not prompt_type or not prompt_content or not name:
         raise HTTPException(400, "project_id, type, name and prompt_content are required")
 
-    if prompt_type not in ["PROJECT", "PHASE", "TASK"]:
-        raise HTTPException(400, "Invalid type. Must be PROJECT, PHASE, or TASK")
+    if prompt_type not in ["PROJECT", "PHASE", "TASK", "MEMBER"]:
+        raise HTTPException(400, "Invalid type. Must be PROJECT, PHASE, TASK, or MEMBER")
 
     # Find existing prompt by ID or by project_id + type
     prompt = None
@@ -159,19 +179,26 @@ def create_or_update_prompt(body: dict, db: Session = Depends(get_db), current_u
 
 @router.post("/ai-review/check")
 def trigger_ai_check(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    entity_type = body.get("entity_type")  # PROJECT, PHASE, TASK
-    entity_id = body.get("entity_id")
+    entity_type = body.get("entity_type")  # PROJECT, PHASE, TASK, MEMBER
+    entity_id = body.get("entity_id")  # for MEMBER: the member_id being reviewed
+    # MEMBER has no project of its own (a member can sit on several) — the
+    # caller must say which project's tasks to scope the review to.
+    member_review_project_id = body.get("project_id")
 
     if not entity_type or not entity_id:
         raise HTTPException(400, "entity_type and entity_id are required")
 
     entity_type = entity_type.upper()
-    if entity_type not in ["PROJECT", "PHASE", "TASK"]:
-        raise HTTPException(400, "Invalid entity_type. Must be PROJECT, PHASE, or TASK")
+    if entity_type not in ["PROJECT", "PHASE", "TASK", "MEMBER"]:
+        raise HTTPException(400, "Invalid entity_type. Must be PROJECT, PHASE, TASK, or MEMBER")
 
     # 1. Fetch Entity & Find Project ID
     project_id = None
     entity_obj = None
+    # Member has no ai_status/last_ai_check_at/last_ai_score/last_review_id
+    # columns (those are Project/Phase/Task-only fields) — every place below
+    # that stamps status onto entity_obj is skipped for MEMBER.
+    is_member_review = entity_type == "MEMBER"
 
     if entity_type == "PROJECT":
         entity_obj = db.query(Project).filter(Project.id == entity_id).first()
@@ -184,6 +211,14 @@ def trigger_ai_check(body: dict, db: Session = Depends(get_db), current_user=Dep
         if not entity_obj:
             raise HTTPException(404, "Phase not found")
         project_id = entity_obj.project_id
+
+    elif entity_type == "MEMBER":
+        entity_obj = db.query(Member).filter(Member.id == entity_id).first()
+        if not entity_obj:
+            raise HTTPException(404, "Member not found")
+        if not member_review_project_id:
+            raise HTTPException(400, "project_id is required for a MEMBER review")
+        project_id = member_review_project_id
 
     elif entity_type == "TASK":
         entity_obj = db.query(Task).filter(Task.id == entity_id).first()
@@ -216,14 +251,64 @@ def trigger_ai_check(body: dict, db: Session = Depends(get_db), current_user=Dep
 
     prompt_snapshot = prompt_obj.prompt_content if prompt_obj else "Default Check"
 
-    # Set status to CHECKING temporarily
-    old_status = entity_obj.ai_status
-    entity_obj.ai_status = "CHECKING"
-    db.commit()
+    # Set status to CHECKING temporarily (Member has no ai_status column)
+    old_status = None if is_member_review else entity_obj.ai_status
+    if not is_member_review:
+        entity_obj.ai_status = "CHECKING"
+        db.commit()
 
     # 3. Gather Payload Data
     review_data = {}
-    if entity_type == "TASK":
+    if entity_type == "MEMBER":
+        proj = db.query(Project).filter(Project.id == project_id).first()
+        if not proj:
+            raise HTTPException(404, "Project not found")
+
+        # Same phase -> task_group -> task walk as PROJECT, but filtered down
+        # to only the tasks this member is assigned to or supporting — never
+        # another person's work in the same project.
+        phases = db.query(Phase).filter(Phase.project_id == proj.id).all()
+        phase_ids = [ph.id for ph in phases]
+        task_groups = db.query(TaskGroup).filter(TaskGroup.phase_id.in_(phase_ids)).all() if phase_ids else []
+        tg_ids = [tg.id for tg in task_groups]
+        member_tasks = (
+            db.query(Task).filter(
+                Task.task_group_id.in_(tg_ids),
+                (Task.assigned_id == entity_obj.id) | (Task.support_id == entity_obj.id),
+            ).all()
+            if tg_ids else []
+        )
+
+        task_list = []
+        for t in member_tasks:
+            role = []
+            if t.assigned_id == entity_obj.id:
+                role.append("assigned")
+            if t.support_id == entity_obj.id:
+                role.append("support")
+            task_list.append({
+                "id": t.id,
+                "detail": t.detail,
+                "priority": t.priority,
+                "manday_est": float(t.manday_est) if t.manday_est else None,
+                "status": t.status,
+                "role": role,
+            })
+
+        review_data = {
+            "project": {
+                "id": proj.id,
+                "name": proj.name,
+            },
+            "member": {
+                "id": entity_obj.id,
+                "display_name": entity_obj.display_name,
+                "position": entity_obj.position,
+            },
+            "tasks": task_list,
+        }
+
+    elif entity_type == "TASK":
         tg = db.query(TaskGroup).filter(TaskGroup.id == entity_obj.task_group_id).first()
         phase = db.query(Phase).filter(Phase.id == tg.phase_id).first()
         proj = db.query(Project).filter(Project.id == project_id).first()
@@ -369,8 +454,9 @@ def trigger_ai_check(body: dict, db: Session = Depends(get_db), current_user=Dep
     model = settings.AI_MODEL
 
     if not api_key:
-        entity_obj.ai_status = old_status
-        db.commit()
+        if not is_member_review:
+            entity_obj.ai_status = old_status
+            db.commit()
         raise HTTPException(400, "AI_API_KEY is not configured in .env file.")
 
     system_prompt = (
@@ -414,16 +500,18 @@ Dữ liệu thực thể gửi lên:
         )
 
         if resp.status_code != 200:
-            entity_obj.ai_status = old_status
-            db.commit()
+            if not is_member_review:
+                entity_obj.ai_status = old_status
+                db.commit()
             raise HTTPException(400, f"AI API error: {resp.text}")
 
         resp_data = resp.json()
         ai_output = resp_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
         if not ai_output:
-            entity_obj.ai_status = old_status
-            db.commit()
+            if not is_member_review:
+                entity_obj.ai_status = old_status
+                db.commit()
             raise HTTPException(500, "AI returned an empty response")
 
         # Clean markdown code block wraps if LLM ignored the instructions
@@ -472,11 +560,12 @@ Dữ liệu thực thể gửi lên:
         db.add(log)
         db.flush()
 
-        # 6. Update Entity Status
-        entity_obj.ai_status = final_status
-        entity_obj.last_ai_check_at = datetime.datetime.now()
-        entity_obj.last_ai_score = score
-        entity_obj.last_review_id = log.id
+        # 6. Update Entity Status (Member has no such columns to stamp)
+        if not is_member_review:
+            entity_obj.ai_status = final_status
+            entity_obj.last_ai_check_at = datetime.datetime.now()
+            entity_obj.last_ai_score = score
+            entity_obj.last_review_id = log.id
 
         db.commit()
         db.refresh(entity_obj)
@@ -510,8 +599,9 @@ Dữ liệu thực thể gửi lên:
         }
 
     except Exception as e:
-        entity_obj.ai_status = "NOT_CHECKED" if old_status == "CHECKING" else old_status
-        db.commit()
+        if not is_member_review:
+            entity_obj.ai_status = "NOT_CHECKED" if old_status == "CHECKING" else old_status
+            db.commit()
         raise HTTPException(500, f"Error calling AI review: {str(e)}")
 
 
@@ -520,15 +610,24 @@ Dữ liệu thực thể gửi lên:
 # ═══════════════════════════════════════════════════════════
 
 @router.get("/ai-review/history")
-def get_review_history(entity_type: str, entity_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_review_history(
+    entity_type: str, entity_id: int, project_id: Optional[int] = None,
+    db: Session = Depends(get_db), current_user=Depends(get_current_user),
+):
     entity_type = entity_type.upper()
-    if entity_type not in ["PROJECT", "PHASE", "TASK"]:
-        raise HTTPException(400, "Invalid entity_type. Must be PROJECT, PHASE, or TASK")
+    if entity_type not in ["PROJECT", "PHASE", "TASK", "MEMBER"]:
+        raise HTTPException(400, "Invalid entity_type. Must be PROJECT, PHASE, TASK, or MEMBER")
 
-    logs = db.query(AIReviewLog).filter(
+    query = db.query(AIReviewLog).filter(
         AIReviewLog.entity_type == entity_type,
         AIReviewLog.entity_id == entity_id
-    ).order_by(AIReviewLog.checked_at.desc()).all()
+    )
+    # A MEMBER's entity_id (their member_id) alone doesn't say which project
+    # this history is for — the same person can be reviewed under several
+    # different projects, each with its own independent history.
+    if entity_type == "MEMBER" and project_id:
+        query = query.filter(AIReviewLog.project_id == project_id)
+    logs = query.order_by(AIReviewLog.checked_at.desc()).all()
 
     return {
         "success": True,

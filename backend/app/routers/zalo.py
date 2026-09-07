@@ -336,10 +336,34 @@ def link_conversation_project(
         project = db.query(Project).filter(Project.id == payload.project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="Không tìm thấy dự án.")
+        conv.project_linked_at = datetime.datetime.now(datetime.timezone.utc)
+    else:
+        conv.project_linked_at = None
 
     conv.project_id = payload.project_id
     db.commit()
     return {"conversation_id": conv.id, "project_id": conv.project_id}
+
+
+@router.post("/conversations/{conversation_id}/unlink-project")
+def unlink_conversation_from_project(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_zalo_user),
+):
+    """Removes a conversation's project link — fixing a mistaken assignment
+    (e.g. a project ends up with several groups because one got linked by
+    accident). Unlike link-project, NOT scoped to the caller's own account:
+    the project's "Tóm tắt Zalo" tab is a shared view across every linked
+    account by design, so anyone who can see it should be able to unlink a
+    wrong entry there, not just whoever happens to own that Zalo account."""
+    conv = db.query(ZaloConversation).filter(ZaloConversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv.project_id = None
+    conv.project_linked_at = None
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/conversations/refresh-names")
@@ -903,7 +927,16 @@ def get_project_zalo_summary(
     group currently linked to this project (ZaloConversation.project_id),
     across every connected Leader's own account, each with its recent AI
     digests, so a PM can see what a group discussed without leaving the
-    project."""
+    project.
+
+    De-duped by name: when several people each connect their OWN Zalo
+    account but are all members of the same real-world group, and each
+    independently links "their view" of it to this project, that produces
+    several ZaloConversation rows sharing one display name. Only the one
+    linked to the project FIRST (earliest project_linked_at) is shown —
+    the others stay in the DB (their own summaries are still reachable via
+    the account owner's own /zalo-account page) but don't clutter this
+    shared view with near-duplicate cards."""
     conversations = (
         db.query(ZaloConversation)
         .join(ZaloAccount, ZaloConversation.account_id == ZaloAccount.id)
@@ -915,6 +948,20 @@ def get_project_zalo_summary(
         .order_by(ZaloConversation.name.asc())
         .all()
     )
+
+    def _link_sort_key(c):
+        # Legacy rows linked before project_linked_at existed sort as if
+        # linked at created_at — still deterministic, just not "first" in
+        # the strict sense for those older links.
+        return c.project_linked_at or c.created_at or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+    first_by_name = {}
+    for conv in conversations:
+        key = (conv.name or "").strip().lower()
+        current = first_by_name.get(key)
+        if current is None or _link_sort_key(conv) < _link_sort_key(current):
+            first_by_name[key] = conv
+    conversations = sorted(first_by_name.values(), key=lambda c: (c.name or "").lower())
 
     result = []
     for conv in conversations:
@@ -958,6 +1005,26 @@ def get_conversation_summaries(
         .all()
     )
     return [_summary_to_dict(s) for s in rows]
+
+
+@router.delete("/summaries/{summary_id}")
+def delete_zalo_summary(
+    summary_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_zalo_user),
+):
+    """Deletes one AI digest row — lets a PM clean up stale/duplicate cards
+    from the project's shared "Tóm tắt Zalo" tab (e.g. the same real-world
+    group linked from two different Leaders' own accounts, each producing
+    its own summaries). Not scoped to "my own account only" — the project
+    tab is already a shared view across every linked account by design, so
+    cleanup there is too."""
+    summary = db.query(ZaloConversationSummary).filter(ZaloConversationSummary.id == summary_id).first()
+    if not summary:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bản tóm tắt.")
+    db.delete(summary)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/conversations/{conversation_id}/summarize-now")

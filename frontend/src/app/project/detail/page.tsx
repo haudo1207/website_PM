@@ -180,11 +180,27 @@ function FloatingDropdown({
     };
   }, [open, onClose, anchorEl]);
 
+  // Flip the menu to open ABOVE the trigger when opening below would push it
+  // past the bottom of the viewport (e.g. the "⋮" row menu on a Group Task/
+  // Task near the bottom of the table) — without this it renders off-screen,
+  // looking like it's missing or covered by something.
+  useLayoutEffect(() => {
+    if (!open || !anchorEl || !pos || !menuRef.current) return;
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const overflowsBottom = menuRect.bottom > window.innerHeight - 8;
+    if (!overflowsBottom) return;
+    const rect = anchorEl.getBoundingClientRect();
+    const flippedTop = rect.top - menuRect.height - 4;
+    if (flippedTop >= 0 && flippedTop !== pos.top) {
+      setPos(prev => (prev ? { ...prev, top: flippedTop } : prev));
+    }
+  }, [open, anchorEl, pos]);
+
   if (!open || !pos || typeof document === 'undefined') return null;
   return createPortal(
     <div
       ref={menuRef}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 200 }}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 200, maxHeight: '70vh', overflowY: 'auto' }}
       className={`text-[#0b1c30] ${className}`}
     >
       {children}
@@ -254,6 +270,15 @@ function ProjectDetailContent() {
   const queryClient = useQueryClient();
   const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const id = searchParams.get('id') || '';
+  // Drill-in from /kpi's "Dự án đang tham gia" list: pre-filter the Tasks
+  // tab to just this one person's own tasks (assignee OR support) — ANDed
+  // alongside the existing Assigned/Support dropdowns (which stay 'All' by
+  // default), so it narrows the list without disabling manual re-filtering.
+  const memberFilterParam = searchParams.get('member') || '';
+  // Numeric Member.id for that same person — needed to scope an AI Review
+  // to just them (assigned_id/support_id), since memberFilterParam only
+  // carries their display name for string-based table filtering.
+  const memberIdParam = searchParams.get('member_id') || '';
   // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
   // next.config.js rewrites that path server-side to /project/detail?tab=tasks
   // purely to pick which page component to render; it does NOT change what the
@@ -361,13 +386,15 @@ function ProjectDetailContent() {
 
   // AI Review Drawer states
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
-  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK'>('PROJECT');
+  const [aiDrawerEntityType, setAiDrawerEntityType] = useState<'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER'>('PROJECT');
   const [aiDrawerEntityId, setAiDrawerEntityId] = useState<number>(0);
   const [aiDrawerEntityName, setAiDrawerEntityName] = useState<string>('');
+  const [aiDrawerProjectId, setAiDrawerProjectId] = useState<number | undefined>(undefined);
 
-  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK', entityId: number, name = '') => {
+  const handleOpenAIReviewDrawer = (entityType: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER', entityId: number, name = '') => {
     setAiDrawerEntityType(entityType);
     setAiDrawerEntityId(entityId);
+    setAiDrawerProjectId(entityType === 'MEMBER' ? Number(id) : undefined);
 
     let resolvedName = name;
     if (!resolvedName) {
@@ -379,11 +406,17 @@ function ProjectDetailContent() {
       } else if (entityType === 'TASK') {
         const foundTask = items.find(t => t.id === entityId);
         resolvedName = foundTask ? foundTask.detail : 'Task';
+      } else if (entityType === 'MEMBER') {
+        resolvedName = memberFilterParam || 'Thành viên';
       }
     }
 
     setAiDrawerEntityName(resolvedName);
     setIsAIDrawerOpen(true);
+  };
+
+  const handleOpenAIReviewDrawerForContext = () => {
+    handleOpenAIReviewDrawer('PROJECT', Number(id));
   };
 
   const [activePhase, setActivePhase] = useState<string>('ALL');
@@ -398,6 +431,7 @@ function ProjectDetailContent() {
   const [editingCell, setEditingCell] = useState<{ taskId: number, colName: string } | null>(null);
   const [editingGroupDate, setEditingGroupDate] = useState<number | null>(null);
   const [editingGroupRemark, setEditingGroupRemark] = useState<number | null>(null);
+  const [editingGroupPeople, setEditingGroupPeople] = useState<{ groupId: number; field: 'assigned_ids' | 'support_ids' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
   const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
@@ -816,14 +850,6 @@ function ProjectDetailContent() {
   // Các cột bắt buộc khi tạo task mới (xem handleSaveTask) - không cho ẩn vì
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
   const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
-
-  // Cột phụ ít dùng - ẩn mặc định cho user CHƯA từng lưu preference (không
-  // đụng tới preference đã lưu của user cũ).
-  const DEFAULT_HIDDEN_COLUMNS = [
-    'KPI RATIO', 'LINK', 'REMARK', 'SEND', 'END DATE EST', 'MD ACTUAL', 'END ACTUAL',
-    'DAYS LATE', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID',
-    'ROOT TASKS', 'NOTES', 'SOLUTION',
-  ];
 
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
@@ -1368,7 +1394,10 @@ function ProjectDetailContent() {
         if (legacy) {
           setHiddenColumns(JSON.parse(legacy));
         } else {
-          setHiddenColumns(DEFAULT_HIDDEN_COLUMNS);
+          // Mặc định là hiện ĐỦ cột cho mọi user/project chưa từng lưu
+          // preference - ẩn/ghim cột là lựa chọn riêng của từng người, không
+          // áp default ẩn sẵn lên người khác chưa từng đụng vào.
+          setHiddenColumns([]);
         }
         setColumnOrder(TASK_COLUMNS);
         setColumnWidths({});
@@ -1690,7 +1719,7 @@ function ProjectDetailContent() {
     const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
       || assignedFilter !== 'All' || supportFilter !== 'All'
       || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
-      || !!searchLower;
+      || !!searchLower || !!memberFilterParam;
     if (!hasActiveFilter) {
       return items;
     }
@@ -1704,7 +1733,8 @@ function ProjectDetailContent() {
       const matchSupport = supportFilter === 'All' || (item.support_name || '') === supportFilter;
       const matchSkillSolution = skillSolutionFilter === 'All' || (item.skill_solution_name || '') === skillSolutionFilter;
       const matchSkillVendor = skillVendorFilter === 'All' || (item.skill_vendor_name || '') === skillVendorFilter;
-      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor;
+      const matchMember = !memberFilterParam || (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam;
+      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
     });
 
     const onlySearch = !priorityFilter.match(/^All$/) === false && !statusFilter.match(/^All$/) === false
@@ -1788,6 +1818,8 @@ function ProjectDetailContent() {
       case 'MANDAY ACTUAL': return group.manday_actual != null ? String(group.manday_actual) : '';
       case 'END ACTUAL':
       case 'END DATE ACTUAL': return formatDateToShow(group.end_date_actual || '');
+      case 'ASSIGNED': return (group.assigned_names || []).join(', ');
+      case 'SUPPORT': return (group.support_names || []).join(', ');
       default: return '';
     }
   };
@@ -2140,6 +2172,15 @@ function ProjectDetailContent() {
       });
     } finally {
       isSavingRef.current = false;
+    }
+  };
+
+  const handleSaveGroupPeople = async (group: any, field: 'assigned_ids' | 'support_ids', ids: (string | number)[]) => {
+    try {
+      await updateTaskGroup(group.phase_id, group.id, { [field]: ids.map(Number) });
+      await reloadAll(true);
+    } catch (err: any) {
+      alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -4300,7 +4341,7 @@ function ProjectDetailContent() {
 
     // Columns NOT applicable to Task Group (show as disabled/empty)
     const GROUP_DISABLED_COLS = [
-      'PRIORITY', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
+      'PRIORITY', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
       'TICKET ID', 'SEND', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL',
       'DAYS LATE', 'SUB ID', 'ROOT TASKS', 'SOLUTION', 'NOTES'
     ];
@@ -4682,6 +4723,55 @@ function ProjectDetailContent() {
               if (isDisabled) {
                 return (
                   <td key={col} className="px-4 py-2.5 text-center text-slate-300 text-xs select-none">—</td>
+                );
+              }
+
+              // Roster of Assigned/Support member ids on the group itself —
+              // additive-synced from child Tasks, and manually editable via
+              // a multi-select (dedup'd, never auto-removed).
+              if (colUpper === 'ASSIGNED' || colUpper === 'SUPPORT') {
+                const field: 'assigned_ids' | 'support_ids' = colUpper === 'ASSIGNED' ? 'assigned_ids' : 'support_ids';
+                const names: string[] = colUpper === 'ASSIGNED' ? (group.assigned_names || []) : (group.support_names || []);
+                const ids: number[] = colUpper === 'ASSIGNED' ? (group.assigned_ids || []) : (group.support_ids || []);
+                const isEditingPeople = editingGroupPeople?.groupId === group.id && editingGroupPeople?.field === field;
+
+                if (isEditingPeople) {
+                  return (
+                    <td key={col} className="px-1 py-1 min-w-[180px]" onBlur={(e) => {
+                      const currentTarget = e.currentTarget;
+                      setTimeout(() => {
+                        if (!currentTarget.contains(document.activeElement)) {
+                          setEditingGroupPeople(null);
+                        }
+                      }, 150);
+                    }}>
+                      <SearchableSelect
+                        label="thành viên"
+                        icon=""
+                        isMulti
+                        options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name }))}
+                        value={ids.map(String)}
+                        onChange={(vals: any) => handleSaveGroupPeople(group, field, vals)}
+                        placeholder="Tìm thành viên..."
+                        className="w-full"
+                      />
+                    </td>
+                  );
+                }
+
+                return (
+                  <td
+                    key={col}
+                    className="px-2 py-2 text-xs cursor-pointer hover:bg-indigo-100/60 group"
+                    onClick={() => setEditingGroupPeople({ groupId: group.id, field })}
+                  >
+                    <div className="flex items-center gap-1 w-full min-w-0">
+                      <span className="truncate min-w-0 font-semibold text-[#1e293b]" title={names.join(', ')}>
+                        {names.length > 0 ? names.join(', ') : <span className="text-slate-300 font-normal">—</span>}
+                      </span>
+                      <Pencil size={11} className="opacity-0 group-hover:opacity-40 transition-opacity shrink-0 text-slate-500" />
+                    </div>
+                  </td>
                 );
               }
 
@@ -5147,7 +5237,7 @@ function ProjectDetailContent() {
             )}
 
             <button
-              onClick={() => handleOpenAIReviewDrawer('PROJECT', Number(id))}
+              onClick={handleOpenAIReviewDrawerForContext}
               className="text-xs font-bold px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 transition-all"
             >
               <Sparkles size={14} /> AI Review
@@ -5272,6 +5362,18 @@ function ProjectDetailContent() {
             </div>
             {taskSearch && (
               <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
+            )}
+            {memberFilterParam && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[11px] font-bold text-blue-700 shrink-0">
+                Đang lọc: {memberFilterParam}
+                <button
+                  onClick={() => router.push(`/project/detail/tasks?id=${id}`)}
+                  className="text-blue-400 hover:text-blue-700 cursor-pointer"
+                  title="Bỏ lọc, xem tất cả task"
+                >
+                  ✕
+                </button>
+              </span>
             )}
 
             {/* Bộ lọc - primary filter UX, dùng chung state với per-column filter */}
@@ -9397,6 +9499,8 @@ function ProjectDetailContent() {
         entityType={aiDrawerEntityType}
         entityId={aiDrawerEntityId}
         entityName={aiDrawerEntityName}
+        projectId={aiDrawerProjectId}
+        memberTab={memberIdParam ? { memberId: Number(memberIdParam), memberName: memberFilterParam, projectId: Number(id) } : undefined}
         onSuccessCheck={() => {
           reloadAll();
           loadProject();
