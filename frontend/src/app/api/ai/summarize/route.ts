@@ -279,7 +279,7 @@ CẤU TRÚC JSON YÊU CẦU:
       body: JSON.stringify({
         ...currentMeeting,
         transcript: transcript,
-        status: 'ĐÃ DIỄN RA',
+        status: 'ĐÃ KẾT THÚC',
         ai_summary: parsedSummary
       })
     });

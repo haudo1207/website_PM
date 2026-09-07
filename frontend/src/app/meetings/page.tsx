@@ -484,7 +484,7 @@ function MeetingsPageContent() {
   // Team (which has no filter UI of its own).
   const statsMeetings = activeTab === 'personal' ? myMeetings : activeTab === 'list' ? filteredMeetings : meetings;
   const totalMeetings = statsMeetings.length;
-  const doneMeetings = statsMeetings.filter(m => String(m.status || '').toUpperCase() === 'ĐÃ DIỄN RA' || String(m.status || '').toUpperCase() === 'DONE' || String(m.status || '').toUpperCase() === 'COMPLETED' || Boolean(m.executive_summary)).length;
+  const doneMeetings = statsMeetings.filter(m => String(m.status || '').toUpperCase() === 'ĐÃ KẾT THÚC' || String(m.status || '').toUpperCase() === 'ĐÃ DIỄN RA' || String(m.status || '').toUpperCase() === 'DONE' || String(m.status || '').toUpperCase() === 'COMPLETED' || Boolean(m.executive_summary)).length;
   const upcomingMeetings = statsMeetings.filter(m => String(m.status || '').toUpperCase() === 'UPCOMING' || String(m.status || '').toUpperCase() === 'SẮP TỚI').length;
   const totalTasksPushed = statsMeetings.reduce((acc, m) => acc + (Array.isArray(m.recommended_tasks) ? m.recommended_tasks.length : (m.ai_summary ? 3 : 0)), 0);
 
@@ -904,7 +904,7 @@ function MeetingsPageContent() {
                               </td>
                               <td className="p-3">
                                 <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${
-                                  statusUpper.includes('DIỄN RA') || statusUpper === 'DONE' ? 'bg-[#e2f7ec] text-[#18724f]'
+                                  statusUpper.includes('DIỄN RA') || statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'DONE' ? 'bg-[#e2f7ec] text-[#18724f]'
                                   : statusUpper === 'ĐÃ HỦY' || statusUpper === 'CANCELLED' ? 'bg-[#fff0f2] text-[#c73750]'
                                   : 'bg-[#eaf0ff] text-[#315dca]'
                                 }`}>
@@ -1005,7 +1005,7 @@ function MeetingsPageContent() {
                     <p className="text-[11px] text-[#94a3b8]">Chưa có dữ liệu.</p>
                   ) : (
                     <>
-                      <div className="space-y-2">
+                      <div className={`space-y-2 ${showAllPeople ? 'max-h-[320px] overflow-y-auto pr-1 custom-scrollbar' : ''}`}>
                         {filteredTopPeople.slice(0, showAllPeople ? undefined : 5).map((p: any) => (
                           <div key={p.name} className="flex items-center justify-between py-1.5 border-b border-[#edf1f6] last:border-0">
                             <div>

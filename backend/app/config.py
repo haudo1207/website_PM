@@ -115,6 +115,14 @@ class Settings(BaseSettings):
     # n8n Integration Webhook Secret
     N8N_WEBHOOK_SECRET: str = ""
 
+    # n8n meeting-discovery webhooks: called when a meeting is created on the
+    # web app so n8n can search Drive by the meeting's "[MK-xxx]" tag instead
+    # of blindly polling "Google Meet" folders. Picked by workspace: infra
+    # workspace uses N8N_MEETING_WEBHOOK_URL_INFRA, everything else uses
+    # N8N_MEETING_WEBHOOK_URL_DEFAULT (see notify_n8n_meeting_created).
+    N8N_MEETING_WEBHOOK_URL_DEFAULT: str = ""
+    N8N_MEETING_WEBHOOK_URL_INFRA: str = ""
+
     # Telegram Bot integration (Leave Request notifications)
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_SECRET: str = ""

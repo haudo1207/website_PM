@@ -28,7 +28,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
   };
 
   const statusUpper = String(meeting.status || 'SẮP TỚI').toUpperCase();
-  const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
+  const isDone = statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
   const isProcessing = statusUpper === 'ĐANG XỬ LÝ AI' || (meeting as any).ai_status === 'processing';
   
   const durationStr = meeting.duration ? `${meeting.duration} phút` : '30 phút';

@@ -15,6 +15,7 @@ from typing import Optional
 
 from ..config import settings
 from ..models.google_token import GoogleToken
+from ..models.workspace_google_account import WorkspaceGoogleAccount
 from ..models.user import User
 
 logger = logging.getLogger("meeting_sync")
@@ -212,13 +213,14 @@ def sync_zoom_meeting(meeting_url: str, meeting_info: dict) -> dict:
 # GOOGLE MEET — OAuth + Calendar + Drive Transcript Sync
 # ═══════════════════════════════════════════════════════════
 
-def _get_google_credentials(db, user_id: int = 1):
+def _get_google_credentials(db, user_id: int = 1, workspace_id: int = None):
     """
     Get valid google.oauth2.credentials.Credentials.
-    Uses shared operational account (mkt.szone@gmail.com).
+    Uses shared operational account (mkt.szone@gmail.com), unless workspace_id
+    resolves to a workspace with its own connected Google account override.
     """
     from google.oauth2.credentials import Credentials
-    token = get_shared_google_access_token(db)
+    token = get_workspace_google_access_token(db, workspace_id)
     return Credentials(token=token)
 
 
@@ -336,6 +338,18 @@ def get_shared_google_access_token(db=None) -> str:
         logger.warning(msg)
         raise ValueError(msg)
 
+    data = _exchange_refresh_token(client_id, client_secret, refresh_token)
+    token = data["access_token"]
+    expires_in = data.get("expires_in", 3600)
+
+    _google_token_cache["token"] = token
+    _google_token_cache["exp"] = time.time() + expires_in - 300  # Cache 55 minutes
+    return token
+
+
+def _exchange_refresh_token(client_id: str, client_secret: str, refresh_token: str) -> dict:
+    """Shared Google OAuth refresh_token -> access_token exchange, used by both the
+    default shared account and per-workspace account token getters."""
     resp = requests.post(
         "https://oauth2.googleapis.com/token",
         data={
@@ -352,23 +366,93 @@ def get_shared_google_access_token(db=None) -> str:
         raise GoogleTokenDead("Refresh token Google đã hết hạn hoặc bị thu hồi (invalid_grant). Vui lòng cấp lại quyền.")
 
     resp.raise_for_status()
-    data = resp.json()
+    return resp.json()
+
+
+_workspace_google_token_cache: dict = {}
+
+
+def _load_workspace_google_tokens(db, workspace_id: int) -> Optional["WorkspaceGoogleAccount"]:
+    """Load the WorkspaceGoogleAccount override row for a workspace, if any."""
+    if not db or not workspace_id:
+        return None
+    try:
+        return db.query(WorkspaceGoogleAccount).filter(WorkspaceGoogleAccount.workspace_id == workspace_id).first()
+    except Exception as e:
+        logger.warning(f"Error loading WorkspaceGoogleAccount for workspace {workspace_id}: {e}")
+        return None
+
+
+def _save_workspace_google_tokens(db, workspace_id: int, tokens: dict, google_email: str = None):
+    """Save/update the Google OAuth tokens overriding the shared account for a workspace."""
+    if not db or not workspace_id:
+        return
+    wga = db.query(WorkspaceGoogleAccount).filter(WorkspaceGoogleAccount.workspace_id == workspace_id).first()
+    if not wga:
+        wga = WorkspaceGoogleAccount(workspace_id=workspace_id)
+        db.add(wga)
+
+    wga.access_token = tokens.get("access_token")
+    if tokens.get("refresh_token"):
+        wga.refresh_token = tokens.get("refresh_token")
+    if google_email:
+        wga.google_email = google_email
+    db.commit()
+
+
+def get_workspace_google_access_token(db=None, workspace_id: int = None) -> str:
+    """
+    Get an access token for the Google account that should be used for a given
+    workspace. Falls back to the shared operational account (get_shared_google_access_token)
+    whenever no workspace is given, or the workspace has no connected override account —
+    this makes the override purely additive and safe for every other workspace.
+    """
+    import time
+    if workspace_id is None:
+        return get_shared_google_access_token(db)
+
+    wga = _load_workspace_google_tokens(db, workspace_id)
+    if not wga or not wga.refresh_token:
+        return get_shared_google_access_token(db)
+
+    cached = _workspace_google_token_cache.get(workspace_id)
+    if cached and time.time() < cached["exp"]:
+        return cached["token"]
+
+    client_id = settings.GOOGLE_CLIENT_ID
+    client_secret = settings.GOOGLE_CLIENT_SECRET
+    if not client_id or not client_secret:
+        raise ValueError("Thiếu cấu hình GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET trong .env")
+
+    data = _exchange_refresh_token(client_id, client_secret, wga.refresh_token)
     token = data["access_token"]
     expires_in = data.get("expires_in", 3600)
-    
-    _google_token_cache["token"] = token
-    _google_token_cache["exp"] = time.time() + expires_in - 300  # Cache 55 minutes
+
+    _workspace_google_token_cache[workspace_id] = {"token": token, "exp": time.time() + expires_in - 300}
     return token
 
 
-def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, creator_email: str, start_iso: str, end_iso: str, attendees_emails: list, db=None) -> dict:
+def is_workspace_google_connected(db, workspace_id: int) -> dict:
+    """Strictly check whether a workspace has its OWN connected Google account
+    override — unlike get_workspace_google_access_token, this does NOT fall
+    back to the shared account, so the UI can tell "infra has its own account
+    connected" apart from "infra has no override, but the shared one still works".
+    """
+    wga = _load_workspace_google_tokens(db, workspace_id)
+    return {
+        "connected": bool(wga and wga.refresh_token),
+        "google_email": wga.google_email if wga else None,
+    }
+
+
+def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, creator_email: str, start_iso: str, end_iso: str, attendees_emails: list, db=None, workspace_id: int = None) -> dict:
     """
     Create Google Meet event using shared operational account (mkt.szone@gmail.com).
     Calls Google Calendar API events.insert with conferenceDataVersion=1. sendUpdates=none:
     the event still shows on each attendee's own Google Calendar (attendees[] controls that,
     independently of sendUpdates), but Google won't email them an invite notice.
     """
-    token = get_shared_google_access_token(db)
+    token = get_workspace_google_access_token(db, workspace_id)
 
     body = {
         "summary": f"[MK-{meeting_id}] {title}",
@@ -428,11 +512,12 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
     return {
         "google_event_id": data.get("id"),
         "meet_link": meet_link or f"https://meet.google.com/{meeting_code}" if meeting_code else "",
-        "meeting_code": meeting_code
+        "meeting_code": meeting_code,
+        "mk_tag": meeting_id
     }
 
 
-def update_google_meet_event(db, google_event_id: str, start_iso: str, end_iso: str) -> None:
+def update_google_meet_event(db, google_event_id: str, start_iso: str, end_iso: str, workspace_id: int = None) -> None:
     """
     Reschedule an existing Google Calendar event (created via
     create_google_meet_shared) to a new start/end time — events.patch on the
@@ -441,7 +526,7 @@ def update_google_meet_event(db, google_event_id: str, start_iso: str, end_iso: 
     no invite/update email is sent. Raises on failure; callers treat this as
     best-effort (see update_meeting in routers/meetings.py).
     """
-    token = get_shared_google_access_token(db)
+    token = get_workspace_google_access_token(db, workspace_id)
     body = {
         "start": {"dateTime": start_iso, "timeZone": "Asia/Ho_Chi_Minh"},
         "end": {"dateTime": end_iso, "timeZone": "Asia/Ho_Chi_Minh"},
@@ -461,10 +546,10 @@ def update_google_meet_event(db, google_event_id: str, start_iso: str, end_iso: 
         raise ValueError(f"Google Calendar patch failed: {resp.text}")
 
 
-def is_google_connected(db, user_id: int) -> bool:
+def is_google_connected(db, user_id: int, workspace_id: int = None) -> bool:
     """Check if Google Calendar & Drive API connection is active with valid refresh token."""
     try:
-        get_shared_google_access_token(db)
+        get_workspace_google_access_token(db, workspace_id)
         return True
     except Exception:
         pass
@@ -476,10 +561,11 @@ def is_google_connected(db, user_id: int) -> bool:
     return False
 
 
-def create_google_meet_link(db, user_id: int, topic: str, start_time: str, duration_minutes: int = 60) -> dict:
+def create_google_meet_link(db, user_id: int, topic: str, start_time: str, duration_minutes: int = 60, workspace_id: int = None) -> dict:
     """
     Create a Google Calendar event with Google Meet link.
-    Uses shared operational account (mkt.szone@gmail.com).
+    Uses shared operational account (mkt.szone@gmail.com), unless workspace_id
+    resolves to a workspace with its own connected Google account override.
     Attributes creator_name and creator_email from current user in DB.
     """
     creator_name = "Portal User"
@@ -512,25 +598,60 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
             # trigger their own account's notification-email settings, which
             # sendUpdates=none below cannot suppress) — omitted on purpose.
             attendees_emails=[],
-            db=db
+            db=db,
+            workspace_id=workspace_id
         )
         if res.get("meet_link"):
-            return {"join_url": res["meet_link"], "id": res.get("google_event_id")}
+            return {"join_url": res["meet_link"], "id": res.get("google_event_id"), "mk_tag": res.get("mk_tag")}
         else:
             raise ValueError("Google Calendar không trả về meet_link hợp lệ")
     except Exception as e:
         logger.error(f"Google Calendar Meet creation failed: {e}")
-        raise ValueError(f"Không thể khởi tạo cuộc họp Google Meet qua tài khoản mkt.szone@gmail.com: {e}")
+        raise ValueError(f"Không thể khởi tạo cuộc họp Google Meet: {e}")
 
 
-def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> dict:
+def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time, workspace_id: int = None) -> None:
+    """
+    Fire-and-forget webhook to n8n right after a meeting's Google Meet link is
+    created, so n8n can search Drive directly for the recording tagged
+    "[MK-{mk_tag}]" (see create_google_meet_shared) instead of blindly polling
+    every "Google Meet" folder for the most recent videos. Best-effort only:
+    n8n discovery must not be able to break meeting creation, so any failure
+    here is logged and swallowed.
+    """
+    url = settings.N8N_MEETING_WEBHOOK_URL_DEFAULT
+    if workspace_id is not None and db is not None:
+        from ..models.system_category import Workspace
+        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if ws and (ws.code or "").strip().lower() == "infra":
+            url = settings.N8N_MEETING_WEBHOOK_URL_INFRA
+
+    if not url:
+        return
+
+    try:
+        requests.post(
+            url,
+            json={
+                "mk_tag": mk_tag,
+                "title": title,
+                "meeting_date": meeting_date.isoformat() if hasattr(meeting_date, "isoformat") else meeting_date,
+                "start_time": start_time.isoformat() if hasattr(start_time, "isoformat") else start_time,
+            },
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning(f"notify_n8n_meeting_created failed (non-fatal): {e}")
+
+
+def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict, workspace_id: int = None) -> dict:
     """
     Sync a Google Meet meeting by searching for transcript on Google Drive.
     Returns { transcript, summary, status } or raises on error.
     """
     transcript_text = None
 
-    if is_google_connected(db, user_id):
+    if is_google_connected(db, user_id, workspace_id):
         match = re.search(r"meet\.google\.com/([a-z-]+)", meeting_url or "")
         meeting_code = match.group(1) if match else ""
         if meeting_code:
@@ -539,7 +660,7 @@ def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> 
             # dialogue with per-line timestamps), which is far more complete than
             # the "Notes by Gemini" companion Doc the Drive search below finds.
             try:
-                api_data = _fetch_meet_api_transcript(db, meeting_code)
+                api_data = _fetch_meet_api_transcript(db, meeting_code, workspace_id)
                 if api_data and api_data.get("text"):
                     transcript_text = api_data["text"]
             except Exception as e:
@@ -547,7 +668,7 @@ def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> 
 
             if not transcript_text:
                 try:
-                    transcript_data = _fetch_google_meet_transcript(db, user_id, meeting_code)
+                    transcript_data = _fetch_google_meet_transcript(db, user_id, meeting_code, workspace_id)
                     if transcript_data and transcript_data.get("text"):
                         transcript_text = transcript_data["text"]
                 except Exception as e:
@@ -573,7 +694,7 @@ def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict) -> 
     }
 
 
-def _fetch_meet_api_transcript(db, meeting_code: str) -> Optional[dict]:
+def _fetch_meet_api_transcript(db, meeting_code: str, workspace_id: int = None) -> Optional[dict]:
     """
     Fetch the raw caption-level transcript via the Google Meet API
     (scope: meetings.space.readonly) — spaces -> conferenceRecords ->
@@ -585,7 +706,7 @@ def _fetch_meet_api_transcript(db, meeting_code: str) -> Optional[dict]:
     fall back to the Drive-doc method — e.g. when the Meet API isn't enabled
     yet, the OAuth token predates this scope, or no transcript exists.
     """
-    token = get_shared_google_access_token(db)
+    token = get_workspace_google_access_token(db, workspace_id)
     headers = {"Authorization": f"Bearer {token}"}
 
     space_resp = requests.get(f"https://meet.googleapis.com/v2/spaces/{meeting_code}", headers=headers, timeout=15)
@@ -677,11 +798,11 @@ def _fetch_meet_api_transcript(db, meeting_code: str) -> Optional[dict]:
     return {"text": "\n".join(lines), "fileName": f"Meet API transcript ({meeting_code})"}
 
 
-def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str) -> Optional[dict]:
+def _fetch_google_meet_transcript(db, user_id: int, meeting_code: str, workspace_id: int = None) -> Optional[dict]:
     """Search Google Drive for a transcript (Google Doc / text / subtitle) matching the meeting code."""
     from googleapiclient.discovery import build
 
-    creds = _get_google_credentials(db, user_id)
+    creds = _get_google_credentials(db, user_id, workspace_id)
     drive = build("drive", "v3", credentials=creds)
 
     matched_file = None
@@ -1319,6 +1440,22 @@ TRANSCRIPT:
 # AUTOMATED BACKGROUND SYNC WORKER
 # ═══════════════════════════════════════════════════════════
 
+def _resolve_meeting_workspace_id(db, meeting) -> Optional[int]:
+    """Resolve which Workspace a meeting belongs to via its project (reusing the same
+    workspace_id_for_project() lookup used elsewhere for data scoping), so the
+    background auto-sync loop can pick the right Google account override, if any."""
+    if not meeting or not getattr(meeting, "project_id", None):
+        return None
+    try:
+        from ..models.project import Project
+        from ..utils.access import workspace_id_for_project
+        proj = db.query(Project).filter(Project.id == meeting.project_id).first()
+        return workspace_id_for_project(db, proj)
+    except Exception as e:
+        logger.warning(f"Error resolving workspace for meeting {getattr(meeting, 'id', None)}: {e}")
+        return None
+
+
 def auto_sync_all_ended_meetings(db):
     """
     Find all meetings that have ended (by date and end time) and process automatic transcript sync & AI summarization.
@@ -1361,7 +1498,8 @@ def auto_sync_all_ended_meetings(db):
                     result = sync_zoom_meeting(m.meeting_url, meeting_info)
                 elif ("google" in platform or "meet" in platform) and m.meeting_url:
                     user_id = m.created_by or 1
-                    result = sync_google_meet(db, user_id, m.meeting_url, meeting_info)
+                    workspace_id = _resolve_meeting_workspace_id(db, m)
+                    result = sync_google_meet(db, user_id, m.meeting_url, meeting_info, workspace_id)
                 elif m.transcript and m.transcript.strip():
                     summary = summarize_with_ai(m.transcript, meeting_info)
                     result = {"transcript": m.transcript, "summary": summary, "status": "DONE"}
