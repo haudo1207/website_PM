@@ -787,6 +787,17 @@ def delete_account(
         raise HTTPException(400, "Bạn không thể tự xóa tài khoản đang đăng nhập.")
     ensure_superadmin_remains(db, account, deleting=True)
     acc_email, acc_id = account.email, account.id
+    # Pre-cascade in-app notifications pointing at this user. The
+    # `notifications.recipient_id` FK is NOT NULL with NO ACTION by default,
+    # so deleting a user who has notifications would fail with a foreign-key
+    # constraint violation. We explicitly clear those rows here so the user
+    # can be removed. The `audit_logs.user_id` / `target_user_id` FKs already
+    # declare `SET NULL`, and `users.member_id` declares `SET NULL`, so the
+    # linked Member and audit trail rows survive intact.
+    from ..models.notification import Notification
+    db.query(Notification).filter(
+        (Notification.recipient_id == acc_id) | (Notification.sender_id == acc_id)
+    ).delete(synchronize_session=False)
     db.delete(account)
     db.commit()
     AuditService.record(
