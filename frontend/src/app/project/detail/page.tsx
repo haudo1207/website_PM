@@ -180,11 +180,27 @@ function FloatingDropdown({
     };
   }, [open, onClose, anchorEl]);
 
+  // Flip the menu to open ABOVE the trigger when opening below would push it
+  // past the bottom of the viewport (e.g. the "⋮" row menu on a Group Task/
+  // Task near the bottom of the table) — without this it renders off-screen,
+  // looking like it's missing or covered by something.
+  useLayoutEffect(() => {
+    if (!open || !anchorEl || !pos || !menuRef.current) return;
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const overflowsBottom = menuRect.bottom > window.innerHeight - 8;
+    if (!overflowsBottom) return;
+    const rect = anchorEl.getBoundingClientRect();
+    const flippedTop = rect.top - menuRect.height - 4;
+    if (flippedTop >= 0 && flippedTop !== pos.top) {
+      setPos(prev => (prev ? { ...prev, top: flippedTop } : prev));
+    }
+  }, [open, anchorEl, pos]);
+
   if (!open || !pos || typeof document === 'undefined') return null;
   return createPortal(
     <div
       ref={menuRef}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 200 }}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 200, maxHeight: '70vh', overflowY: 'auto' }}
       className={`text-[#0b1c30] ${className}`}
     >
       {children}
