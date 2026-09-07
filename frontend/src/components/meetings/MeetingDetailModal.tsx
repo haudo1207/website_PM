@@ -216,7 +216,7 @@ export default function MeetingDetailModal({
   const isUnassignedProject = !localProjectId && (!projectName || projectName === 'Dự án chung' || projectName === 'Chưa gán dự án');
 
   const statusUpper = String(meeting.status || 'UPCOMING').toUpperCase();
-  const isDone = statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
+  const isDone = statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
 
   // Join Link carry Host authuser
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';

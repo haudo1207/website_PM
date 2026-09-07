@@ -12,7 +12,7 @@ from ..models.meeting import Meeting, MeetingMember
 from ..models.project import Project
 from ..models.member import Member
 from ..utils.auth import get_current_user
-from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, user_scope
+from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, resolve_workspace, user_scope, workspace_id_for_project
 from ..utils.audit_service import AuditService
 
 logger = logging.getLogger("meetings")
@@ -22,16 +22,41 @@ router = APIRouter(dependencies=[Depends(require_route_project_access)])
 STATUS_DB_TO_FE = {
     "UPCOMING": "SẮP TỚI",
     "ONGOING": "ĐANG DIỄN RA",
-    "DONE": "ĐÃ DIỄN RA",
+    "DONE": "ĐÃ KẾT THÚC",
     "CANCELLED": "ĐÃ HỦY"
 }
 
 STATUS_FE_TO_DB = {
     "SẮP TỚI": "UPCOMING",
     "ĐANG DIỄN RA": "ONGOING",
-    "ĐÃ DIỄN RA": "DONE",
+    "ĐÃ KẾT THÚC": "DONE",
+    "ĐÃ DIỄN RA": "DONE",  # legacy label, kept as an alias for older callers
     "ĐÃ HỦY": "CANCELLED"
 }
+
+
+def compute_display_status(m: Meeting) -> str:
+    """Meeting status architecture (chốt kiến trúc):
+      SẮP TỚI      -> now < start_time
+      ĐANG DIỄN RA -> start_time <= now < end_time
+      ĐÃ KẾT THÚC  -> now >= end_time
+    Computed live from meeting_date/start_time/end_time so the badge is
+    always accurate regardless of the background auto-sync loop's cadence.
+    CANCELLED is a manual state and always wins over the time computation;
+    falls back to the stored status when date/time isn't fully set (can't compute).
+    """
+    if m.status == "CANCELLED":
+        return "ĐÃ HỦY"
+    if m.meeting_date and m.start_time and m.end_time:
+        start_dt = datetime.datetime.combine(m.meeting_date, m.start_time)
+        end_dt = datetime.datetime.combine(m.meeting_date, m.end_time)
+        now = datetime.datetime.now()
+        if now >= end_dt:
+            return "ĐÃ KẾT THÚC"
+        if now >= start_dt:
+            return "ĐANG DIỄN RA"
+        return "SẮP TỚI"
+    return STATUS_DB_TO_FE.get(m.status, m.status)
 
 def parse_time(time_str: str):
     if not time_str:
@@ -257,7 +282,7 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
         "endTime": m.end_time.strftime("%H:%M") if m.end_time else None,
         "end_time": m.end_time.strftime("%H:%M") if m.end_time else None,
         "duration": duration,
-        "status": STATUS_DB_TO_FE.get(m.status, m.status),
+        "status": compute_display_status(m),
         "transcript": m.transcript,
         "ai_summary": m.ai_summary,
         "summary": summary_list,
@@ -743,10 +768,12 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                 )
         else:
             try:
-                from ..services.meeting_sync import create_google_meet_link
-                result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins)
+                from ..services.meeting_sync import create_google_meet_link, notify_n8n_meeting_created
+                workspace_id = workspace_id_for_project(db, proj if 'proj' in locals() else None)
+                result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
                 meeting_url = result["join_url"]
                 google_event_id = result.get("id")
+                notify_n8n_meeting_created(db, result.get("mk_tag"), title, meeting_date, start_time, workspace_id)
             except Exception as e:
                 logger.error(f"Auto-generate Google Meet link failed: {e}")
                 raise HTTPException(status_code=400, detail=str(e))
@@ -1022,7 +1049,9 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             from ..services.meeting_sync import update_google_meet_event
             start_iso = datetime.datetime.combine(m.meeting_date, m.start_time).isoformat()
             end_iso = datetime.datetime.combine(m.meeting_date, m.end_time).isoformat()
-            update_google_meet_event(db, m.google_event_id, start_iso, end_iso)
+            meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+            workspace_id = workspace_id_for_project(db, meeting_proj)
+            update_google_meet_event(db, m.google_event_id, start_iso, end_iso, workspace_id)
         except Exception as e:
             logger.warning(f"Failed to sync rescheduled time to Google Calendar for meeting {m.id}: {e}")
 
@@ -1205,7 +1234,9 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
                 result = sync_zoom_meeting(m.meeting_url, meeting_info)
             elif ("google" in platform or "meet" in platform) and m.meeting_url:
                 from ..services.meeting_sync import sync_google_meet
-                result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info)
+                meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+                workspace_id = workspace_id_for_project(db, meeting_proj)
+                result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info, workspace_id)
             elif m.transcript and m.transcript.strip():
                 from ..services.meeting_sync import summarize_with_ai
                 summary = summarize_with_ai(m.transcript, meeting_info)
@@ -1241,15 +1272,26 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
 
 # ─── GOOGLE OAUTH — Connect/Disconnect/Status ───────────
 @router.get("/google/status")
-def google_status(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Check if Google Calendar/Drive is connected."""
+def google_status(workspace: str = None, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Check if Google Calendar/Drive is connected. Pass ?workspace=<code> to
+    strictly check that workspace's own connected account override (no fallback
+    to the shared account), instead of the default global connection check."""
+    if workspace:
+        from ..services.meeting_sync import is_workspace_google_connected
+        ws = resolve_workspace(db, workspace)
+        if not ws:
+            raise HTTPException(404, f"Không tìm thấy workspace '{workspace}'")
+        return is_workspace_google_connected(db, ws.id)
+
     from ..services.meeting_sync import is_google_connected
     return {"connected": is_google_connected(db, current_user.id)}
 
 
 @router.get("/google/auth")
-def google_auth_url(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Generate Google OAuth2 authorization URL."""
+def google_auth_url(workspace: str = None, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Generate Google OAuth2 authorization URL. Pass ?workspace=<code> to connect
+    a Google account that overrides the shared one for just that workspace (e.g.
+    ?workspace=infra) instead of replacing the default shared account."""
     from ..config import settings
     client_id = settings.GOOGLE_CLIENT_ID
     client_secret = settings.GOOGLE_CLIENT_SECRET
@@ -1274,7 +1316,13 @@ def google_auth_url(db: Session = Depends(get_db), current_user = Depends(get_cu
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
-    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", state=str(current_user.id))
+    state = str(current_user.id)
+    if workspace:
+        ws = resolve_workspace(db, workspace)
+        if not ws:
+            raise HTTPException(404, f"Không tìm thấy workspace '{workspace}'")
+        state = f"{current_user.id}:{ws.id}"
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", state=state)
     return {"auth_url": auth_url}
 
 
@@ -1630,7 +1678,9 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
         raise HTTPException(404, "Không tìm thấy cuộc họp")
 
     from ..services.meeting_sync import create_google_meet_link
-    link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", m.meeting_date.isoformat() if m.meeting_date else "")
+    meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+    workspace_id = workspace_id_for_project(db, meeting_proj)
+    link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", m.meeting_date.isoformat() if m.meeting_date else "", workspace_id=workspace_id)
     if link_data and link_data.get("join_url"):
         m.meeting_link = link_data["join_url"]
         db.commit()

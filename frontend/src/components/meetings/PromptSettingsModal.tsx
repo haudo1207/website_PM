@@ -2,10 +2,14 @@
 import React, { useState, useEffect } from 'react';
 import { X, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react';
 import { getGoogleStatus, getGoogleAuthUrl, getAiSettings, saveAiSettings } from '@/lib/api';
+import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 interface Props { isOpen: boolean; onClose: () => void; }
 
 export default function PromptSettingsModal({ isOpen, onClose }: Props) {
+  const { workspaceCode } = useWorkspaceFilter();
+  const isInfraWorkspace = (workspaceCode || '').toLowerCase() === 'infra';
+
   const [promptTemplate, setPromptTemplate] = useState('');
   const [hasApiKey, setHasApiKey] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -15,6 +19,10 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
 
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [isCheckingGoogle, setIsCheckingGoogle] = useState(false);
+
+  const [isInfraGoogleConnected, setIsInfraGoogleConnected] = useState(false);
+  const [infraGoogleEmail, setInfraGoogleEmail] = useState<string | null>(null);
+  const [isCheckingInfraGoogle, setIsCheckingInfraGoogle] = useState(false);
 
   useEffect(() => { if (isOpen) fetchSettings(); }, [isOpen]);
 
@@ -26,6 +34,7 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
       else setError(data.error || 'Không thể tải cấu hình AI.');
 
       await checkGoogleConnection();
+      if (isInfraWorkspace) await checkInfraGoogleConnection();
     } catch (err: any) { setError(err.response?.data?.error || err.message || 'Lỗi kết nối.'); }
     finally { setIsLoading(false); }
   };
@@ -42,6 +51,19 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
     }
   };
 
+  const checkInfraGoogleConnection = async () => {
+    setIsCheckingInfraGoogle(true);
+    try {
+      const googleData = await getGoogleStatus('infra');
+      setIsInfraGoogleConnected(!!googleData.connected);
+      setInfraGoogleEmail(googleData.google_email || null);
+    } catch (err) {
+      console.error("Failed to check infra Google status", err);
+    } finally {
+      setIsCheckingInfraGoogle(false);
+    }
+  };
+
   const handleConnectGoogle = async () => {
     try {
       const data = await getGoogleAuthUrl();
@@ -52,6 +74,19 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
       }
     } catch (err: any) {
       alert("Lỗi kết nối API Google Auth: " + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleConnectInfraGoogle = async () => {
+    try {
+      const data = await getGoogleAuthUrl('infra');
+      if (data.auth_url) {
+        window.open(data.auth_url, '_blank');
+      } else {
+        alert("Không thể lấy liên kết xác thực Google cho workspace Infra.");
+      }
+    } catch (err: any) {
+      alert("Lỗi kết nối API Google Auth (Infra): " + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -121,6 +156,49 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
                 </button>
               </div>
             </div>
+
+            {isInfraWorkspace && (
+              <div className="p-4 bg-sky-50/50 border border-sky-200/80 rounded-xl space-y-3 flex-shrink-0">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-[#0b1c30]">Tài khoản Google Infra{infraGoogleEmail ? ` (${infraGoogleEmail})` : ''}</h3>
+                    <p className="text-[11px] text-[#565e74] mt-0.5">Tài khoản Google riêng cho workspace Infra — dùng để tạo link Google Meet & đồng bộ biên bản cho các cuộc họp thuộc workspace này thay vì tài khoản chung ở trên.</p>
+                  </div>
+                  {isInfraGoogleConnected ? (
+                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex-shrink-0">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      ĐÃ KẾT NỐI
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0">
+                      CHƯA KẾT NỐI
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleConnectInfraGoogle}
+                    className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-2xs"
+                  >
+                    <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
+                    <span>{isInfraGoogleConnected ? '🔄 Ủy quyền lại tài khoản Infra' : '🔗 Kết nối tài khoản Google Infra'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={checkInfraGoogleConnection}
+                    disabled={isCheckingInfraGoogle}
+                    className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-slate-200/60 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-semibold"
+                    title="Làm mới trạng thái kết nối"
+                  >
+                    <RefreshCw size={14} className={isCheckingInfraGoogle ? 'animate-spin' : ''} />
+                    {isCheckingInfraGoogle ? 'Đang kiểm tra...' : 'Kiểm tra lại kết nối'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Prompt mẫu để tóm tắt cuộc họp:</label>
