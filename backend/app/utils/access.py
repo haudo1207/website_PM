@@ -119,12 +119,19 @@ def business_unit_for_project(db: Session, project, by_code=None, by_name=None) 
 
 
 def workspace_id_for_project(db: Session, project):
-    """Workspace row id a project belongs to (via business_unit_for_project), or None
-    if the project is missing/unresolvable. Used to pick a per-workspace Google
-    account override for meeting creation/sync (see services/meeting_sync.py)."""
+    """Workspace row id a project belongs to, or None if missing/unresolvable/
+    global ('All'). Resolved from Project.business/data_scope directly — NOT
+    via business_unit_for_project/Customer.business_unit, which is legacy and
+    can silently point to the wrong Workspace (see customer_query_for_user).
+    Used to pick a per-workspace Google account override for meeting
+    creation/sync (see services/meeting_sync.py)."""
     if not project:
         return None
-    ws = resolve_workspace(db, business_unit_for_project(db, project))
+    if project.business and project.business != "All":
+        ws = resolve_workspace(db, project.business)
+        if ws:
+            return ws.id
+    ws = resolve_workspace(db, getattr(project, "data_scope", None))
     return ws.id if ws else None
 
 

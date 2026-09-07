@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import {
   getCustomers,
+  getCustomersByWorkspace,
   createProject,
   updateProject,
   getMembers,
@@ -187,21 +188,27 @@ export default function ProjectFormModal({
     workspaces.forEach(w => m.set(w.name, w.code));
     return m;
   }, [workspaces]);
-  const wsCodes = useMemo(() => new Set(workspaces.map(w => w.code)), [workspaces]);
+  const targetWsCode = wsCodeByName.get(projectForm.business) || (projectForm.business || '').toLowerCase();
 
-  const businessCustomers = useMemo(() => {
-    const targetCode = wsCodeByName.get(projectForm.business) || projectForm.business.toLowerCase();
-    return projectForm.business === 'All'
-      ? allCustomers
-      : allCustomers.filter((c) => (c.business_unit || '').toLowerCase() === targetCode);
-  }, [allCustomers, projectForm.business, wsCodeByName]);
+  // Customer.business_unit is legacy/unreliable (see access.customer_query_for_user
+  // on the backend — confirmed by a production data audit that most Customer rows
+  // carry a stale value). A Customer's real Workspace is derived from its linked
+  // Projects instead, via the same by-workspace endpoint the Project Hub Customers
+  // tab uses, so this dropdown/mismatch check can't be thrown off by bad data.
+  const businessCustomersQuery = useQuery({
+    queryKey: ['customers-by-workspace', targetWsCode],
+    queryFn: () => getCustomersByWorkspace(targetWsCode).catch(() => []),
+    enabled: isOpen && projectForm.business !== 'All' && !!targetWsCode,
+    staleTime: 60_000,
+  });
 
-  const selectedCustomerBu = (allCustomers.find((c) => c.id === Number(projectForm.customerId))?.business_unit || '').toLowerCase();
-  const customerMismatch = !!projectForm.customerId && (
-    projectForm.business === 'All'
-      ? !!selectedCustomerBu && !wsCodes.has(selectedCustomerBu)
-      : selectedCustomerBu !== (wsCodeByName.get(projectForm.business) || projectForm.business.toLowerCase())
-  );
+  const businessCustomers: any[] = projectForm.business === 'All'
+    ? allCustomers
+    : (businessCustomersQuery.data || []);
+
+  const customerMismatch = !!projectForm.customerId && projectForm.business !== 'All' &&
+    !businessCustomersQuery.isLoading &&
+    !businessCustomers.some((c: any) => c.id === Number(projectForm.customerId));
 
   const selectedCustomerName = projectForm.customerId
     ? (allCustomers.find(c => c.id === Number(projectForm.customerId))?.name || 'Chưa chọn KH')
