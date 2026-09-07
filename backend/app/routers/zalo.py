@@ -960,6 +960,26 @@ def get_conversation_summaries(
     return [_summary_to_dict(s) for s in rows]
 
 
+@router.delete("/summaries/{summary_id}")
+def delete_zalo_summary(
+    summary_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_zalo_user),
+):
+    """Deletes one AI digest row — lets a PM clean up stale/duplicate cards
+    from the project's shared "Tóm tắt Zalo" tab (e.g. the same real-world
+    group linked from two different Leaders' own accounts, each producing
+    its own summaries). Not scoped to "my own account only" — the project
+    tab is already a shared view across every linked account by design, so
+    cleanup there is too."""
+    summary = db.query(ZaloConversationSummary).filter(ZaloConversationSummary.id == summary_id).first()
+    if not summary:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bản tóm tắt.")
+    db.delete(summary)
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/conversations/{conversation_id}/summarize-now")
 def summarize_conversation_now(
     conversation_id: int,
