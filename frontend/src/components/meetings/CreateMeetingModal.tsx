@@ -15,7 +15,7 @@ interface MeetingFormData {
   platform: string;
   date: string;
   time: string;
-  endTime: string;
+  duration: string;
   link: string;
   transcript?: string;
   auto_summarize?: boolean;
@@ -89,15 +89,6 @@ function addMinutes(time: string, durationStr: string): string {
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
 
-// Minutes between two "HH:MM" strings, same calendar day (end assumed after
-// start — negative/zero is caught by the "end > start" validation on submit,
-// not clamped away here).
-function diffMinutes(start: string, end: string): number {
-  const [sh, sm] = (start || '00:00').split(':').map(Number);
-  const [eh, em] = (end || '00:00').split(':').map(Number);
-  return (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
-}
-
 function HourMinutePicker({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const [h, m] = (value || '00:00').split(':');
   const hour = HOUR_OPTIONS.includes(h) ? h : '00';
@@ -162,7 +153,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     platform: 'Google Meet',
     date: '',
     time: '',
-    endTime: '',
+    duration: '60',
     link: '',
     transcript: '',
     auto_summarize: true,
@@ -209,11 +200,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         objective: initialData.objective || '',
         agenda: initialData.agenda || '',
         project_ids: openedProjectIds,
-        // Prefer the backend's own end_time/endTime; fall back to deriving it
-        // from time+duration for older payload shapes that only ever had
-        // duration.
-        endTime: initialData.end_time || initialData.endTime
-          || addMinutes(initialData.time, String(initialData.duration || 60)),
+        duration: String(initialData.duration || 60),
         // Prefill from the meeting's real MeetingMember rows (member_id, not
         // the synthesized "Host" entry which has no member_id) so editing
         // doesn't silently drop everyone already added.
@@ -234,7 +221,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         platform: 'Google Meet',
         date: defaultDate,
         time: defaultTime,
-        endTime: addMinutes(defaultTime, '60'),
+        duration: '60',
         link: '',
         transcript: '',
         auto_summarize: true,
@@ -352,7 +339,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       try {
         const res: any = await getMeetings({ from_date: formData.date, to_date: formData.date });
         const items: any[] = res?.data || res || [];
-        const dur = diffMinutes(formData.time, formData.endTime) || 60;
+        const dur = parseInt(formData.duration || '60', 10) || 60;
         const found = findConflicts(formData.time, dur, items, formData.member_ids, initialData?.id);
         if (cancelled) return;
         setScheduleConflicts(found);
@@ -378,7 +365,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       }
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [isOpen, formData.date, formData.time, formData.endTime, formData.member_ids.join(','), initialData?.id]);
+  }, [isOpen, formData.date, formData.time, formData.duration, formData.member_ids.join(','), initialData?.id]);
 
   if (!isOpen) return null;
 
@@ -419,7 +406,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         title: formData.title,
         date: formData.date,
         time: formData.time,
-        duration: String(diffMinutes(formData.time, formData.endTime) || 60),
+        duration: formData.duration,
         project_id: formData.project_ids[0]
       });
       if (data.success && data.join_url) {
@@ -463,11 +450,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     }
     if (!initialData && toDateTimeMs(formData.date, formData.time) < Date.now()) {
       setError('Thời gian họp phải lớn hơn thời gian hiện tại.');
-      isSubmittingRef.current = false;
-      return;
-    }
-    if (!formData.endTime || diffMinutes(formData.time, formData.endTime) <= 0) {
-      setError('Giờ kết thúc phải lớn hơn giờ bắt đầu.');
       isSubmittingRef.current = false;
       return;
     }
@@ -696,29 +678,38 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời gian họp *</label>
-                <input
-                  type="date"
-                  value={formData.date}
-                  onChange={e => setFormData({ ...formData, date: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời gian họp *</label>
+                    <input
+                      type="date"
+                      value={formData.date}
+                      onChange={e => setFormData({ ...formData, date: e.target.value })}
+                      className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời lượng</label>
+                    <select
+                      value={formData.duration}
+                      onChange={e => setFormData({ ...formData, duration: e.target.value })}
+                      className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                    >
+                      <option value="15">15 phút</option>
+                      <option value="30">30 phút</option>
+                      <option value="45">45 phút</option>
+                      <option value="60">1 giờ</option>
+                      <option value="90">1.5 giờ</option>
+                    </select>
+                  </div>
+                </div>
 
-                <div className="grid grid-cols-2 gap-3 mt-2">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#94a3b8] uppercase tracking-wider mb-1">Giờ bắt đầu</label>
-                    <HourMinutePicker
-                      value={formData.time}
-                      onChange={t => setFormData({ ...formData, time: t })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#94a3b8] uppercase tracking-wider mb-1">Giờ kết thúc</label>
-                    <HourMinutePicker
-                      value={formData.endTime}
-                      onChange={t => setFormData({ ...formData, endTime: t })}
-                    />
-                  </div>
+                <div className="mt-2">
+                  <label className="block text-[10px] font-bold text-[#94a3b8] uppercase tracking-wider mb-1">Giờ bắt đầu</label>
+                  <HourMinutePicker
+                    value={formData.time}
+                    onChange={t => setFormData({ ...formData, time: t })}
+                  />
                 </div>
 
                 {isEditingPastMeeting && (
@@ -744,14 +735,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                             <button
                               key={t}
                               type="button"
-                              onClick={() => setFormData(prev => ({
-                                ...prev,
-                                time: t,
-                                // Preserve the meeting's current length when
-                                // jumping to a suggested slot, instead of
-                                // leaving endTime pointed at the old start.
-                                endTime: addMinutes(t, String(diffMinutes(prev.time, prev.endTime) || 60)),
-                              }))}
+                              onClick={() => setFormData(prev => ({ ...prev, time: t }))}
                               className="px-2.5 py-1 text-[11px] font-bold text-[#0058be] bg-white border border-[#bfdbfe] rounded-full hover:bg-[#eff4ff]"
                             >
                               {t}
@@ -909,7 +893,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               {formData.date && formData.time && (
                 <>
                   <b className="text-[#0b1c30]">{formatSummaryDate(formData.date)}</b>
-                  {' · '}{formData.time}–{formData.endTime}
+                  {' · '}{formData.time}–{addMinutes(formData.time, formData.duration)}
                   {' · '}{formData.member_ids.length} người
                   {' · '}{formData.platform}
                 </>
