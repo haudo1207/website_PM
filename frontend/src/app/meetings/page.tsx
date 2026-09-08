@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Search, Sparkles, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
@@ -62,7 +62,6 @@ const parseTimeToMinutes = (t?: string): number => {
 function MeetingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const queryClient = useQueryClient();
   const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   // Navbar's Workspace switcher (shared with Dashboard/KPI/Project Hub) — a
   // super_admin browsing "one company at a time" narrows Meetings the same
@@ -419,7 +418,6 @@ function MeetingsPageContent() {
         const data = await updateMeeting(meetingData.id, meetingData);
         if (data.success) {
           savedObj = data.data;
-          queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meetingData.id ? data.data : m));
         }
       } else {
         const data = await createMeeting(meetingData);
@@ -434,11 +432,19 @@ function MeetingsPageContent() {
             const refreshed = await getMeeting(savedObj.id).catch(() => null);
             if (refreshed?.success) savedObj = refreshed.data;
           }
-          queryClient.setQueryData(['meetings'], (prev: any[] = []) => [savedObj, ...prev]);
           // Meeting mới luôn được chèn lên đầu mảng — nếu đang xem trang khác
           // trang 1 thì quay lại trang 1 để thấy ngay, tránh cảm giác "biến mất".
           setCurrentPage(1);
         }
+      }
+      // Refetch instead of queryClient.setQueryData(['meetings'], ...) — the
+      // real query key is ['meetings', workspaceCode] (and ['meetings',
+      // 'mine', workspaceCode] for the personal tab), so patching the bare
+      // ['meetings'] key was writing to a cache entry nothing reads from;
+      // the visible list never updated until a full page reload re-fetched
+      // under the correct key.
+      if (savedObj) {
+        await Promise.all([fetchMeetings(), fetchMyMeetings()]);
       }
       setIsModalOpen(false);
       setEditingMeeting(null);
@@ -461,7 +467,7 @@ function MeetingsPageContent() {
     if (!deleteConfirmId) return;
     try {
       await deleteMeeting(parseInt(deleteConfirmId));
-      queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.filter(m => m.id !== parseInt(deleteConfirmId)));
+      await Promise.all([fetchMeetings(), fetchMyMeetings()]);
       setDeleteConfirmId(null);
       setToastMessage('✓ Đã xóa cuộc họp thành công!');
       setTimeout(() => setToastMessage(null), 3000);
@@ -474,7 +480,7 @@ function MeetingsPageContent() {
   const handleSync = async (meeting: any) => {
     const data = await syncMeeting(parseInt(meeting.id));
     if (data.success) {
-      queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? data.data : m));
+      await Promise.all([fetchMeetings(), fetchMyMeetings()]);
     }
   };
 
@@ -1181,7 +1187,7 @@ function MeetingsPageContent() {
       {/* Modals */}
       {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
-      {(canManage || detailMeeting?.can_manage) && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={m => queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(x => x.id === m.id ? m : x))} />}
+      {(canManage || detailMeeting?.can_manage) && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={async () => { await Promise.all([fetchMeetings(), fetchMyMeetings()]); }} />}
       <MeetingDetailModal
         isOpen={isDetailOpen}
         onClose={handleCloseDetail}
