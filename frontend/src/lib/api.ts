@@ -366,8 +366,17 @@ export const moveTask = (
     insert_after_task_id: position?.insertAfterTaskId || undefined,
     insert_before_task_id: position?.insertBeforeTaskId || undefined,
   }).then(r => r.data);
-export const moveTaskGroup = (phaseId: number, groupId: number, targetPhaseId: number) =>
-  api.post(`/phases/${phaseId}/task-groups/${groupId}/move`, { target_phase_id: targetPhaseId }).then(r => r.data);
+export const moveTaskGroup = (
+  phaseId: number,
+  groupId: number,
+  targetPhaseId: number,
+  position?: { insertBeforeGroupId?: number; insertAfterGroupId?: number }
+) =>
+  api.post(`/phases/${phaseId}/task-groups/${groupId}/move`, {
+    target_phase_id: targetPhaseId,
+    insert_before_group_id: position?.insertBeforeGroupId || undefined,
+    insert_after_group_id: position?.insertAfterGroupId || undefined,
+  }).then(r => r.data);
 export const reorderTasks = (groupId: number, order: number[]) =>
   api.patch(`/task-groups/${groupId}/tasks/reorder`, { order }).then(r => r.data);
 
@@ -486,6 +495,13 @@ export const createProjectTemplate = (data: object) => api.post('/project-templa
 export const updateProjectTemplate = (id: number, data: object) => api.put(`/project-templates/${id}`, data).then(r => r.data);
 export const deleteProjectTemplate = (id: number) => api.delete(`/project-templates/${id}`).then(r => r.data);
 export const applyProjectTemplate = (templateId: number, projectId: number) => api.post(`/project-templates/${templateId}/apply/${projectId}`).then(r => r.data);
+export const exportProjectToTemplate = (projectId: number, data: {
+  name: string;
+  description?: string;
+  selected_phase_ids: number[];
+  selected_task_group_ids: number[];
+  selected_task_ids: number[];
+}) => api.post(`/projects/${projectId}/export-to-template`, data).then(r => r.data);
 export const getMeeting = (id: number) => api.get(`/meetings/${id}`).then(r => r.data);
 export const createMeeting = (data: object) => api.post('/meetings', data).then(r => r.data);
 export const updateMeeting = (id: number, data: object) => api.put(`/meetings/${id}`, data).then(r => r.data);

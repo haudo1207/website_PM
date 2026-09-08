@@ -133,12 +133,29 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
       onFlash('Template phải có ít nhất 1 Phase!');
       return;
     }
-    // Validate task groups
+    // Duplicate phase names would silently fail later when someone tries to Apply this
+    // template — catch it here, at save time, instead.
+    const seenPhaseNames = new Set<string>();
+    for (const p of validPhases) {
+      const trimmed = p.name.trim();
+      if (seenPhaseNames.has(trimmed)) {
+        onFlash(`Tên Phase bị trùng: "${trimmed}". Mỗi Phase phải có tên khác nhau.`);
+        return;
+      }
+      seenPhaseNames.add(trimmed);
+    }
+    // Every task must have both Skill Solution and Skill Vendor set — otherwise, applying
+    // the template later silently drops the task or falls back to an arbitrary skill/group.
     for (const p of validPhases) {
       const groups = (p.task_groups || []).filter(g => g.name.trim());
-      if (groups.length === 0 && p.name.toLowerCase().includes('lab') === false && p.name.toLowerCase().includes('poc') === false) {
-        // Lab/PoC can be empty, others should have at least 1 task group
-        // But we won't block - just warn
+      for (const g of groups) {
+        const tasks = (g.tasks || []).filter(t => t.detail.trim());
+        for (const t of tasks) {
+          if (!t.skill_solution_id || !t.skill_vendor_id) {
+            onFlash(`Task "${t.detail.trim()}" (task cha "${g.name.trim()}", Phase "${p.name.trim()}") chưa chọn đủ Skill Solution và Skill Vendor.`);
+            return;
+          }
+        }
       }
     }
 
@@ -595,20 +612,20 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
                                           <select
                                             value={task.skill_solution_id ?? ''}
                                             onChange={e => updateTask(pIdx, gIdx, tIdx, 'skill_solution_id', e.target.value ? Number(e.target.value) : null)}
-                                            title="Skill Solution"
-                                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500"
+                                            title="Skill Solution (bắt buộc)"
+                                            className={`bg-white border rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500 ${task.skill_solution_id ? 'border-slate-200' : 'border-red-300'}`}
                                           >
-                                            <option value="">Skill Solution</option>
+                                            <option value="">Skill Solution *</option>
                                             {skillGroups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
                                           </select>
                                           <select
                                             value={task.skill_vendor_id ?? ''}
                                             onChange={e => updateTask(pIdx, gIdx, tIdx, 'skill_vendor_id', e.target.value ? Number(e.target.value) : null)}
-                                            title="Skill Vendor"
+                                            title="Skill Vendor (bắt buộc)"
                                             disabled={!task.skill_solution_id}
-                                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-300"
+                                            className={`bg-white border rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-300 ${task.skill_vendor_id || !task.skill_solution_id ? 'border-slate-200' : 'border-red-300'}`}
                                           >
-                                            <option value="">Skill Vendor</option>
+                                            <option value="">Skill Vendor *</option>
                                             {availableSkills.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                                           </select>
                                         </div>
