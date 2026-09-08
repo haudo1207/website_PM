@@ -391,6 +391,43 @@ function ProjectDetailContent() {
     reloadAll();
   };
 
+  // Shared by a Task row's own onDrop AND the thin gap directly above it
+  // (rendered by renderHoverSpacerRow while a Task is being dragged) —
+  // dropping on the row IS "insert before this task", and the gap right
+  // above it is just a wider, easier-to-hit hitbox for that exact same
+  // target, so both funnel into one implementation instead of forking.
+  const handleTaskDropOnTarget = async (e: React.DragEvent, targetTask: { id: number; task_group_id: number }) => {
+    e.preventDefault();
+    setDragOverTaskId(null);
+    if (!isBeyondTaskDragThreshold(e)) return;
+    try {
+      const raw = e.dataTransfer.getData("application/json");
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.type !== "task") return;
+      if (data.groupId === targetTask.task_group_id) {
+        const groupTasks = items.filter((t: any) => t.task_group_id === targetTask.task_group_id);
+        const sorted = buildTaskTree(groupTasks);
+        const fromIdx = sorted.findIndex((t: any) => t.id === data.taskId);
+        const toIdx = sorted.findIndex((t: any) => t.id === targetTask.id);
+        if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+          const reordered = [...sorted];
+          const [removed] = reordered.splice(fromIdx, 1);
+          reordered.splice(toIdx, 0, removed);
+          await reorderTasks(targetTask.task_group_id, reordered.map((t: any) => t.id));
+          flash("Đã đổi thứ tự Task thành công!");
+          reloadAll();
+        }
+      } else {
+        await performTaskCrossGroupMove(data.taskId, data.groupId, targetTask.task_group_id, { insertBeforeTaskId: targetTask.id });
+      }
+    } catch (err: any) {
+      console.error(err);
+      flash(getApiErrorMessage(err), true);
+      await reloadAll();
+    }
+  };
+
   const handleUndoTaskMove = async () => {
     if (!moveUndo) return;
     const info = moveUndo;
@@ -3789,9 +3826,35 @@ function ProjectDetailContent() {
     );
   };
 
-  const renderHoverSpacerRow = (groupId: number, afterCode: string | null, level: number, isLast: boolean) => {
+  const renderHoverSpacerRow = (groupId: number, afterCode: string | null, level: number, isLast: boolean, nextTaskId?: number) => {
     const dynamicCols = getDynamicColumns();
     const spacerId = `spacer-${groupId}-${afterCode || 'root'}-${isLast ? 'last' : 'mid'}`;
+
+    // While a Task is actively being dragged, the thin gap between two rows
+    // becomes a real drop target too — not just a visual divider — so a drop
+    // aimed at "between task A and task B" (the natural gesture for
+    // inserting) actually lands somewhere, instead of the row body being the
+    // ONLY functional target and this gap silently swallowing the drop.
+    if (!isLast && draggingTaskId !== null && nextTaskId != null) {
+      const isOver = dragOverTaskId === nextTaskId;
+      return (
+        <tr key={spacerId} className="border-none bg-transparent">
+          <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragOverTaskId !== nextTaskId) setDragOverTaskId(nextTaskId);
+              }}
+              onDragLeave={() => {
+                setDragOverTaskId(prev => (prev === nextTaskId ? null : prev));
+              }}
+              onDrop={(e) => handleTaskDropOnTarget(e, { id: nextTaskId, task_group_id: groupId })}
+              className={`h-2 transition-colors ${isOver ? 'border-t-2 border-[#0058be] bg-[#eff4ff]/60' : ''}`}
+            />
+          </td>
+        </tr>
+      );
+    }
 
     return (
       <tr
@@ -3945,40 +4008,7 @@ function ProjectDetailContent() {
         onDragLeave={() => {
           setDragOverTaskId(prev => (prev === task.id ? null : prev));
         }}
-        onDrop={async (e) => {
-          e.preventDefault();
-          setDragOverTaskId(null);
-          if (!isBeyondTaskDragThreshold(e)) return;
-          try {
-            const raw = e.dataTransfer.getData("application/json");
-            if (!raw) return;
-            const data = JSON.parse(raw);
-            if (data.type === "task") {
-              if (data.groupId === task.task_group_id) {
-                const groupTasks = items.filter(t => t.task_group_id === task.task_group_id);
-                const sorted = buildTaskTree(groupTasks);
-                const fromIdx = sorted.findIndex(t => t.id === data.taskId);
-                const toIdx = sorted.findIndex(t => t.id === task.id);
-                if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
-                  const reordered = [...sorted];
-                  const [removed] = reordered.splice(fromIdx, 1);
-                  reordered.splice(toIdx, 0, removed);
-                  await reorderTasks(task.task_group_id, reordered.map(t => t.id));
-                  flash("Đã đổi thứ tự Task thành công!");
-                  reloadAll();
-                }
-              } else {
-                // Drop lands exactly at this row's position — the dropped task
-                // takes this row's slot and everything from here down shifts.
-                await performTaskCrossGroupMove(data.taskId, data.groupId, task.task_group_id, { insertBeforeTaskId: task.id });
-              }
-            }
-          } catch (err: any) {
-            console.error(err);
-            flash(getApiErrorMessage(err), true);
-            await reloadAll();
-          }
-        }}
+        onDrop={(e) => handleTaskDropOnTarget(e, { id: task.id, task_group_id: task.task_group_id })}
       >
         {/* Action cell: cả dòng đều kéo-thả được (giữ chuột trái bất kỳ đâu trên Task) */}
         <td className="px-1 py-2 text-center sticky left-0 z-[11] bg-white" style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
@@ -5536,7 +5566,7 @@ function ProjectDetailContent() {
           }
 
           if (nextVisibleTask && addingTaskAfterCode !== task.task_code) {
-            result.push(renderHoverSpacerRow(group.id, task.task_code, level, false));
+            result.push(renderHoverSpacerRow(group.id, task.task_code, level, false, nextVisibleTask.id));
           }
         });
 
