@@ -1,7 +1,7 @@
 'use client';
 import React, { useMemo, useState } from 'react';
 import { ChevronRight, ChevronDown, FileOutput, Search, X } from 'lucide-react';
-import { exportProjectToTemplate } from '@/lib/api';
+import { exportProjectToTemplate, getApiErrorMessage } from '@/lib/api';
 
 interface TaskNode {
   id: number;
@@ -231,7 +231,7 @@ export default function ExportProjectTemplateModal({ projectId, projectName, pha
       });
       setSuccessResult(result);
     } catch (err: any) {
-      setSubmitError(err?.response?.data?.detail || err?.message || 'Lỗi không xác định');
+      setSubmitError(getApiErrorMessage(err));
     } finally {
       setSubmitting(false);
     }

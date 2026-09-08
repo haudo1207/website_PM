@@ -13,7 +13,8 @@ import {
   getProjectTemplates,
   applyProjectTemplate,
   getWorkspaces,
-  Workspace
+  Workspace,
+  getApiErrorMessage
 } from '@/lib/api';
 
 const PROJECT_PHASES = [
@@ -260,7 +261,7 @@ export default function ProjectFormModal({
             const applyResult = await applyProjectTemplate(Number(selectedTemplateId), result.id);
             onFlash(`Đã tạo dự án và áp dụng template thành công (${applyResult?.created_phase_count ?? 0} phase, ${applyResult?.created_group_count ?? 0} task group, ${applyResult?.created_task_count ?? 0} task)`);
           } catch (applyErr: any) {
-            onFlash('Đã tạo dự án nhưng áp dụng template thất bại: ' + (applyErr?.response?.data?.detail || applyErr?.message || 'Lỗi'), true);
+            onFlash('Đã tạo dự án nhưng áp dụng template thất bại: ' + getApiErrorMessage(applyErr, 'Lỗi'), true);
           }
         } else {
           onFlash('Đã tạo dự án mới thành công');
@@ -273,7 +274,7 @@ export default function ProjectFormModal({
       onClose();
       onSaved(result);
     } catch (err: any) {
-      onFlash('Lỗi lưu thông tin dự án: ' + (err.response?.data?.detail || err.message), true);
+      onFlash('Lỗi lưu thông tin dự án: ' + getApiErrorMessage(err), true);
     } finally {
       setActionLoading(false);
     }

@@ -6,6 +6,24 @@ const api = axios.create({ baseURL: BASE, withCredentials: true });
 
 const PROACTIVE_REFRESH_THRESHOLD_SECONDS = 60;
 
+// FastAPI's own validation errors (HTTP 422, raised before a route handler
+// even runs — e.g. wrong field type) put `detail` as an ARRAY of
+// {type, loc, msg, input} objects, not a string. Every error we raise
+// ourselves uses a plain string detail. Rendering that raw object/array
+// straight into JSX crashes with "Objects are not valid as a React child"
+// (React error #31), so this always normalizes to a plain string first.
+export function getApiErrorMessage(err: any, fallback = 'Lỗi không xác định'): string {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    const msgs = detail.map((d: any) => (typeof d === 'string' ? d : d?.msg)).filter(Boolean);
+    if (msgs.length) return msgs.join('; ');
+  }
+  if (detail && typeof detail === 'object' && typeof detail.msg === 'string') return detail.msg;
+  if (typeof err?.message === 'string' && err.message.trim()) return err.message;
+  return fallback;
+}
+
 type AuthAwareConfig = AxiosRequestConfig & { _skipAuth?: boolean; _retried?: boolean };
 
 interface RefreshResponse {

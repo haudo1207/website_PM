@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Clipboard } from 'lucide-react';
-import { generateMeetingLink, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getMeetings } from '@/lib/api';
+import { generateMeetingLink, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getMeetings, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect, { SearchableSelectHandle } from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
@@ -394,7 +394,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         setError('Không thể tạo link meeting tự động');
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Lỗi khi tạo link meeting');
+      setError(getApiErrorMessage(err, 'Lỗi khi tạo link meeting'));
     } finally {
       setIsGeneratingLink(false);
     }
@@ -478,7 +478,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         setError('AI không đề xuất được nội dung, hãy nhập trực tiếp');
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'AI đề xuất thất bại');
+      setError(getApiErrorMessage(err, 'AI đề xuất thất bại'));
     } finally {
       setIsGeneratingAiContent(false);
     }

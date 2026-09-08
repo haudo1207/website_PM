@@ -6,7 +6,8 @@ import {
   updateProjectTemplate,
   deleteProjectTemplate,
   getCategories,
-  getPriorities
+  getPriorities,
+  getApiErrorMessage
 } from '@/lib/api';
 
 const FALLBACK_PRIORITIES = ['Normal', 'High', 'Critical', 'Interrupt'];
@@ -85,7 +86,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
       const data = await getProjectTemplates();
       setTemplates(data || []);
     } catch (err: any) {
-      onFlash('Không thể tải danh sách template: ' + (err?.response?.data?.detail || err?.message || 'Lỗi'));
+      onFlash('Không thể tải danh sách template: ' + getApiErrorMessage(err, 'Lỗi'));
     } finally {
       setLoading(false);
     }
@@ -198,7 +199,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
       setShowModal(false);
       reload();
     } catch (err: any) {
-      onFlash('Lỗi: ' + (err?.response?.data?.detail || err?.message || 'Không xác định'));
+      onFlash('Lỗi: ' + getApiErrorMessage(err));
     }
   };
 
@@ -209,7 +210,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
       onFlash('Đã xóa template!');
       reload();
     } catch (err: any) {
-      onFlash('Lỗi xóa template: ' + (err?.response?.data?.detail || err?.message || 'Không xác định'));
+      onFlash('Lỗi xóa template: ' + getApiErrorMessage(err));
     }
   };
 

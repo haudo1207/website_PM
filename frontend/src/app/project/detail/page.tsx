@@ -33,7 +33,8 @@ import {
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup,
   getMe,
-  getProjectAuditLogs
+  getProjectAuditLogs,
+  getApiErrorMessage
 } from '@/lib/api';
 import { isAdmin, isSuperAdmin, isMember, getEmail } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
@@ -405,7 +406,7 @@ function ProjectDetailContent() {
       flash(`Đã hoàn tác di chuyển "${info.taskDetail}"`);
       reloadAll();
     } catch (err: any) {
-      flash('Hoàn tác thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      flash('Hoàn tác thất bại: ' + getApiErrorMessage(err), true);
     }
   };
 
@@ -480,7 +481,7 @@ function ProjectDetailContent() {
       setMovingGroup(null);
       reloadAll();
     } catch (err: any) {
-      flash('Lỗi di chuyển Task Group: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      flash('Lỗi di chuyển Task Group: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingMoveGroup(false);
     }
@@ -766,7 +767,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi duyệt task.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi duyệt task.'), true);
     } finally {
       setReviewActionBusy(false);
     }
@@ -789,7 +790,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi gửi yêu cầu sửa.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi gửi yêu cầu sửa.'), true);
     } finally {
       setReviewActionBusy(false);
     }
@@ -809,7 +810,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi gửi review.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi gửi review.'), true);
     } finally {
       setReviewActionBusy(false);
     }
@@ -849,7 +850,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi đánh dấu bị chặn.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi đánh dấu bị chặn.'), true);
     } finally {
       setBlockActionBusy(false);
     }
@@ -866,7 +867,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi gỡ chặn.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi gỡ chặn.'), true);
     } finally {
       setBlockActionBusy(false);
     }
@@ -921,7 +922,7 @@ function ProjectDetailContent() {
       setShowTaskGroupModal(false);
       reloadAll();
     } catch (err: any) {
-      flash('Lỗi lưu Task Group: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi lưu Task Group: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingTaskGroup(false);
     }
@@ -951,7 +952,7 @@ function ProjectDetailContent() {
       setAddingTaskGroupPhaseId(null);
       reloadAll();
     } catch (err: any) {
-      flash('Lỗi tạo Task Group: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi tạo Task Group: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingInlineTaskGroup(false);
     }
@@ -1160,7 +1161,7 @@ function ProjectDetailContent() {
         loadedPhases = phs || [];
       } catch (err: any) {
         console.error('Lỗi khi tải danh sách Phase dự án:', err);
-        flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+        flash('Lỗi tải danh sách Phase: ' + getApiErrorMessage(err), true);
       }
 
       // Every phase's task groups + the project's full task list are independent
@@ -1176,7 +1177,7 @@ function ProjectDetailContent() {
         )),
         getAllProjectTasks(Number(id)).catch(err => {
           console.error('Lỗi khi tải danh sách Task dự án:', err);
-          flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+          flash('Lỗi tải danh sách Task: ' + getApiErrorMessage(err), true);
           return [];
         }),
       ]);
@@ -1415,9 +1416,6 @@ function ProjectDetailContent() {
     setTimeout(() => setMsg(null), 4000);
   };
 
-  const getApiErrorMessage = (err: any): string =>
-    err?.response?.data?.detail || err?.message || 'Lỗi không xác định';
-
   const loadTemplates = useCallback(async () => {
     try {
       setLoadingTemplates(true);
@@ -1446,7 +1444,7 @@ function ProjectDetailContent() {
       setConfirmApplyTemplateId(null);
       reloadAll();
     } catch (err: any) {
-      flash('Áp dụng template thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      flash('Áp dụng template thất bại: ' + getApiErrorMessage(err), true);
     } finally {
       setApplyingTemplateId(null);
     }
@@ -1458,7 +1456,7 @@ function ProjectDetailContent() {
       flash('Xóa dự án thành công!');
       router.push('/project-hub');
     } catch (err: any) {
-      flash('Xóa dự án thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      flash('Xóa dự án thất bại: ' + getApiErrorMessage(err), true);
     }
   };
 
@@ -1883,7 +1881,7 @@ function ProjectDetailContent() {
       setAddChannelValue('');
       flash('Cập nhật liên kết kênh thành công!');
     } catch (err: any) {
-      flash('Lỗi cập nhật liên kết: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi cập nhật liên kết: ' + getApiErrorMessage(err), true);
     } finally {
       setIsSavingLink(false);
     }
@@ -1917,7 +1915,7 @@ function ProjectDetailContent() {
       setNewPhaseName('');
       reloadAll();
     } catch (err: any) {
-      flash('Lỗi tạo phase: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi tạo phase: ' + getApiErrorMessage(err), true);
       reloadAll();
     } finally {
       setSavingPhase(false);
@@ -1954,7 +1952,7 @@ function ProjectDetailContent() {
       setEditingPhaseName('');
       reloadAll();
     } catch (err: any) {
-      flash('Lỗi đổi tên phase: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi đổi tên phase: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingPhase(false);
     }
@@ -2405,7 +2403,7 @@ function ProjectDetailContent() {
         setEditingCell(null);
       }
     } catch (err: any) {
-      flash('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi cập nhật task: ' + getApiErrorMessage(err), true);
       setEditingCell(null);
     } finally {
       isSavingRef.current = false;
@@ -2458,7 +2456,7 @@ function ProjectDetailContent() {
         });
       }
     } catch (err: any) {
-      flash('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
       setEditingCell(prev => {
         if (prev?.taskId === -group.id && prev?.colName === colName) {
           return null;
@@ -2475,7 +2473,7 @@ function ProjectDetailContent() {
       await updateTaskGroup(group.phase_id, group.id, { [field]: ids.map(Number) });
       await reloadAll(true);
     } catch (err: any) {
-      flash('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
     }
   };
 
@@ -2492,7 +2490,7 @@ function ProjectDetailContent() {
       flash(`Đã đồng bộ Remark cho ${childTasks.length} task con!`);
       await reloadAll(true);
     } catch (err: any) {
-      flash('Lỗi đồng bộ Remark: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi đồng bộ Remark: ' + getApiErrorMessage(err), true);
     } finally {
       isSavingRef.current = false;
       setEditingGroupRemark(null);
@@ -2508,7 +2506,7 @@ function ProjectDetailContent() {
       flash('Đã xóa nhiệm vụ thành công!');
       reloadAll(true);
     } catch (err: any) {
-      flash('Lỗi xóa task: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi xóa task: ' + getApiErrorMessage(err), true);
     } finally {
       setTaskToDelete(null);
     }
@@ -2577,7 +2575,7 @@ function ProjectDetailContent() {
       setEditingMeeting(null);
     } catch (error: any) {
       console.error("Failed to save meeting", error);
-      flash(error.response?.data?.detail || "Có lỗi xảy ra khi lưu cuộc họp", true);
+      flash(getApiErrorMessage(error, "Có lỗi xảy ra khi lưu cuộc họp"), true);
     }
   };
 
@@ -2591,7 +2589,7 @@ function ProjectDetailContent() {
       setDeleteConfirmId(null);
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
-      flash(error.response?.data?.detail || "Có lỗi xảy ra khi xóa cuộc họp", true);
+      flash(getApiErrorMessage(error, "Có lỗi xảy ra khi xóa cuộc họp"), true);
     } finally {
       setDeletingMeeting(false);
     }
@@ -2624,7 +2622,7 @@ function ProjectDetailContent() {
       setSelectedMemberId('');
       flash('Đã thêm thành viên mới thành công!');
     } catch (err: any) {
-      flash('Không thể thêm thành viên: ' + (err.response?.data?.detail || err.message), true);
+      flash('Không thể thêm thành viên: ' + getApiErrorMessage(err), true);
     } finally {
       setIsAddingMember(false);
     }
@@ -3476,7 +3474,7 @@ function ProjectDetailContent() {
       reloadAll(true);
       flash('Đã thêm nhiệm vụ thành công!');
     } catch (err: any) {
-      flash('Lỗi thêm task: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi thêm task: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingTask(false);
     }
@@ -3496,7 +3494,7 @@ function ProjectDetailContent() {
         }, 2000);
       }
     } catch (err: any) {
-      flash('Lỗi nhân bản task: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi nhân bản task: ' + getApiErrorMessage(err), true);
     } finally {
       setDuplicatingTaskId(null);
     }
@@ -3590,7 +3588,7 @@ function ProjectDetailContent() {
       await reloadAll(true);
       setSelectedTask(null);
     } catch (err: any) {
-      flash('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi cập nhật task: ' + getApiErrorMessage(err), true);
     } finally {
       setDrawerSaving(false);
     }
@@ -3650,7 +3648,7 @@ function ProjectDetailContent() {
       setMovingTask(null);
       reloadAll();
     } catch (err: any) {
-      flash('Lỗi di chuyển task: ' + (err.response?.data?.detail || err.message), true);
+      flash('Lỗi di chuyển task: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingMoveTask(false);
     }
@@ -5238,7 +5236,7 @@ function ProjectDetailContent() {
                               flash('Đã cập nhật ngày hoàn thành thực tế!');
                               reloadAll(true);
                             } catch (err: any) {
-                              flash('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message), true);
+                              flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
                             }
                           }
                           setEditingGroupDate(null);
@@ -5253,7 +5251,7 @@ function ProjectDetailContent() {
                                 flash('Đã cập nhật ngày hoàn thành thực tế!');
                                 reloadAll(true);
                               } catch (err: any) {
-                                flash('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message), true);
+                                flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
                               }
                             }
                             setEditingGroupDate(null);
@@ -5453,7 +5451,7 @@ function ProjectDetailContent() {
                             await remindTaskGroup(group.id);
                             flash('Đã gửi thông báo nhắc Leader duyệt Task Cha thành công!');
                           } catch (err: any) {
-                            flash(err.response?.data?.detail || 'Lỗi khi gửi thông báo nhắc duyệt!', true);
+                            flash(getApiErrorMessage(err, 'Lỗi khi gửi thông báo nhắc duyệt!'), true);
                           }
                         }}
                         className={`px-2 py-0.5 rounded text-[10.5px] font-bold flex items-center gap-1 transition-all shrink-0 ${allDone
@@ -7867,7 +7865,7 @@ function ProjectDetailContent() {
                                       loadProjectMembers();
                                       flash('Đã gỡ bỏ thành viên');
                                     } catch (err: any) {
-                                      flash('Lỗi gỡ thành viên: ' + (err.response?.data?.detail || err.message), true);
+                                      flash('Lỗi gỡ thành viên: ' + getApiErrorMessage(err), true);
                                     } finally {
                                       setRemovingMemberId(null);
                                     }
