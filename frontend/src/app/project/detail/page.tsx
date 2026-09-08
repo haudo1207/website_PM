@@ -4059,8 +4059,20 @@ function ProjectDetailContent() {
           // resulted from a near-stationary click accidentally starting a
           // native drag, instead of letting a task move by accident.
           taskDragStartPosRef.current = { x: e.clientX, y: e.clientY };
-          setDraggingTaskId(task.id);
-          setDraggingTaskGroupId(task.task_group_id);
+          // Deferred to the next tick — setting this state SYNCHRONOUSLY here
+          // triggers an immediate reflow (every spacer/end-zone across the
+          // whole table resizes to become an active drop target) WHILE
+          // Chromium is still establishing the native drag session. That
+          // reflow can silently break dragover/drop delivery for the rest of
+          // the gesture — confirmed via diagnostic logging: onDragStart and
+          // onDragEnd both fired, but onDragOver/onDrop never did, for a Task
+          // near the bottom of the scrollable table body. Pushing the state
+          // update past the current tick lets the browser finish locking in
+          // the drag session before the DOM/layout changes underneath it.
+          setTimeout(() => {
+            setDraggingTaskId(task.id);
+            setDraggingTaskGroupId(task.task_group_id);
+          }, 0);
         }}
         onDragEnd={() => {
           taskDragStartPosRef.current = null;
@@ -4076,9 +4088,11 @@ function ProjectDetailContent() {
         onDragLeave={() => {
           setDragOverTaskId(prev => (prev === task.id ? null : prev));
         }}
-        onDrop={(e) => draggingGroupId !== null
-          ? handleGroupDropOnTarget(e, task.task_group_id)
-          : handleTaskDropOnTarget(e, { id: task.id, task_group_id: task.task_group_id })}
+        onDrop={(e) => {
+          return draggingGroupId !== null
+            ? handleGroupDropOnTarget(e, task.task_group_id)
+            : handleTaskDropOnTarget(e, { id: task.id, task_group_id: task.task_group_id });
+        }}
       >
         {/* Action cell: cả dòng đều kéo-thả được (giữ chuột trái bất kỳ đâu trên Task) */}
         <td className="px-1 py-2 text-center sticky left-0 z-[11] bg-white" style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
@@ -5049,7 +5063,12 @@ function ProjectDetailContent() {
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("application/json", JSON.stringify({ type: "group", groupId: group.id, phaseId: group.phase_id }));
               groupDragStartPosRef.current = { x: e.clientX, y: e.clientY };
-              setDraggingGroupId(group.id);
+              // Deferred to the next tick — see the matching comment on the
+              // Task row's onDragStart: setting this synchronously reflows
+              // every spacer/end-zone in the table while Chromium is still
+              // establishing the native drag session, which can silently
+              // break dragover/drop delivery for the rest of the gesture.
+              setTimeout(() => setDraggingGroupId(group.id), 0);
             }}
             onDragEnd={() => {
               groupDragStartPosRef.current = null;
