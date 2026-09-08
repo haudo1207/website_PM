@@ -40,7 +40,7 @@ import { isAdmin, isSuperAdmin, isMember, getEmail } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import {
   Search, Filter, Columns3, Plus, ChevronDown, ChevronRight, MoreHorizontal,
-  GripVertical, Pencil, Trash2, Copy, RotateCcw, Lock, Expand, Minimize2, X,
+  Pencil, Trash2, Copy, RotateCcw, Lock, Expand, Minimize2, X,
   Bell, Sparkles, Building2, LayoutTemplate, FileOutput, FolderPlus, Pin, PinOff,
   Users, AlertTriangle, Layers, UserX, ArrowRight, ArrowRightLeft, Clock,
   ArrowUpRight, ArrowDownRight, Minus, Trophy, BarChart3,
@@ -538,6 +538,48 @@ function ProjectDetailContent() {
     await moveTaskGroup(sourcePhaseId, groupId, targetPhaseId, position);
     flash(`Đã chuyển Task Group "${group?.name || ''}" sang Phase "${targetPhase?.name || ''}" thành công!`);
     reloadAll();
+  };
+
+  // Shared by every "landed inside some Group's territory" drop target for a
+  // Group drag: the Group's own header row, PLUS its Task rows and the gaps
+  // between them (via renderSingleTaskRow / renderHoverSpacerRow below).
+  // A Group's Tasks physically sit BETWEEN its own header and the next
+  // Group's header in the DOM, so dragging a Group up or down has to cross
+  // through them — without this, those rows only knew how to handle a Task
+  // drag (data.type === "task") and silently swallowed a Group drop, making
+  // cross-group reorder work in whichever direction happened to have fewer
+  // Task rows in the path and fail in the other.
+  const handleGroupDropOnTarget = async (e: React.DragEvent, targetGroupId: number) => {
+    e.preventDefault();
+    setDragOverGroupId(null);
+    try {
+      const raw = e.dataTransfer.getData("application/json");
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.type !== "group") return;
+      if (data.groupId === targetGroupId || !isBeyondGroupDragThreshold(e)) return;
+      const targetGroup = taskGroups.find((g: any) => g.id === targetGroupId);
+      if (!targetGroup) return;
+      if (data.phaseId === targetGroup.phase_id) {
+        const phaseGroups = taskGroups.filter((g: any) => g.phase_id === targetGroup.phase_id);
+        const fromIdx = phaseGroups.findIndex((g: any) => g.id === data.groupId);
+        const toIdx = phaseGroups.findIndex((g: any) => g.id === targetGroupId);
+        if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+          const reordered = [...phaseGroups];
+          const [removed] = reordered.splice(fromIdx, 1);
+          reordered.splice(toIdx, 0, removed);
+          await reorderTaskGroups(targetGroup.phase_id, reordered.map((g: any) => g.id));
+          flash("Đã đổi thứ tự Task Group thành công!");
+          reloadAll();
+        }
+      } else {
+        await performGroupCrossPhaseMove(data.groupId, data.phaseId, targetGroup.phase_id, { insertBeforeGroupId: targetGroupId });
+      }
+    } catch (err: any) {
+      console.error(err);
+      flash(getApiErrorMessage(err), true);
+      await reloadAll();
+    }
   };
 
   // Task Group CRUD States
@@ -3856,6 +3898,32 @@ function ProjectDetailContent() {
       );
     }
 
+    // Mirror of the above for a Group drag: every gap between this Group's
+    // own Task rows (mid-list AND the one at the very end, right before the
+    // next Group's header) is still territory belonging to this Group, so
+    // dropping anywhere in it reorders relative to it — same as dropping
+    // directly on its header row.
+    if (draggingGroupId !== null) {
+      const isOver = dragOverGroupId === groupId;
+      return (
+        <tr key={spacerId} className="border-none bg-transparent">
+          <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragOverGroupId !== groupId) setDragOverGroupId(groupId);
+              }}
+              onDragLeave={() => {
+                setDragOverGroupId(prev => (prev === groupId ? null : prev));
+              }}
+              onDrop={(e) => handleGroupDropOnTarget(e, groupId)}
+              className={`h-2 transition-colors ${isOver ? 'border-t-2 border-[#0058be] bg-[#eff4ff]/60' : ''}`}
+            />
+          </td>
+        </tr>
+      );
+    }
+
     return (
       <tr
         key={spacerId}
@@ -4008,7 +4076,9 @@ function ProjectDetailContent() {
         onDragLeave={() => {
           setDragOverTaskId(prev => (prev === task.id ? null : prev));
         }}
-        onDrop={(e) => handleTaskDropOnTarget(e, { id: task.id, task_group_id: task.task_group_id })}
+        onDrop={(e) => draggingGroupId !== null
+          ? handleGroupDropOnTarget(e, task.task_group_id)
+          : handleTaskDropOnTarget(e, { id: task.id, task_group_id: task.task_group_id })}
       >
         {/* Action cell: cả dòng đều kéo-thả được (giữ chuột trái bất kỳ đâu trên Task) */}
         <td className="px-1 py-2 text-center sticky left-0 z-[11] bg-white" style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
@@ -4995,32 +5065,17 @@ function ProjectDetailContent() {
               setDragOverGroupId(prev => (prev === group.id ? null : prev));
             }}
             onDrop={async (e) => {
+              if (draggingGroupId !== null) {
+                await handleGroupDropOnTarget(e, group.id);
+                return;
+              }
               e.preventDefault();
               setDragOverGroupId(null);
               try {
                 const raw = e.dataTransfer.getData("application/json");
                 if (!raw) return;
                 const data = JSON.parse(raw);
-                if (data.type === "group") {
-                  if (data.groupId === group.id || !isBeyondGroupDragThreshold(e)) return;
-                  if (data.phaseId === group.phase_id) {
-                    // Same Phase — keep the existing reorder path unchanged.
-                    const phaseGroups = taskGroups.filter(g => g.phase_id === group.phase_id);
-                    const fromIdx = phaseGroups.findIndex(g => g.id === data.groupId);
-                    const toIdx = phaseGroups.findIndex(g => g.id === group.id);
-                    if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
-                      const reordered = [...phaseGroups];
-                      const [removed] = reordered.splice(fromIdx, 1);
-                      reordered.splice(toIdx, 0, removed);
-                      await reorderTaskGroups(group.phase_id, reordered.map(g => g.id));
-                      flash("Đã đổi thứ tự Task Group thành công!");
-                      reloadAll();
-                    }
-                  } else {
-                    // Cross Phase — dropped exactly on this row = insert before it.
-                    await performGroupCrossPhaseMove(data.groupId, data.phaseId, group.phase_id, { insertBeforeGroupId: group.id });
-                  }
-                } else if (data.type === "task") {
+                if (data.type === "task") {
                   if (data.groupId !== group.id && isBeyondTaskDragThreshold(e)) {
                     await performTaskCrossGroupMove(data.taskId, data.groupId, group.id);
                   }
@@ -5045,20 +5100,8 @@ function ProjectDetailContent() {
                   {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 </button>
 
-                {/* 2. Drag handle (whole row is draggable — this icon is just
-                    the visual affordance) / click to open the Move modal. */}
-                {canManageProjectStructure(project) && (
-                  <button
-                    type="button"
-                    onClick={() => handleOpenMoveGroupModal(group)}
-                    className="flex items-center justify-center w-6 h-6 cursor-grab active:cursor-grabbing hover:bg-indigo-200 rounded text-slate-400"
-                    title="Kéo hoặc bấm để di chuyển Task Group sang Phase khác"
-                  >
-                    <GripVertical size={14} />
-                  </button>
-                )}
-
-                {/* 3. More actions (hover visible): add task / edit name / delete */}
+                {/* 2. More actions (hover visible): add task / edit name / delete /
+                    move — whole row is draggable, no separate grip icon needed. */}
                 <div className="relative">
                   <button
                     type="button"
@@ -5534,6 +5577,13 @@ function ProjectDetailContent() {
         // ═══ TASK ROWS (child rows) ═══
         const sortedTasks = buildTaskTree(filteredTasks);
 
+        // Tracks whether "Thêm task phía trên" (addingTaskBeforeCode) actually
+        // found its anchor task and rendered the form right above it — if the
+        // anchor task is hidden (its ancestor got collapsed mid-flow), this
+        // stays false and the group-end fallback below still shows the form
+        // (better than it vanishing entirely).
+        let beforeRowRendered = false;
+
         sortedTasks.forEach((task, tIdx) => {
           if (isAncestorCollapsed(task.task_code)) {
             return;
@@ -5543,6 +5593,17 @@ function ProjectDetailContent() {
           const isCollapsedParent = collapsedParents.has(task.task_code);
           const dotCount = (task.task_code || '').split('.').length - 1;
           const level = Math.max(0, dotCount);
+
+          // 0. Render inline add row BEFORE this task if inserting above it
+          // ("Thêm task phía trên" from the actions menu) — must be pushed
+          // ahead of the task's own row, otherwise there's no render branch
+          // that ever places it here and it silently falls through to the
+          // group-end fallback instead, appearing at the bottom of the list
+          // no matter which task "phía trên" was clicked on.
+          if (addingTaskGroupId === group.id && addingTaskBeforeCode === task.task_code) {
+            result.push(renderInlineAddRow(group.id, addingTaskParentCode, level));
+            beforeRowRendered = true;
+          }
 
           result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent, tIdx, sortedTasks));
 
@@ -5570,9 +5631,9 @@ function ProjectDetailContent() {
           }
         });
 
-        if (addingTaskGroupId === group.id && addingTaskParentCode === null && addingTaskAfterCode === null) {
+        if (addingTaskGroupId === group.id && addingTaskParentCode === null && addingTaskAfterCode === null && !beforeRowRendered) {
           result.push(renderInlineAddRow(group.id, null, 0));
-        } else if (addingTaskGroupId !== group.id || addingTaskParentCode !== null || addingTaskAfterCode !== null) {
+        } else if (addingTaskGroupId !== group.id || addingTaskParentCode !== null || addingTaskAfterCode !== null || beforeRowRendered) {
           result.push(renderGroupEndDropZone(group.id));
         }
       });
@@ -7418,7 +7479,32 @@ function ProjectDetailContent() {
                             })}
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-[#c2c6d6]/40 bg-white">
+                        <tbody
+                          className="divide-y divide-[#c2c6d6]/40 bg-white"
+                          onDragOver={(e) => {
+                            // Safety net, not a retarget: a native HTML5 drop is only
+                            // accepted at a point if SOME dragover in that event's
+                            // bubble path called preventDefault() on the LAST sample
+                            // taken before release. A fast, short drag gesture (a
+                            // quick upward flick is the classic case — reordering one
+                            // row up is a much shorter, snappier motion than dragging
+                            // several rows down) can have its last dragover sample
+                            // land on an 8px spacer or right at a row boundary that
+                            // never got its own dragover call in time, so the browser
+                            // silently REJECTS the drop — no drop event fires
+                            // anywhere, no error, nothing. This unconditional
+                            // preventDefault() on the whole table body — active only
+                            // during a Task/Group drag — guarantees the drop is always
+                            // accepted somewhere in the table regardless of that last-
+                            // sample race. It does NOT change which row/spacer the
+                            // drop actually lands on or how it's handled — that's
+                            // still whichever element is literally under the cursor at
+                            // release, using its own existing onDrop logic.
+                            if (draggingTaskId !== null || draggingGroupId !== null) {
+                              e.preventDefault();
+                            }
+                          }}
+                        >
                           {renderRows()}
                         </tbody>
                       </table>
