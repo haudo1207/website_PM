@@ -377,8 +377,12 @@ export default function MeetingDetailModal({
   };
 
   const handleCopyLink = () => {
-    if (!hostJoinLink) return;
-    navigator.clipboard.writeText(hostJoinLink);
+    // Copy the CLEAN meeting_url — recipients pasting this may not be
+    // logged into hostGoogleEmail, so a link carrying authuser= would be
+    // wrong for them. Only the "Tham gia (Host)" button below is allowed
+    // to use hostJoinLink.
+    if (!baseLink) return;
+    navigator.clipboard.writeText(baseLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
@@ -611,11 +615,11 @@ export default function MeetingDetailModal({
                 {rawLink && (
                   <div className="flex items-center gap-1.5 bg-[#f5f3ff] px-2.5 py-1 rounded-lg border border-[#e0e7ff]">
                     <a
-                      href={hostJoinLink}
+                      href={baseLink}
                       target="_blank"
                       rel="noreferrer"
                       className="text-[#6366f1] font-bold hover:underline flex items-center gap-1 text-[11px]"
-                      title="Mở Google Meet"
+                      title="Mở Google Meet (link gốc)"
                     >
                       <ExternalLink size={12} />
                       <span>{rawLink.replace(/^https?:\/\//, '')}</span>
