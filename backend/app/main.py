@@ -238,6 +238,11 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)"
         ))
+        # Real Calendar-confirmed organizer for this specific meeting, captured
+        # once at creation/regeneration time — see Meeting.organizer_google_email.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS organizer_google_email VARCHAR(255)"
+        ))
         # Explicit "home" Workspace flag (Chính vs Phụ) — see workspace_access.py.
         conn.execute(text(
             "ALTER TABLE user_workspace_access ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false"

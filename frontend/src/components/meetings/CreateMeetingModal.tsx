@@ -17,6 +17,12 @@ interface MeetingFormData {
   time: string;
   duration: string;
   link: string;
+  // Stamped by handleGenerateLink alongside `link` — carried into the create/
+  // update payload so the backend can record the REAL Calendar event/organizer
+  // from that exact call instead of leaving both NULL (meeting_url already
+  // being non-empty by then makes create_meeting skip its own creation path).
+  google_event_id?: string;
+  organizer_google_email?: string;
   transcript?: string;
   auto_summarize?: boolean;
   objective?: string;
@@ -411,7 +417,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       });
       if (data.success && data.join_url) {
         const fullUrl = data.join_url.startsWith('http') ? data.join_url : `https://${data.join_url}`;
-        setFormData(prev => ({ ...prev, link: fullUrl }));
+        setFormData(prev => ({
+          ...prev,
+          link: fullUrl,
+          google_event_id: data.google_event_id,
+          organizer_google_email: data.organizer_google_email,
+        }));
       } else {
         setError('Không thể tạo link meeting tự động');
       }
@@ -776,29 +787,63 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     {copiedLink ? 'Đã sao chép!' : 'Sao chép link'}
                   </button>
                   {(formData.platform === 'Zoom' || formData.platform === 'Google Meet') && (
+                    // Google Meet with a link already generated: swap the button for a
+                    // non-actionable "created" badge + a separate, deliberately smaller
+                    // "Tạo lại" action — prevents an accidental re-click from silently
+                    // spawning a second Meet event for the same meeting. Zoom keeps the
+                    // one-click regenerate since it doesn't carry Google's Host/authuser
+                    // identity concern that motivated this for Meet.
+                    formData.platform === 'Google Meet' && formData.link.trim() ? (
+                      <span className="flex items-center gap-2 text-[11px] font-bold">
+                        <span className="flex items-center gap-1 text-emerald-600">
+                          <Check size={13} /> Đã tạo link
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleGenerateLink}
+                          disabled={isGeneratingLink}
+                          className="flex items-center gap-1 text-[#94a3b8] hover:text-[#0058be] hover:underline disabled:opacity-50"
+                          title="Tạo link Google Meet mới, thay thế link hiện tại"
+                        >
+                          <Sparkles size={12} className={isGeneratingLink ? 'animate-spin text-amber-500' : ''} />
+                          {isGeneratingLink ? 'Đang tạo lại...' : 'Tạo lại'}
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleGenerateLink}
+                        disabled={isGeneratingLink}
+                        className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline disabled:opacity-50"
+                      >
+                        <Sparkles size={13} className={isGeneratingLink ? 'animate-spin text-amber-500' : 'text-[#0058be]'} />
+                        {isGeneratingLink ? 'Đang tạo link...' : `⚡ Tạo link ${formData.platform}`}
+                      </button>
+                    )
+                  )}
+                  {formData.platform !== 'Google Meet' && (
                     <button
                       type="button"
-                      onClick={handleGenerateLink}
-                      disabled={isGeneratingLink}
-                      className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline disabled:opacity-50"
+                      onClick={handlePasteLink}
+                      className="flex items-center gap-1 text-[11px] font-bold text-[#565e74] hover:underline"
                     >
-                      <Sparkles size={13} className={isGeneratingLink ? 'animate-spin text-amber-500' : 'text-[#0058be]'} />
-                      {isGeneratingLink ? 'Đang tạo link...' : `⚡ Tạo link ${formData.platform}`}
+                      <Clipboard size={13} /> Dán link họp
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={handlePasteLink}
-                    className="flex items-center gap-1 text-[11px] font-bold text-[#565e74] hover:underline"
-                  >
-                    <Clipboard size={13} /> Dán link họp
-                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <select
                   value={formData.platform}
-                  onChange={e => setFormData({ ...formData, platform: e.target.value })}
+                  onChange={e => {
+                    const platform = e.target.value;
+                    // Switching TO Google Meet locks the link field to read-only
+                    // (see below) — clear out whatever link belonged to the
+                    // previous platform so it can't get saved stuck behind a
+                    // Meet-only field the user has no way left to edit/clear.
+                    const shouldClearLink = platform === 'Google Meet' && !formData.link.includes('meet.google.com');
+                    setFormData({ ...formData, platform, link: shouldClearLink ? '' : formData.link });
+                  }}
                   className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
                 >
                   <option value="Google Meet">💻 Google Meet</option>
@@ -810,8 +855,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   type="text"
                   value={formData.link}
                   onChange={e => setFormData({ ...formData, link: e.target.value })}
-                  placeholder={formData.platform === 'Zoom' ? 'https://zoom.us/j/...' : formData.platform === 'Google Meet' ? 'https://meet.google.com/...' : formData.platform === 'Microsoft Teams' ? 'https://teams.microsoft.com/l/meetup-join/...' : 'https://...'}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors placeholder:text-[#c2c6d6]"
+                  readOnly={formData.platform === 'Google Meet'}
+                  placeholder={formData.platform === 'Zoom' ? 'https://zoom.us/j/...' : formData.platform === 'Google Meet' ? 'Bấm "Tạo link Google Meet" ở trên' : formData.platform === 'Microsoft Teams' ? 'https://teams.microsoft.com/l/meetup-join/...' : 'https://...'}
+                  className={`w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors placeholder:text-[#c2c6d6] ${formData.platform === 'Google Meet' ? 'bg-[#f8f9fe] cursor-not-allowed' : ''}`}
                 />
               </div>
 

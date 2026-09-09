@@ -43,11 +43,21 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
   const isN8nSource = meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata;
   const isAutoCreated = Boolean(meeting.is_auto_created ?? meeting.ai_summary?.is_auto_created);
 
+  // Some older meetings have authuser baked directly into the stored
+  // meeting_url (saved before that was guaranteed clean) — strip it
+  // defensively so it doesn't override/duplicate the CURRENT hostGoogleEmail.
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
-  const baseLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
-  const hostJoinLink = baseLink.includes('authuser=')
-    ? baseLink
-    : `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=${encodeURIComponent(hostGoogleEmail)}`;
+  const rawLinkWithProtocol = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
+  const baseLink = (() => {
+    try {
+      const u = new URL(rawLinkWithProtocol);
+      u.searchParams.delete('authuser');
+      return u.toString();
+    } catch {
+      return rawLinkWithProtocol;
+    }
+  })();
+  const hostJoinLink = `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=${encodeURIComponent(hostGoogleEmail)}`;
 
   return (
     <div className="bg-white rounded-2xl border border-[#e2e8f0] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">

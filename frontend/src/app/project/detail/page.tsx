@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import MeetingCard from '@/components/meetings/MeetingCard';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
@@ -7672,7 +7671,7 @@ function ProjectDetailContent() {
                     {(isAdmin() || isMember()) && (
                       <button
                         onClick={() => {
-                          setEditingMeeting({ project: project?.name || '' });
+                          setEditingMeeting({ project: project?.name || '', project_ids: project?.id ? [project.id] : [] });
                           setShowMeetingModal(true);
                         }}
                         className="flex items-center gap-2 bg-[#0058be] hover:bg-[#0058be]/90 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all"
@@ -7777,8 +7776,7 @@ function ProjectDetailContent() {
                                 return (
                                   <div
                                     key={item.id}
-                                    onClick={() => { setSummarizingMeeting(item); setIsSummarizeOpen(true); }}
-                                    className={`rounded-lg p-2.5 mb-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-xs border-l-[4px] ${isPM ? 'bg-[#fff7e8] border-l-[#f59e0b]' : 'bg-[#edf5ff] border-l-[#1769d2]'
+                                    className={`rounded-lg p-2.5 mb-2.5 border-l-[4px] ${isPM ? 'bg-[#fff7e8] border-l-[#f59e0b]' : 'bg-[#edf5ff] border-l-[#1769d2]'
                                       }`}
                                   >
                                     <div className="text-[13px] font-medium text-[#0b1c30] leading-snug">
@@ -7801,7 +7799,8 @@ function ProjectDetailContent() {
                     </div>
                   </div>
 
-                  {/* Meeting Cards List */}
+                  {/* Meeting Table List — cùng layout với bảng ở trang Meetings tổng
+                      (app/meetings/page.tsx) để 2 nơi hiển thị đồng bộ. */}
                   <div className="space-y-4">
                     <h3 className="text-sm font-bold text-[#0b1c30]">Danh sách cuộc họp dự án ({meetings.length})</h3>
                     {meetings.length === 0 ? (
@@ -7811,15 +7810,117 @@ function ProjectDetailContent() {
                         <p className="text-xs text-slate-400 mt-1">Nhấn "+ Tạo meeting dự án" để tạo cuộc họp mới</p>
                       </div>
                     ) : (
-                      meetings.map(m => (
-                        <MeetingCard
-                          key={m.id}
-                          meeting={m}
-                          onDelete={m.can_manage ? (id => setDeleteConfirmId(id)) : undefined}
-                          onSummarize={m.can_manage ? (meeting => { setSummarizingMeeting(meeting); setIsSummarizeOpen(true); }) : undefined}
-                          onOpenDetail={meeting => { setDetailMeeting(meeting); setIsDetailOpen(true); }}
-                        />
-                      ))
+                      <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs" style={{ minWidth: 1000 }}>
+                            <thead>
+                              <tr className="bg-[#f8fafc] border-b border-[#e2e8f0] text-left">
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">Cuộc họp</th>
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">Dự án</th>
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">Người tham gia</th>
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">Thời gian</th>
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">Chuẩn bị</th>
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">KPI Tasks</th>
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">Trạng thái</th>
+                                <th className="p-3 font-bold text-[#76859a] text-[10px] uppercase tracking-wider">Điểm hiệu quả</th>
+                                <th className="p-3"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {meetings.map(m => {
+                                const projectNames: string[] = Array.isArray(m.projects) && m.projects.length
+                                  ? m.projects.map((p: any) => p.name).filter(Boolean)
+                                  : (m.project ? [m.project] : []);
+                                const prep = m.score_prep;
+                                const tasks: any[] = m.recommended_tasks || m.ai_summary?.recommended_tasks || [];
+                                const syncedCount = tasks.filter((t: any) => t.imported_task_id).length;
+                                const statusUpper = String(m.status || '').toUpperCase();
+                                const isScheduledOrCancelled = statusUpper === 'SẮP TỚI' || statusUpper === 'ĐÃ HỦY';
+                                const score = m.score_total;
+                                return (
+                                  <tr key={m.id} className="border-b border-[#edf1f6] hover:bg-[#fbfbff] transition-colors">
+                                    <td className="p-3">
+                                      <div className="flex items-center gap-2.5 min-w-[200px]">
+                                        <div className="w-8 h-8 rounded-lg bg-[#efefff] text-[#5e57e7] flex items-center justify-center font-extrabold shrink-0">▣</div>
+                                        <div className="min-w-0">
+                                          <p
+                                            onClick={() => { setDetailMeeting(m); setIsDetailOpen(true); }}
+                                            className="font-bold text-[#0b1c30] truncate max-w-[220px] cursor-pointer hover:text-[#6366f1] transition-colors"
+                                          >
+                                            {m.title}
+                                          </p>
+                                          <p className="text-[10px] text-[#8492a6]">{m.platform || 'Google Meet'}{m.duration ? ` · ${m.duration} phút` : ''}</p>
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td className="p-3">
+                                      <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                        {projectNames.length > 0 ? projectNames.map(name => (
+                                          <span key={name} className="inline-flex items-center gap-1 bg-[#eef4ff] text-[#285dc4] border border-[#dbe8ff] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">▣ {name}</span>
+                                        )) : (
+                                          <span className="inline-flex items-center gap-1 bg-[#f1f5f9] text-[#64748b] border border-[#e2e8f0] rounded-md px-2 py-1 text-[10px] font-bold whitespace-nowrap">Dự án chung</span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="p-3 text-[11px] text-[#52627a]">{(m.members || []).length} người</td>
+                                    <td className="p-3 whitespace-nowrap text-[11px]">{m.date} · {m.time}</td>
+                                    <td className="p-3">
+                                      {prep === null || prep === undefined ? (
+                                        <span className="text-[#94a3b8]">—</span>
+                                      ) : (
+                                        <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${prep >= 20 ? 'bg-emerald-50 text-emerald-700' : prep > 5 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                                          {prep >= 20 ? '✓' : prep > 5 ? '!' : '×'} {prep}/25
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="p-3">
+                                      {isScheduledOrCancelled || tasks.length === 0 ? (
+                                        <span className="text-[#94a3b8]">—</span>
+                                      ) : (
+                                        <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${syncedCount === tasks.length ? 'bg-emerald-50 text-emerald-700' : syncedCount > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                                          {syncedCount === tasks.length ? '✓' : syncedCount > 0 ? '!' : '×'} {Math.round((syncedCount / tasks.length) * 100)}% đã tạo
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="p-3">
+                                      <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${statusUpper.includes('DIỄN RA') || statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'DONE' ? 'bg-[#e2f7ec] text-[#18724f]'
+                                        : statusUpper === 'ĐÃ HỦY' || statusUpper === 'CANCELLED' ? 'bg-[#fff0f2] text-[#c73750]'
+                                          : 'bg-[#eaf0ff] text-[#315dca]'
+                                        }`}>
+                                        {m.status}
+                                      </span>
+                                    </td>
+                                    <td className="p-3">
+                                      {score === null || score === undefined ? <span className="text-[#94a3b8]">—</span> : (
+                                        <span className={`font-extrabold ${score >= 75 ? 'text-emerald-600' : score >= 50 ? 'text-amber-600' : 'text-red-600'}`}>{score}/100</span>
+                                      )}
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <div className="flex items-center justify-end gap-1.5">
+                                        {m.can_manage && (
+                                          <button
+                                            onClick={() => setDeleteConfirmId(String(m.id))}
+                                            title="Xóa cuộc họp"
+                                            className="border border-[#d7dfeb] bg-white rounded-lg h-7 w-7 flex items-center justify-center text-[#94a3b8] hover:border-red-300 hover:text-red-600 transition-colors"
+                                          >
+                                            <span className="material-symbols-outlined text-[14px]">delete</span>
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={() => { setDetailMeeting(m); setIsDetailOpen(true); }}
+                                          className="border border-[#d7dfeb] bg-white rounded-lg h-7 px-2.5 text-[#506078] text-[10px] font-bold hover:border-[#6366f1] hover:text-[#6366f1] transition-colors whitespace-nowrap"
+                                        >
+                                          Chi tiết ›
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     )}
                   </div>
 
@@ -7833,7 +7934,7 @@ function ProjectDetailContent() {
                     />
                   )}
 
-                  {(isAdmin() || detailMeeting?.can_manage) && (
+                  {(isAdmin() || summarizingMeeting?.can_manage) && (
                     <SummarizeModal
                       isOpen={isSummarizeOpen}
                       onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }}
