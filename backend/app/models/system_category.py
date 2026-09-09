@@ -44,3 +44,14 @@ class Workspace(Base):
     name = Column(String(50), unique=True, nullable=False)
     code = Column(String(50), unique=True, nullable=False)
     description = Column(String, nullable=True)
+    # Per-workspace n8n meeting-discovery webhook override (see
+    # notify_n8n_meeting_created in services/meeting_sync.py). Empty/None
+    # falls back to the shared N8N_MEETING_WEBHOOK_URL_DEFAULT env var.
+    n8n_webhook_url = Column(String(500), nullable=True)
+    # Display-only hint of which Google account THIS workspace is supposed to
+    # connect (WorkspaceGoogleAccount) — purely a label shown in the "Connect
+    # Google account" UI before anyone has actually gone through OAuth for
+    # this workspace, so the person clicking Connect knows which mailbox to
+    # log in with. Not used for auth in any way (that's WorkspaceGoogleAccount
+    # .google_email, set only after real OAuth consent).
+    expected_google_email = Column(String(255), nullable=True)

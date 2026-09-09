@@ -1,14 +1,113 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { X, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react';
-import { getGoogleStatus, getGoogleAuthUrl, getAiSettings, saveAiSettings } from '@/lib/api';
+import { getGoogleStatus, getGoogleAuthUrl, getAiSettings, saveAiSettings, getWorkspaces, Workspace } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 
 interface Props { isOpen: boolean; onClose: () => void; }
 
+// One workspace's Google connect card: every workspace now has its own
+// dedicated Google account (no more single shared fallback account shown in
+// this UI), so this is reused both for the single card shown when a specific
+// workspace is filtered and for the full list shown when filter = "All".
+function WorkspaceGoogleCard({ code, label }: { code: string; label: string }) {
+  const [isConnected, setIsConnected] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+  const [expectedEmail, setExpectedEmail] = useState<string | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
+
+  const check = async () => {
+    setIsChecking(true);
+    try {
+      const data = await getGoogleStatus(code);
+      setIsConnected(!!data.connected);
+      setEmail(data.google_email || null);
+      setExpectedEmail(data.expected_google_email || null);
+    } catch (err) {
+      console.error(`Failed to check Google status for workspace ${code}`, err);
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  // Email actually connected takes priority once it exists; before that,
+  // show the admin-set hint (Workspace.expected_google_email) so whoever
+  // clicks Connect knows which mailbox to log in with.
+  const displayEmail = email || expectedEmail;
+
+  // Re-check whenever the workspace this card represents changes (the single-card
+  // case reuses one <WorkspaceGoogleCard> across re-renders as workspaceCode
+  // switches, so `code` itself is the dependency, not just mount).
+  useEffect(() => { check(); }, [code]);
+
+  const handleConnect = async () => {
+    try {
+      const data = await getGoogleAuthUrl(code);
+      if (data.auth_url) {
+        window.open(data.auth_url, '_blank');
+      } else {
+        alert(`Không thể lấy liên kết xác thực Google cho workspace ${label}.`);
+      }
+    } catch (err: any) {
+      alert(`Lỗi kết nối API Google Auth (${label}): ` + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  return (
+    <div className="p-4 bg-sky-50/50 border border-sky-200/80 rounded-xl space-y-3 flex-shrink-0">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-xs font-bold text-[#0b1c30]">Tài khoản Google {label}{displayEmail ? ` (${displayEmail})` : ''}</h3>
+          <p className="text-[11px] text-[#565e74] mt-0.5">Tài khoản Google riêng cho workspace {label} — dùng để tạo link Google Meet & đồng bộ biên bản cho các cuộc họp thuộc workspace này.</p>
+        </div>
+        {isChecking ? (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200 flex-shrink-0">
+            <RefreshCw size={10} className="animate-spin" />
+            ĐANG KIỂM TRA...
+          </span>
+        ) : isConnected ? (
+          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex-shrink-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            ĐÃ KẾT NỐI
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0">
+            CHƯA KẾT NỐI
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <button
+          type="button"
+          onClick={handleConnect}
+          className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-2xs"
+        >
+          <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
+          <span>{isConnected ? `🔄 Ủy quyền lại tài khoản ${label}` : `🔗 Kết nối tài khoản Google ${label}`}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={check}
+          disabled={isChecking}
+          className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-slate-200/60 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-semibold"
+          title="Làm mới trạng thái kết nối"
+        >
+          <RefreshCw size={14} className={isChecking ? 'animate-spin' : ''} />
+          {isChecking ? 'Đang kiểm tra...' : 'Kiểm tra lại kết nối'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function PromptSettingsModal({ isOpen, onClose }: Props) {
   const { workspaceCode } = useWorkspaceFilter();
-  const isInfraWorkspace = (workspaceCode || '').toLowerCase() === 'infra';
+  // A specific workspace filtered → show only that workspace's card.
+  // Filter = "All" (or nothing picked) → show every workspace's card, since
+  // there's no more single "shared account" fallback surfaced in this UI.
+  const hasWorkspace = !!workspaceCode && workspaceCode.toLowerCase() !== 'all';
 
   const [promptTemplate, setPromptTemplate] = useState('');
   const [hasApiKey, setHasApiKey] = useState(true);
@@ -17,14 +116,15 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
-  const [isCheckingGoogle, setIsCheckingGoogle] = useState(false);
+  const [allWorkspaces, setAllWorkspaces] = useState<Workspace[]>([]);
 
-  const [isInfraGoogleConnected, setIsInfraGoogleConnected] = useState(false);
-  const [infraGoogleEmail, setInfraGoogleEmail] = useState<string | null>(null);
-  const [isCheckingInfraGoogle, setIsCheckingInfraGoogle] = useState(false);
-
-  useEffect(() => { if (isOpen) fetchSettings(); }, [isOpen]);
+  useEffect(() => {
+    if (!isOpen) return;
+    fetchSettings();
+    if (!hasWorkspace) {
+      getWorkspaces().then(setAllWorkspaces).catch(err => console.error('Failed to load workspaces', err));
+    }
+  }, [isOpen, workspaceCode]);
 
   const fetchSettings = async () => {
     setIsLoading(true); setError(''); setSuccess(false);
@@ -32,62 +132,8 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
       const data = await getAiSettings();
       if (data.success) { setPromptTemplate(data.promptTemplate); setHasApiKey(data.hasApiKey); }
       else setError(data.error || 'Không thể tải cấu hình AI.');
-
-      await checkGoogleConnection();
-      if (isInfraWorkspace) await checkInfraGoogleConnection();
     } catch (err: any) { setError(err.response?.data?.error || err.message || 'Lỗi kết nối.'); }
     finally { setIsLoading(false); }
-  };
-
-  const checkGoogleConnection = async () => {
-    setIsCheckingGoogle(true);
-    try {
-      const googleData = await getGoogleStatus();
-      setIsGoogleConnected(!!googleData.connected);
-    } catch (err) {
-      console.error("Failed to check Google status", err);
-    } finally {
-      setIsCheckingGoogle(false);
-    }
-  };
-
-  const checkInfraGoogleConnection = async () => {
-    setIsCheckingInfraGoogle(true);
-    try {
-      const googleData = await getGoogleStatus('infra');
-      setIsInfraGoogleConnected(!!googleData.connected);
-      setInfraGoogleEmail(googleData.google_email || null);
-    } catch (err) {
-      console.error("Failed to check infra Google status", err);
-    } finally {
-      setIsCheckingInfraGoogle(false);
-    }
-  };
-
-  const handleConnectGoogle = async () => {
-    try {
-      const data = await getGoogleAuthUrl();
-      if (data.auth_url) {
-        window.open(data.auth_url, '_blank');
-      } else {
-        alert("Không thể lấy liên kết xác thực Google. Hãy chắc chắn bạn đã điền GOOGLE_CLIENT_ID và GOOGLE_CLIENT_SECRET vào .env.");
-      }
-    } catch (err: any) {
-      alert("Lỗi kết nối API Google Auth: " + (err.response?.data?.detail || err.message));
-    }
-  };
-
-  const handleConnectInfraGoogle = async () => {
-    try {
-      const data = await getGoogleAuthUrl('infra');
-      if (data.auth_url) {
-        window.open(data.auth_url, '_blank');
-      } else {
-        alert("Không thể lấy liên kết xác thực Google cho workspace Infra.");
-      }
-    } catch (err: any) {
-      alert("Lỗi kết nối API Google Auth (Infra): " + (err.response?.data?.detail || err.message));
-    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -114,90 +160,15 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
             {error && <div className="p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-start gap-2 font-semibold border border-red-200"><AlertTriangle size={16} className="mt-0.5 flex-shrink-0" /><span>{error}</span></div>}
             {success && <div className="p-3 bg-emerald-50 text-emerald-700 text-xs rounded-lg font-semibold border border-emerald-200">✓ Đã lưu cấu hình Prompt AI thành công!</div>}
             {!hasApiKey && <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg flex items-start gap-2"><AlertTriangle size={18} className="mt-0.5 text-amber-600 flex-shrink-0" /><div><span className="font-bold">Cảnh báo:</span> Chưa tìm thấy GEMINI_API_KEY trong file .env.</div></div>}
-            
-            {/* Google Calendar & Drive Connection */}
-            <div className="p-4 bg-emerald-50/50 border border-emerald-200/80 rounded-xl space-y-3 flex-shrink-0">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-xs font-bold text-[#0b1c30]">Tài khoản Google Công ty (mkt.szone@gmail.com)</h3>
-                  <p className="text-[11px] text-[#565e74] mt-0.5">Tài khoản kết nối hệ thống cố định để tự động tạo link Google Meet Pro & đồng bộ biên bản ngầm. Tất cả người dùng vào sử dụng ngay mà không cần kết nối cá nhân.</p>
-                </div>
-                {isGoogleConnected ? (
-                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex-shrink-0">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    CỐ ĐỊNH NỘI BỘ (ĐÃ SẴN SÀNG)
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0">
-                    CHƯA KẾT NỐI
-                  </span>
-                )}
-              </div>
-              
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                <button
-                  type="button"
-                  onClick={handleConnectGoogle}
-                  className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-2xs"
-                >
-                  <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
-                  <span>{isGoogleConnected ? '🔄 Ủy quyền lại Google Admin (mkt.szone)' : '🔗 Kết nối tài khoản Google Công ty'}</span>
-                </button>
 
-                <button
-                  type="button"
-                  onClick={checkGoogleConnection}
-                  disabled={isCheckingGoogle}
-                  className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-slate-200/60 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-semibold"
-                  title="Làm mới trạng thái kết nối"
-                >
-                  <RefreshCw size={14} className={isCheckingGoogle ? 'animate-spin' : ''} />
-                  {isCheckingGoogle ? 'Đang kiểm tra...' : 'Kiểm tra lại kết nối'}
-                </button>
-              </div>
-            </div>
-
-            {isInfraWorkspace && (
-              <div className="p-4 bg-sky-50/50 border border-sky-200/80 rounded-xl space-y-3 flex-shrink-0">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-xs font-bold text-[#0b1c30]">Tài khoản Google Infra{infraGoogleEmail ? ` (${infraGoogleEmail})` : ''}</h3>
-                    <p className="text-[11px] text-[#565e74] mt-0.5">Tài khoản Google riêng cho workspace Infra — dùng để tạo link Google Meet & đồng bộ biên bản cho các cuộc họp thuộc workspace này thay vì tài khoản chung ở trên.</p>
-                  </div>
-                  {isInfraGoogleConnected ? (
-                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex-shrink-0">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      ĐÃ KẾT NỐI
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0">
-                      CHƯA KẾT NỐI
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleConnectInfraGoogle}
-                    className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-2xs"
-                  >
-                    <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
-                    <span>{isInfraGoogleConnected ? '🔄 Ủy quyền lại tài khoản Infra' : '🔗 Kết nối tài khoản Google Infra'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={checkInfraGoogleConnection}
-                    disabled={isCheckingInfraGoogle}
-                    className="p-1.5 text-[#565e74] hover:text-[#0b1c30] rounded-lg hover:bg-slate-200/60 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-semibold"
-                    title="Làm mới trạng thái kết nối"
-                  >
-                    <RefreshCw size={14} className={isCheckingInfraGoogle ? 'animate-spin' : ''} />
-                    {isCheckingInfraGoogle ? 'Đang kiểm tra...' : 'Kiểm tra lại kết nối'}
-                  </button>
-                </div>
-              </div>
+            {/* Google Calendar & Drive Connection — 1 card khi đang lọc theo 1
+                workspace cụ thể, hoặc đủ danh sách khi đang xem "Tất cả". */}
+            {hasWorkspace ? (
+              <WorkspaceGoogleCard code={workspaceCode!} label={workspaceCode!.toUpperCase()} />
+            ) : (
+              allWorkspaces.map(w => (
+                <WorkspaceGoogleCard key={w.code} code={w.code} label={w.name || w.code.toUpperCase()} />
+              ))
             )}
 
             <div>
@@ -219,4 +190,3 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
     </div>
   );
 }
-

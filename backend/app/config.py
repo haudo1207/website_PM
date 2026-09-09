@@ -115,13 +115,14 @@ class Settings(BaseSettings):
     # n8n Integration Webhook Secret
     N8N_WEBHOOK_SECRET: str = ""
 
-    # n8n meeting-discovery webhooks: called when a meeting is created on the
+    # n8n meeting-discovery webhook: called when a meeting is created on the
     # web app so n8n can search Drive by the meeting's "[MK-xxx]" tag instead
-    # of blindly polling "Google Meet" folders. Picked by workspace: infra
-    # workspace uses N8N_MEETING_WEBHOOK_URL_INFRA, everything else uses
-    # N8N_MEETING_WEBHOOK_URL_DEFAULT (see notify_n8n_meeting_created).
+    # of blindly polling "Google Meet" folders. Shared fallback used whenever
+    # a Workspace has no n8n_webhook_url of its own set (see
+    # notify_n8n_meeting_created in services/meeting_sync.py) — per-workspace
+    # URLs live in the `workspaces` table, not here, so adding a new workspace
+    # needs no code/env change.
     N8N_MEETING_WEBHOOK_URL_DEFAULT: str = ""
-    N8N_MEETING_WEBHOOK_URL_INFRA: str = ""
 
     # Telegram Bot integration (Leave Request notifications)
     TELEGRAM_BOT_TOKEN: str = ""

@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from ..config import settings
 from ..models.google_token import GoogleToken
 from ..models.workspace_google_account import WorkspaceGoogleAccount
+from ..models.system_category import Workspace
 from ..models.user import User
 
 logger = logging.getLogger("meeting_sync")
@@ -451,9 +452,14 @@ def is_workspace_google_connected(db, workspace_id: int) -> dict:
     connected" apart from "infra has no override, but the shared one still works".
     """
     wga = _load_workspace_google_tokens(db, workspace_id)
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first() if db else None
     return {
         "connected": bool(wga and wga.refresh_token),
         "google_email": wga.google_email if wga else None,
+        # Display-only hint (Workspace.expected_google_email) — which mailbox
+        # the "Connect" button should be used with, shown before anyone has
+        # actually connected anything yet.
+        "expected_google_email": ws.expected_google_email if ws else None,
     }
 
 
@@ -631,16 +637,16 @@ def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time,
     n8n discovery must not be able to break meeting creation, so any failure
     here is logged and swallowed.
     """
-    # Route by the SAME signal get_workspace_google_access_token uses to pick
-    # the Google account (a connected WorkspaceGoogleAccount override) — not by
-    # workspace code/name. The recording lands in whichever Drive the override
-    # account owns, so the n8n workflow notified must be the one wired to that
-    # SAME account's credentials, regardless of which workspace holds it.
+    # Route by the Workspace's own n8n_webhook_url (set via the Workspace admin
+    # UI/API, e.g. Settings > Workspaces) — each workspace can point at its own
+    # n8n workflow + Google account credentials with zero code/env changes.
+    # A workspace with nothing configured falls back to the shared DEFAULT
+    # workflow/account.
     url = settings.N8N_MEETING_WEBHOOK_URL_DEFAULT
     if workspace_id is not None and db is not None:
-        wga = _load_workspace_google_tokens(db, workspace_id)
-        if wga and wga.refresh_token:
-            url = settings.N8N_MEETING_WEBHOOK_URL_INFRA
+        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if ws and ws.n8n_webhook_url:
+            url = ws.n8n_webhook_url
 
     if not url:
         return

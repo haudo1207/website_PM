@@ -450,11 +450,13 @@ export interface Workspace {
   name: string;
   code: string;
   description?: string | null;
+  n8n_webhook_url?: string | null;
+  expected_google_email?: string | null;
 }
 export const getWorkspaces = () => api.get<Workspace[]>('/system-categories/workspaces').then(r => r.data);
-export const createWorkspace = (data: { name: string; code: string; description?: string }) =>
+export const createWorkspace = (data: { name: string; code: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string }) =>
   api.post('/system-categories/workspaces', data).then(r => r.data);
-export const updateWorkspace = (id: number, data: { name?: string; code?: string; description?: string }) =>
+export const updateWorkspace = (id: number, data: { name?: string; code?: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string }) =>
   api.put(`/system-categories/workspaces/${id}`, data).then(r => r.data);
 export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
