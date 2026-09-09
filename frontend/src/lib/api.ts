@@ -399,6 +399,42 @@ export const reorderTasks = (groupId: number, order: number[]) =>
   api.patch(`/task-groups/${groupId}/tasks/reorder`, { order }).then(r => r.data);
 
 // ═══════════════════════════════════════════════════════════
+// CALENDAR (008-task-calendar-overview) — Personal "My Task Calendar".
+// Read-only view layer; writes reuse updateTask/createTask above (there is
+// deliberately no POST/PATCH /calendar/* endpoint — see plan.md section 0).
+// ═══════════════════════════════════════════════════════════
+export interface CalendarTask {
+  id: number;
+  task_group_id: number;
+  task_code: string | null;
+  detail: string;
+  priority: string;
+  status: string;
+  manday_est: number | null;
+  start_date: string | null;
+  scheduled_at: string | null; // null = unscheduled (shows in the tray)
+  assigned_id: number | null;
+  assigned_name: string | null;
+  support_id: number | null;
+  support_name: string | null;
+  kpi_base: number;
+  kpi_perform: number;
+  kpi_final: number;
+  notes: string | null;
+  project_id: number;
+  project_name: string;
+  project_color: string | null;
+  // Whether current_user is assigned or support on this task — decides
+  // Done/Drag affordance in the UI (Support is read-only, spec.md FR-CAL-11/12).
+  calendar_role: 'assigned' | 'support';
+}
+// `from`/`to` are YYYY-MM-DD, both inclusive. Backend enforces the
+// (assigned_id OR support_id) = current_user filter server-side — this is
+// NOT a client-side filter, see specs/008-task-calendar-overview/spec.md.
+export const getCalendarTasks = (from: string, to: string) =>
+  api.get<CalendarTask[]>('/calendar/tasks', { params: { from, to } }).then(r => r.data);
+
+// ═══════════════════════════════════════════════════════════
 // LEGACY COMPATIBLE (kept for Settings, Skills, System Categories, Members)
 // ═══════════════════════════════════════════════════════════
 

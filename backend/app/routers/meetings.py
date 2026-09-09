@@ -6,7 +6,6 @@ from typing import Optional, List, Dict, Any
 import datetime
 import logging
 import re
-from zoneinfo import ZoneInfo
 
 from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
@@ -15,6 +14,7 @@ from ..models.member import Member
 from ..utils.auth import get_current_user
 from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, resolve_workspace, user_scope, workspace_id_for_project
 from ..utils.audit_service import AuditService
+from ..utils.timezone import VN_TZ as _VN_TZ
 
 logger = logging.getLogger("meetings")
 router = APIRouter(dependencies=[Depends(require_route_project_access)])
@@ -34,9 +34,6 @@ STATUS_FE_TO_DB = {
     "ĐÃ DIỄN RA": "DONE",  # legacy label, kept as an alias for older callers
     "ĐÃ HỦY": "CANCELLED"
 }
-
-
-_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def _now_vn() -> datetime.datetime:

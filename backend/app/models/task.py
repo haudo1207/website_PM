@@ -144,6 +144,13 @@ class Task(Base):
     unblocked_at        = Column(DateTime, nullable=True)
     unblocked_by        = Column(Integer, nullable=True)  # users.id
 
+    # Personal Calendar (008-task-calendar-overview) — optional work-time
+    # slot, independent of start_date. NULL = task sits in the "chưa xếp
+    # lịch" tray, not on the Calendar grid. Naive TIMESTAMP storing
+    # Asia/Ho_Chi_Minh wall-clock time (see app/utils/timezone.py), same
+    # convention as meetings.py — never UTC.
+    scheduled_at        = Column(DateTime, nullable=True)
+
     # Relationships
     task_group        = relationship("TaskGroup", back_populates="tasks")
     assigned_member   = relationship("Member", foreign_keys=[assigned_id], lazy="select")

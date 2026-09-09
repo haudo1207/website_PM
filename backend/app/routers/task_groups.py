@@ -24,7 +24,7 @@ from ..models.member import Member
 from ..models.user import User
 from ..models.project import Project, project_members
 from ..models.notification import Notification
-from ..utils.kpi_engine import recalculate_task, parse_date
+from ..utils.kpi_engine import recalculate_task, parse_date, parse_datetime
 from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
@@ -196,10 +196,17 @@ MAX_GROUP_MANDAY = 10
 
 
 def validate_group_manday(manday_est) -> None:
-    """Task Group MANDAY EST is capped at <= 10 going forward. Only checked
-    against the incoming value on create/update — existing rows saved before
-    this rule keep whatever value they already had, untouched."""
-    if manday_est is not None and manday_est > MAX_GROUP_MANDAY:
+    """Task Group MANDAY EST must be a whole number from 1 to 10 (inclusive).
+    Only checked against the incoming value on create/update — existing rows
+    saved before this rule keep whatever value they already had, untouched."""
+    if manday_est is None:
+        return
+    if manday_est != int(manday_est):
+        raise HTTPException(400, "Manday EST của Task Group phải là số nguyên, không được là số thập phân.")
+    manday_int = int(manday_est)
+    if manday_int < 1:
+        raise HTTPException(400, "Manday EST của Task Group phải là số nguyên dương, không được là 0 hoặc số âm.")
+    if manday_int > MAX_GROUP_MANDAY:
         raise HTTPException(400, f"Manday EST của Task Group không được vượt quá {MAX_GROUP_MANDAY}.")
 
 
@@ -991,6 +998,9 @@ def serialize_task(t, db, members_map=None, groups_map=None, skills_map=None, us
         "manday_est": safe_float(getattr(t, "manday_est", None)),
         "status": getattr(t, "status", "Waiting") or "Waiting",
         "start_date": str(t.start_date) if getattr(t, "start_date", None) else None,
+        # Personal Calendar (008-task-calendar-overview) — independent of
+        # start_date, NULL = unscheduled. See models/task.py.
+        "scheduled_at": str(t.scheduled_at) if getattr(t, "scheduled_at", None) else None,
         "assigned_id": getattr(t, "assigned_id", None),
         "assigned_name": assigned_name,
         "support_id": getattr(t, "support_id", None),
@@ -1423,6 +1433,10 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
         notes=body.get("notes"),
         end_date_actual=parse_date(body.get("end_date_actual")),
         sort_order=max_order + 1,
+        # Personal Calendar (008-task-calendar-overview) — Quick Create sends
+        # this when the task is created straight onto a time slot; absent =
+        # unscheduled, same "chưa xếp lịch" tray as any other task.
+        scheduled_at=parse_datetime(body.get("scheduled_at")),
     )
     # Safety net: a task created directly with status = Done (import/API
     # callers) still needs a completion date, otherwise it silently drops
@@ -1712,6 +1726,14 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     # Dates
     if "start_date" in body:
         task.start_date = parse_date(body["start_date"])
+
+    # Personal Calendar (008-task-calendar-overview) — independent of
+    # start_date, never touched by the calendar drag-drop update on
+    # purpose (spec.md FR-CAL-16). `null` is a valid value: it means
+    # "unschedule this task", dropping it back into the "chưa xếp lịch"
+    # tray, not "leave unchanged" (hence the explicit "in body" check).
+    if "scheduled_at" in body:
+        task.scheduled_at = parse_datetime(body["scheduled_at"])
     
     new_status_lower = (task.status or "").strip().lower()
     old_status_lower = (old_dict["status"] or "").strip().lower()

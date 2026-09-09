@@ -31,6 +31,34 @@ def parse_date(date_str):
     return None
 
 
+def parse_datetime(value):
+    """Parse a datetime for Task.scheduled_at. None/empty → None (unscheduled —
+    the task drops into the Calendar's "chưa xếp lịch" tray). The value is
+    treated as naive Asia/Ho_Chi_Minh wall-clock time (see utils/timezone.py) —
+    an aware input is converted to VN time and stripped of tzinfo rather than
+    stored as UTC, to stay consistent with every other scheduling datetime in
+    this app (meetings.py)."""
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        dt = value
+    else:
+        value = str(value).strip()
+        dt = None
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                dt = datetime.datetime.strptime(value, fmt)
+                break
+            except ValueError:
+                continue
+        if dt is None:
+            return None
+    if dt.tzinfo is not None:
+        from .timezone import VN_TZ
+        dt = dt.astimezone(VN_TZ).replace(tzinfo=None)
+    return dt
+
+
 def format_date(dt):
     """Format date to dd/MM/yyyy."""
     if not dt:
