@@ -349,6 +349,99 @@ const PriorityDetailModal = ({
   );
 };
 
+// ── Active-Projects tab classification helpers (Task 2) ─────────────
+//
+// Source of truth comes from the `/api/projects` serializer:
+//
+//   pm_id                  (Project.pm_id)        — canonical FK for PM
+//   pm_ids                 (junction, role='PM')
+//   technical_leader_id    (Project.technical_leader_id)
+//   leader_users           (junction, role='Leader')
+//   sales_id, sales_ids    (junction, role='Sales')
+//   member_ids             (junction, role='Member')
+//   data_scope             (Workspace code, lowercased)
+//
+// For Leader accounts (spec 2.1 / 2.3 / 2.4):
+//   Tất cả          = primary-WS projects (handled via `inHomeWs`)
+//   Phụ trách       = PM OR Project Leader relationship (any WS)
+//   Tham gia ngoài  = non-primary-WS AND a real project_members row
+//
+// For Super Admin / Member / Viewer we preserve the existing semantic —
+// every project in their visible list falls into their single (or empty)
+// home Workspace, so Phụ trách mirrors Tất cả and Tham gia ngoài is empty.
+// The spec explicitly requires Super Admin behaviour to stay unchanged.
+
+function projectIsResponsible(
+  p: any,
+  userRole: string,
+  userMemberId: number | null,
+): boolean {
+  const isLeader = String(userRole || '').toLowerCase() === 'leader';
+  if (!isLeader || userMemberId == null) {
+    // Non-Leader fallback — mirror the existing `isOwned` semantic so
+    // existing Super Admin / Member / Viewer behaviour is unchanged.
+    return Boolean(
+      p &&
+      (p.dataScope == null ||
+        (typeof p.dataScope === 'string' &&
+          (p.dataScope === '' || p.dataScope === 'all'))),
+    );
+  }
+  // Leader: PM (canonical Project.pm_id OR junction role='PM')
+  if (p.pm_id === userMemberId) return true;
+  if (Array.isArray(p.pm_ids) && p.pm_ids.includes(userMemberId)) return true;
+  // Leader: Project Leader (canonical Project.technical_leader_id OR
+  // junction role='Leader')
+  if (p.technical_leader_id === userMemberId) return true;
+  if (
+    Array.isArray(p.leader_users) &&
+    p.leader_users.some((u: any) => u && u.id === userMemberId)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function projectIsExternalMember(
+  p: any,
+  userRole: string,
+  userMemberId: number | null,
+  homeWsCode: string | null,
+): boolean {
+  const isLeader = String(userRole || '').toLowerCase() === 'leader';
+  // Anything not in the caller's home Workspace — empty data_scope
+  // means there's no Workspace boundary to compare against.
+  const inHomeWs =
+    !homeWsCode ||
+    !p ||
+    !p.dataScope ||
+    p.dataScope === '' ||
+    p.dataScope === 'all' ||
+    p.dataScope === homeWsCode;
+  if (inHomeWs) return false;
+
+  if (!isLeader || userMemberId == null) {
+    // Non-Leader fallback — same as before: non-primary-WS projects in
+    // the visible list (Member/Viewer cross-WS assigned projects).
+    return true;
+  }
+  // Leader: project lives outside the primary Workspace AND the Leader
+  // appears in the project's member/participant list (any junction role,
+  // including the canonical PM/PL columns — PM/PL of a non-primary-WS
+  // project still counts as a participant here, matching the spec example
+  // for INFRA Project A "Leader is a project member → Tham gia ngoài").
+  return (
+    p.pm_id === userMemberId ||
+    (Array.isArray(p.pm_ids) && p.pm_ids.includes(userMemberId)) ||
+    p.technical_leader_id === userMemberId ||
+    (Array.isArray(p.leader_users) &&
+      p.leader_users.some((u: any) => u && u.id === userMemberId)) ||
+    p.sales_id === userMemberId ||
+    (Array.isArray(p.sales_ids) && p.sales_ids.includes(userMemberId)) ||
+    (Array.isArray(p.member_ids) && p.member_ids.includes(userMemberId))
+  );
+}
+
 export default function OverviewTab() {
   // Recent Activity (cross-project) filter
   const [auditModuleFilter, setAuditModuleFilter] = useState('all');
@@ -1013,6 +1106,15 @@ export default function OverviewTab() {
     // Same reasoning as taskSourceForDrill above: the switcher only decides
     // the roster, not a drilled-into person's own cross-Workspace picture.
     const projectSourceForDrill = (currentUserRole === 'leader' || isDrilledIntoPerson) ? rawProjectsAll : rawProjects;
+
+    // Resolve the current user's linked Member.id once — used by the
+    // Active-Projects tab classification helpers below (PM / Project Leader /
+    // project-member checks against the per-project role arrays returned by
+    // /api/projects). Always the caller's own member_id for a Leader session,
+    // or null for any account that isn't linked to a Member row.
+    const userMemberIdForTabs: number | null =
+      typeof currentUser?.member_id === 'number' ? currentUser.member_id : null;
+
     const allMappedProjects = projectSourceForDrill.map((p: any) => {
       const pAllTasks = taskSourceForDrill.filter(t => isSameId(t.project_id, p.id));
       const pLeaderTasks = pAllTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
@@ -1096,11 +1198,33 @@ export default function OverviewTab() {
         dataScope,
         contributingNames,
         drilledPersonHasAccess,
-        // "Owned" = the project sits in the current home Workspace (Leader's
-        // Chính, or whichever Workspace is currently selected/drilled) — same
-        // Full-vs-Limited-Access distinction the backend already enforces via
-        // project_query_for_user(); an empty homeWsCode (Admin viewing "Tất
-        // cả") treats every project as owned since there's no single home ws.
+        // ── Active-Projects tab classification (spec 2.1 / 2.3 / 2.4) ──
+        // For Leaders: Tất cả = primary-WS projects; Phụ trách = PM/Project
+        // Leader (any WS); Tham gia ngoài = non-primary-WS projects where the
+        // Leader has an actual project_members row. Backend already restricts
+        // the list to projects the Leader is in (primary-WS blanket +
+        // assignment-only for secondary WS), so no extra visibility gating is
+        // needed — we just route each project to the right tab here.
+        //
+        // Non-Leader roles (Super Admin / Member / Viewer) keep the previous
+        // behaviour so this change doesn't disturb Super Admin's "Phụ trách
+        // shows everything" expectation (spec — "Super Admin behavior
+        // unchanged").
+        inHomeWs: !homeWsCodeForSummary || !dataScope || dataScope === homeWsCodeForSummary,
+        isResponsible: projectIsResponsible(
+          p,
+          currentUserRole,
+          userMemberIdForTabs,
+        ),
+        isExternalMember: projectIsExternalMember(
+          p,
+          currentUserRole,
+          userMemberIdForTabs,
+          homeWsCodeForSummary,
+        ),
+        // Legacy flag preserved — drives the Full/Limited access badge and
+        // the Limited-access contribution modal. Same semantic as before:
+        // primary-WS project = "Full access", anything else = "Limited".
         isOwned: !homeWsCodeForSummary || !dataScope || dataScope === homeWsCodeForSummary,
         isDisplayable: belongsToLeaderScope && hasTaskInPeriod
       };
@@ -1949,8 +2073,16 @@ export default function OverviewTab() {
         )}
 
         {(() => {
-          const ownedProjects = activeProjects.filter((p: any) => p.isOwned);
-          const externalProjects = activeProjects.filter((p: any) => !p.isOwned);
+          // Three buckets aligned with the spec (Task 2 — Leader project
+          // visibility). `inHomeWs` drives the Tất cả sub-section and the
+          // "Workspace Chính" header. `isResponsible` and `isExternalMember`
+          // gate the Phụ trách and Tham gia ngoài tabs respectively — for
+          // non-Leader roles they fall back to the legacy semantic so
+          // Super Admin's existing "Phụ trách = everything" behaviour stays
+          // exactly as it was (spec — "Super Admin behavior unchanged").
+          const ownedProjects = activeProjects.filter((p: any) => p.inHomeWs);
+          const responsibleProjects = activeProjects.filter((p: any) => p.isResponsible);
+          const externalProjects = activeProjects.filter((p: any) => p.isExternalMember);
           const wsName = (code: string | null) => (code && (workspacesData || []).find((w: any) => w.code === code)?.name) || (code ? code.toUpperCase() : null);
 
           const renderCard = (p: any, isOwnedCard: boolean) => (
@@ -2028,11 +2160,60 @@ export default function OverviewTab() {
 
           return (
             <div className="p-5 max-h-[520px] overflow-y-auto custom-scrollbar space-y-5">
-              {projectFilterMode !== 'external' && ownedProjects.length > 0 && (
+              {/* Phụ trách tab — show only PM/Project Leader projects.
+                  Non-Leader roles fall back to `isOwned` so Super Admin's
+                  existing behaviour (everything in primary-WS / nothing in
+                  Tham gia ngoài) is preserved. */}
+              {projectFilterMode === 'owned' && (
                 <div>
                   <div className="flex items-center justify-between mb-3 gap-3">
-                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-500">Dự án Workspace Chính phụ trách</h4>
-                    <p className="text-[10px] text-slate-400">Được xem đầy đủ chi tiết dự án và task.</p>
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-500">Dự án phụ trách (PM / Project Leader)</h4>
+                    <p className="text-[10px] text-slate-400">Chỉ các dự án bạn là PM hoặc Project Leader theo quan hệ dự án hiện tại.</p>
+                  </div>
+                  {responsibleProjects.length === 0 ? (
+                    <p className="text-xs text-slate-400 font-semibold py-6 text-center">Bạn hiện không phụ trách dự án nào trong kỳ này.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {responsibleProjects.map((p: any) => renderCard(p, p.isOwned))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tham gia ngoài tab — projects outside primary Workspace
+                  where the current user actually participates. */}
+              {projectFilterMode === 'external' && (
+                <div>
+                  <div className="flex items-center justify-between gap-3 mb-3 p-3 bg-purple-50/60 border border-purple-100 rounded-xl text-[11px] font-semibold text-purple-800">
+                    <span>↗ <strong>Dự án ngoài workspace:</strong> chỉ hiển thị contribution, deadline chung và tiến độ/risk được chia sẻ — không mở toàn bộ chi tiết dự án.</span>
+                    <button
+                      onClick={() => setExternalProjectsCollapsed(v => !v)}
+                      className="shrink-0 px-2.5 py-1 rounded-lg border border-purple-200 bg-white text-purple-700 text-[10px] font-black hover:bg-purple-50"
+                    >
+                      {externalProjectsCollapsed ? 'Hiện' : 'Ẩn'}
+                    </button>
+                  </div>
+                  {externalProjects.length === 0 ? (
+                    <p className="text-xs text-slate-400 font-semibold py-6 text-center">Bạn không tham gia dự án ngoài workspace nào trong kỳ này.</p>
+                  ) : !externalProjectsCollapsed && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {externalProjects.map((p: any) => renderCard(p, false))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tất cả tab — primary-WS projects + external-WS projects
+                  where the user actually participates. The two sub-sections
+                  keep the previous layout so a Leader can scan primary vs.
+                  external in one view, while the Phụ trách and Tham gia
+                  ngoài tabs use the stricter PM/Project Leader and
+                  membership-only filters required by spec 2.1 / 2.3 / 2.4. */}
+              {projectFilterMode === 'all' && ownedProjects.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-3 gap-3">
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-500">Dự án Workspace Chính</h4>
+                    <p className="text-[10px] text-slate-400">Mọi dự án thuộc workspace chính — Leader có quyền xem mà không cần là thành viên dự án.</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {ownedProjects.map((p: any) => renderCard(p, true))}
@@ -2040,7 +2221,7 @@ export default function OverviewTab() {
                 </div>
               )}
 
-              {projectFilterMode !== 'owned' && externalProjects.length > 0 && (
+              {projectFilterMode === 'all' && externalProjects.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between gap-3 mb-3 p-3 bg-purple-50/60 border border-purple-100 rounded-xl text-[11px] font-semibold text-purple-800">
                     <span>↗ <strong>Dự án liên workspace:</strong> chỉ hiển thị contribution, deadline chung và tiến độ/risk được chia sẻ — không mở toàn bộ chi tiết dự án.</span>
@@ -2059,11 +2240,14 @@ export default function OverviewTab() {
                 </div>
               )}
 
-              {projectFilterMode === 'owned' && ownedProjects.length === 0 && (
-                <p className="text-xs text-slate-400 font-semibold py-8 text-center">Không có dự án nào thuộc workspace chính trong kỳ này.</p>
+              {projectFilterMode === 'all' && ownedProjects.length === 0 && externalProjects.length === 0 && (
+                <p className="text-xs text-slate-400 font-semibold py-8 text-center">Chưa có dự án nào trong kỳ này.</p>
+              )}
+              {projectFilterMode === 'owned' && responsibleProjects.length === 0 && (
+                <p className="text-xs text-slate-400 font-semibold py-8 text-center">Bạn hiện không phụ trách dự án nào trong kỳ này.</p>
               )}
               {projectFilterMode === 'external' && externalProjects.length === 0 && (
-                <p className="text-xs text-slate-400 font-semibold py-8 text-center">Không tham gia dự án ngoài workspace nào trong kỳ này.</p>
+                <p className="text-xs text-slate-400 font-semibold py-8 text-center">Bạn không tham gia dự án ngoài workspace nào trong kỳ này.</p>
               )}
             </div>
           );
