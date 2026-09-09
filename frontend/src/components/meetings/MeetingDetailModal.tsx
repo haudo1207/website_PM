@@ -222,14 +222,25 @@ export default function MeetingDetailModal({
   const statusUpper = String(meeting.status || 'UPCOMING').toUpperCase();
   const isDone = statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
 
-  // Join Link carry Host authuser — meeting_url in DB always stays clean
-  // (used for copy/email); authuser is appended only here, for the "Tham
-  // gia (Host)" button href, using the meeting's OWN workspace account.
+  // Join Link carry Host authuser — meeting_url in DB is SUPPOSED to always
+  // stay clean (used for copy/email); authuser is appended only here, for
+  // the "Tham gia (Host)" button href, using the meeting's OWN workspace
+  // account. Some older meetings (created/edited before that guarantee
+  // existed) still have authuser baked directly into the stored value, so
+  // strip it defensively here rather than trust the DB — otherwise the
+  // "clean" link/copy button silently carries a stale account forever.
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
-  const baseLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
-  const hostJoinLink = baseLink.includes('authuser=')
-    ? baseLink
-    : `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=${encodeURIComponent(hostGoogleEmail)}`;
+  const rawLinkWithProtocol = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
+  const baseLink = (() => {
+    try {
+      const u = new URL(rawLinkWithProtocol);
+      u.searchParams.delete('authuser');
+      return u.toString();
+    } catch {
+      return rawLinkWithProtocol;
+    }
+  })();
+  const hostJoinLink = `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=${encodeURIComponent(hostGoogleEmail)}`;
 
   // Real AI & Summary Data
   const execSummary = meeting.executive_summary || (meeting.ai_summary?.executive_summary) || (Array.isArray(meeting.summary) && meeting.summary.length ? meeting.summary[0] : '');
@@ -414,6 +425,9 @@ export default function MeetingDetailModal({
         const taskGroup = taskGroupMap[idx];
         const edit = taskEditMap[idx] || {};
         const assignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
+        const support = taskSupportMap[idx];
+        const skillSolution = taskSkillSolutionMap[idx];
+        const skillVendor = taskSkillVendorMap[idx];
         const mandayRaw = edit.manday_est ?? t.manday_est;
         const manday = mandayRaw === '' || mandayRaw === undefined || mandayRaw === null ? undefined : Number(mandayRaw);
         return {
@@ -425,6 +439,13 @@ export default function MeetingDetailModal({
           // thật) — gửi kèm assigned_id để backend dùng thẳng, khỏi phải dò tên nữa.
           assigned_id: assignee?.id,
           assigned_name: assignee?.name || t.assigned_name || t.owner,
+          // Support/Skill Solution/Skill Vendor cũng được chọn trực tiếp trên bảng
+          // (SearchableSelect) — trước đây bị bỏ sót khỏi payload nên lựa chọn của
+          // reviewer luôn bị rơi mất, backend lại tự fallback về Group/Skill đầu
+          // tiên trong DB (sai dữ liệu). Giờ gửi kèm để backend dùng đúng lựa chọn.
+          support_id: support?.id,
+          skill_solution_id: skillSolution?.id,
+          skill_vendor_id: skillVendor?.id,
           project_id: selectedPid,
           project_name: selectedProj?.name || t.project_name || localProjectName,
           phase_id: phase?.id,

@@ -17,6 +17,12 @@ interface MeetingFormData {
   time: string;
   duration: string;
   link: string;
+  // Stamped by handleGenerateLink alongside `link` — carried into the create/
+  // update payload so the backend can record the REAL Calendar event/organizer
+  // from that exact call instead of leaving both NULL (meeting_url already
+  // being non-empty by then makes create_meeting skip its own creation path).
+  google_event_id?: string;
+  organizer_google_email?: string;
   transcript?: string;
   auto_summarize?: boolean;
   objective?: string;
@@ -411,7 +417,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       });
       if (data.success && data.join_url) {
         const fullUrl = data.join_url.startsWith('http') ? data.join_url : `https://${data.join_url}`;
-        setFormData(prev => ({ ...prev, link: fullUrl }));
+        setFormData(prev => ({
+          ...prev,
+          link: fullUrl,
+          google_event_id: data.google_event_id,
+          organizer_google_email: data.organizer_google_email,
+        }));
       } else {
         setError('Không thể tạo link meeting tự động');
       }

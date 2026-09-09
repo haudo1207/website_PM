@@ -165,13 +165,18 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
 
     proj_name = m.project.name if m.project else "Dự án chung"
 
-    # Which Google account actually organizes this meeting's Meet event —
-    # the workspace's own connected WorkspaceGoogleAccount if set, else the
-    # workspace's expected_google_email hint, else the historical shared
-    # default account. Drives the "Host" badge/join link on the FE so it
-    # reflects the real per-workspace account instead of a hard-coded one.
-    host_google_email = "mkt.szone@gmail.com"
-    if db is not None:
+    # Which Google account actually organizes this meeting's Meet event.
+    # m.organizer_google_email is the Calendar-confirmed ground truth for
+    # THIS specific event, captured once at creation/regeneration time — it
+    # must win whenever set, because the live workspace-connection lookup
+    # below reflects CURRENT status and can drift from what the event was
+    # actually organized under (e.g. the workspace connected its own account
+    # only *after* this meeting was created — the live lookup would then
+    # wrongly show the new account even though Calendar still admits only
+    # the old organizer). Falls back to the live best-effort guess only for
+    # meetings created before this column existed.
+    host_google_email = m.organizer_google_email or "mkt.szone@gmail.com"
+    if not m.organizer_google_email and db is not None:
         try:
             from ..services.meeting_sync import is_workspace_google_connected
             ws_id = workspace_id_for_project(db, m.project)
@@ -430,7 +435,11 @@ def list_meetings(
         ))
 
     if project_id is not None:
-        q = q.filter(Meeting.project_id == project_id)
+        # Match meetings where this is the primary project OR one of the
+        # extra linked projects (meeting_projects) — a meeting assigned to
+        # several projects must show up under every one of them.
+        meetings_via_extra_pid = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id == project_id)
+        q = q.filter(or_(Meeting.project_id == project_id, Meeting.id.in_(meetings_via_extra_pid)))
     if status:
         # Resolve status filter name
         db_status = STATUS_FE_TO_DB.get(status.upper(), status.upper())
@@ -512,7 +521,18 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
             workspace_id = workspace_id_for_project(db, proj)
             result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
             notify_n8n_meeting_created(db, result.get("mk_tag"), title, meeting_date, start_time, workspace_id)
-            return {"success": True, "join_url": result["join_url"], "platform": "Google Meet"}
+            return {
+                "success": True,
+                "join_url": result["join_url"],
+                "platform": "Google Meet",
+                # Carried by the FE into the create/update-meeting payload so
+                # the eventual Meeting row can be stamped with the REAL event
+                # id/organizer from this exact creation call, instead of
+                # create_meeting() silently skipping that (meeting_url is
+                # already non-empty by then) and leaving both fields NULL.
+                "google_event_id": result.get("id"),
+                "organizer_google_email": result.get("organizer_google_email"),
+            }
         except Exception as e:
             logger.error(f"Generate Google Meet link failed: {e}")
             raise HTTPException(status_code=400, detail=str(e))
@@ -779,7 +799,13 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # Handle Link mappings — auto-generate if empty
     meeting_url = body.get("meeting_url") or body.get("link")
     platform = body.get("platform") or "Google Meet"
-    google_event_id = None
+    # Google Meet links are now generated up-front by POST /generate-link
+    # (see CreateMeetingModal's locked-down "Tạo link Google Meet" flow), so
+    # meeting_url usually already arrives non-empty here and the branch below
+    # never runs — carry the event id/organizer that call already captured
+    # instead of silently leaving both NULL for every meeting created this way.
+    google_event_id = body.get("google_event_id")
+    organizer_google_email = body.get("organizer_google_email")
 
     if not meeting_url:
         # Build ISO start_time for API calls
@@ -808,6 +834,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                 result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
                 meeting_url = result["join_url"]
                 google_event_id = result.get("id")
+                organizer_google_email = result.get("organizer_google_email")
                 notify_n8n_meeting_created(db, result.get("mk_tag"), title, meeting_date, start_time, workspace_id)
             except Exception as e:
                 logger.error(f"Auto-generate Google Meet link failed: {e}")
@@ -832,6 +859,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         platform=body.get("platform"),
         meeting_url=meeting_url,
         google_event_id=google_event_id,
+        organizer_google_email=organizer_google_email,
         meeting_date=meeting_date,
         start_time=start_time,
         end_time=end_time,
@@ -955,6 +983,14 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     m.description = body.get("description", m.description)
     m.platform = body.get("platform", m.platform)
     m.meeting_url = body.get("meeting_url") or body.get("link") or m.meeting_url
+    # Only overwrite when the FE actually regenerated a link this edit (see
+    # CreateMeetingModal's "🔄 Tạo lại" flow, which calls /generate-link again
+    # and resends these two alongside the new meeting_url) — a plain
+    # date/time edit sends neither, so the original organizer/event stays put.
+    if body.get("google_event_id"):
+        m.google_event_id = body.get("google_event_id")
+    if body.get("organizer_google_email"):
+        m.organizer_google_email = body.get("organizer_google_email")
     m.meeting_date = new_date
 
     # Support time mappings

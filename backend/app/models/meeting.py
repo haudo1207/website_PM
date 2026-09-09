@@ -16,6 +16,14 @@ class Meeting(Base):
     # NULL for meetings without an auto-generated Google Meet link (manual link,
     # Zoom, Teams, or created before this column existed).
     google_event_id = Column(String(255), nullable=True)
+    # The Google account that actually organizes this meeting's Calendar
+    # event — captured once, straight from the Calendar API response, at
+    # creation/regeneration time (see meeting_sync.create_google_meet_shared).
+    # Frozen for this specific meeting: unlike a live per-workspace lookup,
+    # it can't drift if the workspace's Google account connection changes
+    # later. NULL for meetings created before this column existed, or for
+    # non-Google-Meet platforms.
+    organizer_google_email = Column(String(255), nullable=True)
     meeting_date = Column(Date, nullable=False)
     start_time   = Column(Time, nullable=False)
     end_time     = Column(Time, nullable=True)

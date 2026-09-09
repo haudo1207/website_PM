@@ -531,7 +531,16 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
         "google_event_id": data.get("id"),
         "meet_link": meet_link or f"https://meet.google.com/{meeting_code}" if meeting_code else "",
         "meeting_code": meeting_code,
-        "mk_tag": meeting_id
+        "mk_tag": meeting_id,
+        # Ground truth for "who can actually admit people from the waiting
+        # room" — Calendar's own record of who organizes this exact event,
+        # straight from the API response (whichever token/account actually
+        # created it). Do NOT substitute a live-recomputed workspace lookup
+        # here: that reflects CURRENT connection status, which can drift from
+        # whatever account genuinely organized this event back when it was
+        # created (e.g. workspace connected later) — see meeting_to_dict's
+        # host_google_email, which must prefer this frozen value once stored.
+        "organizer_google_email": data.get("organizer", {}).get("email"),
     }
 
 
@@ -620,7 +629,12 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
             workspace_id=workspace_id
         )
         if res.get("meet_link"):
-            return {"join_url": res["meet_link"], "id": res.get("google_event_id"), "mk_tag": res.get("mk_tag")}
+            return {
+                "join_url": res["meet_link"],
+                "id": res.get("google_event_id"),
+                "mk_tag": res.get("mk_tag"),
+                "organizer_google_email": res.get("organizer_google_email"),
+            }
         else:
             raise ValueError("Google Calendar không trả về meet_link hợp lệ")
     except Exception as e:
