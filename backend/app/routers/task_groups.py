@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import math
 from datetime import timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func as sql_func
+from sqlalchemy import func as sql_func, delete
 from decimal import Decimal
 from ..database import get_db
 from ..models.phase import Phase
@@ -379,6 +379,59 @@ def open_gap_for_insertion(level_prefix: str, insert_seq: int, gid: int, db: Ses
             d.task_code = f"{new_code}." + d.task_code[len(old_desc_prefix):]
 
 
+def rebuild_group_task_codes(group_id: int, group_index: int, db: Session):
+    """Rebuild every Task's task_code in `group_id` under the given
+    group_index prefix, preserving relative sibling order and nesting depth
+    (sub-tasks stay nested under their parent's new code) — depth-first, same
+    approach as reorder_tasks(), just renumbering instead of resequencing.
+    Must be called for EVERY group whose rank within its Phase changed, not
+    just the one that was directly moved — inserting/removing a group at
+    position N shifts the index of every group after it too."""
+    all_tasks = db.query(Task).filter(Task.task_group_id == group_id).all()
+    if not all_tasks:
+        return
+    original_code_by_id = {t.id: t.task_code for t in all_tasks}
+    task_by_original_code = {
+        code: t for t in all_tasks if (code := original_code_by_id[t.id])
+    }
+    depth_by_id = {
+        t.id: (original_code_by_id[t.id] or "").count(".") for t in all_tasks
+    }
+
+    def original_parent_id(t):
+        parent_code = get_parent_code(original_code_by_id[t.id])
+        parent_task = task_by_original_code.get(parent_code)
+        return parent_task.id if parent_task else None
+
+    buckets = {}
+    for t in all_tasks:
+        buckets.setdefault(original_parent_id(t), []).append(t)
+    for sibling_list in buckets.values():
+        sibling_list.sort(key=lambda t: get_own_seq(original_code_by_id[t.id]) or 0)
+
+    new_code_by_id = {}
+
+    def new_prefix_for(pid):
+        if pid is None:
+            return f"{group_index}."
+        return f"{new_code_by_id[pid]}."
+
+    # Shallowest levels first so a parent's new code is finalized before its
+    # children's bucket computes its new prefix from it.
+    for pid in sorted(buckets.keys(), key=lambda k: depth_by_id[k] if k is not None else -1):
+        prefix = new_prefix_for(pid)
+        for seq, t in enumerate(buckets[pid], start=1):
+            new_code_by_id[t.id] = f"{prefix}{seq}"
+
+    for t in all_tasks:
+        new_code = new_code_by_id.get(t.id)
+        if new_code and t.task_code != new_code:
+            t.task_code = new_code
+
+    db.flush()
+    resync_group_sort_order(group_id, db)
+
+
 def resync_group_sort_order(gid: int, db: Session):
     """Keep sort_order in lockstep with task_code's hierarchical display order
     (parent, then its own children in order, then the next sibling — exactly
@@ -521,20 +574,53 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
     assigned_ids = validate_member_ids_for_project(body.get("assigned_ids"), phase.project_id, db, "Người thực hiện")
     support_ids = validate_member_ids_for_project(body.get("support_ids"), phase.project_id, db, "SP")
 
-    max_order = db.query(sql_func.max(TaskGroup.sort_order)).filter(TaskGroup.phase_id == phid).scalar() or 0
+    # Position the new group: at a specific spot if the caller supplied one
+    # (insert_before_group_id / insert_after_group_id), otherwise append at
+    # the end like before. Inserting in the middle shifts every group after
+    # it, so their task_code prefixes (= their rank) must be rebuilt too —
+    # same helper move_task_group_to_phase() already uses.
+    existing_groups = (
+        db.query(TaskGroup)
+        .filter(TaskGroup.phase_id == phid)
+        .order_by(TaskGroup.sort_order, TaskGroup.id)
+        .all()
+    )
+    insert_before_group_id = body.get("insert_before_group_id")
+    insert_after_group_id = body.get("insert_after_group_id")
+    if insert_before_group_id:
+        insert_idx = next((i for i, g in enumerate(existing_groups) if g.id == insert_before_group_id), None)
+        if insert_idx is None:
+            raise HTTPException(400, "insert_before_group_id was not found in this phase.")
+    elif insert_after_group_id:
+        anchor_idx = next((i for i, g in enumerate(existing_groups) if g.id == insert_after_group_id), None)
+        if anchor_idx is None:
+            raise HTTPException(400, "insert_after_group_id was not found in this phase.")
+        insert_idx = anchor_idx + 1
+    else:
+        insert_idx = len(existing_groups)
+
     tg = TaskGroup(
         phase_id=phid,
         name=name,
         description=body.get("description"),
         status=body.get("status", "Waiting"),
         manday_est=manday_est,
-        sort_order=max_order + 1,
+        sort_order=0,
         start_date_est=parse_date(body.get("start_date_est")),
         assigned_ids=assigned_ids,
         support_ids=support_ids,
     )
     tg = recalculate_task_group_dates(tg, db)
     db.add(tg)
+    db.flush()
+
+    new_order = existing_groups[:insert_idx] + [tg] + existing_groups[insert_idx:]
+    for seq, g in enumerate(new_order, start=1):
+        g.sort_order = seq
+    db.flush()
+    for seq, g in enumerate(new_order, start=1):
+        rebuild_group_task_codes(g.id, seq, db)
+
     db.commit()
     db.refresh(tg)
     AuditService.record(
@@ -549,6 +635,34 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
     )
     db.commit()
     return serialize_task_group(tg, db)
+
+
+@router.patch("/phases/{phid}/task-groups/reorder")
+def reorder_task_groups(phid: int, body: dict, db: Session = Depends(get_db)):
+    """Expects body: { "order": [gid1, gid2, gid3, ...] } — the full new order
+    of every Task Group in this Phase. Reordering shifts every Group's rank
+    within the Phase (not just whichever one the user actually dragged), and
+    task_code's prefix IS that rank — so every affected Group's Tasks must be
+    renumbered too, the same way move_task_group_to_phase() already does.
+
+    Registered BEFORE the /{gid} route below on purpose: Starlette matches
+    routes in registration order, and a bare {gid} segment matches ANY
+    string including the literal "reorder" — so if this route came after,
+    PATCH .../task-groups/reorder would be swallowed by update_task_group's
+    {gid} route instead, which then 422s trying to parse "reorder" as an
+    int. Same fix applied to /task-groups/{gid}/tasks/reorder below."""
+    order = body.get("order", [])
+    moved_groups = []
+    for idx, gid in enumerate(order):
+        tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
+        if tg:
+            tg.sort_order = idx
+            moved_groups.append(tg)
+    db.flush()
+    for seq, tg in enumerate(moved_groups, start=1):
+        rebuild_group_task_codes(tg.id, seq, db)
+    db.commit()
+    return {"ok": True}
 
 
 @router.patch("/phases/{phid}/task-groups/{gid}")
@@ -655,15 +769,39 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
 
 @router.delete("/phases/{phid}/task-groups/{gid}")
 def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Cascade-deletes the Task Group and every Task in it (sub-tasks
+    included — a sub-task lives under the SAME task_group_id, just with a
+    longer dotted task_code, so deleting by task_group_id already covers
+    them) in a single transaction: nothing commits until the whole cascade
+    (link documents, Tasks, the Group itself, then re-indexing the Phase's
+    remaining Groups) has succeeded."""
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
     if not tg:
         raise HTTPException(404, "Task group not found.")
-    task_count = db.query(Task).filter(Task.task_group_id == gid).count()
-    if task_count > 0:
-        raise HTTPException(400, f"Không thể xóa Task Group vì còn {task_count} Task. Hãy xóa hết Task trước.")
     tg_name = tg.name
     project_id = tg.phase.project_id if tg.phase else None
+
+    tasks_in_group = db.query(Task).filter(Task.task_group_id == gid).all()
+    deleted_task_count = len(tasks_in_group)
+    if tasks_in_group:
+        delete_task_link_documents(db, [t.id for t in tasks_in_group])
+        db.execute(delete(Task).where(Task.task_group_id == gid))
+
     db.delete(tg)
+    db.flush()
+
+    # Close the gap this Group's removal left in its Phase's ranking — every
+    # remaining Group after it shifts down one rank, and their task_code
+    # prefixes (= their rank) must be rebuilt to match.
+    remaining_groups = (
+        db.query(TaskGroup).filter(TaskGroup.phase_id == phid).order_by(TaskGroup.sort_order, TaskGroup.id).all()
+    )
+    for seq, g in enumerate(remaining_groups, start=1):
+        g.sort_order = seq
+    db.flush()
+    for seq, g in enumerate(remaining_groups, start=1):
+        rebuild_group_task_codes(g.id, seq, db)
+
     db.commit()
     AuditService.record(
         db=db,
@@ -673,44 +811,92 @@ def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db), curren
         entity_id=gid,
         action="DELETE",
         project_id=project_id,
-        description=f"Đã xóa Task Cha '{tg_name}'"
+        severity="CRITICAL",
+        description=f"Đã xóa Task Cha '{tg_name}' — kèm theo {deleted_task_count} Task (bao gồm sub-task)"
     )
     db.commit()
-    return {"ok": True}
-
-
-@router.patch("/phases/{phid}/task-groups/reorder")
-def reorder_task_groups(phid: int, body: dict, db: Session = Depends(get_db)):
-    """Expects body: { "order": [gid1, gid2, gid3, ...] }"""
-    order = body.get("order", [])
-    for idx, gid in enumerate(order):
-        tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
-        if tg:
-            tg.sort_order = idx
-    db.commit()
-    return {"ok": True}
+    return {"ok": True, "deleted_task_count": deleted_task_count}
 
 
 @router.post("/phases/{phid}/task-groups/{gid}/move")
 def move_task_group_to_phase(phid: int, gid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Move a Task Group to a different Phase — optionally to a precise
+    position (insert_before_group_id / insert_after_group_id, the DB id of a
+    sibling Group already in the target Phase; before wins if both are given,
+    same priority as move_task()'s insert_before/after_task_id). Defaults to
+    appending at the end of the target Phase when no position is given. Works
+    identically for a same-Phase reorder (target_phase_id == phid).
+
+    The Group's Tasks (and their sub-tasks) have no phase_id of their own —
+    they belong to the Group, so they move along with it. task_code's prefix
+    is the Group's rank within its OWN Phase, which just changed, so every
+    Task's code must be rebuilt under the new prefix — same depth-first,
+    order-preserving approach as reorder_tasks(), just renumbering instead of
+    resequencing."""
     target_phase_id = body.get("target_phase_id")
     if not target_phase_id:
         raise HTTPException(400, "target_phase_id is required.")
-        
+
     tg = db.query(TaskGroup).filter(TaskGroup.id == gid, TaskGroup.phase_id == phid).first()
     if not tg:
         raise HTTPException(404, "Task group not found in this phase.")
-        
+
     target_phase = db.query(Phase).filter(Phase.id == target_phase_id).first()
     if not target_phase:
         raise HTTPException(404, "Target Phase not found.")
     require_project(db, current_user, target_phase.project_id)
-        
-    max_order = db.query(sql_func.max(TaskGroup.sort_order)).filter(TaskGroup.phase_id == target_phase_id).scalar() or 0
-    
+
+    insert_before_group_id = body.get("insert_before_group_id")
+    insert_after_group_id = body.get("insert_after_group_id")
+
+    # Every OTHER group already in the target Phase, in current display order
+    # (the moving group itself is excluded — for a same-Phase move it's
+    # already in this list under its old position, which we don't want).
+    other_groups = (
+        db.query(TaskGroup)
+        .filter(TaskGroup.phase_id == target_phase_id, TaskGroup.id != gid)
+        .order_by(TaskGroup.sort_order, TaskGroup.id)
+        .all()
+    )
+
+    if insert_before_group_id:
+        insert_idx = next((i for i, g in enumerate(other_groups) if g.id == insert_before_group_id), None)
+        if insert_idx is None:
+            raise HTTPException(400, "insert_before_group_id was not found in the target phase.")
+    elif insert_after_group_id:
+        anchor_idx = next((i for i, g in enumerate(other_groups) if g.id == insert_after_group_id), None)
+        if anchor_idx is None:
+            raise HTTPException(400, "insert_after_group_id was not found in the target phase.")
+        insert_idx = anchor_idx + 1
+    else:
+        insert_idx = len(other_groups)  # append at the end — pre-existing default behavior
+
+    new_order = other_groups[:insert_idx] + [tg] + other_groups[insert_idx:]
+    for seq, g in enumerate(new_order, start=1):
+        g.sort_order = seq
     tg.phase_id = target_phase_id
-    tg.sort_order = max_order + 1
-    
+    db.flush()
+
+    # Cross-Phase move: close the numbering gap left behind in the source
+    # Phase's remaining groups (same-Phase move already resequenced above).
+    source_groups = []
+    if target_phase_id != phid:
+        source_groups = (
+            db.query(TaskGroup).filter(TaskGroup.phase_id == phid).order_by(TaskGroup.sort_order, TaskGroup.id).all()
+        )
+        for seq, g in enumerate(source_groups, start=1):
+            g.sort_order = seq
+        db.flush()
+
+    # Rebuild task_code for EVERY group whose rank may have shifted — not
+    # just the one that moved. Inserting/removing at position N shifts every
+    # group after it too (both in the target Phase, and in the source Phase
+    # if this was a cross-Phase move).
+    for seq, g in enumerate(new_order, start=1):
+        rebuild_group_task_codes(g.id, seq, db)
+    for seq, g in enumerate(source_groups, start=1):
+        rebuild_group_task_codes(g.id, seq, db)
+
     db.commit()
     db.refresh(tg)
     return serialize_task_group(tg, db)
@@ -1341,6 +1527,81 @@ def copy_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=De
     )
     db.commit()
     return serialize_task(new_task, db)
+
+
+@router.patch("/task-groups/{gid}/tasks/reorder")
+def reorder_tasks(gid: int, body: dict, db: Session = Depends(get_db)):
+    """Expects body: { "order": [tid1, tid2, tid3, ...] } — the full new
+    flattened order of every task in this group (parents and children
+    interleaved as displayed). The frontend renders/sorts tasks by task_code,
+    not sort_order, so a drag-and-drop reorder must renumber task_code to
+    match the new order — otherwise the reorder has no visible effect after
+    reload (sort_order alone silently drifts out of sync with the display).
+
+    Registered BEFORE the /{tid} route below on purpose: Starlette matches
+    routes in registration order, and a bare {tid} segment matches ANY
+    string including the literal "reorder" — so if this route came after,
+    PATCH .../tasks/reorder would be swallowed by update_task's {tid} route
+    instead, which then 422s trying to parse "reorder" as an int."""
+    order = body.get("order", [])
+    if not order:
+        return {"ok": True}
+
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    group_index = get_group_index(tg, db) if tg else 1
+
+    tasks_by_id = {
+        t.id: t for t in db.query(Task).filter(Task.task_group_id == gid, Task.id.in_(order)).all()
+    }
+    ordered_tasks = [tasks_by_id[tid] for tid in order if tid in tasks_by_id]
+    if not ordered_tasks:
+        return {"ok": True}
+
+    # Nesting doesn't change via this drag — only the relative order of
+    # siblings within each level does. Parentage must be pinned by stable
+    # object identity (task.id) up front, captured from the ORIGINAL codes,
+    # because string prefixes shift as siblings get renumbered below.
+    original_code_by_id = {t.id: t.task_code for t in ordered_tasks}
+    task_by_original_code = {
+        code: t for t in ordered_tasks if (code := original_code_by_id[t.id])
+    }
+    depth_by_id = {
+        t.id: (original_code_by_id[t.id] or "").count(".") for t in ordered_tasks
+    }
+
+    def original_parent_id(t):
+        parent_code = get_parent_code(original_code_by_id[t.id])
+        parent_task = task_by_original_code.get(parent_code)
+        return parent_task.id if parent_task else None
+
+    buckets = {}
+    for t in ordered_tasks:
+        buckets.setdefault(original_parent_id(t), []).append(t)
+
+    new_code_by_id = {}
+
+    def new_prefix_for(pid):
+        if pid is None:
+            return f"{group_index}."
+        return f"{new_code_by_id[pid]}."
+
+    # Process shallowest levels first so a parent's new code is finalized
+    # before its children's bucket computes its new prefix from it.
+    for pid in sorted(buckets.keys(), key=lambda k: depth_by_id[k] if k is not None else -1):
+        prefix = new_prefix_for(pid)
+        for seq, t in enumerate(buckets[pid], start=1):
+            new_code_by_id[t.id] = f"{prefix}{seq}"
+
+    for t in ordered_tasks:
+        new_code = new_code_by_id.get(t.id)
+        if new_code and t.task_code != new_code:
+            t.task_code = new_code
+
+    db.flush()
+    resync_group_sort_order(gid, db)
+
+    db.commit()
+    return {"ok": True}
 
 
 @router.patch("/task-groups/{gid}/tasks/{tid}")
@@ -2131,72 +2392,3 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
     db.commit()
     db.refresh(task)
     return serialize_task(task, db)
-
-
-@router.patch("/task-groups/{gid}/tasks/reorder")
-def reorder_tasks(gid: int, body: dict, db: Session = Depends(get_db)):
-    """Expects body: { "order": [tid1, tid2, tid3, ...] } — the full new
-    flattened order of every task in this group (parents and children
-    interleaved as displayed). The frontend renders/sorts tasks by task_code,
-    not sort_order, so a drag-and-drop reorder must renumber task_code to
-    match the new order — otherwise the reorder has no visible effect after
-    reload (sort_order alone silently drifts out of sync with the display)."""
-    order = body.get("order", [])
-    if not order:
-        return {"ok": True}
-
-    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
-    group_index = get_group_index(tg, db) if tg else 1
-
-    tasks_by_id = {
-        t.id: t for t in db.query(Task).filter(Task.task_group_id == gid, Task.id.in_(order)).all()
-    }
-    ordered_tasks = [tasks_by_id[tid] for tid in order if tid in tasks_by_id]
-    if not ordered_tasks:
-        return {"ok": True}
-
-    # Nesting doesn't change via this drag — only the relative order of
-    # siblings within each level does. Parentage must be pinned by stable
-    # object identity (task.id) up front, captured from the ORIGINAL codes,
-    # because string prefixes shift as siblings get renumbered below.
-    original_code_by_id = {t.id: t.task_code for t in ordered_tasks}
-    task_by_original_code = {
-        code: t for t in ordered_tasks if (code := original_code_by_id[t.id])
-    }
-    depth_by_id = {
-        t.id: (original_code_by_id[t.id] or "").count(".") for t in ordered_tasks
-    }
-
-    def original_parent_id(t):
-        parent_code = get_parent_code(original_code_by_id[t.id])
-        parent_task = task_by_original_code.get(parent_code)
-        return parent_task.id if parent_task else None
-
-    buckets = {}
-    for t in ordered_tasks:
-        buckets.setdefault(original_parent_id(t), []).append(t)
-
-    new_code_by_id = {}
-
-    def new_prefix_for(pid):
-        if pid is None:
-            return f"{group_index}."
-        return f"{new_code_by_id[pid]}."
-
-    # Process shallowest levels first so a parent's new code is finalized
-    # before its children's bucket computes its new prefix from it.
-    for pid in sorted(buckets.keys(), key=lambda k: depth_by_id[k] if k is not None else -1):
-        prefix = new_prefix_for(pid)
-        for seq, t in enumerate(buckets[pid], start=1):
-            new_code_by_id[t.id] = f"{prefix}{seq}"
-
-    for t in ordered_tasks:
-        new_code = new_code_by_id.get(t.id)
-        if new_code and t.task_code != new_code:
-            t.task_code = new_code
-
-    db.flush()
-    resync_group_sort_order(gid, db)
-
-    db.commit()
-    return {"ok": True}

@@ -165,6 +165,22 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
 
     proj_name = m.project.name if m.project else "Dự án chung"
 
+    # Which Google account actually organizes this meeting's Meet event —
+    # the workspace's own connected WorkspaceGoogleAccount if set, else the
+    # workspace's expected_google_email hint, else the historical shared
+    # default account. Drives the "Host" badge/join link on the FE so it
+    # reflects the real per-workspace account instead of a hard-coded one.
+    host_google_email = "mkt.szone@gmail.com"
+    if db is not None:
+        try:
+            from ..services.meeting_sync import is_workspace_google_connected
+            ws_id = workspace_id_for_project(db, m.project)
+            if ws_id:
+                status = is_workspace_google_connected(db, ws_id)
+                host_google_email = status.get("google_email") or status.get("expected_google_email") or host_google_email
+        except Exception as e:
+            logger.warning(f"Failed to resolve host_google_email for meeting {m.id}: {e}")
+
     # Primary project (m.project_id) first, then any extra linked projects —
     # dedup by id so the primary never shows twice if also linked as "extra".
     project_ids = [m.project_id] if m.project_id else []
@@ -274,7 +290,7 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
     custom_only = [cm for cm in custom_members if cm.get("display_name") not in db_member_names]
     final_members = db_members + custom_only
 
-    host_name = m.creator.display_name if m.creator else "Host mkt.szone"
+    host_name = m.creator.display_name if m.creator else f"Host {host_google_email.split('@')[0]}"
     if not final_members:
         final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}]
     else:
@@ -317,6 +333,7 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
         "projects": projects_list,
         "created_by": m.created_by,
         "creator_name": m.creator.display_name if m.creator else None,
+        "host_google_email": host_google_email,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
         "members": final_members,

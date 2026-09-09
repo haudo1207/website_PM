@@ -13,7 +13,8 @@ import {
   getProjectTemplates,
   applyProjectTemplate,
   getWorkspaces,
-  Workspace
+  Workspace,
+  getApiErrorMessage
 } from '@/lib/api';
 
 const PROJECT_PHASES = [
@@ -257,10 +258,10 @@ export default function ProjectFormModal({
         result = await createProject(payload);
         if (result && result.id && selectedTemplateId) {
           try {
-            await applyProjectTemplate(Number(selectedTemplateId), result.id);
-            onFlash('Đã tạo dự án và áp dụng template thành công');
+            const applyResult = await applyProjectTemplate(Number(selectedTemplateId), result.id);
+            onFlash(`Đã tạo dự án và áp dụng template thành công (${applyResult?.created_phase_count ?? 0} phase, ${applyResult?.created_group_count ?? 0} task group, ${applyResult?.created_task_count ?? 0} task)`);
           } catch (applyErr: any) {
-            onFlash('Đã tạo dự án nhưng áp dụng template thất bại: ' + (applyErr?.response?.data?.detail || applyErr?.message || 'Lỗi'), true);
+            onFlash('Đã tạo dự án nhưng áp dụng template thất bại: ' + getApiErrorMessage(applyErr, 'Lỗi'), true);
           }
         } else {
           onFlash('Đã tạo dự án mới thành công');
@@ -273,7 +274,7 @@ export default function ProjectFormModal({
       onClose();
       onSaved(result);
     } catch (err: any) {
-      onFlash('Lỗi lưu thông tin dự án: ' + (err.response?.data?.detail || err.message), true);
+      onFlash('Lỗi lưu thông tin dự án: ' + getApiErrorMessage(err), true);
     } finally {
       setActionLoading(false);
     }
@@ -507,19 +508,28 @@ export default function ProjectFormModal({
                   >
                     <option value="">None (Không áp dụng template)</option>
                     {templates.map(t => (
-                      <option key={t.id} value={t.id}>{t.name} ({t.phases?.length || 18} phases)</option>
+                      <option key={t.id} value={t.id}>{t.name} ({(t.phases || []).filter((p: any) => p.is_active !== false).length} phases)</option>
                     ))}
                   </select>
 
-                  {selectedTemplateId && (
-                    <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-3 text-[11px] font-bold text-emerald-800 animate-in fade-in">
-                      <span className="flex items-center gap-1">✓ 18 Phase</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1">✓ 35 Task Group</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1">✓ 220 Tasks</span>
-                    </div>
-                  )}
+                  {selectedTemplateId && (() => {
+                    const selected = templates.find(t => t.id === selectedTemplateId);
+                    const activePhases = (selected?.phases || []).filter((p: any) => p.is_active !== false);
+                    const groupCount = activePhases.reduce((acc: number, p: any) => acc + (p.task_groups?.length || 0), 0);
+                    const taskCount = activePhases.reduce(
+                      (acc: number, p: any) => acc + (p.task_groups || []).reduce((a2: number, g: any) => a2 + (g.tasks?.length || 0), 0),
+                      0
+                    );
+                    return (
+                      <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-3 text-[11px] font-bold text-emerald-800 animate-in fade-in">
+                        <span className="flex items-center gap-1">✓ {activePhases.length} Phase</span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">✓ {groupCount} Task Group</span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">✓ {taskCount} Tasks</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -556,7 +566,7 @@ export default function ProjectFormModal({
                 </div>
                 <div>
                   <span className="text-slate-400 block">Template:</span>
-                  <span className="font-bold text-slate-800 truncate block">{selectedTemplateId ? 'Standard Template' : 'None'}</span>
+                  <span className="font-bold text-slate-800 truncate block">{selectedTemplateId ? (templates.find(t => t.id === selectedTemplateId)?.name || 'Không xác định') : 'None'}</span>
                 </div>
               </div>
             </div>

@@ -762,7 +762,11 @@ def create_workspace(body: dict, db: Session = Depends(get_db), current_user=Dep
         raise HTTPException(400, f"Workspace '{name}' đã tồn tại")
     if db.query(Workspace).filter(Workspace.code == code).first():
         raise HTTPException(400, f"Mã workspace '{code}' đã tồn tại")
-    w = Workspace(name=name, code=code, description=body.get("description") or None)
+    w = Workspace(
+        name=name, code=code, description=body.get("description") or None,
+        n8n_webhook_url=body.get("n8n_webhook_url") or None,
+        expected_google_email=body.get("expected_google_email") or None,
+    )
     db.add(w)
     db.commit()
     db.refresh(w)
@@ -794,9 +798,13 @@ def update_workspace(id: int, body: dict, db: Session = Depends(get_db), current
 
     old_name = w.name
     old_code = w.code
+    old_webhook = w.n8n_webhook_url
+    old_expected_email = w.expected_google_email
     w.name = name
     w.code = code
     w.description = body.get("description") or None
+    w.n8n_webhook_url = body.get("n8n_webhook_url") or None
+    w.expected_google_email = body.get("expected_google_email") or None
 
     # Cascade changes to every entity that stores workspace values
     if old_name.lower() != name.lower():
@@ -813,9 +821,10 @@ def update_workspace(id: int, body: dict, db: Session = Depends(get_db), current
     db.refresh(w)
     AuditService.record_diff(
         db=db, user_id=getattr(current_user, "id", None), module="Workspace", entity_type="Workspace",
-        entity_id=w.id, old_dict={"name": old_name, "code": old_code},
-        new_dict={"name": w.name, "code": w.code},
-        field_labels={"name": "Tên workspace", "code": "Mã workspace"}
+        entity_id=w.id,
+        old_dict={"name": old_name, "code": old_code, "n8n_webhook_url": old_webhook, "expected_google_email": old_expected_email},
+        new_dict={"name": w.name, "code": w.code, "n8n_webhook_url": w.n8n_webhook_url, "expected_google_email": w.expected_google_email},
+        field_labels={"name": "Tên workspace", "code": "Mã workspace", "n8n_webhook_url": "Webhook n8n", "expected_google_email": "Email Google dự kiến"}
     )
     db.commit()
     return w

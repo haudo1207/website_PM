@@ -128,7 +128,11 @@ export default function MeetingDetailModal({
   const [localProjectId, setLocalProjectId] = useState<number | null>(null);
   const [localMembers, setLocalMembers] = useState<any[]>([]);
 
-  const creatorName = meeting?.creator_name || meeting?.creator?.display_name || meeting?.created_by_name || 'Host mkt.szone';
+  // host_google_email is resolved server-side per the meeting's own workspace
+  // (its connected WorkspaceGoogleAccount, or that workspace's expected-email
+  // hint, or the shared default) — never hard-code an account here.
+  const hostGoogleEmail: string = meeting?.host_google_email || 'mkt.szone@gmail.com';
+  const creatorName = meeting?.creator_name || meeting?.creator?.display_name || meeting?.created_by_name || `Host ${hostGoogleEmail.split('@')[0]}`;
 
   // Auto fetch projects list when modal opens
   useEffect(() => {
@@ -218,12 +222,14 @@ export default function MeetingDetailModal({
   const statusUpper = String(meeting.status || 'UPCOMING').toUpperCase();
   const isDone = statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
 
-  // Join Link carry Host authuser
+  // Join Link carry Host authuser — meeting_url in DB always stays clean
+  // (used for copy/email); authuser is appended only here, for the "Tham
+  // gia (Host)" button href, using the meeting's OWN workspace account.
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
   const baseLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
   const hostJoinLink = baseLink.includes('authuser=')
     ? baseLink
-    : `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=mkt.szone@gmail.com`;
+    : `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=${encodeURIComponent(hostGoogleEmail)}`;
 
   // Real AI & Summary Data
   const execSummary = meeting.executive_summary || (meeting.ai_summary?.executive_summary) || (Array.isArray(meeting.summary) && meeting.summary.length ? meeting.summary[0] : '');
@@ -687,10 +693,10 @@ export default function MeetingDetailModal({
                 target="_blank"
                 rel="noreferrer"
                 className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
-                title="Vào Google Meet bằng tài khoản Host mkt.szone@gmail.com"
+                title={`Vào Google Meet bằng tài khoản Host ${hostGoogleEmail}`}
               >
                 <Video size={16} />
-                <span>Tham gia (Host mkt.szone)</span>
+                <span>Tham gia (Host {hostGoogleEmail.split('@')[0]})</span>
                 <ExternalLink size={13} />
               </a>
             </div>

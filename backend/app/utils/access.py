@@ -729,6 +729,52 @@ def is_project_leader(db: Session, user, project_id: int) -> bool:
     ).first() is not None
 
 
+def can_apply_project_template(db: Session, user, project: Project) -> bool:
+    """Apply Template access — narrower than has_full_project_access(): a
+    global Leader must ALSO actually have access to this project's Workspace
+    (checked via user_allowed_scopes(), which is multi-workspace aware —
+    unlike can_access_project()'s Leader branch, which only compares against
+    the user's single primary data_scope column and would wrongly deny a
+    Leader whose access to this Workspace comes from a secondary one).
+    has_full_project_access()'s WRITE_ROLES shortcut is deliberately NOT
+    reused here — it treats "role == leader" as an instant pass with no
+    Workspace check at all, which is exactly the gap this function exists to
+    close for Apply Template specifically.
+
+    Allowed: super_admin; a Leader whose Workspace access covers this
+    project; a Member/Viewer/anyone whose project_members_v2 role for this
+    exact project is 'PM' or 'Leader' (PROJECT_FULL_ACCESS_ROLES). Everyone
+    else (plain Member, Viewer, unrelated user) — denied.
+    """
+    role = getattr(user, "role", None) or ROLE_MEMBER
+    if role == ROLE_SUPER_ADMIN:
+        return True
+
+    if role == ROLE_LEADER:
+        scopes = user_allowed_scopes(db, user)
+        if scopes == ALL_SCOPE or project.data_scope in scopes or project.business == "All":
+            return True
+
+    member_id = getattr(user, "member_id", None)
+    if member_id:
+        row = db.execute(
+            project_members.select().where(
+                project_members.c.project_id == project.id,
+                project_members.c.member_id == member_id,
+                project_members.c.role.in_(PROJECT_FULL_ACCESS_ROLES),
+            )
+        ).first()
+        if row is not None:
+            return True
+
+    return False
+
+
+def require_project_template_access(db: Session, user, project: Project) -> None:
+    if not can_apply_project_template(db, user, project):
+        raise HTTPException(403, "Bạn không có quyền áp dụng template cho dự án này.")
+
+
 def _is_member_of_project(db: Session, user, project_id: int) -> bool:
     """Check if the user's linked member is assigned to the project."""
     if not user.member_id:

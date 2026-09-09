@@ -35,7 +35,10 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
   const execSummary = meeting.executive_summary || (meeting.summary && meeting.summary.length ? meeting.summary[0] : '');
   const hasAISummary = Boolean(execSummary || meeting.ai_summary);
 
-  const creatorName = meeting.creator_name || meeting.creator?.display_name || meeting.created_by_name || 'Host mkt.szone';
+  // host_google_email is resolved server-side per the meeting's own workspace
+  // — never hard-code an account here (see backend meeting_to_dict).
+  const hostGoogleEmail: string = meeting.host_google_email || 'mkt.szone@gmail.com';
+  const creatorName = meeting.creator_name || meeting.creator?.display_name || meeting.created_by_name || `Host ${hostGoogleEmail.split('@')[0]}`;
   const platformName = meeting.platform || 'Google Meet';
   const isN8nSource = meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata;
   const isAutoCreated = Boolean(meeting.is_auto_created ?? meeting.ai_summary?.is_auto_created);
@@ -44,7 +47,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
   const baseLink = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
   const hostJoinLink = baseLink.includes('authuser=')
     ? baseLink
-    : `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=mkt.szone@gmail.com`;
+    : `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=${encodeURIComponent(hostGoogleEmail)}`;
 
   return (
     <div className="bg-white rounded-2xl border border-[#e2e8f0] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -159,7 +162,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
           target="_blank"
           rel="noreferrer"
           className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center gap-1"
-          title="Vào Google Meet bằng tài khoản Host mkt.szone@gmail.com để duyệt người tham gia và bật ghi âm"
+          title={`Vào Google Meet bằng tài khoản Host ${hostGoogleEmail} để duyệt người tham gia và bật ghi âm`}
         >
           <Video size={14} />
           <span>Tham gia (Host)</span>

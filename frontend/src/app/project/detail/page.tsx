@@ -15,6 +15,7 @@ import ProjectPrototypeTab from '@/components/ProjectPrototypeTab';
 import ProjectZaloSummaryTab from '@/components/ProjectZaloSummaryTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProjectFormModal from '@/components/ProjectFormModal';
+import ExportProjectTemplateModal from '@/components/ExportProjectTemplateModal';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import {
   getProjects, getProject, updateProject, deleteProject,
@@ -32,14 +33,15 @@ import {
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup,
   getMe,
-  getProjectAuditLogs
+  getProjectAuditLogs,
+  getApiErrorMessage
 } from '@/lib/api';
-import { isAdmin, isMember, getEmail } from '@/lib/auth';
+import { isAdmin, isSuperAdmin, isMember, getEmail } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import {
   Search, Filter, Columns3, Plus, ChevronDown, ChevronRight, MoreHorizontal,
-  GripVertical, Pencil, Trash2, Copy, RotateCcw, Lock, Expand, Minimize2, X,
-  Bell, Sparkles, Building2, LayoutTemplate, FolderPlus, Pin, PinOff,
+  Pencil, Trash2, Copy, RotateCcw, Lock, Expand, Minimize2, X,
+  Bell, Sparkles, Building2, LayoutTemplate, FileOutput, FolderPlus, Pin, PinOff,
   Users, AlertTriangle, Layers, UserX, ArrowRight, ArrowRightLeft, Clock,
   ArrowUpRight, ArrowDownRight, Minus, Trophy, BarChart3,
   Ban, CheckCircle2,
@@ -302,15 +304,283 @@ function ProjectDetailContent() {
   const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
   const [addingTaskAfterCode, setAddingTaskAfterCode] = useState<string | null>(null);
   const [addingTaskBeforeCode, setAddingTaskBeforeCode] = useState<string | null>(null);
-  const [hoveredSpacerPos, setHoveredSpacerPos] = useState<{ id: string; left: string } | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<number | null>(null);
   const [draggingTaskGroupId, setDraggingTaskGroupId] = useState<number | null>(null);
   const [dragOverTaskId, setDragOverTaskId] = useState<number | null>(null);
+  // Task drag-and-drop: native HTML5 draggable/dragstart already enforces the
+  // browser's own movement threshold before a drag begins, but once it does,
+  // click never fires for that gesture — regardless of how small the actual
+  // movement was. This ref + threshold guards the DROP side instead: any drop
+  // whose total mouse movement stayed under 5px is treated as accidental
+  // jitter during a click and is silently ignored (no API call), so a task
+  // can never move unless the user clearly dragged it.
+  const taskDragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const TASK_DRAG_THRESHOLD_PX = 5;
+  const [dragOverGroupEndZoneId, setDragOverGroupEndZoneId] = useState<number | null>(null);
+
+  // Task Group drag-and-drop — mirrors the Task drag pattern above (whole
+  // row draggable, 5px drop-side threshold guard, insertion-line instead of
+  // whole-row highlight), kept on its OWN refs/state so a Group drag never
+  // interferes with a Task drag's bookkeeping (only one can be in flight at
+  // a time, but they track independent "what's under the cursor" info).
+  const [draggingGroupId, setDraggingGroupId] = useState<number | null>(null);
+  const [dragOverGroupId, setDragOverGroupId] = useState<number | null>(null);
+  const [dragOverPhaseEndZoneId, setDragOverPhaseEndZoneId] = useState<number | null>(null);
+  const groupDragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  const isBeyondGroupDragThreshold = (e: { clientX: number; clientY: number }) => {
+    const start = groupDragStartPosRef.current;
+    if (!start) return true;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    return Math.sqrt(dx * dx + dy * dy) >= TASK_DRAG_THRESHOLD_PX;
+  };
+
+  const isBeyondTaskDragThreshold = (e: { clientX: number; clientY: number }) => {
+    const start = taskDragStartPosRef.current;
+    if (!start) return true; // no recorded start — fail-open rather than block a legitimate drop
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    return Math.sqrt(dx * dx + dy * dy) >= TASK_DRAG_THRESHOLD_PX;
+  };
+
+  // Undo affordance for a cross-Group/cross-Phase drag — separate from the
+  // generic flash() toast so it can carry its own action button. Kept alive
+  // 8s, same idea as the generic toast's 4s but a little longer since it also
+  // requires reading + deciding, not just reading.
+  const [moveUndo, setMoveUndo] = useState<{
+    message: string;
+    taskId: number;
+    taskDetail: string;
+    currentGroupId: number;   // where the task is NOW (after the move) — the "from" for reversing
+    originalGroupId: number;  // where it came from — the "to" for reversing
+    originalInsertBeforeTaskId: number | null; // anchor to restore its exact original position; null = it was last
+  } | null>(null);
+  const moveUndoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const getGroupPhaseLabel = (groupId: number) => {
+    const g = taskGroups.find((tg: any) => tg.id === groupId);
+    const p = g ? phases.find((ph: any) => ph.id === g.phase_id) : null;
+    return { groupName: g?.name || '', phaseName: p?.name || '' };
+  };
+
+  // Shared by every cross-Group/cross-Phase drag drop target (Task row, Group
+  // header, end-of-group zone) so the feedback message + undo capture stay
+  // consistent no matter which of the 3 a Task was dropped onto.
+  const performTaskCrossGroupMove = async (
+    taskId: number,
+    sourceGroupId: number,
+    targetGroupId: number,
+    position?: { insertBeforeTaskId?: number; insertAfterTaskId?: number }
+  ) => {
+    const taskDetail = items.find((t: any) => t.id === taskId)?.detail || 'Task';
+    // Capture the task's original neighbor in its source group BEFORE moving,
+    // so Undo can restore it to (as close as possible to) the exact same spot.
+    const sourceSiblings = buildTaskTree(items.filter((t: any) => t.task_group_id === sourceGroupId));
+    const originalIdx = sourceSiblings.findIndex((t: any) => t.id === taskId);
+    const originalInsertBeforeTaskId = originalIdx !== -1 ? (sourceSiblings[originalIdx + 1]?.id ?? null) : null;
+
+    await moveTask(sourceGroupId, taskId, targetGroupId, position);
+    const { groupName, phaseName } = getGroupPhaseLabel(targetGroupId);
+    if (moveUndoTimeoutRef.current) clearTimeout(moveUndoTimeoutRef.current);
+    setMoveUndo({
+      message: `Đã chuyển "${taskDetail}" → ${phaseName} / ${groupName}`,
+      taskId, taskDetail, currentGroupId: targetGroupId, originalGroupId: sourceGroupId, originalInsertBeforeTaskId,
+    });
+    moveUndoTimeoutRef.current = setTimeout(() => setMoveUndo(null), 8000);
+    reloadAll();
+  };
+
+  // Shared by a Task row's own onDrop AND the thin gap directly above it
+  // (rendered by renderHoverSpacerRow while a Task is being dragged) —
+  // dropping on the row IS "insert before this task", and the gap right
+  // above it is just a wider, easier-to-hit hitbox for that exact same
+  // target, so both funnel into one implementation instead of forking.
+  const handleTaskDropOnTarget = async (e: React.DragEvent, targetTask: { id: number; task_group_id: number }) => {
+    e.preventDefault();
+    setDragOverTaskId(null);
+    if (!isBeyondTaskDragThreshold(e)) return;
+    try {
+      const raw = e.dataTransfer.getData("application/json");
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.type !== "task") return;
+      if (data.groupId === targetTask.task_group_id) {
+        const groupTasks = items.filter((t: any) => t.task_group_id === targetTask.task_group_id);
+        const sorted = buildTaskTree(groupTasks);
+        const fromIdx = sorted.findIndex((t: any) => t.id === data.taskId);
+        const toIdx = sorted.findIndex((t: any) => t.id === targetTask.id);
+        if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+          const reordered = [...sorted];
+          const [removed] = reordered.splice(fromIdx, 1);
+          reordered.splice(toIdx, 0, removed);
+          await reorderTasks(targetTask.task_group_id, reordered.map((t: any) => t.id));
+          flash("Đã đổi thứ tự Task thành công!");
+          reloadAll();
+        }
+      } else {
+        await performTaskCrossGroupMove(data.taskId, data.groupId, targetTask.task_group_id, { insertBeforeTaskId: targetTask.id });
+      }
+    } catch (err: any) {
+      console.error(err);
+      flash(getApiErrorMessage(err), true);
+      await reloadAll();
+    }
+  };
+
+  const handleUndoTaskMove = async () => {
+    if (!moveUndo) return;
+    const info = moveUndo;
+    setMoveUndo(null);
+    if (moveUndoTimeoutRef.current) clearTimeout(moveUndoTimeoutRef.current);
+    try {
+      await moveTask(
+        info.currentGroupId,
+        info.taskId,
+        info.originalGroupId,
+        info.originalInsertBeforeTaskId ? { insertBeforeTaskId: info.originalInsertBeforeTaskId } : undefined
+      );
+      flash(`Đã hoàn tác di chuyển "${info.taskDetail}"`);
+      reloadAll();
+    } catch (err: any) {
+      flash('Hoàn tác thất bại: ' + getApiErrorMessage(err), true);
+    }
+  };
+
   const [movingTask, setMovingTask] = useState<any>(null);
   const [moveTargetPhaseId, setMoveTargetPhaseId] = useState<number | ''>('');
   const [moveTargetGroupId, setMoveTargetGroupId] = useState<number | ''>('');
   const [moveTargetPosition, setMoveTargetPosition] = useState<string>('end');
   const [savingMoveTask, setSavingMoveTask] = useState(false);
+
+  // Move Task Group modal — mirrors the Task move modal above, but positions
+  // are anchored to sibling GROUPS within a Phase, not sibling tasks within a
+  // group. mode/anchor stay separate (not a single flat dropdown like Task's)
+  // per the agreed UX: pick a position TYPE first, only then (for before/after)
+  // pick which sibling Group anchors it.
+  const [movingGroup, setMovingGroup] = useState<any>(null);
+  const [moveGroupTargetPhaseId, setMoveGroupTargetPhaseId] = useState<number | ''>('');
+  const [moveGroupPositionMode, setMoveGroupPositionMode] = useState<'start' | 'before' | 'after' | 'end'>('end');
+  const [moveGroupAnchorId, setMoveGroupAnchorId] = useState<number | ''>('');
+  const [savingMoveGroup, setSavingMoveGroup] = useState(false);
+
+  const getGroupsOfPhase = (phaseId: number | '', excludeGroupId?: number) =>
+    taskGroups
+      .filter((g: any) => g.phase_id === phaseId && g.id !== excludeGroupId)
+      .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0));
+
+  const computeCurrentGroupPosition = (group: any): { mode: 'start' | 'after' | 'end'; anchorGroupId: number | '' } => {
+    const siblings = taskGroups
+      .filter((g: any) => g.phase_id === group.phase_id)
+      .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0));
+    const idx = siblings.findIndex((g: any) => g.id === group.id);
+    if (idx <= 0) return { mode: 'start', anchorGroupId: '' };
+    if (idx === siblings.length - 1) return { mode: 'end', anchorGroupId: '' };
+    return { mode: 'after', anchorGroupId: siblings[idx - 1].id };
+  };
+
+  const handleOpenMoveGroupModal = (group: any) => {
+    setMovingGroup(group);
+    setMoveGroupTargetPhaseId(group.phase_id);
+    const current = computeCurrentGroupPosition(group);
+    setMoveGroupPositionMode(current.mode);
+    setMoveGroupAnchorId(current.anchorGroupId);
+  };
+
+  const moveGroupSiblingsInTargetPhase = movingGroup ? getGroupsOfPhase(moveGroupTargetPhaseId, movingGroup.id) : [];
+
+  const moveGroupHasChanged = !!movingGroup && moveGroupTargetPhaseId !== '' && (() => {
+    if (moveGroupTargetPhaseId !== movingGroup.phase_id) return true;
+    if (moveGroupSiblingsInTargetPhase.length === 0) return false; // only Group in this Phase — nowhere else to put it
+    const current = computeCurrentGroupPosition(movingGroup);
+    if (moveGroupPositionMode !== current.mode) return true;
+    if (moveGroupPositionMode === 'after' && moveGroupAnchorId !== current.anchorGroupId) return true;
+    return false;
+  })();
+
+  const handleConfirmMoveGroup = async () => {
+    if (!movingGroup || moveGroupTargetPhaseId === '' || !moveGroupHasChanged) return;
+    if ((moveGroupPositionMode === 'before' || moveGroupPositionMode === 'after') && moveGroupAnchorId === '') return;
+    setSavingMoveGroup(true);
+    try {
+      let position: { insertBeforeGroupId?: number; insertAfterGroupId?: number } | undefined;
+      if (moveGroupPositionMode === 'start') {
+        if (moveGroupSiblingsInTargetPhase[0]) position = { insertBeforeGroupId: moveGroupSiblingsInTargetPhase[0].id };
+      } else if (moveGroupPositionMode === 'before') {
+        position = { insertBeforeGroupId: moveGroupAnchorId as number };
+      } else if (moveGroupPositionMode === 'after') {
+        position = { insertAfterGroupId: moveGroupAnchorId as number };
+      }
+      // 'end' -> position stays undefined (append — matches backend default)
+      const targetPhase = phases.find((p: any) => p.id === moveGroupTargetPhaseId);
+      await moveTaskGroup(movingGroup.phase_id, movingGroup.id, moveGroupTargetPhaseId as number, position);
+      flash(`Đã di chuyển Task Group "${movingGroup.name}" sang "${targetPhase?.name || ''}" thành công!`);
+      setMovingGroup(null);
+      reloadAll();
+    } catch (err: any) {
+      flash('Lỗi di chuyển Task Group: ' + getApiErrorMessage(err), true);
+    } finally {
+      setSavingMoveGroup(false);
+    }
+  };
+
+  // Cross-Phase Group drag drop — same-Phase drag reorder keeps using
+  // reorderTaskGroups() (unchanged), this is only for when a Group is
+  // dropped on a group/end-zone belonging to a DIFFERENT Phase.
+  const performGroupCrossPhaseMove = async (
+    groupId: number,
+    sourcePhaseId: number,
+    targetPhaseId: number,
+    position?: { insertBeforeGroupId?: number; insertAfterGroupId?: number }
+  ) => {
+    const group = taskGroups.find((g: any) => g.id === groupId);
+    const targetPhase = phases.find((p: any) => p.id === targetPhaseId);
+    await moveTaskGroup(sourcePhaseId, groupId, targetPhaseId, position);
+    flash(`Đã chuyển Task Group "${group?.name || ''}" sang Phase "${targetPhase?.name || ''}" thành công!`);
+    reloadAll();
+  };
+
+  // Shared by every "landed inside some Group's territory" drop target for a
+  // Group drag: the Group's own header row, PLUS its Task rows and the gaps
+  // between them (via renderSingleTaskRow / renderHoverSpacerRow below).
+  // A Group's Tasks physically sit BETWEEN its own header and the next
+  // Group's header in the DOM, so dragging a Group up or down has to cross
+  // through them — without this, those rows only knew how to handle a Task
+  // drag (data.type === "task") and silently swallowed a Group drop, making
+  // cross-group reorder work in whichever direction happened to have fewer
+  // Task rows in the path and fail in the other.
+  const handleGroupDropOnTarget = async (e: React.DragEvent, targetGroupId: number) => {
+    e.preventDefault();
+    setDragOverGroupId(null);
+    try {
+      const raw = e.dataTransfer.getData("application/json");
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.type !== "group") return;
+      if (data.groupId === targetGroupId || !isBeyondGroupDragThreshold(e)) return;
+      const targetGroup = taskGroups.find((g: any) => g.id === targetGroupId);
+      if (!targetGroup) return;
+      if (data.phaseId === targetGroup.phase_id) {
+        const phaseGroups = taskGroups.filter((g: any) => g.phase_id === targetGroup.phase_id);
+        const fromIdx = phaseGroups.findIndex((g: any) => g.id === data.groupId);
+        const toIdx = phaseGroups.findIndex((g: any) => g.id === targetGroupId);
+        if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+          const reordered = [...phaseGroups];
+          const [removed] = reordered.splice(fromIdx, 1);
+          reordered.splice(toIdx, 0, removed);
+          await reorderTaskGroups(targetGroup.phase_id, reordered.map((g: any) => g.id));
+          flash("Đã đổi thứ tự Task Group thành công!");
+          reloadAll();
+        }
+      } else {
+        await performGroupCrossPhaseMove(data.groupId, data.phaseId, targetGroup.phase_id, { insertBeforeGroupId: targetGroupId });
+      }
+    } catch (err: any) {
+      console.error(err);
+      flash(getApiErrorMessage(err), true);
+      await reloadAll();
+    }
+  };
 
   // Task Group CRUD States
   const [showTaskGroupModal, setShowTaskGroupModal] = useState(false);
@@ -389,6 +659,7 @@ function ProjectDetailContent() {
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
   const [templates, setTemplates] = useState<any[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showExportTemplateModal, setShowExportTemplateModal] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [applyingTemplateId, setApplyingTemplateId] = useState<number | null>(null);
   const [confirmApplyTemplateId, setConfirmApplyTemplateId] = useState<number | null>(null);
@@ -575,7 +846,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi duyệt task.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi duyệt task.'), true);
     } finally {
       setReviewActionBusy(false);
     }
@@ -598,7 +869,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi gửi yêu cầu sửa.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi gửi yêu cầu sửa.'), true);
     } finally {
       setReviewActionBusy(false);
     }
@@ -618,7 +889,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi gửi review.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi gửi review.'), true);
     } finally {
       setReviewActionBusy(false);
     }
@@ -658,7 +929,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi đánh dấu bị chặn.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi đánh dấu bị chặn.'), true);
     } finally {
       setBlockActionBusy(false);
     }
@@ -675,7 +946,7 @@ function ProjectDetailContent() {
       refetchTasks();
       queryClient.invalidateQueries({ queryKey: ['task-audit-activity', task.id] });
     } catch (err: any) {
-      flash(err.response?.data?.detail || 'Lỗi khi gỡ chặn.', true);
+      flash(getApiErrorMessage(err, 'Lỗi khi gỡ chặn.'), true);
     } finally {
       setBlockActionBusy(false);
     }
@@ -701,14 +972,16 @@ function ProjectDetailContent() {
 
   const handleSaveTaskGroup = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingTaskGroup) return;
     if (!tgName.trim()) {
-      alert('Tên Task Group không được để trống!');
+      flash('Tên Task Group không được để trống!', true);
       return;
     }
     if (!tgPhaseId) {
-      alert('Vui lòng chọn Phase cho Task Group!');
+      flash('Vui lòng chọn Phase cho Task Group!', true);
       return;
     }
+    setSavingTaskGroup(true);
     try {
       if (editingTaskGroup) {
         await updateTaskGroup(Number(tgPhaseId), editingTaskGroup.id, {
@@ -728,11 +1001,14 @@ function ProjectDetailContent() {
       setShowTaskGroupModal(false);
       reloadAll();
     } catch (err: any) {
-      alert('Lỗi lưu Task Group: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi lưu Task Group: ' + getApiErrorMessage(err), true);
+    } finally {
+      setSavingTaskGroup(false);
     }
   };
 
   const handleSaveInlineTaskGroup = async (phaseId: number) => {
+    if (savingInlineTaskGroup) return;
     const name = newTgForm.name.trim();
     if (!name) {
       setAddingTaskGroupPhaseId(null);
@@ -740,9 +1016,10 @@ function ProjectDetailContent() {
     }
     const manday_est = newTgForm.manday_est ? parseFloat(newTgForm.manday_est) : null;
     if (newTgForm.manday_est && isNaN(manday_est as number)) {
-      alert('Manday EST phải là số!');
+      flash('Manday EST phải là số!', true);
       return;
     }
+    setSavingInlineTaskGroup(true);
     try {
       await createTaskGroup(phaseId, {
         name,
@@ -754,25 +1031,14 @@ function ProjectDetailContent() {
       setAddingTaskGroupPhaseId(null);
       reloadAll();
     } catch (err: any) {
-      alert('Lỗi tạo Task Group: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi tạo Task Group: ' + getApiErrorMessage(err), true);
+    } finally {
+      setSavingInlineTaskGroup(false);
     }
   };
 
-  const handleDeleteTaskGroupClick = async (group: any) => {
-    if (group.task_count > 0) {
-      alert(`Không thể xóa Task Group "${group.name}" vì còn ${group.task_count} Task. Hãy xóa hết Task trước.`);
-      return;
-    }
-    if (!confirm(`Bạn có chắc chắn muốn xóa Task Group "${group.name}"?`)) {
-      return;
-    }
-    try {
-      await deleteTaskGroup(group.phase_id, group.id);
-      flash('Đã xóa Task Group thành công!');
-      reloadAll();
-    } catch (err: any) {
-      alert('Lỗi xóa Task Group: ' + (err.response?.data?.detail || err.message));
-    }
+  const handleDeleteTaskGroupClick = (group: any) => {
+    setGroupToDelete({ id: group.id, phase_id: group.phase_id, name: group.name });
   };
 
   const getParentCode = (code: string): string => {
@@ -974,7 +1240,7 @@ function ProjectDetailContent() {
         loadedPhases = phs || [];
       } catch (err: any) {
         console.error('Lỗi khi tải danh sách Phase dự án:', err);
-        flash('Lỗi tải danh sách Phase: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+        flash('Lỗi tải danh sách Phase: ' + getApiErrorMessage(err), true);
       }
 
       // Every phase's task groups + the project's full task list are independent
@@ -990,7 +1256,7 @@ function ProjectDetailContent() {
         )),
         getAllProjectTasks(Number(id)).catch(err => {
           console.error('Lỗi khi tải danh sách Task dự án:', err);
-          flash('Lỗi tải danh sách Task: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+          flash('Lỗi tải danh sách Task: ' + getApiErrorMessage(err), true);
           return [];
         }),
       ]);
@@ -1169,6 +1435,17 @@ function ProjectDetailContent() {
   const [addChannelKey, setAddChannelKey] = useState('');
   const [addChannelValue, setAddChannelValue] = useState('');
 
+  // Double-submit guards for create/save/delete flows that don't already
+  // have one — each disables its trigger button while the request is in
+  // flight so a double-click can't fire the request twice.
+  const [savingTaskGroup, setSavingTaskGroup] = useState(false);
+  const [savingInlineTaskGroup, setSavingInlineTaskGroup] = useState(false);
+  const [savingPhase, setSavingPhase] = useState(false);
+  const [duplicatingTaskId, setDuplicatingTaskId] = useState<number | null>(null);
+  const [deletingMeeting, setDeletingMeeting] = useState(false);
+  const [savingGroupChat, setSavingGroupChat] = useState(false);
+  const [removingMemberId, setRemovingMemberId] = useState<number | null>(null);
+
   const [newForm, setNewForm] = useState<any>({});
 
   // Edit Project Modal — form fields/dropdowns now live inside the shared
@@ -1178,6 +1455,8 @@ function ProjectDetailContent() {
 
   const [projectMembers, setProjectMembers] = useState<any[]>([]);
   const [myMemberId, setMyMemberId] = useState<number | null>(null);
+  const [myRole, setMyRole] = useState<string | null>(null);
+  const [myWorkspaceIds, setMyWorkspaceIds] = useState<string[]>([]);
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [categories, setCategories] = useState<any[]>([]);
   const [dbPriorities, setDbPriorities] = useState<any[]>([]);
@@ -1198,6 +1477,18 @@ function ProjectDetailContent() {
   const addMemberRef = useRef<HTMLDivElement>(null);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // Delete Phase modal — replaces the native confirm()/alert() combo.
+  // Backend cascade-deletes the Phase + all its Task Groups + all Tasks/
+  // Sub-tasks in one transaction (see delete_phase() in
+  // backend/app/routers/projects.py), so the modal just previews the counts.
+  const [phaseToDelete, setPhaseToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [deletingPhase, setDeletingPhase] = useState(false);
+
+  // Delete Task Group modal — same cascade pattern (see delete_task_group()
+  // in backend/app/routers/task_groups.py).
+  const [groupToDelete, setGroupToDelete] = useState<{ id: number; phase_id: number; name: string } | null>(null);
+  const [deletingGroup, setDeletingGroup] = useState(false);
 
   const flash = (t: string, e = false) => {
     setMsg({ t, e });
@@ -1226,13 +1517,13 @@ function ProjectDetailContent() {
     if (!id) return;
     setApplyingTemplateId(templateId);
     try {
-      await applyProjectTemplate(templateId, Number(id));
-      flash('Áp dụng template thành công!');
+      const result = await applyProjectTemplate(templateId, Number(id));
+      flash(`Áp dụng template thành công: ${result?.created_phase_count ?? 0} phase, ${result?.created_group_count ?? 0} task group, ${result?.created_task_count ?? 0} task.`);
       setShowTemplateModal(false);
       setConfirmApplyTemplateId(null);
       reloadAll();
     } catch (err: any) {
-      flash('Áp dụng template thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      flash('Áp dụng template thất bại: ' + getApiErrorMessage(err), true);
     } finally {
       setApplyingTemplateId(null);
     }
@@ -1244,7 +1535,7 @@ function ProjectDetailContent() {
       flash('Xóa dự án thành công!');
       router.push('/project-hub');
     } catch (err: any) {
-      flash('Xóa dự án thất bại: ' + (err?.response?.data?.detail || err?.message || 'Lỗi không xác định'), true);
+      flash('Xóa dự án thất bại: ' + getApiErrorMessage(err), true);
     }
   };
 
@@ -1447,7 +1738,7 @@ function ProjectDetailContent() {
     setPinnedPhaseIds(prev => {
       if (prev.includes(phaseId)) return prev.filter(x => x !== phaseId);
       if (prev.length >= MAX_PINNED_PHASES) {
-        alert(`Chỉ được ghim tối đa ${MAX_PINNED_PHASES} Phase. Hãy bỏ ghim bớt 1 Phase trước khi ghim thêm.`);
+        flash(`Chỉ được ghim tối đa ${MAX_PINNED_PHASES} Phase. Hãy bỏ ghim bớt 1 Phase trước khi ghim thêm.`, true);
         return prev;
       }
       return [...prev, phaseId];
@@ -1505,7 +1796,17 @@ function ProjectDetailContent() {
   }, [id, loadProject, reloadAll, loadChatData, loadProjectMembers, loadMeetings]);
 
   useEffect(() => {
-    getMe().then(me => setMyMemberId(me?.member_id ?? null)).catch(() => setMyMemberId(null));
+    getMe().then(me => {
+      setMyMemberId(me?.member_id ?? null);
+      setMyRole((me?.role || '').toLowerCase() || null);
+      // workspace_ids already covers multi-Workspace Leaders correctly (not
+      // just their single primary data_scope) — see GET /me in users.py.
+      setMyWorkspaceIds((me?.workspace_ids || []).map((w: string) => (w || '').toLowerCase()));
+    }).catch(() => {
+      setMyMemberId(null);
+      setMyRole(null);
+      setMyWorkspaceIds([]);
+    });
   }, []);
 
   // Full project-management rights: global admin (super_admin/leader), OR this
@@ -1518,6 +1819,49 @@ function ProjectDetailContent() {
       (m: any) => (m.role === 'PM' || m.role === 'Leader') && Number(m.id) === Number(myMemberId)
     );
   }, [myMemberId, projectMembers]);
+
+  // Shared 4-tier rule — Admin, OR a Leader whose Workspace access actually
+  // covers this project (NOT a blanket "role === leader" pass — that's what
+  // isProjectManager/isAdmin() do, and is exactly the gap this exists to
+  // close), OR this project's own PM/Leader. Mirrors the backend's dedicated
+  // can_apply_project_template() (backend/app/utils/access.py). Kept as
+  // separately-NAMED call sites below (not exported directly) so a future
+  // rule change for just one action doesn't ripple to the others — frontend
+  // gating is UX only, the backend re-checks independently either way.
+  const hasProjectManagementAccess = (project: any): boolean => {
+    if (!project) return false;
+    if (myRole === 'super_admin') return true;
+    if (myRole === 'leader') {
+      const scope = (project.data_scope || '').toLowerCase();
+      if (myWorkspaceIds.includes('all') || myWorkspaceIds.includes(scope) || project.business === 'All') {
+        return true;
+      }
+    }
+    if (myMemberId == null) return false;
+    return projectMembers.some(
+      (m: any) => (m.role === 'PM' || m.role === 'Leader') && Number(m.id) === Number(myMemberId)
+    );
+  };
+
+  const canApplyProjectTemplate = (project: any): boolean => hasProjectManagementAccess(project);
+
+  // Phase CRUD, Task Group CRUD/Move — require_route_project_access requires
+  // this same PM/Leader-or-above tier for these paths (they don't match the
+  // broader _is_task_write allowance plain Task actions get, see below).
+  const canManageProjectStructure = (project: any): boolean => hasProjectManagementAccess(project);
+
+  // Task CRUD/Move — backend allows ANY assigned project member, not just
+  // PM/Leader (_is_task_write in backend/app/utils/access.py). Named per
+  // action per the agreed convention; all 3 delegate to the same check today
+  // so a future rule change for just one doesn't require touching the others.
+  const isAssignedProjectMember = (): boolean => {
+    if (myMemberId == null) return false;
+    return projectMembers.some((m: any) => Number(m.id) === Number(myMemberId));
+  };
+  const canManageTasks = (project: any): boolean => hasProjectManagementAccess(project) || isAssignedProjectMember();
+  const canEditTask = (project: any): boolean => canManageTasks(project);
+  const canMoveTask = (project: any): boolean => canManageTasks(project);
+  const canDeleteTask = (project: any): boolean => canManageTasks(project);
 
   // Load members, customers and categories
   useEffect(() => {
@@ -1616,31 +1960,33 @@ function ProjectDetailContent() {
       setAddChannelValue('');
       flash('Cập nhật liên kết kênh thành công!');
     } catch (err: any) {
-      alert('Lỗi cập nhật liên kết: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi cập nhật liên kết: ' + getApiErrorMessage(err), true);
     } finally {
       setIsSavingLink(false);
     }
   };
 
   const handleCreatePhase = async () => {
+    if (savingPhase) return;
     const name = newPhaseName.trim();
     if (!name) {
-      alert('Tên Phase không được để trống!');
+      flash('Tên Phase không được để trống!', true);
       return;
     }
     if (name.toLowerCase() === 'master') {
-      alert('Tên "Master" là dành riêng cho Phase mặc định!');
+      flash('Tên "Master" là dành riêng cho Phase mặc định!', true);
       return;
     }
     if (name.length >= 20) {
-      alert('Tên Phase quá dài! Chỉ được tối đa 19 ký tự.');
+      flash('Tên Phase quá dài! Chỉ được tối đa 19 ký tự.', true);
       return;
     }
     const dup = phases.some(p => p.name.toLowerCase() === name.toLowerCase());
     if (dup) {
-      alert('Phase này đã tồn tại trong dự án!');
+      flash('Phase này đã tồn tại trong dự án!', true);
       return;
     }
+    setSavingPhase(true);
     try {
       await createPhase(Number(id), { name });
       flash('Tạo Phase mới thành công!');
@@ -1648,31 +1994,35 @@ function ProjectDetailContent() {
       setNewPhaseName('');
       reloadAll();
     } catch (err: any) {
-      alert('Lỗi tạo phase: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi tạo phase: ' + getApiErrorMessage(err), true);
       reloadAll();
+    } finally {
+      setSavingPhase(false);
     }
   };
 
   const handleRenamePhase = async () => {
+    if (savingPhase) return;
     const name = editingPhaseName.trim();
     if (!name) {
-      alert('Tên Phase không được để trống!');
+      flash('Tên Phase không được để trống!', true);
       return;
     }
     if (name.toLowerCase() === 'master') {
-      alert('Tên "Master" là dành riêng cho Phase mặc định!');
+      flash('Tên "Master" là dành riêng cho Phase mặc định!', true);
       return;
     }
     if (name.length >= 20) {
-      alert('Tên Phase quá dài! Chỉ được tối đa 19 ký tự.');
+      flash('Tên Phase quá dài! Chỉ được tối đa 19 ký tự.', true);
       return;
     }
     const dup = phases.some(p => p.id !== editingPhaseId && p.name.toLowerCase() === name.toLowerCase());
     if (dup) {
-      alert('Phase này đã tồn tại trong dự án!');
+      flash('Phase này đã tồn tại trong dự án!', true);
       return;
     }
     if (editingPhaseId === null) return;
+    setSavingPhase(true);
     try {
       await updatePhase(Number(id), editingPhaseId, { name });
       flash('Đổi tên Phase thành công!');
@@ -1681,28 +2031,53 @@ function ProjectDetailContent() {
       setEditingPhaseName('');
       reloadAll();
     } catch (err: any) {
-      alert('Lỗi đổi tên phase: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi đổi tên phase: ' + getApiErrorMessage(err), true);
+    } finally {
+      setSavingPhase(false);
     }
   };
 
-  const handleDeletePhase = async (pid: number, pname: string) => {
+  const handleDeletePhase = (pid: number, pname: string) => {
     if (pname.toLowerCase() === 'master') {
-      alert('Không thể xóa Phase Master!');
+      flash('Không thể xóa Phase Master!', true);
       return;
     }
-    if (!confirm(`Bạn có chắc chắn muốn xóa Phase "${pname}"?\nTất cả nhiệm vụ thuộc Phase này cũng sẽ bị xóa vĩnh viễn.`)) {
-      return;
-    }
+    setPhaseToDelete({ id: pid, name: pname });
+  };
+
+  const handleConfirmDeletePhase = async () => {
+    if (!phaseToDelete || deletingPhase) return;
+    setDeletingPhase(true);
     try {
-      await deletePhase(Number(id), pid);
-      flash('Đã xóa Phase thành công!');
-      if (activePhase === pname) {
+      const result = await deletePhase(Number(id), phaseToDelete.id);
+      const groupCount = result?.deleted_group_count ?? 0;
+      const taskCount = result?.deleted_task_count ?? 0;
+      flash(`Đã xóa Phase "${phaseToDelete.name}" cùng ${groupCount} Task Group và ${taskCount} Task!`);
+      if (activePhase === phaseToDelete.name) {
         setActivePhase('ALL');
       }
+      setPhaseToDelete(null);
       reloadAll();
     } catch (err: any) {
-      alert('Lỗi xóa phase: ' + (err.response?.data?.detail || err.message));
+      flash(getApiErrorMessage(err), true);
+    } finally {
+      setDeletingPhase(false);
+    }
+  };
+
+  const handleConfirmDeleteGroup = async () => {
+    if (!groupToDelete || deletingGroup) return;
+    setDeletingGroup(true);
+    try {
+      const result = await deleteTaskGroup(groupToDelete.phase_id, groupToDelete.id);
+      const taskCount = result?.deleted_task_count ?? 0;
+      flash(`Đã xóa Task Group "${groupToDelete.name}" cùng ${taskCount} Task!`);
+      setGroupToDelete(null);
       reloadAll();
+    } catch (err: any) {
+      flash(getApiErrorMessage(err), true);
+    } finally {
+      setDeletingGroup(false);
     }
   };
 
@@ -2107,7 +2482,7 @@ function ProjectDetailContent() {
         setEditingCell(null);
       }
     } catch (err: any) {
-      alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi cập nhật task: ' + getApiErrorMessage(err), true);
       setEditingCell(null);
     } finally {
       isSavingRef.current = false;
@@ -2160,7 +2535,7 @@ function ProjectDetailContent() {
         });
       }
     } catch (err: any) {
-      alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
       setEditingCell(prev => {
         if (prev?.taskId === -group.id && prev?.colName === colName) {
           return null;
@@ -2177,7 +2552,7 @@ function ProjectDetailContent() {
       await updateTaskGroup(group.phase_id, group.id, { [field]: ids.map(Number) });
       await reloadAll(true);
     } catch (err: any) {
-      alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
     }
   };
 
@@ -2194,7 +2569,7 @@ function ProjectDetailContent() {
       flash(`Đã đồng bộ Remark cho ${childTasks.length} task con!`);
       await reloadAll(true);
     } catch (err: any) {
-      alert('Lỗi đồng bộ Remark: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi đồng bộ Remark: ' + getApiErrorMessage(err), true);
     } finally {
       isSavingRef.current = false;
       setEditingGroupRemark(null);
@@ -2210,7 +2585,7 @@ function ProjectDetailContent() {
       flash('Đã xóa nhiệm vụ thành công!');
       reloadAll(true);
     } catch (err: any) {
-      alert('Lỗi xóa task: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi xóa task: ' + getApiErrorMessage(err), true);
     } finally {
       setTaskToDelete(null);
     }
@@ -2279,12 +2654,13 @@ function ProjectDetailContent() {
       setEditingMeeting(null);
     } catch (error: any) {
       console.error("Failed to save meeting", error);
-      alert(error.response?.data?.detail || "Có lỗi xảy ra khi lưu cuộc họp");
+      flash(getApiErrorMessage(error, "Có lỗi xảy ra khi lưu cuộc họp"), true);
     }
   };
 
   const executeDeleteMeeting = async () => {
-    if (!deleteConfirmId) return;
+    if (!deleteConfirmId || deletingMeeting) return;
+    setDeletingMeeting(true);
     try {
       await deleteMeeting(parseInt(deleteConfirmId));
       flash('Đã xóa cuộc họp thành công!');
@@ -2292,7 +2668,9 @@ function ProjectDetailContent() {
       setDeleteConfirmId(null);
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
-      alert(error.response?.data?.detail || "Có lỗi xảy ra khi xóa cuộc họp");
+      flash(getApiErrorMessage(error, "Có lỗi xảy ra khi xóa cuộc họp"), true);
+    } finally {
+      setDeletingMeeting(false);
     }
   };
 
@@ -2323,7 +2701,7 @@ function ProjectDetailContent() {
       setSelectedMemberId('');
       flash('Đã thêm thành viên mới thành công!');
     } catch (err: any) {
-      alert('Không thể thêm thành viên: ' + (err.response?.data?.detail || err.message));
+      flash('Không thể thêm thành viên: ' + getApiErrorMessage(err), true);
     } finally {
       setIsAddingMember(false);
     }
@@ -3099,31 +3477,31 @@ function ProjectDetailContent() {
     const skillVendorVal = newForm['SKILL VENDOR'] || null;
 
     if (!detailVal) {
-      alert('Tên nhiệm vụ (DETAIL TASK) không được để trống!');
+      flash('Tên nhiệm vụ (DETAIL TASK) không được để trống!', true);
       return;
     }
     if (isNaN(mandayEstVal) || mandayEstVal <= 0) {
-      alert('MANDAY EST phải là số lớn hơn 0!');
+      flash('MANDAY EST phải là số lớn hơn 0!', true);
       return;
     }
     if (!startDateVal) {
-      alert('Ngày bắt đầu (START DATE) không được để trống!');
+      flash('Ngày bắt đầu (START DATE) không được để trống!', true);
       return;
     }
     if (!assignedVal) {
-      alert('Cột ASSIGNED là bắt buộc.');
+      flash('Cột ASSIGNED là bắt buộc.', true);
       return;
     }
     if (!supportVal) {
-      alert('Cột SUPPORT là bắt buộc.');
+      flash('Cột SUPPORT là bắt buộc.', true);
       return;
     }
     if (!skillSolutionVal) {
-      alert('Cột SKILL SOLUTION là bắt buộc.');
+      flash('Cột SKILL SOLUTION là bắt buộc.', true);
       return;
     }
     if (!skillVendorVal) {
-      alert('Cột SKILL VENDOR là bắt buộc.');
+      flash('Cột SKILL VENDOR là bắt buộc.', true);
       return;
     }
 
@@ -3175,13 +3553,15 @@ function ProjectDetailContent() {
       reloadAll(true);
       flash('Đã thêm nhiệm vụ thành công!');
     } catch (err: any) {
-      alert('Lỗi thêm task: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi thêm task: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingTask(false);
     }
   };
 
   const handleDuplicateTask = async (groupId: number, taskId: number) => {
+    if (duplicatingTaskId !== null) return;
+    setDuplicatingTaskId(taskId);
     try {
       const newTask = await duplicateTask(groupId, taskId);
       flash('Đã nhân bản task thành công!');
@@ -3193,7 +3573,9 @@ function ProjectDetailContent() {
         }, 2000);
       }
     } catch (err: any) {
-      alert('Lỗi nhân bản task: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi nhân bản task: ' + getApiErrorMessage(err), true);
+    } finally {
+      setDuplicatingTaskId(null);
     }
   };
 
@@ -3285,7 +3667,7 @@ function ProjectDetailContent() {
       await reloadAll(true);
       setSelectedTask(null);
     } catch (err: any) {
-      alert('Lỗi cập nhật task: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi cập nhật task: ' + getApiErrorMessage(err), true);
     } finally {
       setDrawerSaving(false);
     }
@@ -3345,33 +3727,9 @@ function ProjectDetailContent() {
       setMovingTask(null);
       reloadAll();
     } catch (err: any) {
-      alert('Lỗi di chuyển task: ' + (err.response?.data?.detail || err.message));
+      flash('Lỗi di chuyển task: ' + getApiErrorMessage(err), true);
     } finally {
       setSavingMoveTask(false);
-    }
-  };
-
-  const handleMoveTaskGroup = async (phaseId: number, groupId: number) => {
-    const otherPhases = phases.filter(p => p.id !== phaseId);
-    if (otherPhases.length === 0) {
-      alert('Không có Phase khác trong dự án này để di chuyển Task Group!');
-      return;
-    }
-    const listText = otherPhases.map((p, idx) => `${idx + 1}. ${p.name}`).join('\n');
-    const input = prompt(`Nhập số thứ tự của Phase muốn di chuyển Task Group tới:\n${listText}`);
-    if (input === null) return;
-    const choice = parseInt(input, 10);
-    if (isNaN(choice) || choice < 1 || choice > otherPhases.length) {
-      alert('Lựa chọn không hợp lệ!');
-      return;
-    }
-    const targetPhase = otherPhases[choice - 1];
-    try {
-      await moveTaskGroup(phaseId, groupId, targetPhase.id);
-      flash(`Đã di chuyển Task Group sang Phase "${targetPhase.name}" thành công!`);
-      reloadAll();
-    } catch (err: any) {
-      alert('Lỗi di chuyển Task Group: ' + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -3429,41 +3787,9 @@ function ProjectDetailContent() {
     );
   };
 
-  const handleSpacerMouseEnter = (e: React.MouseEvent<HTMLDivElement>, spacerId: string) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const relativeX = e.clientX - rect.left;
-    const width = rect.width;
-    const ratio = relativeX / width;
-
-    let snapLeft = '50%';
-    if (ratio < 0.2) {
-      snapLeft = '10%';
-    } else if (ratio >= 0.2 && ratio < 0.4) {
-      snapLeft = '30%';
-    } else if (ratio >= 0.4 && ratio < 0.6) {
-      snapLeft = '50%';
-    } else if (ratio >= 0.6 && ratio < 0.8) {
-      snapLeft = '70%';
-    } else {
-      snapLeft = '90%';
-    }
-
-    setHoveredSpacerPos({ id: spacerId, left: snapLeft });
-  };
-
-  const handleSpacerMouseLeave = () => {
-    setHoveredSpacerPos(null);
-  };
-
   const renderHoverTgSpacerRow = (phaseId: number) => {
     const dynamicCols = getDynamicColumns();
     const spacerId = `spacer-tg-${phaseId}`;
-    const snappedPos = hoveredSpacerPos?.id === spacerId ? hoveredSpacerPos.left : '50%';
-
-    const handleAddTgClick = () => {
-      setAddingTaskGroupPhaseId(phaseId);
-      setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
-    };
 
     return (
       <tr
@@ -3471,61 +3797,132 @@ function ProjectDetailContent() {
         className="group/spacer border-none bg-transparent"
       >
         <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent relative">
-          <div
-            onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
-            onMouseLeave={handleSpacerMouseLeave}
-            className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
-          >
+          <div className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20">
             {/* Dashed line */}
             <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
               <div className="w-full border-t border-slate-300 border-dashed opacity-0 group-hover/spacer:opacity-100 transition-opacity duration-200"></div>
             </div>
-            {/* Emerald pill button */}
-            {/* <button
-              type="button"
-              onClick={handleAddTgClick}
-              style={{ left: snappedPos, transform: 'translateX(-50%)' }}
-              className="absolute opacity-0 group-hover/spacer:opacity-100 transition-all duration-200 bg-[#006847] hover:bg-[#00583b] text-white font-bold text-[10px] px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-1 active:scale-95 z-10 cursor-pointer hover:shadow-lg hover:scale-105"
-            >
-              <span className="text-[12px] font-extrabold">+</span> Thêm Task Group
-            </button> */}
           </div>
         </td>
       </tr>
     );
   };
 
-  const renderHoverSpacerRow = (groupId: number, afterCode: string | null, level: number, isLast: boolean) => {
+  // End-of-phase drop target — mirrors renderGroupEndDropZone but for Task
+  // Groups: reuses the plain hover spacer when no Group is being dragged,
+  // otherwise shows a visible "Thả Task Group vào đây" zone. This exact call
+  // site already runs once per Phase regardless of group count (empty-Phase
+  // and end-of-non-empty-Phase both fall through to it), so both cases are
+  // covered without extra branching.
+  const renderPhaseEndDropZone = (phaseId: number) => {
+    if (draggingGroupId === null) {
+      return renderHoverTgSpacerRow(phaseId);
+    }
+    const isOver = dragOverPhaseEndZoneId === phaseId;
+    return (
+      <tr key={`phase-end-drop-${phaseId}`} className="border-none bg-transparent">
+        <td colSpan={getDynamicColumns().length + 1} className="p-1.5 border-none bg-transparent">
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (dragOverPhaseEndZoneId !== phaseId) setDragOverPhaseEndZoneId(phaseId);
+            }}
+            onDragLeave={() => {
+              setDragOverPhaseEndZoneId(prev => (prev === phaseId ? null : prev));
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              setDragOverPhaseEndZoneId(null);
+              if (!isBeyondGroupDragThreshold(e)) return;
+              try {
+                const raw = e.dataTransfer.getData("application/json");
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (data.type !== "group") return;
+                if (data.phaseId === phaseId) {
+                  const phaseGroups = taskGroups.filter((g: any) => g.phase_id === phaseId);
+                  const fromIdx = phaseGroups.findIndex((g: any) => g.id === data.groupId);
+                  if (fromIdx !== -1 && fromIdx !== phaseGroups.length - 1) {
+                    const reordered = [...phaseGroups];
+                    const [removed] = reordered.splice(fromIdx, 1);
+                    reordered.push(removed);
+                    await reorderTaskGroups(phaseId, reordered.map((g: any) => g.id));
+                    flash("Đã đổi thứ tự Task Group thành công!");
+                    reloadAll();
+                  }
+                } else {
+                  await performGroupCrossPhaseMove(data.groupId, data.phaseId, phaseId);
+                }
+              } catch (err: any) {
+                console.error(err);
+                flash(getApiErrorMessage(err), true);
+                await reloadAll();
+              }
+            }}
+            className={`flex items-center justify-center h-9 rounded-lg border-2 border-dashed text-[11.5px] font-semibold transition-colors ${isOver ? 'border-[#0058be] bg-[#eff4ff] text-[#0058be]' : 'border-slate-300 text-slate-400'}`}
+          >
+            Thả Task Group vào đây
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const renderHoverSpacerRow = (groupId: number, afterCode: string | null, level: number, isLast: boolean, nextTaskId?: number) => {
     const dynamicCols = getDynamicColumns();
     const spacerId = `spacer-${groupId}-${afterCode || 'root'}-${isLast ? 'last' : 'mid'}`;
-    const snappedPos = hoveredSpacerPos?.id === spacerId ? hoveredSpacerPos.left : '50%';
 
-    const handleAddClick = () => {
-      setAddingTaskGroupId(groupId);
-      const parentCode = afterCode ? (getParentCode(afterCode) || null) : null;
-      setAddingTaskParentCode(parentCode);
-      setAddingTaskAfterCode(afterCode);
-      setAddingTaskBeforeCode(null);
-      const todayStr = toPickerDate(new Date().toISOString());
-      const initialForm: Record<string, string> = {};
-      dynamicCols.forEach(col => {
-        const colUpper = col.toUpperCase().trim();
-        if (colUpper === 'STATUS') {
-          initialForm[col] = 'Waiting';
-        } else if (colUpper === 'PRIORITY') {
-          initialForm[col] = 'Normal';
-        } else if (colUpper.includes('START DATE') || colUpper === 'START') {
-          initialForm[col] = todayStr;
-        } else if (colUpper === 'KPI RATIO') {
-          initialForm[col] = '90/10';
-        } else if (colUpper === 'MANDAY EST') {
-          initialForm[col] = '1.0';
-        } else {
-          initialForm[col] = '';
-        }
-      });
-      setNewForm(initialForm);
-    };
+    // While a Task is actively being dragged, the thin gap between two rows
+    // becomes a real drop target too — not just a visual divider — so a drop
+    // aimed at "between task A and task B" (the natural gesture for
+    // inserting) actually lands somewhere, instead of the row body being the
+    // ONLY functional target and this gap silently swallowing the drop.
+    if (!isLast && draggingTaskId !== null && nextTaskId != null) {
+      const isOver = dragOverTaskId === nextTaskId;
+      return (
+        <tr key={spacerId} className="border-none bg-transparent">
+          <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragOverTaskId !== nextTaskId) setDragOverTaskId(nextTaskId);
+              }}
+              onDragLeave={() => {
+                setDragOverTaskId(prev => (prev === nextTaskId ? null : prev));
+              }}
+              onDrop={(e) => handleTaskDropOnTarget(e, { id: nextTaskId, task_group_id: groupId })}
+              className={`h-2 transition-colors ${isOver ? 'border-t-2 border-[#0058be] bg-[#eff4ff]/60' : ''}`}
+            />
+          </td>
+        </tr>
+      );
+    }
+
+    // Mirror of the above for a Group drag: every gap between this Group's
+    // own Task rows (mid-list AND the one at the very end, right before the
+    // next Group's header) is still territory belonging to this Group, so
+    // dropping anywhere in it reorders relative to it — same as dropping
+    // directly on its header row.
+    if (draggingGroupId !== null) {
+      const isOver = dragOverGroupId === groupId;
+      return (
+        <tr key={spacerId} className="border-none bg-transparent">
+          <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragOverGroupId !== groupId) setDragOverGroupId(groupId);
+              }}
+              onDragLeave={() => {
+                setDragOverGroupId(prev => (prev === groupId ? null : prev));
+              }}
+              onDrop={(e) => handleGroupDropOnTarget(e, groupId)}
+              className={`h-2 transition-colors ${isOver ? 'border-t-2 border-[#0058be] bg-[#eff4ff]/60' : ''}`}
+            />
+          </td>
+        </tr>
+      );
+    }
 
     return (
       <tr
@@ -3533,24 +3930,72 @@ function ProjectDetailContent() {
         className="group/spacer border-none bg-transparent"
       >
         <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent relative">
-          <div
-            onMouseEnter={(e) => handleSpacerMouseEnter(e, spacerId)}
-            onMouseLeave={handleSpacerMouseLeave}
-            className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20"
-          >
+          <div className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20">
             {/* Dashed line */}
             <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
               <div className="w-full border-t border-slate-300 border-dashed opacity-0 group-hover/spacer:opacity-100 transition-opacity duration-200"></div>
             </div>
-            {/* Teal/emerald pill button */}
-            {/* <button
-              type="button"
-              onClick={handleAddClick}
-              style={{ left: snappedPos, transform: 'translateX(-50%)' }}
-              className="absolute opacity-0 group-hover/spacer:opacity-100 transition-all duration-200 bg-[#006847] hover:bg-[#00583b] text-white font-bold text-[10px] px-3.5 py-1.5 rounded-lg shadow-md flex items-center gap-1 active:scale-95 z-10 cursor-pointer hover:shadow-lg hover:scale-105"
-            >
-              <span className="text-[12px] font-extrabold">+</span> Thêm Task
-            </button> */}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  // End-of-group drop target — reuses the plain hover spacer when no Task is
+  // being dragged (unchanged existing look), but while a Task drag IS active
+  // it renders a visible "Thả Task vào đây" zone so a Task can be appended to
+  // the end of ANY group via drag, including an empty one (this same call
+  // site already runs once per group regardless of task count, so no extra
+  // branching is needed for the empty-group case).
+  const renderGroupEndDropZone = (groupId: number) => {
+    if (draggingTaskId === null) {
+      return renderHoverSpacerRow(groupId, null, 0, true);
+    }
+    const isOver = dragOverGroupEndZoneId === groupId;
+    return (
+      <tr key={`group-end-drop-${groupId}`} className="border-none bg-transparent">
+        <td colSpan={getDynamicColumns().length + 1} className="p-1.5 border-none bg-transparent">
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (dragOverGroupEndZoneId !== groupId) setDragOverGroupEndZoneId(groupId);
+            }}
+            onDragLeave={() => {
+              setDragOverGroupEndZoneId(prev => (prev === groupId ? null : prev));
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              setDragOverGroupEndZoneId(null);
+              if (!isBeyondTaskDragThreshold(e)) return;
+              try {
+                const raw = e.dataTransfer.getData("application/json");
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (data.type !== "task") return;
+                if (data.groupId === groupId) {
+                  const groupTasks = items.filter(t => t.task_group_id === groupId);
+                  const sorted = buildTaskTree(groupTasks);
+                  const fromIdx = sorted.findIndex(t => t.id === data.taskId);
+                  if (fromIdx !== -1 && fromIdx !== sorted.length - 1) {
+                    const reordered = [...sorted];
+                    const [removed] = reordered.splice(fromIdx, 1);
+                    reordered.push(removed);
+                    await reorderTasks(groupId, reordered.map(t => t.id));
+                    flash("Đã đổi thứ tự Task thành công!");
+                    reloadAll();
+                  }
+                } else {
+                  await performTaskCrossGroupMove(data.taskId, data.groupId, groupId);
+                }
+              } catch (err: any) {
+                console.error(err);
+                flash(getApiErrorMessage(err), true);
+                await reloadAll();
+              }
+            }}
+            className={`flex items-center justify-center h-9 rounded-lg border-2 border-dashed text-[11.5px] font-semibold transition-colors ${isOver ? 'border-[#0058be] bg-[#eff4ff] text-[#0058be]' : 'border-slate-300 text-slate-400'}`}
+          >
+            Thả Task vào đây
           </div>
         </td>
       </tr>
@@ -3604,18 +4049,37 @@ function ProjectDetailContent() {
       <tr
         id={`task-row-${task.id}`}
         key={task.id}
-        draggable
-        className={`group relative transition-colors cursor-grab active:cursor-grabbing ${rowBgClass} ${isDragging ? 'opacity-40' : ''} ${isCrossGroupTarget ? 'ring-2 ring-inset ring-emerald-500 bg-emerald-50' : isDragOver ? 'bg-slate-100' : ''}`}
+        draggable={canMoveTask(project)}
+        className={`group relative transition-colors cursor-grab active:cursor-grabbing border-t-2 ${rowBgClass} ${isDragging ? 'opacity-40' : ''} ${isCrossGroupTarget ? 'border-t-emerald-500' : isDragOver ? 'border-t-[#0058be]' : 'border-t-transparent'}`}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("application/json", JSON.stringify({ type: "task", taskId: task.id, groupId: task.task_group_id }));
-          setDraggingTaskId(task.id);
-          setDraggingTaskGroupId(task.task_group_id);
+          // Recorded here (not on mousedown) so the distance check at drop time
+          // measures actual drag travel — used to silently ignore drops that
+          // resulted from a near-stationary click accidentally starting a
+          // native drag, instead of letting a task move by accident.
+          taskDragStartPosRef.current = { x: e.clientX, y: e.clientY };
+          // Deferred to the next tick — setting this state SYNCHRONOUSLY here
+          // triggers an immediate reflow (every spacer/end-zone across the
+          // whole table resizes to become an active drop target) WHILE
+          // Chromium is still establishing the native drag session. That
+          // reflow can silently break dragover/drop delivery for the rest of
+          // the gesture — confirmed via diagnostic logging: onDragStart and
+          // onDragEnd both fired, but onDragOver/onDrop never did, for a Task
+          // near the bottom of the scrollable table body. Pushing the state
+          // update past the current tick lets the browser finish locking in
+          // the drag session before the DOM/layout changes underneath it.
+          setTimeout(() => {
+            setDraggingTaskId(task.id);
+            setDraggingTaskGroupId(task.task_group_id);
+          }, 0);
         }}
         onDragEnd={() => {
+          taskDragStartPosRef.current = null;
           setDraggingTaskId(null);
           setDraggingTaskGroupId(null);
           setDragOverTaskId(null);
+          setDragOverGroupEndZoneId(null);
         }}
         onDragOver={(e) => {
           e.preventDefault();
@@ -3624,38 +4088,10 @@ function ProjectDetailContent() {
         onDragLeave={() => {
           setDragOverTaskId(prev => (prev === task.id ? null : prev));
         }}
-        onDrop={async (e) => {
-          e.preventDefault();
-          setDragOverTaskId(null);
-          try {
-            const raw = e.dataTransfer.getData("application/json");
-            if (!raw) return;
-            const data = JSON.parse(raw);
-            if (data.type === "task") {
-              if (data.groupId === task.task_group_id) {
-                const groupTasks = items.filter(t => t.task_group_id === task.task_group_id);
-                const sorted = buildTaskTree(groupTasks);
-                const fromIdx = sorted.findIndex(t => t.id === data.taskId);
-                const toIdx = sorted.findIndex(t => t.id === task.id);
-                if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
-                  const reordered = [...sorted];
-                  const [removed] = reordered.splice(fromIdx, 1);
-                  reordered.splice(toIdx, 0, removed);
-                  await reorderTasks(task.task_group_id, reordered.map(t => t.id));
-                  flash("Đã đổi thứ tự Task thành công!");
-                  reloadAll();
-                }
-              } else {
-                // Drop lands exactly at this row's position — the dropped task
-                // takes this row's slot and everything from here down shifts.
-                await moveTask(data.groupId, data.taskId, task.task_group_id, { insertBeforeTaskId: task.id });
-                flash(`Đã di chuyển task sang nhóm mới thành công!`);
-                reloadAll();
-              }
-            }
-          } catch (err: any) {
-            console.error(err);
-          }
+        onDrop={(e) => {
+          return draggingGroupId !== null
+            ? handleGroupDropOnTarget(e, task.task_group_id)
+            : handleTaskDropOnTarget(e, { id: task.id, task_group_id: task.task_group_id });
         }}
       >
         {/* Action cell: cả dòng đều kéo-thả được (giữ chuột trái bất kỳ đâu trên Task) */}
@@ -3683,6 +4119,7 @@ function ProjectDetailContent() {
                 align="right"
                 className="bg-white border border-slate-200 rounded-lg shadow-lg w-[190px] py-1 text-left"
               >
+                  {canEditTask(project) && (
                   <button
                     type="button"
                     onClick={() => {
@@ -3718,6 +4155,8 @@ function ProjectDetailContent() {
                     <Plus size={15} className="text-blue-500" />
                     Thêm task phía trên
                   </button>
+                  )}
+                  {canEditTask(project) && (
                   <button
                     type="button"
                     onClick={() => {
@@ -3748,6 +4187,8 @@ function ProjectDetailContent() {
                     <Plus size={15} className="text-emerald-600" />
                     Thêm task phía dưới
                   </button>
+                  )}
+                  {canEditTask(project) && (
                   <button
                     type="button"
                     onClick={() => { setOpenRowMenu(null); handleDuplicateTask(task.task_group_id, task.id); }}
@@ -3756,6 +4197,8 @@ function ProjectDetailContent() {
                     <Copy size={15} className="text-amber-600" />
                     Nhân bản
                   </button>
+                  )}
+                  {canMoveTask(project) && (
                   <button
                     type="button"
                     onClick={() => { setOpenRowMenu(null); handleOpenMoveModal(task); }}
@@ -3764,7 +4207,9 @@ function ProjectDetailContent() {
                     <ArrowRightLeft size={15} className="text-[#0058be]" />
                     Di chuyển
                   </button>
-                  <div className="my-1 border-t border-slate-100" />
+                  )}
+                  {canDeleteTask(project) && <div className="my-1 border-t border-slate-100" />}
+                  {canDeleteTask(project) && (
                   <button
                     type="button"
                     onClick={() => { setOpenRowMenu(null); setTaskToDelete(task.id); }}
@@ -3773,6 +4218,7 @@ function ProjectDetailContent() {
                     <Trash2 size={15} />
                     Xóa
                   </button>
+                  )}
               </FloatingDropdown>
             </div>
 
@@ -4341,10 +4787,10 @@ function ProjectDetailContent() {
           return (
             <td
               key={col}
-              className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-text hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'} ${colUpper !== 'DETAIL TASK' ? alignClass : ''}`}
+              className={`${cellStyle} ${colUpper === 'DETAIL TASK' ? 'whitespace-normal break-words' : 'whitespace-nowrap'} ${isReadOnly || !canEditTask(project) ? 'bg-[#f8fafc]/50 cursor-default' : 'cursor-text hover:bg-slate-100/80 group'} ${isNumericOrDate ? 'font-mono text-[#0b1c30] font-semibold' : 'text-[#565e74]'} ${colUpper !== 'DETAIL TASK' ? alignClass : ''}`}
               style={{ width: getColumnWidth(col), ...getPinTdStyle(col) }}
               onClick={() => {
-                if (!isReadOnly) handleStartEdit(col, val);
+                if (!isReadOnly && canEditTask(project)) handleStartEdit(col, val);
               }}
             >
               <div className={`flex items-center gap-1 w-full min-w-0 ${align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : ''}`}>
@@ -4557,13 +5003,13 @@ function ProjectDetailContent() {
                 const raw = e.dataTransfer.getData("application/json");
                 if (!raw) return;
                 const data = JSON.parse(raw);
-                if (data.type === "group" && data.phaseId !== phase.id) {
-                  await moveTaskGroup(data.phaseId, data.groupId, phase.id);
-                  flash(`Đã di chuyển Task Group sang Phase "${phase.name}" thành công!`);
-                  reloadAll();
+                if (data.type === "group" && data.phaseId !== phase.id && isBeyondGroupDragThreshold(e)) {
+                  await performGroupCrossPhaseMove(data.groupId, data.phaseId, phase.id);
                 }
               } catch (err: any) {
                 console.error(err);
+                flash(getApiErrorMessage(err), true);
+                await reloadAll();
               }
             }}
           >
@@ -4586,7 +5032,7 @@ function ProjectDetailContent() {
         if (addingTaskGroupPhaseId === phase.id) {
           result.push(renderInlineAddGroupRow(phase.id, 'I'));
         } else {
-          result.push(renderHoverTgSpacerRow(phase.id));
+          result.push(renderPhaseEndDropZone(phase.id));
         }
         return;
       }
@@ -4600,54 +5046,63 @@ function ProjectDetailContent() {
         const dynamicCols = getDynamicColumns();
 
         // ═══ TASK GROUP ROW (rendered as table row) ═══
+        const isDraggingThisGroup = draggingGroupId === group.id;
+        const isGroupDragOverThis = dragOverGroupId === group.id;
+        // Insertion line (Group being dragged) vs the older "drop a Task into
+        // this Group" highlight — only one kind of drag can be in flight at
+        // a time, so which state is non-null tells us which to show.
+        const showGroupInsertionLine = draggingGroupId !== null && isGroupDragOverThis;
+        const showTaskDropHighlight = draggingTaskId !== null && isGroupDragOverThis;
         result.push(
           <tr
             id={`tg-row-${group.id}`}
             key={`tg-row-${group.id}`}
-            className="bg-indigo-50/50 hover:bg-indigo-50 border-b border-[#E3E7EE] border-l-[3px] border-l-indigo-400 group transition-colors"
+            draggable={canManageProjectStructure(project)}
+            className={`border-t-2 ${showGroupInsertionLine ? 'border-t-[#0058be]' : 'border-t-transparent'} ${showTaskDropHighlight ? 'bg-indigo-100' : 'bg-indigo-50/50 hover:bg-indigo-50'} border-b border-[#E3E7EE] border-l-[3px] border-l-indigo-400 group transition-colors ${isDraggingThisGroup ? 'opacity-40' : ''}`}
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("application/json", JSON.stringify({ type: "group", groupId: group.id, phaseId: group.phase_id }));
+              groupDragStartPosRef.current = { x: e.clientX, y: e.clientY };
+              // Deferred to the next tick — see the matching comment on the
+              // Task row's onDragStart: setting this synchronously reflows
+              // every spacer/end-zone in the table while Chromium is still
+              // establishing the native drag session, which can silently
+              // break dragover/drop delivery for the rest of the gesture.
+              setTimeout(() => setDraggingGroupId(group.id), 0);
             }}
-            onDragEnd={(e) => {
-              const el = document.getElementById(`tg-row-${group.id}`);
-              if (el) el.setAttribute('draggable', 'false');
+            onDragEnd={() => {
+              groupDragStartPosRef.current = null;
+              setDraggingGroupId(null);
+              setDragOverGroupId(null);
+              setDragOverPhaseEndZoneId(null);
             }}
             onDragOver={(e) => {
               e.preventDefault();
-              e.currentTarget.classList.add("bg-indigo-100");
+              if (dragOverGroupId !== group.id) setDragOverGroupId(group.id);
             }}
-            onDragLeave={(e) => {
-              e.currentTarget.classList.remove("bg-indigo-100");
+            onDragLeave={() => {
+              setDragOverGroupId(prev => (prev === group.id ? null : prev));
             }}
             onDrop={async (e) => {
+              if (draggingGroupId !== null) {
+                await handleGroupDropOnTarget(e, group.id);
+                return;
+              }
               e.preventDefault();
-              e.currentTarget.classList.remove("bg-indigo-100");
+              setDragOverGroupId(null);
               try {
                 const raw = e.dataTransfer.getData("application/json");
                 if (!raw) return;
                 const data = JSON.parse(raw);
-                if (data.type === "group") {
-                  const phaseGroups = taskGroups.filter(g => g.phase_id === group.phase_id);
-                  const fromIdx = phaseGroups.findIndex(g => g.id === data.groupId);
-                  const toIdx = phaseGroups.findIndex(g => g.id === group.id);
-                  if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
-                    const reordered = [...phaseGroups];
-                    const [removed] = reordered.splice(fromIdx, 1);
-                    reordered.splice(toIdx, 0, removed);
-                    await reorderTaskGroups(group.phase_id, reordered.map(g => g.id));
-                    flash("Đã đổi thứ tự Task Group thành công!");
-                    reloadAll();
-                  }
-                } else if (data.type === "task") {
-                  if (data.groupId !== group.id) {
-                    await moveTask(data.groupId, data.taskId, group.id);
-                    flash(`Đã chuyển task vào nhóm "${group.name}" thành công!`);
-                    reloadAll();
+                if (data.type === "task") {
+                  if (data.groupId !== group.id && isBeyondTaskDragThreshold(e)) {
+                    await performTaskCrossGroupMove(data.taskId, data.groupId, group.id);
                   }
                 }
               } catch (err: any) {
                 console.error(err);
+                flash(getApiErrorMessage(err), true);
+                await reloadAll();
               }
             }}
           >
@@ -4664,25 +5119,8 @@ function ProjectDetailContent() {
                   {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 </button>
 
-                {/* 2. Drag Handle / Move Task Group (Always visible, clickable) */}
-                <button
-                  type="button"
-                  onMouseDown={() => {
-                    const el = document.getElementById(`tg-row-${group.id}`);
-                    if (el) el.setAttribute('draggable', 'true');
-                  }}
-                  onMouseUp={() => {
-                    const el = document.getElementById(`tg-row-${group.id}`);
-                    if (el) el.setAttribute('draggable', 'false');
-                  }}
-                  onClick={() => handleMoveTaskGroup(group.phase_id, group.id)}
-                  className="flex items-center justify-center w-6 h-6 cursor-grab active:cursor-grabbing hover:bg-indigo-200 rounded text-slate-400"
-                  title="Kéo hoặc bấm để di chuyển Task Group sang Phase khác"
-                >
-                  <GripVertical size={14} />
-                </button>
-
-                {/* 3. More actions (hover visible): add task / edit name / delete */}
+                {/* 2. More actions (hover visible): add task / edit name / delete /
+                    move — whole row is draggable, no separate grip icon needed. */}
                 <div className="relative">
                   <button
                     type="button"
@@ -4704,6 +5142,7 @@ function ProjectDetailContent() {
                     align="right"
                     className="bg-white border border-slate-200 rounded-lg shadow-lg w-[190px] py-1 text-left"
                   >
+                      {canEditTask(project) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -4724,6 +5163,8 @@ function ProjectDetailContent() {
                         <Plus size={15} className="text-[#0058be]" />
                         Thêm task
                       </button>
+                      )}
+                      {canManageProjectStructure(project) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -4738,7 +5179,19 @@ function ProjectDetailContent() {
                         <Pencil size={15} className="text-slate-500" />
                         Đổi tên nhóm
                       </button>
-                      <div className="my-1 border-t border-slate-100" />
+                      )}
+                      {canManageProjectStructure(project) && (
+                      <button
+                        type="button"
+                        onClick={() => { setOpenRowMenu(null); handleOpenMoveGroupModal(group); }}
+                        className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                      >
+                        <ArrowRightLeft size={15} className="text-[#0058be]" />
+                        Di chuyển
+                      </button>
+                      )}
+                      {canManageProjectStructure(project) && <div className="my-1 border-t border-slate-100" />}
+                      {canManageProjectStructure(project) && (
                       <button
                         type="button"
                         onClick={() => { setOpenRowMenu(null); handleDeleteTaskGroupClick(group); }}
@@ -4747,6 +5200,7 @@ function ProjectDetailContent() {
                         <Trash2 size={15} />
                         Xóa nhóm
                       </button>
+                      )}
                   </FloatingDropdown>
                 </div>
               </div>
@@ -4874,7 +5328,7 @@ function ProjectDetailContent() {
                               flash('Đã cập nhật ngày hoàn thành thực tế!');
                               reloadAll(true);
                             } catch (err: any) {
-                              alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+                              flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
                             }
                           }
                           setEditingGroupDate(null);
@@ -4889,7 +5343,7 @@ function ProjectDetailContent() {
                                 flash('Đã cập nhật ngày hoàn thành thực tế!');
                                 reloadAll(true);
                               } catch (err: any) {
-                                alert('Lỗi cập nhật: ' + (err.response?.data?.detail || err.message));
+                                flash('Lỗi cập nhật: ' + getApiErrorMessage(err), true);
                               }
                             }
                             setEditingGroupDate(null);
@@ -5089,7 +5543,7 @@ function ProjectDetailContent() {
                             await remindTaskGroup(group.id);
                             flash('Đã gửi thông báo nhắc Leader duyệt Task Cha thành công!');
                           } catch (err: any) {
-                            alert(err.response?.data?.detail || 'Lỗi khi gửi thông báo nhắc duyệt!');
+                            flash(getApiErrorMessage(err, 'Lỗi khi gửi thông báo nhắc duyệt!'), true);
                           }
                         }}
                         className={`px-2 py-0.5 rounded text-[10.5px] font-bold flex items-center gap-1 transition-all shrink-0 ${allDone
@@ -5142,6 +5596,13 @@ function ProjectDetailContent() {
         // ═══ TASK ROWS (child rows) ═══
         const sortedTasks = buildTaskTree(filteredTasks);
 
+        // Tracks whether "Thêm task phía trên" (addingTaskBeforeCode) actually
+        // found its anchor task and rendered the form right above it — if the
+        // anchor task is hidden (its ancestor got collapsed mid-flow), this
+        // stays false and the group-end fallback below still shows the form
+        // (better than it vanishing entirely).
+        let beforeRowRendered = false;
+
         sortedTasks.forEach((task, tIdx) => {
           if (isAncestorCollapsed(task.task_code)) {
             return;
@@ -5151,6 +5612,17 @@ function ProjectDetailContent() {
           const isCollapsedParent = collapsedParents.has(task.task_code);
           const dotCount = (task.task_code || '').split('.').length - 1;
           const level = Math.max(0, dotCount);
+
+          // 0. Render inline add row BEFORE this task if inserting above it
+          // ("Thêm task phía trên" from the actions menu) — must be pushed
+          // ahead of the task's own row, otherwise there's no render branch
+          // that ever places it here and it silently falls through to the
+          // group-end fallback instead, appearing at the bottom of the list
+          // no matter which task "phía trên" was clicked on.
+          if (addingTaskGroupId === group.id && addingTaskBeforeCode === task.task_code) {
+            result.push(renderInlineAddRow(group.id, addingTaskParentCode, level));
+            beforeRowRendered = true;
+          }
 
           result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent, tIdx, sortedTasks));
 
@@ -5174,14 +5646,14 @@ function ProjectDetailContent() {
           }
 
           if (nextVisibleTask && addingTaskAfterCode !== task.task_code) {
-            result.push(renderHoverSpacerRow(group.id, task.task_code, level, false));
+            result.push(renderHoverSpacerRow(group.id, task.task_code, level, false, nextVisibleTask.id));
           }
         });
 
-        if (addingTaskGroupId === group.id && addingTaskParentCode === null && addingTaskAfterCode === null) {
+        if (addingTaskGroupId === group.id && addingTaskParentCode === null && addingTaskAfterCode === null && !beforeRowRendered) {
           result.push(renderInlineAddRow(group.id, null, 0));
-        } else if (addingTaskGroupId !== group.id || addingTaskParentCode !== null || addingTaskAfterCode !== null) {
-          result.push(renderHoverSpacerRow(group.id, null, 0, true));
+        } else if (addingTaskGroupId !== group.id || addingTaskParentCode !== null || addingTaskAfterCode !== null || beforeRowRendered) {
+          result.push(renderGroupEndDropZone(group.id));
         }
       });
 
@@ -5191,7 +5663,7 @@ function ProjectDetailContent() {
           const nextIndex = to_roman(groupsInPhase.length + 1);
           result.push(renderInlineAddGroupRow(phase.id, nextIndex));
         } else {
-          result.push(renderHoverTgSpacerRow(phase.id));
+          result.push(renderPhaseEndDropZone(phase.id));
         }
       }
     });
@@ -5320,12 +5792,23 @@ function ProjectDetailContent() {
         {/* MAIN CONTAINER */}
         <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-6">
           {msg && (
-            // z-[100] - PHẢI cao hơn mọi drawer full-screen (Task Edit/Leader
-            // Review Detail/AI Review đều z-50) để toast không bao giờ bị đè
-            // khuất phía sau khi 1 drawer đang mở lúc flash() được gọi (vd
-            // validate lỗi hoặc save thành công mà drawer vẫn ở lại mở).
-            <div className={`fixed top-4 right-4 z-[100] p-3 rounded-lg text-xs font-semibold shadow-xl border ${msg.e ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+            // z-[1000] - PHẢI cao hơn mọi drawer full-screen (Task Edit/Leader
+            // Review Detail/AI Review đều z-50) VÀ mọi modal (z-[999], vd
+            // Xóa Phase/Task Group, Thêm/Sửa Task Group...) để toast không
+            // bao giờ bị đè khuất phía sau khi 1 drawer/modal đang mở lúc
+            // flash() được gọi (vd validate lỗi hoặc save thành công mà
+            // drawer/modal vẫn ở lại mở).
+            <div className={`fixed top-4 right-4 z-[1000] p-3 rounded-lg text-xs font-semibold shadow-xl border ${msg.e ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
+            </div>
+          )}
+
+          {moveUndo && (
+            <div className="fixed top-20 right-4 z-[100] p-3 rounded-lg text-xs font-semibold shadow-xl border bg-white text-[#0b1c30] border-slate-200 flex items-center gap-3">
+              <span>{moveUndo.message}</span>
+              <button onClick={handleUndoTaskMove} className="text-[#0058be] font-bold hover:underline shrink-0">
+                Hoàn tác
+              </button>
             </div>
           )}
 
@@ -5583,6 +6066,7 @@ function ProjectDetailContent() {
             </div>
 
             {/* + Thêm task (split button: main = thêm task, dropdown = thêm task / thêm group task) */}
+            {canEditTask(project) && (
             <div className="relative flex">
               <button
                 onClick={() => {
@@ -5593,7 +6077,7 @@ function ProjectDetailContent() {
                       return ph && ph.name === activePhase;
                     });
                   if (currentPhaseGroups.length === 0) {
-                    alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
+                    flash('Hãy tạo ít nhất một Task Group trước khi thêm Task!', true);
                     return;
                   }
                   const targetGroup = currentPhaseGroups[0];
@@ -5638,7 +6122,7 @@ function ProjectDetailContent() {
                           return ph && ph.name === activePhase;
                         });
                       if (currentPhaseGroups.length === 0) {
-                        alert('Hãy tạo ít nhất một Task Group trước khi thêm Task!');
+                        flash('Hãy tạo ít nhất một Task Group trước khi thêm Task!', true);
                         return;
                       }
                       const targetGroup = currentPhaseGroups[0];
@@ -5658,6 +6142,7 @@ function ProjectDetailContent() {
                     <Plus size={16} className="text-[#0058be]" />
                     Thêm task
                   </button>
+                  {canManageProjectStructure(project) && (
                   <button
                     onClick={() => {
                       setAddTaskMenuOpen(false);
@@ -5671,7 +6156,7 @@ function ProjectDetailContent() {
                         if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
                       }
                       if (!defaultPhaseId) {
-                        alert('Vui lòng tạo Phase trước!');
+                        flash('Vui lòng tạo Phase trước!', true);
                         return;
                       }
                       setAddingTaskGroupPhaseId(defaultPhaseId);
@@ -5682,8 +6167,10 @@ function ProjectDetailContent() {
                     <FolderPlus size={16} className="text-indigo-600" />
                     Thêm Group Task
                   </button>
+                  )}
               </FloatingDropdown>
             </div>
+            )}
           </div>
           )}
           </div>
@@ -6551,26 +7038,30 @@ function ProjectDetailContent() {
                                   <Sparkles size={15} className="text-indigo-600" />
                                   AI Check
                                 </button>
-                                <button
-                                  onClick={() => {
-                                    setOpenHeaderMenu(null);
-                                    setEditingPhaseId(p.id);
-                                    setEditingPhaseName(p.label);
-                                    setShowRenameModal(true);
-                                  }}
-                                  className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
-                                >
-                                  <Pencil size={15} className="text-slate-500" />
-                                  Chỉnh sửa
-                                </button>
-                                <div className="my-1 border-t border-slate-100" />
-                                <button
-                                  onClick={() => { setOpenHeaderMenu(null); handleDeletePhase(p.id!, p.label); }}
-                                  className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-red-600 hover:bg-red-50"
-                                >
-                                  <Trash2 size={15} />
-                                  Xóa Phase
-                                </button>
+                                {canManageProjectStructure(project) && (
+                                  <button
+                                    onClick={() => {
+                                      setOpenHeaderMenu(null);
+                                      setEditingPhaseId(p.id);
+                                      setEditingPhaseName(p.label);
+                                      setShowRenameModal(true);
+                                    }}
+                                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                                  >
+                                    <Pencil size={15} className="text-slate-500" />
+                                    Chỉnh sửa
+                                  </button>
+                                )}
+                                {canManageProjectStructure(project) && <div className="my-1 border-t border-slate-100" />}
+                                {canManageProjectStructure(project) && (
+                                  <button
+                                    onClick={() => { setOpenHeaderMenu(null); handleDeletePhase(p.id!, p.label); }}
+                                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-red-600 hover:bg-red-50"
+                                  >
+                                    <Trash2 size={15} />
+                                    Xóa Phase
+                                  </button>
+                                )}
                               </FloatingDropdown>
                             </div>
                           )}
@@ -6641,27 +7132,42 @@ function ProjectDetailContent() {
                       {/* + Thêm Phase / Áp dụng template LUÔN hiện ngoài thanh, không bao giờ
                           rơi vào dropdown "Phase khác" - width của chúng luôn được reserve
                           trong visiblePhaseCount ở trên. */}
-                      <button
-                        onClick={() => {
-                          setNewPhaseName('');
-                          setShowPhaseModal(true);
-                        }}
-                        className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-[#0058be] hover:bg-slate-100 transition-all flex items-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
-                        title="Tạo Phase mới"
-                      >
-                        <Plus size={14} />
-                        Thêm Phase
-                      </button>
+                      {canManageProjectStructure(project) && (
+                        <button
+                          onClick={() => {
+                            setNewPhaseName('');
+                            setShowPhaseModal(true);
+                          }}
+                          className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-[#0058be] hover:bg-slate-100 transition-all flex items-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
+                          title="Tạo Phase mới"
+                        >
+                          <Plus size={14} />
+                          Thêm Phase
+                        </button>
+                      )}
                       <div className="w-px h-5 bg-slate-200 mx-1 shrink-0" />
-                      <button
-                        onClick={handleOpenTemplateModal}
-                        className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                        title="Thay cấu trúc Phase và Task hiện tại bằng Project Template"
-                        aria-label="Áp dụng template — thay cấu trúc Phase và Task hiện tại bằng Project Template"
-                      >
-                        <LayoutTemplate size={14} />
-                        Áp dụng template
-                      </button>
+                      {canApplyProjectTemplate(project) && (
+                        <button
+                          onClick={handleOpenTemplateModal}
+                          className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                          title="Thay cấu trúc Phase và Task hiện tại bằng Project Template"
+                          aria-label="Áp dụng template — thay cấu trúc Phase và Task hiện tại bằng Project Template"
+                        >
+                          <LayoutTemplate size={14} />
+                          Áp dụng template
+                        </button>
+                      )}
+                      {isSuperAdmin() && (
+                        <button
+                          onClick={() => setShowExportTemplateModal(true)}
+                          className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                          title="Chọn Phase/Task Group/Task muốn tái sử dụng và tạo Project Template mới từ dự án này"
+                          aria-label="Xuất thành Template — tạo Project Template mới từ cấu trúc dự án này"
+                        >
+                          <FileOutput size={14} />
+                          Xuất thành Template
+                        </button>
+                      )}
 
                       {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[110px]
                           giống tab thật) để tính visiblePhaseCount ở trên - không ảnh hưởng layout. */}
@@ -6992,7 +7498,32 @@ function ProjectDetailContent() {
                             })}
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-[#c2c6d6]/40 bg-white">
+                        <tbody
+                          className="divide-y divide-[#c2c6d6]/40 bg-white"
+                          onDragOver={(e) => {
+                            // Safety net, not a retarget: a native HTML5 drop is only
+                            // accepted at a point if SOME dragover in that event's
+                            // bubble path called preventDefault() on the LAST sample
+                            // taken before release. A fast, short drag gesture (a
+                            // quick upward flick is the classic case — reordering one
+                            // row up is a much shorter, snappier motion than dragging
+                            // several rows down) can have its last dragover sample
+                            // land on an 8px spacer or right at a row boundary that
+                            // never got its own dragover call in time, so the browser
+                            // silently REJECTS the drop — no drop event fires
+                            // anywhere, no error, nothing. This unconditional
+                            // preventDefault() on the whole table body — active only
+                            // during a Task/Group drag — guarantees the drop is always
+                            // accepted somewhere in the table regardless of that last-
+                            // sample race. It does NOT change which row/spacer the
+                            // drop actually lands on or how it's handled — that's
+                            // still whichever element is literally under the cursor at
+                            // release, using its own existing onDrop logic.
+                            if (draggingTaskId !== null || draggingGroupId !== null) {
+                              e.preventDefault();
+                            }
+                          }}
+                        >
                           {renderRows()}
                         </tbody>
                       </table>
@@ -7331,8 +7862,8 @@ function ProjectDetailContent() {
                         </div>
                         <p className="text-xs text-[#565e74] mb-6">Bạn có chắc chắn muốn xóa cuộc họp này? Hành động này không thể hoàn tác.</p>
                         <div className="flex justify-end gap-3">
-                          <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-2 text-xs font-bold text-[#565e74] bg-white border border-[#c2c6d6] hover:bg-[#f0f2f5] rounded-lg transition-colors">Hủy</button>
-                          <button onClick={executeDeleteMeeting} className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-sm">Xác nhận xóa</button>
+                          <button onClick={() => setDeleteConfirmId(null)} disabled={deletingMeeting} className="px-4 py-2 text-xs font-bold text-[#565e74] bg-white border border-[#c2c6d6] hover:bg-[#f0f2f5] rounded-lg transition-colors disabled:opacity-50">Hủy</button>
+                          <button onClick={executeDeleteMeeting} disabled={deletingMeeting} className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-sm disabled:opacity-50">{deletingMeeting ? 'Đang xóa...' : 'Xác nhận xóa'}</button>
                         </div>
                       </div>
                     </div>
@@ -7462,15 +7993,20 @@ function ProjectDetailContent() {
                               {!isLeader && !isPM && (
                                 <button
                                   onClick={async () => {
+                                    if (removingMemberId !== null) return;
+                                    setRemovingMemberId(m.id);
                                     try {
                                       await removeProjectMember(Number(id), m.id);
                                       loadProjectMembers();
                                       flash('Đã gỡ bỏ thành viên');
                                     } catch (err: any) {
-                                      alert('Lỗi gỡ thành viên: ' + (err.response?.data?.detail || err.message));
+                                      flash('Lỗi gỡ thành viên: ' + getApiErrorMessage(err), true);
+                                    } finally {
+                                      setRemovingMemberId(null);
                                     }
                                   }}
-                                  className="text-slate-400 hover:text-red-600 p-1"
+                                  disabled={removingMemberId === m.id}
+                                  className="text-slate-400 hover:text-red-600 p-1 disabled:opacity-50 disabled:cursor-not-allowed"
                                   title="Gỡ thành viên"
                                 >
                                   <span className="material-symbols-outlined text-[16px]">close</span>
@@ -7649,37 +8185,77 @@ function ProjectDetailContent() {
         </div>
       )}
 
-      {/* Modal Xác Nhận Áp Dụng Template (GHI ĐÈ) */}
-      {confirmApplyTemplateId !== null && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6">
-              <div className="flex items-center gap-3 text-amber-600 mb-3">
-                <span className="material-symbols-outlined text-[28px]">warning</span>
-                <h3 className="text-base font-bold text-[#0b1c30]">Xác nhận áp dụng template</h3>
+      {/* Modal Xác Nhận Áp Dụng Template (GHI ĐÈ) — kèm Preview số liệu trước khi Apply */}
+      {confirmApplyTemplateId !== null && (() => {
+        const previewTemplate = templates.find((t: any) => t.id === confirmApplyTemplateId);
+        const previewPhases = (previewTemplate?.phases || []).filter((p: any) => p.is_active !== false);
+        const previewGroupCount = previewPhases.reduce((acc: number, p: any) => acc + (p.task_groups?.length || 0), 0);
+        const previewTaskCount = previewPhases.reduce(
+          (acc: number, p: any) => acc + (p.task_groups || []).reduce((a2: number, g: any) => a2 + (g.tasks?.length || 0), 0),
+          0
+        );
+        return (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="p-6">
+                <div className="flex items-center gap-3 text-amber-600 mb-3">
+                  <span className="material-symbols-outlined text-[28px]">warning</span>
+                  <h3 className="text-base font-bold text-[#0b1c30]">Xác nhận áp dụng template</h3>
+                </div>
+                {previewTemplate && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 mb-3">
+                    <div className="text-xs font-bold text-[#0b1c30] mb-2 truncate">{previewTemplate.name}</div>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div>
+                        <div className="text-lg font-bold text-[#0058be]">{previewPhases.length}</div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wide">Phases</div>
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold text-[#0058be]">{previewGroupCount}</div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wide">Task Groups</div>
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold text-[#0058be]">{previewTaskCount}</div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wide">Tasks</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Áp dụng template này sẽ <strong className="text-red-600">XÓA TOÀN BỘ Phase và Task hiện tại</strong> của dự án, sau đó thay bằng cấu trúc ở trên.
+                </p>
+                <p className="text-xs text-slate-500 mt-2">Hành động này <strong>không thể hoàn tác</strong>. Bạn có chắc chắn muốn tiếp tục?</p>
               </div>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Áp dụng template này sẽ <strong className="text-red-600">XÓA TOÀN BỘ Phase và Task hiện tại</strong> của dự án, sau đó tạo mới theo cấu trúc template được chọn.
-              </p>
-              <p className="text-xs text-slate-500 mt-2">Hành động này <strong>không thể hoàn tác</strong>. Bạn có chắc chắn muốn tiếp tục?</p>
-            </div>
-            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
-              <button
-                onClick={() => setConfirmApplyTemplateId(null)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
-              >
-                Hủy
-              </button>
-              <button
-                onClick={() => handleApplyTemplate(confirmApplyTemplateId)}
-                disabled={applyingTemplateId === confirmApplyTemplateId}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50"
-              >
-                {applyingTemplateId === confirmApplyTemplateId ? 'Đang áp dụng...' : 'Xác nhận áp dụng'}
-              </button>
+              <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  onClick={() => setConfirmApplyTemplateId(null)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                >
+                  Hủy
+                </button>
+                <button
+                  onClick={() => handleApplyTemplate(confirmApplyTemplateId)}
+                  disabled={applyingTemplateId === confirmApplyTemplateId}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50"
+                >
+                  {applyingTemplateId === confirmApplyTemplateId ? 'Đang áp dụng...' : 'Áp dụng Template'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        );
+      })()}
+
+      {showExportTemplateModal && (
+        <ExportProjectTemplateModal
+          projectId={Number(id)}
+          projectName={project?.name || ''}
+          phases={phases}
+          taskGroups={taskGroups}
+          tasks={items}
+          onClose={() => setShowExportTemplateModal(false)}
+          onSuccess={(result) => flash(`Xuất template "${result.name}" thành công (${result.created_phase_count} phase, ${result.created_group_count} task group, ${result.created_task_count} task)`)}
+        />
       )}
 
       <ProjectFormModal
@@ -8010,6 +8586,7 @@ function ProjectDetailContent() {
                         align="right"
                         className="bg-white border border-slate-200 rounded-lg shadow-lg w-[190px] py-1 text-left"
                       >
+                        {canEditTask(project) && (
                         <button
                           onClick={() => { setLeaderReviewMoreMenuOpen(false); setLeaderReviewDetailTask(null); handleDuplicateTask(t.task_group_id, t.id); }}
                           className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
@@ -8017,6 +8594,8 @@ function ProjectDetailContent() {
                           <Copy size={15} className="text-[#0058be]" />
                           Nhân bản Task
                         </button>
+                        )}
+                        {canDeleteTask(project) && (
                         <button
                           onClick={() => { setLeaderReviewMoreMenuOpen(false); setLeaderReviewDetailTask(null); setTaskToDelete(t.id); }}
                           className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-red-600 hover:bg-red-50"
@@ -8024,6 +8603,7 @@ function ProjectDetailContent() {
                           <Trash2 size={15} />
                           Xóa Task
                         </button>
+                        )}
                       </FloatingDropdown>
                     </div>
                   </div>
@@ -8200,6 +8780,7 @@ function ProjectDetailContent() {
                 >
                   <Sparkles size={16} />
                 </button>
+                {canEditTask(project) && (
                 <button
                   onClick={() => handleDuplicateTask(selectedTask.task_group_id, selectedTask.id)}
                   className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-[#0058be] transition-colors"
@@ -8207,6 +8788,8 @@ function ProjectDetailContent() {
                 >
                   <Copy size={16} />
                 </button>
+                )}
+                {canDeleteTask(project) && (
                 <button
                   onClick={() => { setSelectedTask(null); setTaskToDelete(selectedTask.id); }}
                   className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-slate-500 hover:text-red-600 transition-colors"
@@ -8214,6 +8797,7 @@ function ProjectDetailContent() {
                 >
                   <Trash2 size={16} />
                 </button>
+                )}
                 <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
                   <X size={18} />
                 </button>
@@ -8700,6 +9284,227 @@ function ProjectDetailContent() {
         </div>
       )}
 
+      {/* Modal Di chuyển Task Group — vị trí là mode (Đầu/Trước/Sau/Cuối Phase)
+          + anchor Group riêng, khác với Task (1 dropdown gộp) vì Group thường
+          có ít sibling hơn nên tách 2 bước sẽ rõ ràng hơn. */}
+      {movingGroup !== null && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-[#0b1c30]">Di chuyển Task Group</h3>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">
+                  {movingGroup.name} · {(items.filter((t: any) => t.task_group_id === movingGroup.id)).length} Tasks
+                </p>
+              </div>
+              <button
+                onClick={() => setMovingGroup(null)}
+                className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Phase đích</label>
+                <select
+                  value={moveGroupTargetPhaseId}
+                  onChange={(e) => {
+                    const newPhaseId = e.target.value === '' ? '' : parseInt(e.target.value, 10);
+                    setMoveGroupTargetPhaseId(newPhaseId);
+                    // Đổi Phase đích -> anchor Group của Phase cũ không còn hợp
+                    // lệ, phải reset (đúng yêu cầu "loại bỏ anchor cũ").
+                    const siblings = getGroupsOfPhase(newPhaseId, movingGroup.id);
+                    if (siblings.length === 0) {
+                      setMoveGroupPositionMode('end');
+                      setMoveGroupAnchorId('');
+                    } else if (newPhaseId === movingGroup.phase_id) {
+                      const current = computeCurrentGroupPosition(movingGroup);
+                      setMoveGroupPositionMode(current.mode);
+                      setMoveGroupAnchorId(current.anchorGroupId);
+                    } else {
+                      setMoveGroupPositionMode('end');
+                      setMoveGroupAnchorId('');
+                    }
+                  }}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                >
+                  {phases.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              {moveGroupTargetPhaseId !== '' && moveGroupTargetPhaseId !== movingGroup.phase_id && (() => {
+                const sourcePhase = phases.find((p: any) => p.id === movingGroup.phase_id);
+                const targetPhase = phases.find((p: any) => p.id === moveGroupTargetPhaseId);
+                const taskCount = items.filter((t: any) => t.task_group_id === movingGroup.id).length;
+                return (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] text-amber-800 leading-relaxed">
+                    <div className="font-semibold">
+                      Di chuyển "{movingGroup.name}" từ <strong>{sourcePhase?.name || 'Phase hiện tại'}</strong> → <strong>{targetPhase?.name || ''}</strong>
+                    </div>
+                    <div className="mt-0.5">{taskCount} Task sẽ được chuyển theo cùng Group.</div>
+                  </div>
+                );
+              })()}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Vị trí</label>
+                <select
+                  value={moveGroupPositionMode}
+                  onChange={(e) => {
+                    setMoveGroupPositionMode(e.target.value as typeof moveGroupPositionMode);
+                    setMoveGroupAnchorId('');
+                  }}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                >
+                  {/* Phase đích không có Group nào khác -> chỉ "Cuối Phase" có ý nghĩa */}
+                  {moveGroupSiblingsInTargetPhase.length > 0 && <option value="start">Đầu Phase</option>}
+                  {moveGroupSiblingsInTargetPhase.length > 0 && <option value="before">Trước Group...</option>}
+                  {moveGroupSiblingsInTargetPhase.length > 0 && <option value="after">Sau Group...</option>}
+                  <option value="end">Cuối Phase</option>
+                </select>
+              </div>
+              {(moveGroupPositionMode === 'before' || moveGroupPositionMode === 'after') && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">
+                    {moveGroupPositionMode === 'before' ? 'Trước Group' : 'Sau Group'}
+                  </label>
+                  <select
+                    value={moveGroupAnchorId}
+                    onChange={(e) => setMoveGroupAnchorId(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  >
+                    <option value="">-- Chọn Group --</option>
+                    {moveGroupSiblingsInTargetPhase.map((g: any) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setMovingGroup(null)}
+                disabled={savingMoveGroup}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleConfirmMoveGroup}
+                disabled={
+                  savingMoveGroup ||
+                  !moveGroupHasChanged ||
+                  ((moveGroupPositionMode === 'before' || moveGroupPositionMode === 'after') && moveGroupAnchorId === '')
+                }
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {savingMoveGroup ? 'Đang di chuyển...' : 'Di chuyển'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xóa Phase — cascade delete: Phase + all its Task Groups + all
+          Tasks/Sub-tasks are always deletable together, no blocked state. */}
+      {phaseToDelete !== null && (() => {
+        const phaseGroupIds = taskGroups.filter((g: any) => g.phase_id === phaseToDelete.id).map((g: any) => g.id);
+        const groupCount = phaseGroupIds.length;
+        const taskCount = items.filter((t: any) => phaseGroupIds.includes(t.task_group_id)).length;
+        return (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="p-6">
+                <div className="flex items-center gap-3 mb-3 text-rose-600">
+                  <span className="material-symbols-outlined text-[28px]">warning</span>
+                  <h3 className="text-base font-bold text-[#0b1c30]">
+                    Xóa Phase "{phaseToDelete.name}"?
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Thao tác này sẽ xóa vĩnh viễn:
+                </p>
+                <ul className="mt-2 text-xs text-slate-700 space-y-1 list-disc pl-5">
+                  <li>{groupCount} Task Group{groupCount !== 1 ? 's' : ''}</li>
+                  <li>{taskCount} Task{taskCount !== 1 ? 's' : ''}</li>
+                  <li>Các Sub-task bên trong</li>
+                </ul>
+                <p className="text-xs text-rose-500 mt-3 font-medium">
+                  ⚠️ Tất cả dữ liệu thuộc Phase này sẽ bị xóa. Không thể hoàn tác.
+                </p>
+              </div>
+              <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setPhaseToDelete(null)}
+                  disabled={deletingPhase}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeletePhase}
+                  disabled={deletingPhase}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition-colors shadow-sm disabled:opacity-50"
+                >
+                  {deletingPhase ? 'Đang xóa...' : 'Xóa Phase'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal Xóa Task Group — cascade delete: Group + all its Tasks/
+          Sub-tasks, no blocked state. */}
+      {groupToDelete !== null && (() => {
+        const taskCount = items.filter((t: any) => t.task_group_id === groupToDelete.id).length;
+        return (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="p-6">
+                <div className="flex items-center gap-3 mb-3 text-rose-600">
+                  <span className="material-symbols-outlined text-[28px]">warning</span>
+                  <h3 className="text-base font-bold text-[#0b1c30]">
+                    Xóa Task Group "{groupToDelete.name}"?
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Thao tác này sẽ xóa:
+                </p>
+                <ul className="mt-2 text-xs text-slate-700 space-y-1 list-disc pl-5">
+                  <li>{taskCount} Task{taskCount !== 1 ? 's' : ''}</li>
+                  <li>Các Sub-task bên trong</li>
+                </ul>
+                <p className="text-xs text-rose-500 mt-3 font-medium">
+                  ⚠️ Không thể hoàn tác.
+                </p>
+              </div>
+              <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setGroupToDelete(null)}
+                  disabled={deletingGroup}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteGroup}
+                  disabled={deletingGroup}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition-colors shadow-sm disabled:opacity-50"
+                >
+                  {deletingGroup ? 'Đang xóa...' : 'Xóa Task Group'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Modal Tạo Phase */}
       {showPhaseModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
@@ -8728,15 +9533,17 @@ function ProjectDetailContent() {
             <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
               <button
                 onClick={() => setShowPhaseModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                disabled={savingPhase}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
               >
                 Hủy bỏ
               </button>
               <button
                 onClick={handleCreatePhase}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm"
+                disabled={savingPhase}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm disabled:opacity-50"
               >
-                Tạo Phase
+                {savingPhase ? 'Đang tạo...' : 'Tạo Phase'}
               </button>
             </div>
           </div>
@@ -8771,15 +9578,17 @@ function ProjectDetailContent() {
             <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
               <button
                 onClick={() => setShowRenameModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                disabled={savingPhase}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
               >
                 Hủy bỏ
               </button>
               <button
                 onClick={handleRenamePhase}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-amber-500 hover:bg-amber-600 transition-colors shadow-sm"
+                disabled={savingPhase}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-amber-500 hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50"
               >
-                Lưu Thay Đổi
+                {savingPhase ? 'Đang lưu...' : 'Lưu Thay Đổi'}
               </button>
             </div>
           </div>
@@ -8864,15 +9673,17 @@ function ProjectDetailContent() {
                 <button
                   type="button"
                   onClick={() => setShowTaskGroupModal(false)}
-                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                  disabled={savingTaskGroup}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
                 >
                   Hủy bỏ
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm"
+                  disabled={savingTaskGroup}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm disabled:opacity-50"
                 >
-                  {editingTaskGroup ? 'Lưu thay đổi' : 'Tạo Task Group'}
+                  {savingTaskGroup ? 'Đang lưu...' : (editingTaskGroup ? 'Lưu thay đổi' : 'Tạo Task Group')}
                 </button>
               </div>
             </form>

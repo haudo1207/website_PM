@@ -63,10 +63,14 @@ export default function SystemCategoriesView({
   const [newWsName, setNewWsName] = useState('');
   const [newWsCode, setNewWsCode] = useState('');
   const [newWsDesc, setNewWsDesc] = useState('');
+  const [newWsWebhook, setNewWsWebhook] = useState('');
+  const [newWsExpectedEmail, setNewWsExpectedEmail] = useState('');
   const [editingWsId, setEditingWsId] = useState<number | null>(null);
   const [editingWsName, setEditingWsName] = useState('');
   const [editingWsCode, setEditingWsCode] = useState('');
   const [editingWsDesc, setEditingWsDesc] = useState('');
+  const [editingWsWebhook, setEditingWsWebhook] = useState('');
+  const [editingWsExpectedEmail, setEditingWsExpectedEmail] = useState('');
 
   useEffect(() => {
     loadMasterPhases();
@@ -219,10 +223,12 @@ export default function SystemCategoriesView({
     e.preventDefault();
     if (!newWsName.trim() || !newWsCode.trim()) return;
     try {
-      await createWorkspace({ name: newWsName, code: newWsCode, description: newWsDesc });
+      await createWorkspace({ name: newWsName, code: newWsCode, description: newWsDesc, n8n_webhook_url: newWsWebhook, expected_google_email: newWsExpectedEmail });
       setNewWsName('');
       setNewWsCode('');
       setNewWsDesc('');
+      setNewWsWebhook('');
+      setNewWsExpectedEmail('');
       setShowAddWorkspace(false);
       onReload();
       onFlash('Đã thêm Workspace mới thành công');
@@ -234,7 +240,7 @@ export default function SystemCategoriesView({
   const handleUpdateWorkspace = async (id: number) => {
     if (!editingWsName.trim() || !editingWsCode.trim()) return;
     try {
-      await updateWorkspace(id, { name: editingWsName, code: editingWsCode, description: editingWsDesc });
+      await updateWorkspace(id, { name: editingWsName, code: editingWsCode, description: editingWsDesc, n8n_webhook_url: editingWsWebhook, expected_google_email: editingWsExpectedEmail });
       setEditingWsId(null);
       onReload();
       onFlash('Đã cập nhật Workspace thành công');
@@ -676,45 +682,69 @@ export default function SystemCategoriesView({
           </div>
 
           {showAddWorkspace && (
-            <form onSubmit={handleAddWorkspace} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col md:flex-row gap-4 items-end">
-              <div className="flex-1 flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Workspace <span className="text-red-500">*</span></label>
-                <input
-                  required
-                  type="text"
-                  placeholder="Ví dụ: INFRA, DEV..."
-                  value={newWsName}
-                  onChange={e => setNewWsName(e.target.value)}
-                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                />
+            <form onSubmit={handleAddWorkspace} className="p-6 bg-slate-50/30 border-b border-slate-200 flex flex-col gap-4">
+              <div className="flex flex-col md:flex-row gap-4 items-end">
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tên Workspace <span className="text-red-500">*</span></label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Ví dụ: INFRA, DEV..."
+                    value={newWsName}
+                    onChange={e => setNewWsName(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mã Workspace <span className="text-red-500">*</span></label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Ví dụ: infra, dev (chữ thường, không dấu, không khoảng trắng)"
+                    value={newWsCode}
+                    onChange={e => setNewWsCode(e.target.value.toLowerCase())}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả (tùy chọn)</label>
+                  <input
+                    type="text"
+                    placeholder="Mô tả workspace..."
+                    value={newWsDesc}
+                    onChange={e => setNewWsDesc(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shrink-0"
+                >
+                  Lưu Workspace
+                </button>
               </div>
-              <div className="flex-1 flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mã Workspace <span className="text-red-500">*</span></label>
-                <input
-                  required
-                  type="text"
-                  placeholder="Ví dụ: infra, dev (chữ thường, không dấu, không khoảng trắng)"
-                  value={newWsCode}
-                  onChange={e => setNewWsCode(e.target.value.toLowerCase())}
-                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                />
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Webhook n8n riêng (tùy chọn)</label>
+                  <input
+                    type="text"
+                    placeholder="https://... — để trống thì dùng webhook n8n dùng chung (N8N_MEETING_WEBHOOK_URL_DEFAULT)"
+                    value={newWsWebhook}
+                    onChange={e => setNewWsWebhook(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email Google dự kiến (tùy chọn)</label>
+                  <input
+                    type="text"
+                    placeholder="vd: devv.szone@gmail.com — chỉ để hiển thị gợi ý trước khi kết nối"
+                    value={newWsExpectedEmail}
+                    onChange={e => setNewWsExpectedEmail(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  />
+                </div>
               </div>
-              <div className="flex-1 flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Mô tả (tùy chọn)</label>
-                <input
-                  type="text"
-                  placeholder="Mô tả workspace..."
-                  value={newWsDesc}
-                  onChange={e => setNewWsDesc(e.target.value)}
-                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500"
-                />
-              </div>
-              <button
-                type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shrink-0"
-              >
-                Lưu Workspace
-              </button>
             </form>
           )}
 
@@ -725,28 +755,46 @@ export default function SystemCategoriesView({
               workspaces.map(w => (
                 <div key={w.id} className="p-4 px-6 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
                   {editingWsId === w.id ? (
-                    <div className="flex-1 flex flex-col md:flex-row gap-3 items-center">
-                      <input
-                        type="text"
-                        value={editingWsName}
-                        onChange={e => setEditingWsName(e.target.value)}
-                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
-                      />
-                      <input
-                        type="text"
-                        value={editingWsCode}
-                        onChange={e => setEditingWsCode(e.target.value.toLowerCase())}
-                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
-                      />
-                      <input
-                        type="text"
-                        value={editingWsDesc}
-                        onChange={e => setEditingWsDesc(e.target.value)}
-                        className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
-                      />
-                      <div className="flex gap-2">
-                        <button onClick={() => handleUpdateWorkspace(w.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
-                        <button onClick={() => setEditingWsId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                    <div className="flex-1 flex flex-col gap-3">
+                      <div className="flex flex-col md:flex-row gap-3 items-center">
+                        <input
+                          type="text"
+                          value={editingWsName}
+                          onChange={e => setEditingWsName(e.target.value)}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
+                        />
+                        <input
+                          type="text"
+                          value={editingWsCode}
+                          onChange={e => setEditingWsCode(e.target.value.toLowerCase())}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a]"
+                        />
+                        <input
+                          type="text"
+                          value={editingWsDesc}
+                          onChange={e => setEditingWsDesc(e.target.value)}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
+                        />
+                        <div className="flex gap-2">
+                          <button onClick={() => handleUpdateWorkspace(w.id)} className="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded font-semibold">Lưu</button>
+                          <button onClick={() => setEditingWsId(null)} className="text-xs bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-semibold">Hủy</button>
+                        </div>
+                      </div>
+                      <div className="flex flex-col md:flex-row gap-3">
+                        <input
+                          type="text"
+                          placeholder="Webhook n8n riêng (tùy chọn) — https://..."
+                          value={editingWsWebhook}
+                          onChange={e => setEditingWsWebhook(e.target.value)}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Email Google dự kiến (tùy chọn)"
+                          value={editingWsExpectedEmail}
+                          onChange={e => setEditingWsExpectedEmail(e.target.value)}
+                          className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
+                        />
                       </div>
                     </div>
                   ) : (
@@ -757,6 +805,20 @@ export default function SystemCategoriesView({
                           <span className="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded font-mono font-bold">{w.code}</span>
                         </div>
                         {w.description && <div className="text-[11px] text-slate-500 mt-0.5">{w.description}</div>}
+                        <div className="text-[11px] mt-0.5">
+                          {w.n8n_webhook_url ? (
+                            <span className="text-emerald-600 font-semibold">🔗 Webhook n8n riêng: <span className="font-mono">{w.n8n_webhook_url}</span></span>
+                          ) : (
+                            <span className="text-slate-400">Dùng webhook n8n dùng chung (mặc định)</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] mt-0.5">
+                          {w.expected_google_email ? (
+                            <span className="text-sky-600 font-semibold">✉️ Email Google dự kiến: <span className="font-mono">{w.expected_google_email}</span></span>
+                          ) : (
+                            <span className="text-slate-400">Chưa đặt email Google dự kiến</span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <button
@@ -765,6 +827,8 @@ export default function SystemCategoriesView({
                             setEditingWsName(w.name);
                             setEditingWsCode(w.code);
                             setEditingWsDesc(w.description || '');
+                            setEditingWsWebhook(w.n8n_webhook_url || '');
+                            setEditingWsExpectedEmail(w.expected_google_email || '');
                           }}
                           className="text-xs text-blue-600 hover:underline font-semibold"
                         >

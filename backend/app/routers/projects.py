@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from sqlalchemy import case, or_, and_
+from sqlalchemy import case, or_, and_, delete
 from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
@@ -41,6 +41,7 @@ from ..utils.access import (
 )
 from ..utils.auth import get_current_user, require_super_admin, require_manager
 from ..utils.project_progress import get_progress_pct_for_phase
+from ..services.document_storage import delete_task_link_documents
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
@@ -1200,13 +1201,32 @@ def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db),
 
 @router.delete("/projects/{pid:int}/phases/{phid}")
 def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Cascade-deletes the Phase and everything under it — every Task Group
+    in it, and every Task (including sub-tasks — a sub-task's task_code is
+    just a longer dotted code under the SAME task_group_id, so deleting by
+    task_group_id already covers them) in those groups — in a single
+    transaction: nothing commits until every delete below has succeeded, so
+    a mid-way failure leaves the Phase (and everything in it) exactly as it
+    was, never a partial cascade (Phase gone but Tasks orphaned, etc.).
+    Every OTHER Phase's own Group/Task numbering is independent and
+    untouched — there's nothing to re-index once this Phase's own subtree is
+    gone entirely."""
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")
-    tg_count = db.query(TaskGroup).filter(TaskGroup.phase_id == phid).count()
-    if tg_count > 0:
-        raise HTTPException(400, f"Không thể xóa Phase vì còn {tg_count} Task Group. Hãy xóa hết Task Group trước.")
     phase_name = ph.name
+
+    group_ids = [g.id for g in db.query(TaskGroup).filter(TaskGroup.phase_id == phid).all()]
+    deleted_task_count = 0
+    if group_ids:
+        task_ids = [t.id for t in db.query(Task).filter(Task.task_group_id.in_(group_ids)).all()]
+        deleted_task_count = len(task_ids)
+        if task_ids:
+            delete_task_link_documents(db, task_ids)
+        db.execute(delete(Task).where(Task.task_group_id.in_(group_ids)))
+        db.execute(delete(TaskGroup).where(TaskGroup.phase_id == phid))
+    deleted_group_count = len(group_ids)
+
     db.delete(ph)
     db.commit()
     AuditService.record(
@@ -1217,10 +1237,14 @@ def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_use
         entity_id=phid,
         action="DELETE",
         project_id=pid,
-        description=f"Đã xóa Phase '{phase_name}'"
+        severity="CRITICAL",
+        description=(
+            f"Đã xóa Phase '{phase_name}' — kèm theo {deleted_group_count} Task Group "
+            f"và {deleted_task_count} Task (bao gồm sub-task)"
+        )
     )
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "deleted_group_count": deleted_group_count, "deleted_task_count": deleted_task_count}
 
 
 # ═══════════════════════════════════════════════════════════

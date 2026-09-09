@@ -433,6 +433,21 @@ def apply_schema_updates():
         conn.execute(text("UPDATE audit_logs SET business_unit = 'INFRA' WHERE LOWER(business_unit) = 'infrastructure'"))
         conn.execute(text("UPDATE audit_logs SET business_unit = 'DEV' WHERE LOWER(business_unit) = 'markee'"))
 
+        # Per-workspace n8n meeting-discovery webhook URL — lets each Workspace
+        # route to its own n8n workflow (e.g. one watching its own connected
+        # Google account's Drive) purely from data, with zero code/env changes
+        # needed to add a new workspace. Empty = falls back to
+        # N8N_MEETING_WEBHOOK_URL_DEFAULT (see notify_n8n_meeting_created).
+        conn.execute(text(
+            "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS n8n_webhook_url VARCHAR(500)"
+        ))
+        # Display-only hint of the Google account each Workspace is meant to
+        # connect — lets the "Connect Google account" UI show the intended
+        # email before anyone has actually gone through OAuth for it.
+        conn.execute(text(
+            "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS expected_google_email VARCHAR(255)"
+        ))
+
         # Performance: index the tasks_v2 FK columns hit hardest by Dashboard
         # Overview's per-member/per-skill JOIN and GROUP BY queries.
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_v2_assigned_id ON tasks_v2 (assigned_id)"))

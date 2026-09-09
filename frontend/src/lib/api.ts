@@ -6,6 +6,24 @@ const api = axios.create({ baseURL: BASE, withCredentials: true });
 
 const PROACTIVE_REFRESH_THRESHOLD_SECONDS = 60;
 
+// FastAPI's own validation errors (HTTP 422, raised before a route handler
+// even runs — e.g. wrong field type) put `detail` as an ARRAY of
+// {type, loc, msg, input} objects, not a string. Every error we raise
+// ourselves uses a plain string detail. Rendering that raw object/array
+// straight into JSX crashes with "Objects are not valid as a React child"
+// (React error #31), so this always normalizes to a plain string first.
+export function getApiErrorMessage(err: any, fallback = 'Lỗi không xác định'): string {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    const msgs = detail.map((d: any) => (typeof d === 'string' ? d : d?.msg)).filter(Boolean);
+    if (msgs.length) return msgs.join('; ');
+  }
+  if (detail && typeof detail === 'object' && typeof detail.msg === 'string') return detail.msg;
+  if (typeof err?.message === 'string' && err.message.trim()) return err.message;
+  return fallback;
+}
+
 type AuthAwareConfig = AxiosRequestConfig & { _skipAuth?: boolean; _retried?: boolean };
 
 interface RefreshResponse {
@@ -366,8 +384,17 @@ export const moveTask = (
     insert_after_task_id: position?.insertAfterTaskId || undefined,
     insert_before_task_id: position?.insertBeforeTaskId || undefined,
   }).then(r => r.data);
-export const moveTaskGroup = (phaseId: number, groupId: number, targetPhaseId: number) =>
-  api.post(`/phases/${phaseId}/task-groups/${groupId}/move`, { target_phase_id: targetPhaseId }).then(r => r.data);
+export const moveTaskGroup = (
+  phaseId: number,
+  groupId: number,
+  targetPhaseId: number,
+  position?: { insertBeforeGroupId?: number; insertAfterGroupId?: number }
+) =>
+  api.post(`/phases/${phaseId}/task-groups/${groupId}/move`, {
+    target_phase_id: targetPhaseId,
+    insert_before_group_id: position?.insertBeforeGroupId || undefined,
+    insert_after_group_id: position?.insertAfterGroupId || undefined,
+  }).then(r => r.data);
 export const reorderTasks = (groupId: number, order: number[]) =>
   api.patch(`/task-groups/${groupId}/tasks/reorder`, { order }).then(r => r.data);
 
@@ -423,11 +450,13 @@ export interface Workspace {
   name: string;
   code: string;
   description?: string | null;
+  n8n_webhook_url?: string | null;
+  expected_google_email?: string | null;
 }
 export const getWorkspaces = () => api.get<Workspace[]>('/system-categories/workspaces').then(r => r.data);
-export const createWorkspace = (data: { name: string; code: string; description?: string }) =>
+export const createWorkspace = (data: { name: string; code: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string }) =>
   api.post('/system-categories/workspaces', data).then(r => r.data);
-export const updateWorkspace = (id: number, data: { name?: string; code?: string; description?: string }) =>
+export const updateWorkspace = (id: number, data: { name?: string; code?: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string }) =>
   api.put(`/system-categories/workspaces/${id}`, data).then(r => r.data);
 export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
@@ -486,6 +515,13 @@ export const createProjectTemplate = (data: object) => api.post('/project-templa
 export const updateProjectTemplate = (id: number, data: object) => api.put(`/project-templates/${id}`, data).then(r => r.data);
 export const deleteProjectTemplate = (id: number) => api.delete(`/project-templates/${id}`).then(r => r.data);
 export const applyProjectTemplate = (templateId: number, projectId: number) => api.post(`/project-templates/${templateId}/apply/${projectId}`).then(r => r.data);
+export const exportProjectToTemplate = (projectId: number, data: {
+  name: string;
+  description?: string;
+  selected_phase_ids: number[];
+  selected_task_group_ids: number[];
+  selected_task_ids: number[];
+}) => api.post(`/projects/${projectId}/export-to-template`, data).then(r => r.data);
 export const getMeeting = (id: number) => api.get(`/meetings/${id}`).then(r => r.data);
 export const createMeeting = (data: object) => api.post('/meetings', data).then(r => r.data);
 export const updateMeeting = (id: number, data: object) => api.put(`/meetings/${id}`, data).then(r => r.data);
