@@ -498,7 +498,7 @@ export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
 
 // Members
-export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string }) =>
+export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string; light?: boolean }) =>
   api.get('/members', { params }).then(r => r.data);
 export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.data);
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
@@ -522,9 +522,9 @@ export const deleteCustomer = (id: number, cascadeProjects: boolean = false) =>
   api.delete(`/system-categories/customers/${id}`, { params: { cascade_projects: cascadeProjects } }).then(r => r.data);
 
 // Lunch Records
-export const getLunchRecords = (params?: { date?: string; member_id?: number }) =>
+export const getLunchRecords = (params?: { date?: string; member_id?: number; year?: number; month?: number }) =>
   api.get('/lunch', { params }).then(r => r.data);
-export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean; status?: string }) =>
+export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean; status?: 'off' | 'lunch' | 'no_lunch' | 'onsite' | 'bonus' | string }) =>
   api.post('/lunch', data).then(r => r.data);
 export const deleteLunchRecord = (id: number) =>
   api.delete(`/lunch/${id}`).then(r => r.data);

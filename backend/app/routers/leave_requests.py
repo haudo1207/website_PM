@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, selectinload
 from typing import Optional
 from datetime import datetime
 import logging
@@ -19,18 +19,23 @@ router = APIRouter()
 
 def _leader_scope_ok(db: Session, current_user: User, target_user_id: int) -> bool:
     """A Leader may only view/manage leave requests from users within their
-    own Workspace(s) (Company); super_admin is unrestricted."""
+    own Workspace(s); super_admin is unrestricted."""
+    if current_user.role == ROLE_SUPER_ADMIN:
+        return True
     if current_user.role != ROLE_LEADER:
         return True
+
     allowed = user_allowed_scopes(db, current_user)
     if allowed == ALL_SCOPE:
         return True
+
     target_user = db.query(User).filter(User.id == target_user_id).first()
-    target_scope = (target_user.data_scope or "").strip().lower() if target_user else ""
-    # A globally-scoped user's leave requests are visible/manageable by any
-    # Leader — same "belongs to every Workspace" rule as member_query_for_user
-    # and can_access_project (see access.py) — otherwise they'd have no
-    # Leader able to approve/reject them at all.
+    if not target_user:
+        return False
+
+    target_scope = (target_user.data_scope or "").strip().lower()
+    # Global scope remains visible to every Leader, matching the app's
+    # Workspace-visibility convention used elsewhere in the project.
     return target_scope in allowed or target_scope == ALL_SCOPE
 
 def leave_to_dict(lr: LeaveRequest) -> dict:
@@ -76,7 +81,7 @@ def list_leave_requests(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    q = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member))
+    q = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member))
 
     # Super admin can see all; Leader is scoped to their own Company
     # (Workspace); regular users can only see their own.
@@ -86,11 +91,13 @@ def list_leave_requests(
     elif current_user.role == ROLE_LEADER:
         allowed = user_allowed_scopes(db, current_user)
         if allowed != ALL_SCOPE:
-            # A globally-scoped user's leave requests must still surface in
-            # every Leader's queue — same fallback as member_query_for_user.
-            q = q.join(User, LeaveRequest.user_id == User.id).filter(
-                or_(func.lower(User.data_scope).in_(allowed), func.lower(User.data_scope) == ALL_SCOPE)
+            allowed_scopes = {str(s).strip().lower() for s in allowed if str(s).strip()}
+            user_ids_subq = (
+                db.query(User.id)
+                .filter(or_(User.data_scope.in_(allowed_scopes), User.data_scope == ALL_SCOPE))
+                .subquery()
             )
+            q = q.filter(LeaveRequest.user_id.in_(user_ids_subq))
         if user_id:
             q = q.filter(LeaveRequest.user_id == user_id)
     else:
@@ -109,7 +116,7 @@ def list_leave_requests(
 # GET ONE LEAVE REQUEST
 @router.get("/{id}")
 def get_leave_request(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
+    lr = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member)).filter(LeaveRequest.id == id).first()
     if not lr:
         raise HTTPException(404, "Không tìm thấy leave request")
     
@@ -142,7 +149,7 @@ def create_leave_request(body: dict, db: Session = Depends(get_db), current_user
     db.add(leave_request)
     db.commit()
     db.refresh(leave_request)
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == leave_request.id).first()
+    lr = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member)).filter(LeaveRequest.id == leave_request.id).first()
 
     # ── Telegram notification (non-blocking) ─────────────────────────
     # The Leave Request is already saved successfully. Notifying admins is an
@@ -193,7 +200,7 @@ def update_leave_request(id: int, body: dict, db: Session = Depends(get_db), cur
             description=f"{'Duyệt' if lr.status == 'Approved' else 'Từ chối'} đơn nghỉ phép #{lr.id} của user #{lr.user_id}"
         )
         db.commit()
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
+    lr = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member)).filter(LeaveRequest.id == id).first()
     return leave_to_dict(lr)
 
 # DELETE LEAVE REQUEST
@@ -222,11 +229,16 @@ def delete_leave_request(id: int, db: Session = Depends(get_db), current_user: U
 
 # APPROVE/REJECT LEAVE REQUEST (admin only)
 @router.patch("/{id}/approve")
-def approve_leave_request(id: int, body: dict, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+def approve_leave_request(id: int, body: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     lr = db.query(LeaveRequest).filter(LeaveRequest.id == id).first()
     if not lr:
         raise HTTPException(404, "Không tìm thấy leave request")
-    
+
+    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
+        raise HTTPException(403, "Không có quyền duyệt đơn nghỉ phép")
+    if not _leader_scope_ok(db, current_user, lr.user_id):
+        raise HTTPException(403, "Không có quyền duyệt đơn của Workspace khác")
+
     status = body.get('status')
     if status not in ['Approved', 'Rejected']:
         raise HTTPException(400, "Status phải là Approved hoặc Rejected")
@@ -242,5 +254,5 @@ def approve_leave_request(id: int, body: dict, db: Session = Depends(get_db), cu
         description=f"{'Duyệt' if status == 'Approved' else 'Từ chối'} đơn nghỉ phép #{lr.id} của user #{lr.user_id}"
     )
     db.commit()
-    lr = db.query(LeaveRequest).options(joinedload(LeaveRequest.user).joinedload(User.member)).filter(LeaveRequest.id == id).first()
+    lr = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member)).filter(LeaveRequest.id == id).first()
     return leave_to_dict(lr)

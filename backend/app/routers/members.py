@@ -218,111 +218,114 @@ def list_members(
             "the Members-tab behavior where Leaders see every member."
         ),
     ),
+    light: Optional[bool] = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    # Subquery to calculate KPI from Tasks for each member
-    # Using UNION ALL to combine assigned and support portions of the task
-    q_assigned = db.query(
-        Task.assigned_id.label('member_id'),
-        Task.kpi_assigned.label('kpi_final'),
-        func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
-        func.coalesce(Task.manday_est, 0.0).label('manday_est'),
-        (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
-        Task.id.label('task_id')
-    ).filter(
-        Task.status == 'Done',
-        Task.end_date_actual.isnot(None),
-        Task.assigned_id.isnot(None)
-    )
-
-    q_support = db.query(
-        Task.support_id.label('member_id'),
-        Task.kpi_support.label('kpi_final'),
-        func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
-        func.coalesce(Task.manday_est, 0.0).label('manday_est'),
-        (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
-        Task.id.label('task_id')
-    ).filter(
-        Task.status == 'Done',
-        Task.end_date_actual.isnot(None),
-        Task.support_id.isnot(None)
-    )
-
-    # Custom Fiscal Calendar Template
-    # Structure: (start_month_day, end_month_day, start_year_offset, end_year_offset, weeks)
-    CYCLE_TEMPLATE = {
-        1:  ("-12-22", "-01-18", -1, 0, 4),
-        2:  ("-01-19", "-02-22", 0, 0, 5),
-        3:  ("-02-23", "-03-22", 0, 0, 4),
-        4:  ("-03-23", "-04-19", 0, 0, 4),
-        5:  ("-04-20", "-05-24", 0, 0, 5),
-        6:  ("-05-25", "-06-21", 0, 0, 4),
-        7:  ("-06-22", "-07-19", 0, 0, 4),
-        8:  ("-07-20", "-08-23", 0, 0, 5),
-        9:  ("-08-24", "-09-20", 0, 0, 4),
-        10: ("-09-21", "-10-25", 0, 0, 5),
-        11: ("-10-26", "-11-22", 0, 0, 4),
-        12: ("-11-23", "-12-20", 0, 0, 4),
-    }
-    # Default: full year = 52 weeks; will be overridden when a specific month is selected
-    weeks_divisor = 52
-
-    # Apply date filters
-    if start_date or end_date:
-        if start_date:
-            q_assigned = q_assigned.filter(Task.end_date_actual >= start_date)
-            q_support = q_support.filter(Task.end_date_actual >= start_date)
-        if end_date:
-            q_assigned = q_assigned.filter(Task.end_date_actual <= end_date)
-            q_support = q_support.filter(Task.end_date_actual <= end_date)
+    if light:
+        q = db.query(Member, User.id.label("user_id")).outerjoin(User, User.member_id == Member.id).options(joinedload(Member.skills))
     else:
-        if month and not year:
-            year = datetime.datetime.now().year
+        # Subquery to calculate KPI from Tasks for each member
+        # Using UNION ALL to combine assigned and support portions of the task
+        q_assigned = db.query(
+            Task.assigned_id.label('member_id'),
+            Task.kpi_assigned.label('kpi_final'),
+            func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
+            func.coalesce(Task.manday_est, 0.0).label('manday_est'),
+            (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
+            Task.id.label('task_id')
+        ).filter(
+            Task.status == 'Done',
+            Task.end_date_actual.isnot(None),
+            Task.assigned_id.isnot(None)
+        )
 
-        if year:
-            if month and month in CYCLE_TEMPLATE:
-                s_md, e_md, s_yo, e_yo, weeks = CYCLE_TEMPLATE[month]
-                weeks_divisor = weeks
-                start_dt = f"{year + s_yo}{s_md}"
-                end_dt = f"{year + e_yo}{e_md}"
-                q_assigned = q_assigned.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
-                q_support = q_support.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
-            else:
-                q_assigned = q_assigned.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
-                q_support = q_support.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
+        q_support = db.query(
+            Task.support_id.label('member_id'),
+            Task.kpi_support.label('kpi_final'),
+            func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
+            func.coalesce(Task.manday_est, 0.0).label('manday_est'),
+            (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
+            Task.id.label('task_id')
+        ).filter(
+            Task.status == 'Done',
+            Task.end_date_actual.isnot(None),
+            Task.support_id.isnot(None)
+        )
+
+        # Custom Fiscal Calendar Template
+        # Structure: (start_month_day, end_month_day, start_year_offset, end_year_offset, weeks)
+        CYCLE_TEMPLATE = {
+            1:  ("-12-22", "-01-18", -1, 0, 4),
+            2:  ("-01-19", "-02-22", 0, 0, 5),
+            3:  ("-02-23", "-03-22", 0, 0, 4),
+            4:  ("-03-23", "-04-19", 0, 0, 4),
+            5:  ("-04-20", "-05-24", 0, 0, 5),
+            6:  ("-05-25", "-06-21", 0, 0, 4),
+            7:  ("-06-22", "-07-19", 0, 0, 4),
+            8:  ("-07-20", "-08-23", 0, 0, 5),
+            9:  ("-08-24", "-09-20", 0, 0, 4),
+            10: ("-09-21", "-10-25", 0, 0, 5),
+            11: ("-10-26", "-11-22", 0, 0, 4),
+            12: ("-11-23", "-12-20", 0, 0, 4),
+        }
+        # Default: full year = 52 weeks; will be overridden when a specific month is selected
+        weeks_divisor = 52
+
+        # Apply date filters
+        if start_date or end_date:
+            if start_date:
+                q_assigned = q_assigned.filter(Task.end_date_actual >= start_date)
+                q_support = q_support.filter(Task.end_date_actual >= start_date)
+            if end_date:
+                q_assigned = q_assigned.filter(Task.end_date_actual <= end_date)
+                q_support = q_support.filter(Task.end_date_actual <= end_date)
         else:
-            if month:
-                q_assigned = q_assigned.filter(extract('month', Task.end_date_actual) == month)
-                q_support = q_support.filter(extract('month', Task.end_date_actual) == month)
+            if month and not year:
+                year = datetime.datetime.now().year
 
-    union_q = q_assigned.union_all(q_support).subquery('union_q')
+            if year:
+                if month and month in CYCLE_TEMPLATE:
+                    s_md, e_md, s_yo, e_yo, weeks = CYCLE_TEMPLATE[month]
+                    weeks_divisor = weeks
+                    start_dt = f"{year + s_yo}{s_md}"
+                    end_dt = f"{year + e_yo}{e_md}"
+                    q_assigned = q_assigned.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
+                    q_support = q_support.filter(Task.end_date_actual >= start_dt, Task.end_date_actual <= end_dt)
+                else:
+                    q_assigned = q_assigned.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
+                    q_support = q_support.filter(Task.end_date_actual >= f"{year - 1}-12-22", Task.end_date_actual <= f"{year}-12-20")
+            else:
+                if month:
+                    q_assigned = q_assigned.filter(extract('month', Task.end_date_actual) == month)
+                    q_support = q_support.filter(extract('month', Task.end_date_actual) == month)
 
-    task_query = db.query(
-        union_q.c.member_id.label('member_id'),
-        func.sum(union_q.c.kpi_final).label('kpi_total'),
-        func.count(union_q.c.task_id).label('task_count'),
-        func.sum(union_q.c.manday_actual).label('manday_total'),
-        func.sum(union_q.c.manday_est).label('manday_est_total'),
-        func.sum(union_q.c.kpi_base).label('kpi_base_total')
-    ).group_by(union_q.c.member_id)
+        union_q = q_assigned.union_all(q_support).subquery('union_q')
 
-    kpi_subq = task_query.subquery()
+        task_query = db.query(
+            union_q.c.member_id.label('member_id'),
+            func.sum(union_q.c.kpi_final).label('kpi_total'),
+            func.count(union_q.c.task_id).label('task_count'),
+            func.sum(union_q.c.manday_actual).label('manday_total'),
+            func.sum(union_q.c.manday_est).label('manday_est_total'),
+            func.sum(union_q.c.kpi_base).label('kpi_base_total')
+        ).group_by(union_q.c.member_id)
 
-    # Query Member with KPI
-    q = db.query(
-        Member,
-        User.id.label("user_id"),
-        func.coalesce(kpi_subq.c.kpi_total, 0).label("kpi_total"),
-        func.coalesce(kpi_subq.c.task_count, 0).label("task_count"),
-        func.coalesce(kpi_subq.c.manday_total, 0).label("manday_total"),
-        func.coalesce(kpi_subq.c.manday_est_total, 0).label("manday_est_total"),
-        func.coalesce(kpi_subq.c.kpi_base_total, 0).label("kpi_base_total")
-    ).outerjoin(
-        User, User.member_id == Member.id
-    ).outerjoin(
-        kpi_subq, Member.id == kpi_subq.c.member_id
-    ).options(joinedload(Member.skills))
+        kpi_subq = task_query.subquery()
+
+        q = db.query(
+            Member,
+            User.id.label("user_id"),
+            func.coalesce(kpi_subq.c.kpi_total, 0).label("kpi_total"),
+            func.coalesce(kpi_subq.c.task_count, 0).label("task_count"),
+            func.coalesce(kpi_subq.c.manday_total, 0).label("manday_total"),
+            func.coalesce(kpi_subq.c.manday_est_total, 0).label("manday_est_total"),
+            func.coalesce(kpi_subq.c.kpi_base_total, 0).label("kpi_base_total")
+        ).outerjoin(
+            User, User.member_id == Member.id
+        ).outerjoin(
+            kpi_subq, Member.id == kpi_subq.c.member_id
+        ).options(joinedload(Member.skills))
 
     if search:
         like = f"%{search}%"
@@ -387,12 +390,28 @@ def list_members(
         q = q.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
 
     results = q.order_by(Member.display_name.asc()).all()
-    
+
     out = []
-    for ( m, user_id, kpi_total, task_count, manday_total, manday_est_total, kpi_base_total ) in results:
+    for row in results:
+        if light:
+            m, user_id = row
+        else:
+            m, user_id, kpi_total, task_count, manday_total, manday_est_total, kpi_base_total = row
+
         d = member_to_dict(m)
         d["user_id"] = user_id
-        
+
+        if light:
+            d['kpi_total'] = 0.0
+            d['kpi_avg'] = 0.0
+            d['kpi_bonus'] = 0.0
+            d['manday_total'] = 0.0
+            d['manday_est_total'] = 0.0
+            d['kpi_base_total'] = 0.0
+            d['workspace'] = scope_display_name(db, m.user.data_scope) if m.user else None
+            out.append(d)
+            continue
+
         total = float(kpi_total) if kpi_total else 0.0
         count = int(task_count) if task_count else 0
         md_total = float(manday_total) if manday_total else 0.0

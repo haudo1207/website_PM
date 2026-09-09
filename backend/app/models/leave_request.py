@@ -1,10 +1,14 @@
-from sqlalchemy import Column, Integer, String, Date, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Date, Boolean, DateTime, ForeignKey, Text, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..database import Base
 
 class LeaveRequest(Base):
     __tablename__ = "leave_requests"
+    __table_args__ = (
+        Index('ix_leave_requests_status_created', 'status', 'created_at'),
+        Index('ix_leave_requests_user_status_created', 'user_id', 'status', 'created_at'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
