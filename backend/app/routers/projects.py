@@ -1,6 +1,7 @@
 """
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
+import re
 from collections import defaultdict
 from typing import Optional
 
@@ -136,6 +137,9 @@ def serialize_project(p, db):
         "status": p.status,
         "current_phase": p.current_phase,
         "data_scope": p.data_scope,
+        # Personal Calendar (008-task-calendar-overview) — hex color tinting
+        # this project's task blocks/legend on the Calendar.
+        "color": p.color,
         # Issue 3 — configured Project Progress, single source of truth.
         "progress_pct": round(get_progress_pct_for_phase(db, p.current_phase), 2),
         "phase_count": phase_count,
@@ -206,6 +210,7 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "status": p.status,
         "current_phase": p.current_phase,
         "data_scope": p.data_scope,
+        "color": p.color,
         # Issue 3 — configured Project Progress, single source of truth.
         "progress_pct": round(progress_pct, 2),
         "phase_count": phase_count,
@@ -683,6 +688,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         "status": p.status,
         "current_phase": p.current_phase,
         "description": p.description,
+        "color": p.color,
     }
 
     for field in ["name", "code", "customer_name", "description", "status", "current_phase"]:
@@ -692,6 +698,17 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
                 setattr(p, "code", str(val).strip()[:50])
             else:
                 setattr(p, field, str(val).strip() if val is not None else None)
+
+    # Personal Calendar (008-task-calendar-overview) — identifies this
+    # project's tasks on a member's Calendar (left border + tint).
+    if "color" in body:
+        color_val = body["color"]
+        if color_val in (None, ""):
+            p.color = None
+        elif re.fullmatch(r"#[0-9A-Fa-f]{6}", str(color_val).strip()):
+            p.color = str(color_val).strip()
+        else:
+            raise HTTPException(400, "Color must be a hex value like #0058BE.")
 
     if "year" in body:
         y_val = body["year"]
@@ -896,6 +913,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             "status": p.status,
             "current_phase": p.current_phase,
             "description": p.description,
+            "color": p.color,
         }
         field_labels = {
             "name": "Tên dự án",
@@ -905,6 +923,7 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             "status": "Trạng thái",
             "current_phase": "Giai đoạn hiện tại",
             "description": "Mô tả dự án",
+            "color": "Màu Calendar",
         }
         AuditService.record_diff(
             db=db,
