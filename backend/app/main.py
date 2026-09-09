@@ -301,6 +301,11 @@ def apply_schema_updates():
             END $$
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_sales_id ON projects (sales_id)"))
+        # Lunch records: an index on "date" so the monthly date-range queries
+        # (and upsert lookups) do not require a full table scan.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_lunch_records_date ON lunch_records (date)"
+        ))
 
         # Create audit_logs table and indices if not exists
         conn.execute(text("""
