@@ -1013,9 +1013,18 @@ function ProjectDetailContent() {
       setAddingTaskGroupPhaseId(null);
       return;
     }
-    const manday_est = newTgForm.manday_est ? parseFloat(newTgForm.manday_est) : null;
-    if (newTgForm.manday_est && isNaN(manday_est as number)) {
-      flash('Manday EST phải là số!', true);
+    const mandayRaw = newTgForm.manday_est.trim();
+    if (!mandayRaw) {
+      flash('MANDAY EST là bắt buộc!', true);
+      return;
+    }
+    const manday_est = Number(mandayRaw);
+    if (!Number.isFinite(manday_est) || !Number.isInteger(manday_est)) {
+      flash('MANDAY EST phải là số nguyên, không được là số thập phân!', true);
+      return;
+    }
+    if (manday_est < 1 || manday_est > 10) {
+      flash('MANDAY EST phải là số nguyên từ 1 đến 10!', true);
       return;
     }
     setSavingInlineTaskGroup(true);
@@ -2511,7 +2520,24 @@ function ProjectDetailContent() {
       case 'DETAIL TASK': payload.name = value; break;
       case 'MANDAY EST':
       case 'MANDAY (EST)':
-      case 'MANDAY': payload.manday_est = value ? parseFloat(value) : null; break;
+      case 'MANDAY': {
+        const trimmed = (value || '').trim();
+        if (!trimmed) {
+          flash('MANDAY EST của Task Group là bắt buộc, không được để trống!', true);
+          return;
+        }
+        const manday = Number(trimmed);
+        if (!Number.isFinite(manday) || !Number.isInteger(manday)) {
+          flash('MANDAY EST của Task Group phải là số nguyên, không được là số thập phân!', true);
+          return;
+        }
+        if (manday < 1 || manday > 10) {
+          flash('MANDAY EST của Task Group phải là số nguyên từ 1 đến 10!', true);
+          return;
+        }
+        payload.manday_est = manday;
+        break;
+      }
       case 'STATUS': payload.status = value; break;
       case 'START DATE':
       case 'START DATE (EST)': payload.start_date_est = convertToDbDate(value); break;
@@ -4913,11 +4939,15 @@ function ProjectDetailContent() {
               return (
                 <td key={col} className="px-2 py-1.5">
                   <input
-                    type="text"
+                    type="number"
+                    required
+                    min={1}
+                    max={10}
+                    step={1}
                     value={newTgForm.manday_est}
                     onChange={e => setNewTgForm(prev => ({ ...prev, manday_est: e.target.value }))}
                     onKeyDown={handleKeyDown}
-                    placeholder="EST Manday..."
+                    placeholder="EST Manday (1-10, Bắt buộc)..."
                     className="w-full bg-white border border-[#c2c6d6] text-[#0b1c30] px-2 py-1 rounded text-xs focus:outline-none focus:border-indigo-500 font-bold"
                   />
                 </td>
@@ -5484,7 +5514,9 @@ function ProjectDetailContent() {
                   <td key={col} className="px-2 py-1">
                     <input
                       type={colUpper.includes('MANDAY') ? 'number' : 'text'}
-                      step={colUpper.includes('MANDAY') ? 'any' : undefined}
+                      step={colUpper.includes('MANDAY') ? 1 : undefined}
+                      min={colUpper.includes('MANDAY') ? 1 : undefined}
+                      max={colUpper.includes('MANDAY') ? 10 : undefined}
                       value={editValue}
                       autoFocus
                       onChange={e => setEditValue(e.target.value)}
