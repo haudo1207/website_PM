@@ -13,13 +13,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import axios from 'axios';
 import { useQuery } from '@tanstack/react-query';
 import { getMondayToSundayRange, getWeekOfMonth, CYCLE_TEMPLATE, projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
 import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonProject, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse, WorkloadSetting } from '@/lib/api';
+import { getToken } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SvgIcon from '@/components/dashboard/Icons';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
+import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
 
 function formatYMD(d: Date): string {
   const y = d.getFullYear();
@@ -136,6 +139,40 @@ export default function MultiTeamProjectComparison() {
   const teamsList: TeamComparisonTeam[] = teamComparisonData?.teams || [];
   const weeksDivisor: number = teamComparisonData?.weeks_divisor || 52;
   const workloadSettings: WorkloadSetting[] = teamComparisonData?.workload_settings || [];
+
+  // ── Tasks + Projects fetch — required by the Member Detail modal opened
+  //    from Section 4 click. Same endpoints Overview already uses
+  //    (`/api/all-tasks-global`, `/api/projects`), so no new data source.
+  const { data: allTasksData } = useQuery<any[]>({
+    queryKey: ['team-load-all-tasks-global', teamWsParam || 'all'],
+    queryFn: async () => {
+      const ts = Date.now();
+      const token = getToken();
+      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+      const url = `/api/all-tasks-global?_t=${ts}${teamWsParam ? `&workspace=${encodeURIComponent(teamWsParam)}` : ''}`;
+      const res = await axios.get(url, config).catch(() => ({ data: [] }));
+      return res.data || [];
+    },
+    staleTime: 2 * 60_000,
+  });
+  const { data: allProjectsData } = useQuery<any[]>({
+    queryKey: ['team-load-projects', teamWsParam || 'all'],
+    queryFn: async () => {
+      const ts = Date.now();
+      const token = getToken();
+      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+      const url = `/api/projects?_t=${ts}${teamWsParam ? `&workspace=${encodeURIComponent(teamWsParam)}` : ''}`;
+      const res = await axios.get(url, config).catch(() => ({ data: [] }));
+      return res.data || [];
+    },
+    staleTime: 2 * 60_000,
+  });
+  const allTasks: any[] = allTasksData || [];
+  const allProjects: any[] = allProjectsData || [];
+
+  // ── Section 4 → Member Detail modal state ────────────────────────
+  const [selectedMemberModal, setSelectedMemberModal] = useState<TeamComparisonMember | null>(null);
+  const closeMemberModal = useCallback(() => setSelectedMemberModal(null), []);
 
   // ── Multi-Leader selection state (relocated from System Audit) ─────────
   const [selectedLeaderIds, setSelectedLeaderIds] = useState<number[]>([]);
@@ -429,8 +466,15 @@ export default function MultiTeamProjectComparison() {
                       </div>
                     </td>
                     <td className="px-3 py-3 text-right font-extrabold text-[#0058be]">{t.kpi.toFixed(1)}</td>
-                    <td className="px-3 py-3 text-right font-extrabold text-[#0058be]">
-                      {weeksDivisor > 0 ? `${(t.kpi / weeksDivisor).toFixed(1)}%` : '0.0%'}
+                    <td className="px-3 py-3 text-right">
+                      <div className="inline-flex items-center justify-end gap-2">
+                        <KpiAverageCircle
+                          pct={weeksDivisor > 0 ? (t.kpi / weeksDivisor) : 0}
+                        />
+                        <span className="font-extrabold text-[#0058be]">
+                          {weeksDivisor > 0 ? `${(t.kpi / weeksDivisor).toFixed(1)}%` : '0.0%'}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-3 py-3 text-right font-mono text-slate-700">{t.plan_md.toFixed(1)}</td>
                     <td className="px-3 py-3 text-right font-mono text-slate-700">{t.actual_md.toFixed(1)}</td>
@@ -478,10 +522,17 @@ export default function MultiTeamProjectComparison() {
                   <p className="text-white/80 mb-1">Chức năng này so sánh các Project đang được các Team (Leader) phụ trách.</p>
                   <p className="text-white/60 mt-1.5">Cách tính cho mỗi Project:</p>
                   <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
-                    <li><b>Tiến độ (Progress):</b> (manday_actual ÷ manday_est) × 100% — tỷ lệ ngày công thực tế so với dự kiến</li>
+                    <li><b>Tiến độ (Progress Bar):</b> (manday_actual ÷ manday_est) × 100% — tỷ lệ ngày công thực tế so với dự kiến. Nếu manday_est = 0 thì Progress = 0%.</li>
                     <li><b>Timeline:</b> ((Tổng task − Task trễ) ÷ Tổng task) × 100%</li>
                     <li><b>Task:</b> Task hoàn thành ÷ Tổng task</li>
                     <li><b>Health:</b> Phân loại theo tỷ lệ task trễ (giống Section 2)</li>
+                  </ul>
+                  <p className="text-white/60 mt-1.5">Ý nghĩa Progress Bar:</p>
+                  <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                    <li>Progress Bar thể hiện <b>lượng công đã làm</b> so với <b>lượng công dự kiến</b> trong kỳ lọc.</li>
+                    <li><b>100% baseline:</b> nghĩa là số ngày công thực tế (manday_actual) bằng đúng số ngày công kế hoạch (manday_est) — dự án đã "dùng hết" effort dự kiến.</li>
+                    <li>{"<"}100%: dự án đã dùng <b>ít</b> effort hơn dự kiến (còn dư).</li>
+                    <li>{">"}100% (hiển thị tối đa 100% trên thanh): dự án đã <b>vượt</b> effort dự kiến — nên xem thêm Task trễ/Health để đánh giá rủi ro.</li>
                   </ul>
                   <p className="text-white/50 mt-1.5">Chọn nhiều Leader rồi nhấn "So sánh" để xem project cards song song. Project metrics hiển thị toàn bộ task của project (không chỉ task của team).</p>
                 </FormulaTooltip>
@@ -807,7 +858,14 @@ export default function MultiTeamProjectComparison() {
                           const status = memberStatus(m);
                           const kpiPct = memberKpiPct(m);
                           return (
-                            <div key={m.member_id} className="p-3 bg-white border border-slate-200 rounded-lg">
+                            <div
+                              key={m.member_id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setSelectedMemberModal(m)}
+                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedMemberModal(m); } }}
+                              className="p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-[#0058be]/60 hover:shadow-md hover:bg-blue-50/30 transition-all focus:outline-none focus:ring-2 focus:ring-[#0058be]/40"
+                            >
                               <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <div className="min-w-0">
                                   <p className="text-xs font-bold text-[#0b1c30] truncate" title={m.name}>
@@ -817,7 +875,10 @@ export default function MultiTeamProjectComparison() {
                                     {m.position || m.department || '—'}
                                   </p>
                                 </div>
-                                <WorkloadBadge status={status} />
+                                <div className="flex items-center gap-1.5">
+                                  <WorkloadBadge status={status} />
+                                  <span className="text-[10px] font-bold text-slate-400 hover:text-[#0058be]">🔍</span>
+                                </div>
                               </div>
                               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
                                 <SmallStat label="Done" value={m.done} color="text-emerald-600" />
@@ -840,6 +901,20 @@ export default function MultiTeamProjectComparison() {
                                     <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
                                   </>}
                                 />
+                              </div>
+                              {/* KPI Average progress bar — visual representation of
+                                  the existing `m.kpi_pct` value vs the 100% baseline.
+                                  Pure UI: no recalculation, no formula change. The
+                                  bar caps at 100% (the SVG); overage is signalled by
+                                  the "+ N%" suffix in the label. */}
+                              <div className="mt-2.5 pt-2 border-t border-slate-100">
+                                <div className="flex items-center justify-between text-[9px] font-bold mb-1">
+                                  <span className="text-slate-500 uppercase tracking-wider">KPI Average</span>
+                                  <span className={`tabular-nums ${kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-[#0058be]'}`}>
+                                    {kpiPct.toFixed(1)}%{kpiPct > 100 ? ` (+${kpiPct.toFixed(1)}%)` : ''}
+                                  </span>
+                                </div>
+                                <KpiAverageProgressBar pct={kpiPct} />
                               </div>
                             </div>
                           );
@@ -984,6 +1059,40 @@ export default function MultiTeamProjectComparison() {
           </div>
         </div>
       )}
+
+      {/* SECTION 4 → Member Detail modal. Reuses the Overview Member
+          Detail drill-down so the same Task list, KPI Average, priority
+          pills and project cards open from a Section 4 member click. The
+          underlying TeamComparisonMember is reshaped into the modal's
+          expected `{id, name, rawMember}` payload — `rawMember.team` /
+          `rawMember.leader_name` drive the modal header subtitle. */}
+      {selectedMemberModal && (
+        <MemberDetailModal
+          member={{
+            id: selectedMemberModal.member_id,
+            name: selectedMemberModal.name,
+            rawMember: {
+              team: selectedMemberModal.team || undefined,
+              department: selectedMemberModal.department || undefined,
+              leader_name: teamsList.find(t => (t.members || []).some(mm => mm.member_id === selectedMemberModal.member_id))?.leader_name,
+              display_name: selectedMemberModal.name,
+              full_name: selectedMemberModal.name,
+            },
+          }}
+          tasks={allTasks}
+          projects={allProjects}
+          onClose={closeMemberModal}
+          onNavigate={(projectId) => { closeMemberModal(); window.location.href = `/project/detail/overview?id=${projectId}`; }}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          selectedWeek={selectedWeek}
+          activeQuickFilter={activeQuickFilter}
+          onApplyQuickFilter={applyQuickFilter}
+          onYearChange={setSelectedYear}
+          onMonthChange={setSelectedMonth}
+          onWeekChange={setSelectedWeek}
+        />
+      )}
     </div>
   );
 }
@@ -1057,6 +1166,82 @@ function CounterChip({ label, value, tone }: { label: string; value: number; ton
     <div className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-lg border ${toneCls}`}>
       <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{label}</span>
       <span className="text-sm font-black leading-tight">{value}</span>
+    </div>
+  );
+}
+
+// KPI Average circle — small SVG ring used in Section 2 (per Team row)
+// and elsewhere. Pure visualisation: the displayed percentage comes from the
+// existing team/member KPI Average calculation; the ring only renders the
+// numeric value against a 100% baseline.
+function KpiAverageCircle({ pct }: { pct: number }) {
+  const safePct = Number.isFinite(pct) ? pct : 0;
+  // Cap the visual ring at 100% (the SVG can't show >360° cleanly). When
+  // the value exceeds 100% the ring stays full and the percentage label
+  // carries the "+" prefix to signal overage.
+  const ringPct = Math.max(0, Math.min(100, safePct));
+  const radius = 8;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (ringPct / 100) * circumference;
+  // Colour follows the same thresholds used elsewhere in the dashboard.
+  const color = safePct > 120 ? '#dc2626' : safePct >= 90 ? '#059669' : '#0058be';
+  return (
+    <span
+      className="relative inline-flex items-center justify-center w-5 h-5 shrink-0"
+      title={`KPI Average: ${safePct.toFixed(1)}%`}
+    >
+      <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
+        <circle cx="10" cy="10" r={radius} stroke="#e2e8f0" strokeWidth="2.2" fill="transparent" />
+        <circle
+          cx="10"
+          cy="10"
+          r={radius}
+          stroke={color}
+          strokeWidth="2.2"
+          fill="transparent"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          className="transition-all duration-500"
+        />
+      </svg>
+      <span
+        className="absolute text-[6px] font-black leading-none"
+        style={{ color }}
+      >
+        {safePct >= 100 ? '+' : ''}
+      </span>
+    </span>
+  );
+}
+
+// KPI Average progress bar — visual representation of `m.kpi_pct` against
+// the 100% baseline, used in Section 4 (per Member card). Mirrors the
+// example pattern in the task spec:
+//   KPI Average: 80%   ████████░░ 80%
+//   KPI Average: 100%  ██████████ 100%
+//   KPI Average: 150%  ██████████ + 150%
+// Pure UI: the bar is a visual representation of the existing value; it
+// does NOT recompute or modify the underlying KPI Average logic.
+function KpiAverageProgressBar({ pct }: { pct: number }) {
+  const safePct = Number.isFinite(pct) ? pct : 0;
+  // Bar caps at 100% (10 segments). When the value exceeds 100% the bar
+  // stays full and the accompanying label shows "+ N%" to signal overage.
+  const fillPct = Math.max(0, Math.min(100, safePct));
+  // Colour follows the same thresholds used in the existing KPI% chip.
+  const fillCls = safePct > 120
+    ? 'bg-rose-500'
+    : safePct >= 90
+      ? 'bg-emerald-500'
+      : 'bg-[#0058be]';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 bg-slate-100 rounded-full overflow-hidden h-2">
+        <div
+          className={`${fillCls} h-2 rounded-full transition-all duration-500`}
+          style={{ width: `${fillPct}%` }}
+        />
+      </div>
     </div>
   );
 }
