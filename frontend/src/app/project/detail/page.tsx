@@ -185,17 +185,51 @@ function FloatingDropdown({
   // past the bottom of the viewport (e.g. the "⋮" row menu on a Group Task/
   // Task near the bottom of the table) — without this it renders off-screen,
   // looking like it's missing or covered by something.
+  //
+  // Also flip LEFT↔RIGHT so a menu anchored to the very edge of the viewport
+  // (Task `...` next to the left side of a narrow window, or near the right
+  // side) stays fully visible: the default `align="right"` opens the menu to
+  // the LEFT of the button; if there isn't enough horizontal room there we
+  // switch to opening to the RIGHT (`left: rect.right`), and vice-versa for
+  // `align="left"`. The flip is symmetric and re-runs whenever the user
+  // scrolls/resizes so a fresh re-position is always picked up.
   useLayoutEffect(() => {
     if (!open || !anchorEl || !pos || !menuRef.current) return;
     const menuRect = menuRef.current.getBoundingClientRect();
-    const overflowsBottom = menuRect.bottom > window.innerHeight - 8;
-    if (!overflowsBottom) return;
-    const rect = anchorEl.getBoundingClientRect();
-    const flippedTop = rect.top - menuRect.height - 4;
-    if (flippedTop >= 0 && flippedTop !== pos.top) {
-      setPos(prev => (prev ? { ...prev, top: flippedTop } : prev));
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const VIEWPORT_GAP = 8;
+    let nextTop = pos.top;
+    let nextLeft = pos.left;
+    let nextRight = pos.right;
+
+    // Vertical flip: bottom-overflow → above the anchor.
+    if (menuRect.bottom > window.innerHeight - VIEWPORT_GAP) {
+      const flippedTop = anchorRect.top - menuRect.height - 4;
+      if (flippedTop >= 0) {
+        nextTop = flippedTop;
+      }
     }
-  }, [open, anchorEl, pos]);
+
+    // Horizontal flip: when `align="right"` (menu extends LEFT from the
+    // anchor's right edge) and the menu would clip past the left viewport
+    // edge, switch to extending RIGHT from the anchor's right edge. When
+    // `align="left"` and it would clip past the right edge, mirror-image.
+    const overflowsLeft = menuRect.left < VIEWPORT_GAP;
+    const overflowsRight = menuRect.right > window.innerWidth - VIEWPORT_GAP;
+    if (align === 'right' && overflowsLeft) {
+      // Menu opens to the right of the anchor (instead of left of it).
+      nextLeft = anchorRect.right;
+      nextRight = undefined;
+    } else if (align === 'left' && overflowsRight) {
+      // Menu opens to the left of the anchor (instead of right of it).
+      nextRight = Math.max(VIEWPORT_GAP, window.innerWidth - anchorRect.left);
+      nextLeft = undefined;
+    }
+
+    if (nextTop !== pos.top || nextLeft !== pos.left || nextRight !== pos.right) {
+      setPos({ top: nextTop, left: nextLeft, right: nextRight });
+    }
+  }, [open, anchorEl, pos, align]);
 
   if (!open || !pos || typeof document === 'undefined') return null;
   return createPortal(
@@ -1133,7 +1167,7 @@ function ProjectDetailContent() {
   type ColumnAlign = 'left' | 'center' | 'right';
   const COLUMN_META: Record<string, { defaultWidth: number; minWidth: number; align: ColumnAlign }> = {
     'TASK ID':        { defaultWidth: 112, minWidth: 80,  align: 'left' },
-    'DETAIL TASK':    { defaultWidth: 320, minWidth: 260, align: 'left' },
+    'DETAIL TASK':    { defaultWidth: 380, minWidth: 320, align: 'left' },
     'PRIORITY':       { defaultWidth: 90,  minWidth: 70,  align: 'center' },
     'MANDAY EST':     { defaultWidth: 72,  minWidth: 60,  align: 'center' },
     'STATUS':         { defaultWidth: 105, minWidth: 85,  align: 'center' },
@@ -3463,6 +3497,33 @@ function ProjectDetailContent() {
               }`}
           />
         );
+      } else if (colUpper === 'DETAIL TASK') {
+        // UX (Task 1): the single-line input is too narrow for typing a real
+        // task name/description. Render a multi-line <textarea> that auto-
+        // grows with content; the wider column default (380 / min 320) +
+        // larger cell padding below give the input a more comfortable
+        // horizontal footprint, while still fitting a single-line name when
+        // the user has only a short title. No field, value, validation or
+        // creation API change — purely a sizing/layout upgrade.
+        const autoGrow = (e: React.FormEvent<HTMLTextAreaElement>) => {
+          const el = e.currentTarget;
+          el.style.height = 'auto';
+          el.style.height = `${el.scrollHeight}px`;
+        };
+        inputField = (
+          <textarea
+            value={newForm[col] || ''}
+            onChange={e => setNewForm({ ...newForm, [col]: e.target.value })}
+            onInput={autoGrow}
+            onFocus={autoGrow}
+            onKeyDown={handleInputKeyDown}
+            rows={1}
+            className={`w-full bg-white border rounded px-2 py-1.5 text-[12px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold resize-none overflow-hidden min-h-[30px] leading-snug ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
+              }`}
+            placeholder={col + (isRequired ? ' *' : '')}
+            autoFocus={cIdx === 1}
+          />
+        );
       } else {
         inputField = (
           <input
@@ -3480,8 +3541,13 @@ function ProjectDetailContent() {
       }
     }
 
+    // UX (Task 1): give the DETAIL TASK form cell a little more padding
+    // so the wider textarea above has visual breathing room without
+    // affecting the other narrow columns (which keep the original p-1 to
+    // stay aligned with their display-row siblings).
+    const isDetailTaskCol = colUpper === 'DETAIL TASK';
     return (
-      <td key={col} className="p-1">
+      <td key={col} className={isDetailTaskCol ? 'p-1.5' : 'p-1'}>
         {inputField}
       </td>
     );
@@ -3949,17 +4015,70 @@ function ProjectDetailContent() {
       );
     }
 
+    // UX (Task 2): Quick-Add `+` shortcut — exposes the same "thêm task ở đây"
+    // action as the ⋮ row menu's "Thêm task phía trên" entry but as a hover
+    // affordance directly on the gap between two tasks (or at the end of
+    // the group when `afterCode` is null). The existing inline form, sort
+    // logic, validation, API, and field shape are reused — only the trigger
+    // surface is new. Respects `canEditTask(project)` so the same permission
+    // gate the ⋮ menu uses still applies. Gated behind `canEditTask` AND
+    // `addingTaskGroupId === null` so it disappears the moment the user has
+    // any inline form open (the form is the new focus, no clutter).
+    const showQuickAdd = canEditTask(project) && addingTaskGroupId === null;
+
     return (
       <tr
         key={spacerId}
         className="group/spacer border-none bg-transparent"
       >
         <td colSpan={dynamicCols.length + 1} className="p-0 border-none bg-transparent relative">
-          <div className="relative flex items-center h-2 transition-all duration-200 group-hover/spacer:bg-slate-50/20">
-            {/* Dashed line */}
+          <div className="relative flex items-center h-5 transition-all duration-200 group-hover/spacer:bg-slate-50/20">
+            {/* Dashed line (existing) */}
             <div className="absolute inset-x-4 flex items-center pointer-events-none w-[calc(100%-2rem)]">
               <div className="w-full border-t border-slate-300 border-dashed opacity-0 group-hover/spacer:opacity-100 transition-opacity duration-200"></div>
             </div>
+            {/* Quick-Add `+` (new) — appears on hover; clicking it opens the
+                existing inline-add form positioned BELOW the upper task
+                (or at the end of the group when `afterCode` is null), so the
+                new Task lands exactly at the gap the user clicked on. The
+                button itself is non-selectable so the user can copy text
+                from a Task without picking up the `+` accidentally. */}
+            {showQuickAdd && (
+              <button
+                type="button"
+                aria-label="Thêm task tại vị trí này"
+                title="Thêm task tại vị trí này"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Reuse the exact same state-mutation pattern the ⋮ menu's
+                  // "Thêm task phía dưới" handler uses (see the existing
+                  // handler around line 4184 in this file), so the new Task
+                  // goes through the same createTask() + sort_order path.
+                  setAddingTaskGroupId(groupId);
+                  setAddingTaskParentCode(getParentCode(afterCode || '') || null);
+                  setAddingTaskAfterCode(afterCode);
+                  setAddingTaskBeforeCode(null);
+                  const dynamicColsLocal = getDynamicColumns();
+                  const initialForm: Record<string, string> = {};
+                  dynamicColsLocal.forEach(c => { initialForm[c] = ''; });
+                  const todayStr = toPickerDate(new Date().toISOString());
+                  const statusCol = dynamicColsLocal.find(c => c.toUpperCase() === 'STATUS');
+                  if (statusCol) initialForm[statusCol] = 'Waiting';
+                  const priorityCol = dynamicColsLocal.find(c => c.toUpperCase() === 'PRIORITY');
+                  if (priorityCol) initialForm[priorityCol] = 'Normal';
+                  const startDateCol = dynamicColsLocal.find(c => c.toUpperCase() === 'START DATE');
+                  if (startDateCol) initialForm[startDateCol] = todayStr;
+                  const kpiRatioCol = dynamicColsLocal.find(c => c.toUpperCase() === 'KPI RATIO');
+                  if (kpiRatioCol) initialForm[kpiRatioCol] = '90/10';
+                  const mandayCol = dynamicColsLocal.find(c => c.toUpperCase() === 'MANDAY EST');
+                  if (mandayCol) initialForm[mandayCol] = '1.0';
+                  setNewForm(initialForm);
+                }}
+                className="relative z-[1] inline-flex items-center justify-center w-5 h-5 rounded-full border border-dashed border-slate-300 bg-white text-slate-400 opacity-0 group-hover/spacer:opacity-100 hover:opacity-100 hover:border-[#0058be] hover:bg-[#0058be] hover:text-white hover:scale-110 hover:shadow-sm transition-all duration-150 cursor-pointer select-none"
+              >
+                <Plus size={12} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
         </td>
       </tr>
