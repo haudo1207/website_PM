@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Portal from '@/components/Portal';
 import { getProjects, getPhases, getTaskGroups, getProjectMembers, getCategories, getMe, createTask, getApiErrorMessage } from '@/lib/api';
-import { toApiDate, toApiDateTime, toDatetimeLocalValue, parseDatetimeLocalValue, combineDateAndTime } from './dateUtils';
+import { toApiDate, toApiDateTime, parseApiDate, combineDateAndTime } from './dateUtils';
 
 interface SkillItem { id: number; name: string; group_id: number }
 interface SkillGroup { id: number; name: string; category_id: number; skills: SkillItem[] }
@@ -20,6 +20,14 @@ export interface QuickCreatePrefill {
 const labelCls = 'text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider block mb-1';
 const selectCls = 'w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12.5px] text-[#0b1c30] focus:border-[#0058be] outline-none disabled:bg-slate-50 disabled:text-slate-400';
 const inputCls = selectCls;
+
+// Plain "00".."23" / "00".."59" option lists — deliberately NOT
+// <input type="time">/"datetime-local">, whose displayed format follows the
+// browser/OS locale and can render 12h with SA/CH (AM/PM) on some machines.
+// The whole app is VN-only, 24h — these two <select>s guarantee that
+// regardless of locale, since they're just numbers, not a native time widget.
+const HOURS_24 = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const MINUTES_60 = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
 
 export default function QuickCreateDrawer({
   isOpen,
@@ -39,10 +47,13 @@ export default function QuickCreateDrawer({
   const [assignedId, setAssignedId] = useState<number | ''>('');
   const [supportId, setSupportId] = useState<number | ''>('');
   const [mandayEst, setMandayEst] = useState('');
-  // Free-entry "YYYY-MM-DDTHH:MM" (<input type="datetime-local"> format) —
-  // any minute is valid here (14:17, 09:05, ...). The 30-minute snap only
-  // applies to Drag & Drop on the Calendar grid, never to Quick Create.
-  const [workTime, setWorkTime] = useState('');
+  // Work time, split into 3 free-entry parts — any minute is valid (14:17,
+  // 09:05, ...); the 30-minute snap only applies to Drag & Drop on the
+  // Calendar grid, never to Quick Create. All three must be set for the
+  // task to count as scheduled; any one missing = unscheduled.
+  const [wtDate, setWtDate] = useState(''); // <input type="date"> value, "YYYY-MM-DD"
+  const [wtHour, setWtHour] = useState(''); // "00".."23"
+  const [wtMinute, setWtMinute] = useState(''); // "00".."59"
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [skillGroupId, setSkillGroupId] = useState<number | ''>(''); // -> skill_solution_id
   const [skillId, setSkillId] = useState<number | ''>(''); // -> skill_vendor_id
@@ -80,7 +91,13 @@ export default function QuickCreateDrawer({
     setProjectId(''); setPhaseId(''); setTaskGroupId('');
     setDetail(''); setAssignedId(''); setSupportId('');
     setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId('');
-    setWorkTime(prefill ? toDatetimeLocalValue(combineDateAndTime(prefill.day, prefill.hours, prefill.minutes)) : '');
+    if (prefill) {
+      setWtDate(toApiDate(prefill.day));
+      setWtHour(String(prefill.hours).padStart(2, '0'));
+      setWtMinute(String(prefill.minutes).padStart(2, '0'));
+    } else {
+      setWtDate(''); setWtHour(''); setWtMinute('');
+    }
     setFormError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -122,10 +139,14 @@ export default function QuickCreateDrawer({
     setSubmitting(true);
     setFormError(null);
     try {
-      // Work time is free-entry (any minute) and optional — empty means the
-      // task has no scheduled_at and lands in "chưa xếp lịch", same as
-      // leaving it blank via the toolbar "+" button.
-      const workTimeDate = workTime ? parseDatetimeLocalValue(workTime) : null;
+      // Work time is free-entry (any minute, 24h — no SA/CH) and optional:
+      // all 3 parts (date/hour/minute) must be set, otherwise the task has
+      // no scheduled_at and lands in "chưa xếp lịch", same as leaving it
+      // blank via the toolbar "+" button.
+      const wtDay = wtDate ? parseApiDate(wtDate) : null;
+      const workTimeDate = wtDay && wtHour !== '' && wtMinute !== ''
+        ? combineDateAndTime(wtDay, Number(wtHour), Number(wtMinute))
+        : null;
       const scheduledAt = workTimeDate ? toApiDateTime(workTimeDate) : null;
       const startDate = workTimeDate ? toApiDate(workTimeDate) : toApiDate(new Date());
       await createTask(taskGroupId as number, {
@@ -225,15 +246,43 @@ export default function QuickCreateDrawer({
               </div>
               <div>
                 <label className={labelCls}>Giờ làm việc</label>
+                {/* Date on its own row, Hour:Minute on the next — cramming
+                    all 3 controls into one row overflowed the drawer's
+                    max-w-md width (native <input type="date"> doesn't shrink
+                    below its content size), pushing the minute <select> out
+                    of view. Two rows guarantees everything stays visible. */}
                 <input
                   className={inputCls}
-                  type="datetime-local"
-                  value={workTime}
-                  onChange={e => setWorkTime(e.target.value)}
+                  type="date"
+                  value={wtDate}
+                  onChange={e => setWtDate(e.target.value)}
                 />
+                {/* 24h HH:mm via two plain <select>s — never a native time
+                    control, so it can never render 12h SA/CH regardless of
+                    the browser/OS locale. */}
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <select className={`${selectCls} flex-1`} value={wtHour} onChange={e => setWtHour(e.target.value)}>
+                    <option value="">Giờ --</option>
+                    {HOURS_24.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  <span className="text-slate-400 font-bold shrink-0">:</span>
+                  <select className={`${selectCls} flex-1`} value={wtMinute} onChange={e => setWtMinute(e.target.value)}>
+                    <option value="">Phút --</option>
+                    {MINUTES_60.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                {(wtDate || wtHour !== '' || wtMinute !== '') && (
+                  <button
+                    type="button"
+                    onClick={() => { setWtDate(''); setWtHour(''); setWtMinute(''); }}
+                    className="text-[10.5px] font-semibold text-slate-400 hover:text-rose-500 mt-1"
+                  >
+                    ✕ Xoá giờ
+                  </button>
+                )}
                 <p className="text-[10.5px] text-slate-400 mt-1">
-                  {workTime
-                    ? 'Chọn giờ phút tự do, không giới hạn 30 phút (chỉ Drag & Drop trên Calendar mới snap 30 phút).'
+                  {wtDate && wtHour !== '' && wtMinute !== ''
+                    ? 'Định dạng 24 giờ (00:00–23:59), giờ phút tự do — không dùng SA/CH.'
                     : 'Để trống — task sẽ nằm trong khu "Chưa xếp lịch".'}
                 </p>
               </div>

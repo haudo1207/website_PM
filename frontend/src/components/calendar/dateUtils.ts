@@ -117,18 +117,14 @@ export function toApiDateTime(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
 }
 
-// <input type="datetime-local"> uses "YYYY-MM-DDTHH:MM" (local, no seconds,
-// no timezone suffix) — these two convert between that and our Date/API
-// representations without ever touching UTC.
-export function toDatetimeLocalValue(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
-export function parseDatetimeLocalValue(value: string): Date | null {
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+// Parses an <input type="date"> value ("YYYY-MM-DD", always this format
+// regardless of locale — only the DISPLAY is locale-dependent, the value
+// attribute never is) into a local Date at midnight.
+export function parseApiDate(value: string): Date | null {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
-  const [, y, mo, da, h, mi] = m;
-  return new Date(Number(y), Number(mo) - 1, Number(da), Number(h), Number(mi));
+  const [, y, mo, da] = m;
+  return new Date(Number(y), Number(mo) - 1, Number(da));
 }
 
 export interface PositionedTask {
