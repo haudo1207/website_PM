@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Portal from '@/components/Portal';
 import { getProjects, getPhases, getTaskGroups, getProjectMembers, getCategories, getMe, createTask, getApiErrorMessage } from '@/lib/api';
-import { combineDateAndTime, toApiDate, toApiDateTime } from './dateUtils';
+import { toApiDate, toApiDateTime, toDatetimeLocalValue, parseDatetimeLocalValue, combineDateAndTime } from './dateUtils';
 
 interface SkillItem { id: number; name: string; group_id: number }
 interface SkillGroup { id: number; name: string; category_id: number; skills: SkillItem[] }
@@ -39,6 +39,10 @@ export default function QuickCreateDrawer({
   const [assignedId, setAssignedId] = useState<number | ''>('');
   const [supportId, setSupportId] = useState<number | ''>('');
   const [mandayEst, setMandayEst] = useState('');
+  // Free-entry "YYYY-MM-DDTHH:MM" (<input type="datetime-local"> format) —
+  // any minute is valid here (14:17, 09:05, ...). The 30-minute snap only
+  // applies to Drag & Drop on the Calendar grid, never to Quick Create.
+  const [workTime, setWorkTime] = useState('');
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [skillGroupId, setSkillGroupId] = useState<number | ''>(''); // -> skill_solution_id
   const [skillId, setSkillId] = useState<number | ''>(''); // -> skill_vendor_id
@@ -67,13 +71,18 @@ export default function QuickCreateDrawer({
     [skillGroups, skillGroupId]
   );
 
-  // Reset the entire form every time the drawer opens.
+  // Reset the entire form every time the drawer opens. Work time prefills
+  // from the clicked grid cell (exact minute, not snapped) when opened that
+  // way; opening via the toolbar "+" has no prefill, so it starts empty —
+  // in both cases the field stays freely editable afterwards.
   useEffect(() => {
     if (!isOpen) return;
     setProjectId(''); setPhaseId(''); setTaskGroupId('');
     setDetail(''); setAssignedId(''); setSupportId('');
     setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId('');
+    setWorkTime(prefill ? toDatetimeLocalValue(combineDateAndTime(prefill.day, prefill.hours, prefill.minutes)) : '');
     setFormError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   // Assigned defaults to current user once profile loads.
@@ -93,12 +102,8 @@ export default function QuickCreateDrawer({
   const handleCategoryChange = (v: number | '') => { setCategoryId(v); setSkillGroupId(''); setSkillId(''); };
   const handleSkillGroupChange = (v: number | '') => { setSkillGroupId(v); setSkillId(''); };
 
-  const workTimeLabel = prefill
-    ? `${String(prefill.hours).padStart(2, '0')}:${String(prefill.minutes).padStart(2, '0')} · ${prefill.day.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}`
-    : 'Chưa chọn giờ — task sẽ nằm trong khu "Chưa xếp lịch"';
-
-  // start_date is NOT a form field — it's silently derived from Work time
-  // (or today, if created via the toolbar "+" with no time picked). See
+  // start_date is NOT a form field — it's silently derived from the date
+  // part of Work time (or today, if Work time is left empty). See
   // spec.md FR-CAL-15 — inferring this avoids asking for information the
   // user already gave once.
   //
@@ -117,8 +122,12 @@ export default function QuickCreateDrawer({
     setSubmitting(true);
     setFormError(null);
     try {
-      const scheduledAt = prefill ? toApiDateTime(combineDateAndTime(prefill.day, prefill.hours, prefill.minutes)) : null;
-      const startDate = prefill ? toApiDate(prefill.day) : toApiDate(new Date());
+      // Work time is free-entry (any minute) and optional — empty means the
+      // task has no scheduled_at and lands in "chưa xếp lịch", same as
+      // leaving it blank via the toolbar "+" button.
+      const workTimeDate = workTime ? parseDatetimeLocalValue(workTime) : null;
+      const scheduledAt = workTimeDate ? toApiDateTime(workTimeDate) : null;
+      const startDate = workTimeDate ? toApiDate(workTimeDate) : toApiDate(new Date());
       await createTask(taskGroupId as number, {
         detail: detail.trim(),
         assigned_id: assignedId,
@@ -216,9 +225,17 @@ export default function QuickCreateDrawer({
               </div>
               <div>
                 <label className={labelCls}>Giờ làm việc</label>
-                <div className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-[12.5px] text-slate-600">
-                  🕐 {workTimeLabel}
-                </div>
+                <input
+                  className={inputCls}
+                  type="datetime-local"
+                  value={workTime}
+                  onChange={e => setWorkTime(e.target.value)}
+                />
+                <p className="text-[10.5px] text-slate-400 mt-1">
+                  {workTime
+                    ? 'Chọn giờ phút tự do, không giới hạn 30 phút (chỉ Drag & Drop trên Calendar mới snap 30 phút).'
+                    : 'Để trống — task sẽ nằm trong khu "Chưa xếp lịch".'}
+                </p>
               </div>
               <div>
                 <label className={labelCls}>Manday EST <span className="text-amber-500">*</span></label>
