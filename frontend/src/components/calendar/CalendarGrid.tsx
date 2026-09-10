@@ -13,7 +13,7 @@ import {
   layoutDayTasks,
   parseScheduledAt,
   toApiDate,
-  topToTimeOfDay,
+  topToExactTimeOfDay,
 } from './dateUtils';
 
 const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i);
@@ -52,7 +52,9 @@ function DayColumn({
         title="Click để tạo task nhanh tại khung giờ này"
         onClick={e => {
           const rect = e.currentTarget.getBoundingClientRect();
-          const { hours, minutes } = topToTimeOfDay(e.clientY - rect.top);
+          // Exact click position, not snapped — Quick Create is free-entry
+          // (any minute); only Drag & Drop on this grid snaps to 30 minutes.
+          const { hours, minutes } = topToExactTimeOfDay(e.clientY - rect.top);
           onEmptyCellClick(day, hours, minutes);
         }}
       >

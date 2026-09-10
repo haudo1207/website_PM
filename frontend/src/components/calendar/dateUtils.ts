@@ -90,6 +90,19 @@ export function topToTimeOfDay(topPx: number): { hours: number; minutes: number 
   return { hours: Math.floor(totalMin / 60), minutes: totalMin % 60 };
 }
 
+// Exact (unsnapped) pixel → time-of-day, rounded only to the nearest whole
+// minute. Used to prefill Quick Create's Work time when clicking a grid
+// cell — unlike Drag & Drop, Quick Create is deliberately free-entry (any
+// minute, e.g. 14:17), not locked to the 30-minute grid. See
+// specs/008-task-calendar-overview spec.md: "30 phút chỉ áp dụng cho Drag &
+// Drop, không áp dụng cho Quick Create."
+export function topToExactTimeOfDay(topPx: number): { hours: number; minutes: number } {
+  const maxTop = (HOUR_END - HOUR_START) * HOUR_HEIGHT - 1;
+  const clamped = Math.max(0, Math.min(topPx, maxTop));
+  const totalMin = Math.round(HOUR_START * 60 + (clamped / HOUR_HEIGHT) * 60);
+  return { hours: Math.floor(totalMin / 60), minutes: totalMin % 60 };
+}
+
 export function combineDateAndTime(day: Date, hours: number, minutes: number): Date {
   const d = new Date(day);
   d.setHours(hours, minutes, 0, 0);
@@ -102,6 +115,16 @@ export function combineDateAndTime(day: Date, hours: number, minutes: number): D
 // VN wall-clock time as-is, never UTC — see utils/timezone.py).
 export function toApiDateTime(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
+}
+
+// Parses an <input type="date"> value ("YYYY-MM-DD", always this format
+// regardless of locale — only the DISPLAY is locale-dependent, the value
+// attribute never is) into a local Date at midnight.
+export function parseApiDate(value: string): Date | null {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const [, y, mo, da] = m;
+  return new Date(Number(y), Number(mo) - 1, Number(da));
 }
 
 export interface PositionedTask {

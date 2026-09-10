@@ -6215,7 +6215,7 @@ function ProjectDetailContent() {
               </FloatingDropdown>
             </div>
 
-            {/* + Thêm task (split button: main = thêm task, dropdown = thêm task / thêm group task) */}
+            {/* + Tạo task mới (split button: main = thêm task, dropdown = thêm task / thêm group task) */}
             {canEditTask(project) && (
             <div className="relative flex">
               <button
@@ -6242,15 +6242,15 @@ function ProjectDetailContent() {
                   if (statusCol) initialForm[statusCol] = 'Waiting';
                   setNewForm(initialForm);
                 }}
-                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-semibold text-[13px] h-9 pl-3.5 pr-3 rounded-l-[8px] shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
+                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-semibold text-[13px] h-9 pl-4 pr-5 ml-1 rounded-l-[8px] shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
               >
                 <Plus size={16} />
-                Thêm task
+                Tạo task mới
               </button>
               <button
                 ref={addTaskMenuBtnRef}
                 onClick={() => setAddTaskMenuOpen(!addTaskMenuOpen)}
-                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white h-9 w-8 flex items-center justify-center rounded-r-[8px] shadow-sm transition-all border-l border-white/20 active:scale-95"
+                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white h-9 w-9 flex items-center justify-center rounded-r-[8px] shadow-sm transition-all border-l border-white/20 active:scale-95"
                 title="Thêm task / Thêm Group Task"
               >
                 <ChevronDown size={16} />
