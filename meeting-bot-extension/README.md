@@ -1,104 +1,105 @@
 # Markee Meeting Host Bot
 
-Chrome extension + VPS setup so any of the 4 operational Gmail mailboxes can
-auto-join its own Google Meet meetings as **host**, auto-admit guests from
-the waiting room, and (via VPS-side screen capture, see below — not a Meet
-feature) get recorded — without anyone needing to manually log into that
-mailbox to open the door.
+Chrome extension + hướng dẫn setup VPS để 1 trong 4 mail vận hành có thể tự
+join Google Meet với vai trò **host**, tự "cho vào" người ở phòng chờ, và
+(qua quay màn hình phía VPS, xem bên dưới — không phải tính năng của Meet)
+được ghi hình lại — mà không cần ai phải đăng nhập tay vào mail đó để mở
+cửa cho người khác.
 
-## Why this exists
+## Vì sao cần cái này
 
-These 4 mailboxes are personal Gmail accounts (confirmed: all `@gmail.com`,
-added to a Google Family group), not Google Workspace. Personal Gmail has
-no API to change a Meet space's access policy (`accessType=OPEN`) and no
-native "Record meeting" button — both are Workspace-only features. The only
-way to get "anyone with the link walks straight in" behavior is to have the
-actual organizer account physically present in the call to admit people,
-and the only way to get a recording is to capture the screen ourselves.
-Hence: a VPS keeps 4 Chrome windows open, one per mailbox, each signed in
-once and left logged in, each running this extension.
+4 mail vận hành này là Gmail cá nhân (đã xác nhận: toàn bộ đuôi `@gmail.com`,
+nằm trong 1 nhóm Google Family), không phải Google Workspace. Gmail cá nhân
+không có API để đổi quyền phòng họp Meet (`accessType=OPEN`) và cũng không
+có nút "Ghi lại cuộc họp" — cả 2 đều là tính năng chỉ Workspace mới có. Cách
+duy nhất để "ai có link cũng vào thẳng được" là phải có chính tài khoản
+tổ chức (organizer) đang thực sự có mặt trong phòng họp để bấm cho vào, và
+cách duy nhất để có bản ghi là tự quay lại màn hình. Vì vậy: một VPS giữ
+sẵn 4 cửa sổ Chrome mở, mỗi cửa sổ đăng nhập 1 mail, đăng nhập 1 lần rồi để
+nguyên đó, mỗi cửa sổ chạy extension này.
 
-Backend side (already in this repo): `backend/app/routers/meeting_bot.py`
-exposes `GET /api/meeting-bot/queue?google_email=...` (protected by the
-`MEETING_BOT_TOKEN` env var — set it in `.env` on both backend and here).
-It matches meetings to mailboxes via `Meeting.organizer_google_email`
-(frozen at creation time) or, as a fallback, the owning workspace's
-connected/expected Google account.
+Phía backend (đã có sẵn trong repo): `backend/app/routers/meeting_bot.py`
+mở endpoint `GET /api/meeting-bot/queue?google_email=...` (bảo vệ bằng biến
+môi trường `MEETING_BOT_TOKEN` — cần set giống nhau ở cả backend và ở
+extension). Endpoint này khớp từng meeting với đúng mail phụ trách qua
+`Meeting.organizer_google_email` (đã lưu cố định lúc tạo meeting), hoặc nếu
+chưa có thì lấy theo mail đã connect/mail dự kiến của workspace sở hữu
+meeting đó.
 
-## VPS setup (one-time)
+## Setup VPS (làm 1 lần)
 
-Tested shape: any small Linux VPS (2 vCPU / 4GB RAM is enough for 4 idle
-Meet tabs), Ubuntu 22.04+.
+Hình dung: 1 VPS Linux nhỏ (2 vCPU / 4GB RAM là đủ cho 4 tab Meet chạy
+nền), Ubuntu 22.04 trở lên.
 
 ```bash
 sudo apt update
 sudo apt install -y xvfb google-chrome-stable ffmpeg pulseaudio
 ```
 
-For each of the 4 mailboxes, create an isolated Chrome profile dir and a
-virtual display:
+Với mỗi mail trong 4 mail, tạo 1 thư mục profile Chrome riêng + 1 màn hình ảo:
 
 ```bash
 mkdir -p ~/meeting-bot/profile-ws1
 Xvfb :101 -screen 0 1280x800x24 &
 DISPLAY=:101 google-chrome \
   --user-data-dir=$HOME/meeting-bot/profile-ws1 \
-  --load-extension=/path/to/meeting-bot-extension \
+  --load-extension=/duong-dan-toi/meeting-bot-extension \
   --no-first-run --disable-notifications &
 ```
 
-Repeat with `:102`/`profile-ws2`, `:103`/`profile-ws3`, `:104`/`profile-ws4`.
+Lặp lại với `:102`/`profile-ws2`, `:103`/`profile-ws3`, `:104`/`profile-ws4`.
 
-**First run per profile (manual, one-time):** connect via VNC/x11vnc to that
-`:10X` display (or `--remote-debugging-port` + a local Chrome DevTools
-session tunneled over SSH), log into the corresponding Gmail account
-normally, approve any 2FA/"new device" prompt, then open
-`chrome://extensions` → enable the unpacked extension → open its Options
-page → fill in:
-- **Backend API base URL**: `https://<your-pm-domain>/api/meeting-bot`
-- **Bot token**: same value as `MEETING_BOT_TOKEN` in the backend's `.env`
-- **Gmail of this profile**: the exact mailbox this Chrome window is signed
-  into (must match `organizer_google_email` / the workspace's connected
-  Google account exactly).
+**Bước đầu tiên cho mỗi profile (làm tay, chỉ 1 lần):** kết nối vào màn
+hình ảo `:10X` đó qua VNC/x11vnc (hoặc dùng
+`--remote-debugging-port` rồi mở DevTools từ máy mình qua SSH tunnel), đăng
+nhập bình thường vào đúng tài khoản Gmail đó, xác nhận nếu Google hỏi
+2FA/"thiết bị lạ", rồi vào `chrome://extensions` → bật extension đã load →
+mở trang Options của nó → điền:
+- **Backend API base URL**: `https://<domain-pm-cua-ban>/api/meeting-bot`
+- **Bot token**: giống hệt giá trị `MEETING_BOT_TOKEN` trong `.env` của backend
+- **Gmail của profile này**: đúng mail cửa sổ Chrome này đang đăng nhập
+  (phải khớp chính xác với `organizer_google_email` / mail đã connect của
+  workspace tương ứng).
 
-After that, the profile stays logged in indefinitely (cookies persist in
-`--user-data-dir`) — no more manual steps needed day-to-day. Run each
-`Xvfb` + `google-chrome` pair under a systemd unit (`Restart=always`) so a
-VPS reboot or a Chrome crash recovers on its own; see `systemd-example/`.
+Sau bước đó, profile giữ nguyên trạng thái đăng nhập vĩnh viễn (cookie lưu
+trong `--user-data-dir`) — không cần làm tay lại mỗi ngày. Nên chạy mỗi cặp
+`Xvfb` + `google-chrome` dưới dạng systemd service (`Restart=always`) để
+VPS restart hay Chrome bị crash thì tự phục hồi (xem `systemd-example/`).
 
-## Recording (VPS-side, not Meet's own feature)
+## Ghi hình (làm ở phía VPS, không phải tính năng của Meet)
 
-Since personal Gmail has no native "Record" button, capture the virtual
-display + a PulseAudio monitor source instead, e.g. one ffmpeg process per
-profile, started/stopped alongside the meeting window:
+Vì Gmail cá nhân không có nút "Ghi lại" của Meet, phải tự quay màn hình ảo
++ lấy nguồn âm thanh PulseAudio, ví dụ mỗi profile chạy 1 tiến trình ffmpeg
+riêng, bật/tắt theo lúc vào/ra cuộc họp:
 
 ```bash
 ffmpeg -f x11grab -video_size 1280x800 -i :101 \
-       -f pulse -i <monitor-source-for-:101> \
+       -f pulse -i <monitor-source-cho-:101> \
        -c:v libx264 -preset veryfast -c:a aac \
        ~/meeting-bot/recordings/ws1-$(date +%Y%m%d-%H%M%S).mp4
 ```
 
-This is a separate, still-to-be-wired piece: nothing in this extension
-starts/stops ffmpeg yet. The simplest next step is a small script the bot's
-`background.js` could ping (e.g. via a tiny local HTTP server on the VPS)
-when it opens/closes a meeting tab, so recording brackets line up with the
-actual call — not built here because it depends on final choices (where
-recordings get uploaded, retention, disk sizing for 4 concurrent calls).
+Phần này **hiện chưa được tự động hoá** — extension chưa tự bật/tắt ffmpeg
+giúp bạn. Bước tiếp theo đơn giản nhất là viết 1 server nhỏ chạy local trên
+VPS mà `background.js` gọi tới mỗi khi mở/đóng tab meeting, để đoạn ghi hình
+khớp đúng thời gian cuộc họp thật — chưa làm sẵn vì còn phụ thuộc vài quyết
+định cuối (ghi xong lưu ở đâu/đẩy lên đâu, giữ file bao lâu, dung lượng ổ
+đĩa nếu 4 workspace họp cùng lúc).
 
-## Known limitations / risks — read before relying on this
+## Giới hạn / rủi ro cần biết — đọc trước khi tin tưởng dùng thật
 
-- **Google may flag the automation.** Persistent scripted control of a
-  personal Gmail session (auto-clicking Meet's UI) is outside normal usage
-  patterns and could trigger an "unusual activity" / re-verification
-  prompt, which would silently break auto-admit until someone manually
-  re-verifies. Keep each profile's login stable (don't reset
-  `user-data-dir`) to minimize this.
-- **One mailbox = one concurrent meeting.** If two projects under the same
-  workspace are scheduled at the same time, only one gets auto-admit; the
-  other behaves like today (needs a human with access to that Gmail).
-- **`content.js` selectors are the most likely thing to break** when
-  Google ships a Meet UI change — see the comment at the top of that file
-  for how to fix it (re-check aria-labels/button text in a manual session).
-- Nothing here has been run against a live VPS yet — this is a first
-  implementation to deploy and iterate on, not a battle-tested one.
+- **Google có thể coi đây là hành vi bất thường.** Việc điều khiển tự động
+  liên tục 1 phiên Gmail cá nhân (tự bấm nút trong Meet) nằm ngoài cách
+  dùng thông thường, có thể khiến Google yêu cầu xác minh lại "hoạt động
+  bất thường" — lúc đó auto-admit sẽ âm thầm ngừng hoạt động cho tới khi có
+  người vào xác minh lại tay. Giữ nguyên trạng thái đăng nhập của từng
+  profile (đừng xoá `user-data-dir`) để giảm rủi ro này.
+- **1 mail chỉ host được 1 cuộc cùng lúc.** Nếu 2 dự án cùng workspace họp
+  trùng giờ, chỉ 1 cuộc được auto-admit; cuộc còn lại vẫn như hiện tại (cần
+  người có quyền đăng nhập đúng mail đó).
+- **Các selector trong `content.js` là phần dễ hỏng nhất** mỗi khi Google
+  đổi giao diện Meet — xem comment ở đầu file đó để biết cách sửa (mở thử
+  1 cuộc họp tay trong đúng profile đó rồi kiểm tra lại aria-label/chữ trên
+  nút).
+- Toàn bộ phần này **chưa từng chạy thử trên VPS thật** — đây là bản dựng
+  đầu tiên để triển khai rồi chỉnh dần, chưa phải bản đã kiểm chứng ổn định.
