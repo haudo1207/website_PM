@@ -1195,6 +1195,7 @@ function MeetingsPageContent() {
         onEdit={detailMeeting?.can_manage ? handleOpenEditFromDetail : undefined}
         onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
         onSync={detailMeeting?.can_manage ? handleSync : undefined}
+        onDelete={detailMeeting?.can_manage ? (m => { handleCloseDetail(); setDeleteConfirmId(String(m.id)); }) : undefined}
       />
 
       {/* Delete Confirm Modal */}

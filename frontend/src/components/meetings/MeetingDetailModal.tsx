@@ -38,6 +38,7 @@ interface MeetingDetailModalProps {
   onEdit?: (meeting: any) => void;
   onSummarize?: (meeting: any) => void;
   onSync?: (meeting: any) => Promise<any>;
+  onDelete?: (meeting: any) => void;
 }
 
 export default function MeetingDetailModal({
@@ -46,7 +47,8 @@ export default function MeetingDetailModal({
   meeting,
   onEdit,
   onSummarize,
-  onSync
+  onSync,
+  onDelete
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
 
@@ -707,6 +709,14 @@ export default function MeetingDetailModal({
                         className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be] flex items-center gap-2 disabled:opacity-50"
                       >
                         <span>{isSyncing ? '⏳ Đang đồng bộ...' : '🔄 Đồng bộ (Sync)'}</span>
+                      </button>
+                    )}
+                    {onDelete && (
+                      <button
+                        onClick={() => { setShowMenu(false); onDelete(meeting); }}
+                        className="w-full text-left px-3.5 py-2 hover:bg-red-50 text-red-600 flex items-center gap-2 border-t border-slate-100"
+                      >
+                        <span>🗑️ Xóa cuộc họp</span>
                       </button>
                     )}
                   </div>
