@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     ZALO_WORKER_URL: str = "http://zalo-worker:8090"
     ZALO_WORKER_INTERNAL_TOKEN: str = ""
 
+    # Meeting Host Bot — Chrome extension on a VPS, one signed-in Google
+    # profile per operational mailbox, polling GET /api/meeting-bot/queue to
+    # know when to join-as-host/auto-admit/record. See
+    # meeting-bot-extension/README.md.
+    MEETING_BOT_TOKEN: str = ""
+
     @property
     def telegram_base_url(self) -> str:
         return (self.APP_BASE_URL or self.FRONTEND_URL or "").rstrip("/")
