@@ -938,6 +938,18 @@ export default function OverviewTab() {
       if (selectedMemberId !== 'all') {
         activeTeamList = activeTeamList.filter(m => isSameId(m.id, selectedMemberId));
         drilledMemberId = selectedMemberId;
+      } else {
+        // "Toàn bộ team" — memberCardSource only ever holds subordinates
+        // (rows whose leader_name points at this Leader), so a task/project
+        // assigned directly to the Leader themself (not one of their
+        // members) would otherwise vanish from their own team-wide view.
+        // Mirrors the leaderSelf fallback above (Admin drilled into a
+        // Leader already gets this for free).
+        const selfId = currentUser?.member_id;
+        if (selfId != null && !activeTeamList.some((m: any) => isSameId(m.id, selfId))) {
+          const selfRow = rawMembers.find((m: any) => isSameId(m.id, selfId));
+          if (selfRow) activeTeamList = [...activeTeamList, selfRow];
+        }
       }
     }
     const teamMemberIds = activeTeamList.map(m => m.id);
