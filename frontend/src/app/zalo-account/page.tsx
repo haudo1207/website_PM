@@ -1008,7 +1008,9 @@ export default function ZaloAccountPage() {
               ) : conversationSummaries.length === 0 ? (
                 <div className="text-sm text-slate-400 text-center py-10">Chưa có bản tóm tắt nào.</div>
               ) : (
-                conversationSummaries.map((s: ZaloConversationSummary) => <ZaloSummaryCard key={s.id} s={s} />)
+                conversationSummaries.map((s: ZaloConversationSummary) => (
+                  <ZaloSummaryCard key={s.id} s={s} projectId={selectedConversation?.project_id ?? undefined} />
+                ))
               )}
             </div>
           </div>

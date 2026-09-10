@@ -200,7 +200,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         : (initialData.project_id ? [initialData.project_id] : []);
       setFormData({
         ...initialData,
+        title: initialData.title || '',
         platform: initialData.platform || 'Google Meet',
+        link: initialData.link || initialData.meeting_url || '',
         transcript: initialData.transcript || '',
         auto_summarize: true,
         objective: initialData.objective || '',

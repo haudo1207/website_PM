@@ -1018,7 +1018,14 @@ export interface ZaloPushTaskItem {
   index: number;
   detail_task: string;
   priority: string;
+  assigned_id: number;
   assigned_name: string;
+  support_id: number;
+  skill_solution_id: number;
+  skill_vendor_id: number;
+  phase_id?: number;
+  task_group_id?: number;
+  start_date: string;
   deadline: string;
   manday_est?: number;
 }

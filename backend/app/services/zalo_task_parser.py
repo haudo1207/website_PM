@@ -232,41 +232,78 @@ def create_task_direct(
     deadline: Optional[datetime.date],
     source_thread_id: str,
     priority_raw: str = "Normal",
+    support: Optional[Member] = None,
+    skill_solution_id: Optional[int] = None,
+    skill_vendor_id: Optional[int] = None,
+    phase_id: Optional[int] = None,
+    task_group_id: Optional[int] = None,
+    start_date: Optional[datetime.date] = None,
+    kpi_ratio_assign: int = 100,
+    kpi_ratio_support: int = 0,
 ) -> Optional[Task]:
     """"+ Task" form path — title/assignee/priority/manday/deadline picked
     directly in the UI (no text-command parsing, no @mention matching
     needed). Returns None if the project has no skill data to default to
-    yet."""
-    group, skill = _default_skill(db)
-    if not group or not skill:
-        return None
+    yet.
 
-    task_group = _ensure_zalo_task_group(db, project_id)
+    `support`/`skill_solution_id`/`skill_vendor_id`/`phase_id`+`task_group_id`/
+    `start_date` are optional overrides — the Zalo summary's "Task đề xuất"
+    push (a real Assigned/Support/Skill/Phase/Task-cha picker, see
+    push_zalo_summary_tasks) passes these explicitly; the simpler "+ Task"
+    quick-add form and the /task text command have no way to specify them
+    and keep getting the auto-defaulted placeholders below unchanged.
+    """
+    if skill_solution_id and skill_vendor_id:
+        group_id, skill_id = skill_solution_id, skill_vendor_id
+    else:
+        group, skill = _default_skill(db)
+        if not group or not skill:
+            return None
+        group_id, skill_id = group.id, skill.id
+
     _ensure_project_member(db, project_id, assigned.id)
 
-    support_id = _default_support_id(db, project_id, assigned.id)
-    if support_id is None:
-        return None
+    if support is not None:
+        support_id = support.id
+    else:
+        support_id = _default_support_id(db, project_id, assigned.id)
+        if support_id is None:
+            return None
     _ensure_project_member(db, project_id, support_id)
 
-    start_date = datetime.date.today()
+    # Explicit Phase/Task cha (validated by the caller against project_id)
+    # lands the task in the real project plan with the normal "T{group}.{n}"
+    # code, matching push_meeting_tasks — the dedicated "Zalo"/"Từ Zalo"
+    # bucket (and its "ZL" tag) is only for callers that have no placement
+    # picker at all.
+    if phase_id and task_group_id:
+        task_group = db.query(TaskGroup).filter(TaskGroup.id == task_group_id, TaskGroup.phase_id == phase_id).first()
+        code_prefix = "T"
+    else:
+        task_group = None
+        code_prefix = "ZL"
+    if task_group is None:
+        task_group = _ensure_zalo_task_group(db, project_id)
+        code_prefix = "ZL"
+
+    resolved_start_date = start_date or datetime.date.today()
     existing_count = db.query(Task).filter(Task.task_group_id == task_group.id).count()
 
     task = Task(
         task_group_id=task_group.id,
-        task_code=f"ZL{task_group.id}.{existing_count + 1}",
+        task_code=f"{code_prefix}{task_group.id}.{existing_count + 1}",
         detail=title[:500],
         priority=resolve_priority(db, priority_raw),
         manday_est=manday,
         status="Waiting",
-        start_date=start_date,
-        end_date_est=deadline or calc_end_date_est(start_date, manday),
+        start_date=resolved_start_date,
+        end_date_est=deadline or calc_end_date_est(resolved_start_date, manday),
         assigned_id=assigned.id,
         support_id=support_id,
-        kpi_ratio_assign=100,
-        kpi_ratio_support=0,
-        skill_solution_id=group.id,
-        skill_vendor_id=skill.id,
+        kpi_ratio_assign=kpi_ratio_assign,
+        kpi_ratio_support=kpi_ratio_support,
+        skill_solution_id=group_id,
+        skill_vendor_id=skill_id,
         notes=f"Tạo từ Zalo (form Task nhanh) — thread {source_thread_id}.",
     )
     db.add(task)
