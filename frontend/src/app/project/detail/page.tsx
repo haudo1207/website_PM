@@ -4074,9 +4074,10 @@ function ProjectDetailContent() {
                   if (mandayCol) initialForm[mandayCol] = '1.0';
                   setNewForm(initialForm);
                 }}
-                className="relative z-[1] inline-flex items-center justify-center w-5 h-5 rounded-full border border-dashed border-slate-300 bg-white text-slate-400 opacity-0 group-hover/spacer:opacity-100 hover:opacity-100 hover:border-[#0058be] hover:bg-[#0058be] hover:text-white hover:scale-110 hover:shadow-sm transition-all duration-150 cursor-pointer select-none"
+                className="relative z-[1] inline-flex items-center justify-center h-5 px-2.5 ml-3 rounded-full border border-dashed border-slate-300 bg-white text-slate-400 opacity-0 group-hover/spacer:opacity-100 hover:opacity-100 hover:border-[#0058be] hover:bg-[#0058be] hover:text-white hover:scale-105 hover:shadow-sm transition-all duration-150 cursor-pointer select-none gap-1 text-[10.5px] font-semibold whitespace-nowrap"
               >
                 <Plus size={12} strokeWidth={2.5} />
+                <span>Tạo task mới</span>
               </button>
             )}
           </div>
