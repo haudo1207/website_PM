@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Markee Meeting Host Bot — Cấu hình</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 24px auto; }
+    label { display: block; margin-top: 12px; font-weight: 600; }
+    input { width: 100%; padding: 6px; box-sizing: border-box; }
+    button { margin-top: 16px; padding: 8px 16px; }
+    #status { margin-top: 10px; color: green; }
+    p.hint { color: #666; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h2>Markee Meeting Host Bot</h2>
+  <p class="hint">Mỗi Chrome profile (mỗi tài khoản Gmail) cấu hình 1 lần. Profile này sẽ chỉ tự
+  join các cuộc họp được gán cho đúng mailbox bên dưới.</p>
+
+  <label for="apiBase">Backend API base URL</label>
+  <input id="apiBase" placeholder="https://your-pm-domain.com/api/meeting-bot">
+
+  <label for="botToken">Bot token (MEETING_BOT_TOKEN trên backend)</label>
+  <input id="botToken" type="password">
+
+  <label for="googleEmail">Gmail của profile này (tài khoản đang đăng nhập trong Chrome này)</label>
+  <input id="googleEmail" placeholder="workspace1.meeting@gmail.com">
+
+  <button id="save">Lưu</button>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>
