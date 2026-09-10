@@ -1147,10 +1147,26 @@ export default function OverviewTab() {
         }
       });
 
-      // Check if any task in this project falls within the selected time period
+      // Check if any task in this project falls within the selected time period.
+      // For the page-wide Leader role (own-team view, NOT drilled into a single
+      // Member) the period gate must respect spec Task 4: a Project is displayed
+      // only when the Leader's team actually has a task in the project within
+      // the selected period. `pTasksToUse` for that path still resolves to
+      // `pAllTasks` (every task of the project across all teams / workspaces),
+      // which is what was letting projects leak in whenever any team member
+      // outside the Leader's own roster had a task in the period. Switching the
+      // Leader-not-drilled path to `pLeaderTasks` (team-filtered) keeps every
+      // other path untouched: Super Admin (workspace-scoped `pTasksToUse`),
+      // Admin drilled into a Leader (already `pLeaderTasks`), and a Leader
+      // drilled into a Member (already `pLeaderTasks`). When the Leader has no
+      // members, `pLeaderTasks` falls back to `pAllTasks` (line 1120 guard), so
+      // the empty-team edge case still works exactly as before.
+      const tasksForPeriodCheck = (currentUserRole === 'leader' && !isDrilledIn)
+        ? pLeaderTasks
+        : pTasksToUse;
       const hasTaskInPeriod = (selectedYear === 'all' && selectedMonth === 'all' && selectedWeek === 'all' && (activeQuickFilter === 'all' || !activeQuickFilter))
         ? true
-        : pTasksToUse.some(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
+        : tasksForPeriodCheck.some(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
 
       // Leader/Member scope filter: project must belong to the drilled-in
       // Leader's team, or the drilled-in Member specifically, or be a project
