@@ -17,6 +17,7 @@ from .routers import ai_skills as ai_skills_router
 from .routers import ai_sessions as ai_sessions_router
 from .routers import public_share as public_share_router
 from .routers import workload_settings as workload_settings_router
+from .routers import calendar as calendar_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -300,6 +301,11 @@ def apply_schema_updates():
             END $$
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_sales_id ON projects (sales_id)"))
+        # Lunch records: an index on "date" so the monthly date-range queries
+        # (and upsert lookups) do not require a full table scan.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_lunch_records_date ON lunch_records (date)"
+        ))
 
         # Create audit_logs table and indices if not exists
         conn.execute(text("""
@@ -798,6 +804,27 @@ def apply_schema_updates():
             END
             WHERE mp.progress_pct IS NULL
         """))
+
+        # ── Task Calendar Overview (008-task-calendar-overview) ──────────
+        # scheduled_at: optional work-time slot on the Personal Calendar.
+        # NULL = task sits in the "chưa xếp lịch" tray, not on the grid.
+        # Naive TIMESTAMP storing Asia/Ho_Chi_Minh wall-clock time — same
+        # convention as meetings.py (_VN_TZ), not UTC.
+        conn.execute(text(
+            "ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS color VARCHAR(20) NULL"
+        ))
+        # Composite indexes for GET /api/calendar/tasks — the query always
+        # filters by (assigned_id OR support_id) AND a scheduled_at range,
+        # same grouping as ix_tasks_v2_assigned_id/support_id below.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tasks_v2_assigned_scheduled ON tasks_v2 (assigned_id, scheduled_at)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tasks_v2_support_scheduled ON tasks_v2 (support_id, scheduled_at)"
+        ))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -1490,6 +1517,7 @@ app.include_router(notifications_router.router, prefix="/api/notifications")
 app.include_router(telegram_router.router,      prefix="/api/telegram")
 app.include_router(zalo_router.router,          prefix="/api/zalo")
 app.include_router(workload_settings_router.router, prefix="/api/workload-settings")
+app.include_router(calendar_router.router,          prefix="/api/calendar")
 app.include_router(ai_skills_router.router,     prefix="/api")
 app.include_router(ai_sessions_router.router,   prefix="/api")
 app.include_router(public_share_router.router,  prefix="/api")

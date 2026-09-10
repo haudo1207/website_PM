@@ -67,6 +67,11 @@ class Project(Base):
     # extension's project share-link feature (see routers/public_share.py).
     share_token           = Column(String(64), unique=True, nullable=True, index=True)
 
+    # Personal Calendar (008-task-calendar-overview) — hex color identifying
+    # this project's tasks on a member's Calendar (left border + tint on
+    # each task block). Not set on older projects until backfilled.
+    color                 = Column(String(20), nullable=True)
+
     # Relationships
     pm_member             = relationship("Member", foreign_keys=[pm_id], lazy="select")
     technical_leader      = relationship("Member", foreign_keys=[technical_leader_id], lazy="select")

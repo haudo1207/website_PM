@@ -29,10 +29,12 @@ function GroupSummaryDays({
   summaries,
   onDeleted,
   onUpdated,
+  projectId,
 }: {
   summaries: ZaloConversationSummary[];
   onDeleted: (summaryId: number) => void;
   onUpdated: (updated: ZaloConversationSummary) => void;
+  projectId: number;
 }) {
   const byDay = useMemo(() => {
     const map = new Map<string, ZaloConversationSummary[]>();
@@ -105,7 +107,7 @@ function GroupSummaryDays({
               >
                 <Trash2 size={14} />
               </button>
-              <ZaloSummaryCard s={s} onUpdated={onUpdated} />
+              <ZaloSummaryCard s={s} onUpdated={onUpdated} projectId={projectId} />
             </div>
           ))}
         </div>
@@ -276,6 +278,7 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
               summaries={g.summaries}
               onDeleted={(summaryId) => handleDeleted(g.conversation_id, summaryId)}
               onUpdated={(updated) => handleSummaryUpdated(g.conversation_id, updated)}
+              projectId={projectId}
             />
           </div>
         </div>

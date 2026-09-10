@@ -1,0 +1,93 @@
+"""
+Calendar Router — Personal "My Task Calendar" view (008-task-calendar-overview).
+
+A read-only scheduling layer on top of the existing Task Management system,
+NOT a second Task CRUD system. Creating/updating a task (including its
+`scheduled_at`) still goes entirely through the existing
+POST/PATCH /task-groups/{gid}/tasks endpoints in task_groups.py — see
+specs/008-task-calendar-overview/plan.md section 0.
+"""
+from datetime import datetime, time, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, or_
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..models.member import Member
+from ..models.phase import Phase
+from ..models.project import Project
+from ..models.skill_master import Group, Skill
+from ..models.task import Task
+from ..models.task_group import TaskGroup
+from ..models.user import User
+from ..utils.auth import get_current_user
+from ..utils.kpi_engine import parse_date
+from .task_groups import serialize_task
+
+router = APIRouter()
+
+
+@router.get("/tasks")
+def list_calendar_tasks(
+    from_: str = Query(..., alias="from", description="YYYY-MM-DD, inclusive"),
+    to: str = Query(..., description="YYYY-MM-DD, inclusive"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Personal Calendar — returns ONLY tasks where current_user is
+    assigned_id or support_id, across every project they belong to.
+
+    This is a hard data-scope boundary, not a UX filter: Project role
+    (Leader / PM / Super Admin) does NOT expand it — a Leader with full
+    access to a project still only sees their own Assigned/Support tasks
+    here (spec.md section 2.2/2.3). Never widen this filter to "everyone
+    on the project"; that would be a Team Calendar, explicitly out of
+    scope for this feature (spec.md section 6).
+
+    Includes BOTH: tasks scheduled inside [from, to] (rendered on the grid)
+    AND every unscheduled task in scope (scheduled_at IS NULL — rendered in
+    the "chưa xếp lịch" tray). An unscheduled task has no date of its own,
+    so it can't be excluded by the date filter — it always accompanies
+    whatever range is being viewed, same as spec.md FR-CAL-06. Frontend
+    splits the two by checking `scheduled_at`.
+    """
+    member_id = getattr(current_user, "member_id", None)
+    if not member_id:
+        return []
+
+    from_date = parse_date(from_)
+    to_date = parse_date(to)
+    if not from_date or not to_date:
+        raise HTTPException(400, "Invalid 'from'/'to' — expected YYYY-MM-DD.")
+
+    from_dt = datetime.combine(from_date, time.min)
+    to_dt = datetime.combine(to_date, time.min) + timedelta(days=1)  # 'to' is inclusive
+
+    results = (
+        db.query(Task, TaskGroup, Phase, Project)
+        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+        .join(Phase, TaskGroup.phase_id == Phase.id)
+        .join(Project, Phase.project_id == Project.id)
+        .filter(or_(Task.assigned_id == member_id, Task.support_id == member_id))
+        .filter(or_(
+            Task.scheduled_at.is_(None),
+            and_(Task.scheduled_at >= from_dt, Task.scheduled_at < to_dt),
+        ))
+        .all()
+    )
+
+    members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+    groups_map = {g.id: g.name for g in db.query(Group).all()}
+    skills_map = {s.id: s.name for s in db.query(Skill).all()}
+
+    output = []
+    for task, tg, phase, project in results:
+        t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
+        t_dict["project_id"] = project.id
+        t_dict["project_name"] = project.name
+        t_dict["project_color"] = getattr(project, "color", None)
+        t_dict["calendar_role"] = "assigned" if task.assigned_id == member_id else "support"
+        output.append(t_dict)
+
+    return output

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
@@ -9,7 +9,8 @@ import StatusBadge, { LeaveTypeBadge } from '@/components/leave-request/StatusBa
 import LeaveRequestForm from '@/components/leave-request/LeaveRequestForm';
 import Portal from '@/components/Portal';
 import { formatDateLabel, LeaveRequest, LeaveRequestFormValues, getStorageKey, mockLeaveRequests } from '@/lib/leave-request';
-import { getMembers, getLeaveRequests, createLeaveRequest, updateLeaveRequest, deleteLeaveRequest, approveLeaveRequest, getLunchRecords, upsertLunchRecord, getLunchMonthlySummary } from '@/lib/api';
+import { getMembers, getLeaveRequests, createLeaveRequest, updateLeaveRequest, deleteLeaveRequest, approveLeaveRequest, getLunchRecords, upsertLunchRecord, deleteLunchRecord, getLunchMonthlySummary } from '@/lib/api';
+import { getBusinessWeekdayLabel, isWeekendDate, monthCalendarDays, workingDaysForMonth } from '@/lib/business-date';
 
 const ITEMS_PER_PAGE = 5;
 
@@ -28,7 +29,414 @@ interface TeamMember {
 // ═══════════════════════════════════════════════════════════════
 // LUNCH CHECK-IN COMPONENT (with backend API)
 // ═══════════════════════════════════════════════════════════════
-function LunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { members: TeamMember[]; leaveRequests: LeaveRequest[]; calendarDate: string; isAdmin: boolean }) {
+type LunchStatus = '' | 'lunch' | 'no_lunch' | 'onsite' | 'bonus';
+
+const LUNCH_PRICE = 40000;
+const LUNCH_STATUS_OPTIONS: { value: LunchStatus; label: string }[] = [
+  { value: 'no_lunch', label: 'Không đặt' },
+  { value: 'lunch', label: 'Đặt' },
+  { value: 'onsite', label: 'Onsite' },
+  { value: 'bonus', label: 'Bonus' },
+  { value: '', label: 'Chưa chọn' },
+];
+const MEMBER_LUNCH_STATUS_OPTIONS = LUNCH_STATUS_OPTIONS.filter((item) => item.value === '' || item.value === 'lunch' || item.value === 'no_lunch');
+
+function getLunchStatus(record?: { has_lunch: boolean; status?: string }): LunchStatus {
+  if (!record) return '';
+  if (record.status === 'lunch' || record.status === 'no_lunch' || record.status === 'onsite' || record.status === 'bonus') {
+    return record.status;
+  }
+  return record.has_lunch ? 'lunch' : 'no_lunch';
+}
+
+function lunchStatusClass(status: LunchStatus) {
+  switch (status) {
+    case 'lunch':
+      return 'border-blue-200 bg-blue-50 text-blue-700';
+    case 'no_lunch':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    case 'onsite':
+      return 'border-orange-200 bg-orange-50 text-orange-700';
+    case 'bonus':
+      return 'border-violet-200 bg-violet-50 text-violet-700';
+    default:
+      return 'border-slate-200 bg-slate-50 text-slate-600';
+  }
+}
+
+function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[]; leaveRequests: LeaveRequest[]; calendarDate: string; isAdmin: boolean }) {
+  const now = new Date(calendarDate);
+  const [lunchRecords, setLunchRecords] = useState<{ id: number; member_id: number; date: string; has_lunch: boolean; status?: string }[]>([]);
+  const [selectedTeam, setSelectedTeam] = useState('All');
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDate, setSelectedDate] = useState(calendarDate);
+  const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+
+  const fetchLunchRecords = useCallback(async () => {
+    const records = await getLunchRecords({ year: selectedYear, month: selectedMonth });
+    setLunchRecords(records);
+  }, [selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    const userId = Number(localStorage.getItem('user_id') || 0);
+    const storedMemberId = Number(localStorage.getItem('member_id') || 0);
+    const member = members.find((m) => m.user_id === userId);
+    setCurrentMemberId(storedMemberId || member?.id || null);
+  }, [members]);
+
+  useEffect(() => {
+    fetchLunchRecords().catch((err: unknown) => console.error('Error fetching lunch records:', err));
+  }, [fetchLunchRecords]);
+
+  const teams = useMemo(() => {
+    const set = new Set<string>();
+    members.forEach((m) => { if (m.team) set.add(m.team); });
+    return ['All', ...Array.from(set).sort()];
+  }, [members]);
+
+  const visibleMembers = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return members
+      .filter((m) => selectedTeam === 'All' || m.team === selectedTeam)
+      .filter((m) => !q || m.name.toLowerCase().includes(q));
+  }, [members, searchTerm, selectedTeam]);
+
+  const calendarDays = useMemo(() => monthCalendarDays(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
+  const workDays = useMemo(() => workingDaysForMonth(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
+
+  useEffect(() => {
+    if (isAdmin || workDays.length === 0) return;
+    if (!selectedDate.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
+      setSelectedDate(workDays[0].ymd);
+    }
+  }, [isAdmin, selectedDate, selectedMonth, selectedYear, workDays]);
+
+  const recordsByCell = useMemo(() => {
+    const map = new Map<string, { id: number; member_id: number; date: string; has_lunch: boolean; status?: string }>();
+    lunchRecords.forEach((r) => map.set(`${r.member_id}-${r.date}`, r));
+    return map;
+  }, [lunchRecords]);
+
+  const memberMonthlySummary = useMemo(() => {
+    if (!currentMemberId) return { lunch: 0, noLunch: 0, empty: workDays.length };
+    let lunch = 0;
+    let noLunch = 0;
+    let empty = 0;
+
+    workDays.forEach((day) => {
+      const status = getLunchStatus(recordsByCell.get(`${currentMemberId}-${day.ymd}`));
+      if (status === 'lunch') lunch += 1;
+      else if (status === 'no_lunch') noLunch += 1;
+      else empty += 1;
+    });
+
+    return { lunch, noLunch, empty };
+  }, [currentMemberId, recordsByCell, workDays]);
+
+  const summary = useMemo(() => {
+    let lunch = 0;
+    let noLunch = 0;
+    let onsite = 0;
+    let bonus = 0;
+    let empty = 0;
+
+    visibleMembers.forEach((m) => {
+      workDays.forEach((day) => {
+        const status = getLunchStatus(recordsByCell.get(`${m.id}-${day.ymd}`));
+        if (status === 'lunch') lunch += 1;
+        else if (status === 'no_lunch') noLunch += 1;
+        else if (status === 'onsite') onsite += 1;
+        else if (status === 'bonus') bonus += 1;
+        else empty += 1;
+      });
+    });
+
+    return {
+      lunch,
+      noLunch,
+      onsite,
+      bonus,
+      empty,
+      totalCost: (noLunch + bonus) * LUNCH_PRICE,
+    };
+  }, [recordsByCell, visibleMembers, workDays]);
+
+  const saveStatus = async (memberId: number, date: string, status: LunchStatus) => {
+    if (isWeekendDate(date)) return;
+
+    const key = `${memberId}-${date}`;
+    const current = recordsByCell.get(key);
+    setSavingKey(key);
+    try {
+      if (!status) {
+        if (current) await deleteLunchRecord(current.id);
+      } else {
+        await upsertLunchRecord({
+          member_id: memberId,
+          date,
+          has_lunch: status === 'lunch' || status === 'bonus',
+          status,
+        });
+      }
+      await fetchLunchRecords();
+    } catch (err) {
+      console.error('Error saving lunch status:', err);
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  if (!isAdmin) {
+    const currentMember = currentMemberId ? members.find((m) => m.id === currentMemberId) : null;
+    return (
+      <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-5">
+        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-[#061733]">Check Lunch</h2>
+            <p className="mt-1 text-sm text-[#565e74]">Theo dõi và cập nhật đăng ký cơm trưa trong tháng.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-[#565e74]">Tháng</span>
+              <select value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => <option key={month} value={month}>Tháng {String(month).padStart(2, '0')}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-[#565e74]">Năm</span>
+              <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
+                {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        {currentMemberId ? (
+          <>
+            <div className="mb-4 grid gap-3 sm:grid-cols-4">
+              <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-4">
+                <div className="text-xs text-[#565e74]">Thành viên</div>
+                <div className="mt-1 truncate text-lg font-bold">{currentMember?.name || 'Member'}</div>
+              </div>
+              <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-4">
+                <div className="text-xs text-[#565e74]">Ngày làm việc</div>
+                <div className="mt-1 text-2xl font-bold">{workDays.length}</div>
+              </div>
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                <div className="text-xs text-[#565e74]">Đặt</div>
+                <div className="mt-1 text-2xl font-bold text-blue-700">{memberMonthlySummary.lunch}</div>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <div className="text-xs text-[#565e74]">Không đặt / Chưa chọn</div>
+                <div className="mt-1 text-2xl font-bold text-emerald-700">{memberMonthlySummary.noLunch} / {memberMonthlySummary.empty}</div>
+              </div>
+            </div>
+
+            <section className="rounded-xl border border-[#c2c6d6]/70 bg-white">
+              <div className="flex items-center justify-between border-b border-[#c2c6d6]/70 px-4 py-3">
+                <h3 className="text-sm font-bold">Check Lunch - Tháng {String(selectedMonth).padStart(2, '0')}/{selectedYear}</h3>
+                <span className="text-xs text-[#565e74]">Ngày đang chọn: {formatDateLabel(selectedDate)}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-0 text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-4 py-3 text-left text-xs font-bold">Ngày</th>
+                      <th className="border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-4 py-3 text-left text-xs font-bold">Thứ</th>
+                      <th className="border-b border-[#c2c6d6]/70 bg-[#f8f9ff] px-4 py-3 text-left text-xs font-bold">Cơm trưa</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {calendarDays.map((day) => {
+                      const key = `${currentMemberId}-${day.ymd}`;
+                      const status = getLunchStatus(recordsByCell.get(key));
+                      const isSelected = day.ymd === selectedDate;
+                      const isToday = day.ymd === dateToYMD(new Date());
+                      const rowWeekend = day.isWeekend;
+
+                      return (
+                        <tr key={day.ymd} onClick={() => !rowWeekend && setSelectedDate(day.ymd)} className={`cursor-pointer ${rowWeekend ? 'bg-slate-100 text-slate-400 opacity-80' : isSelected ? 'bg-blue-50' : isToday ? 'bg-amber-50' : 'hover:bg-slate-50'}`} aria-disabled={rowWeekend}>
+                          <td className={`border-b border-r border-slate-100 px-4 py-3 font-bold ${rowWeekend ? 'text-slate-400' : isSelected ? 'text-blue-700' : 'text-[#061733]'}`}>
+                            {`${String(day.day).padStart(2, '0')}/${String(selectedMonth).padStart(2, '0')}/${selectedYear}`}
+                            {isToday && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Hôm nay</span>}
+                          </td>
+                          <td className={`border-b border-r border-slate-100 px-4 py-3 ${rowWeekend ? 'text-slate-400' : 'text-[#565e74]'}`}>
+                            {getBusinessWeekdayLabel(day.ymd)}
+                          </td>
+                          <td className={`border-b border-slate-100 px-4 py-2 ${rowWeekend ? 'bg-slate-100' : ''}`}>
+                            {rowWeekend ? (
+                              <div className="flex h-10 w-40 items-center justify-center rounded-lg border border-slate-200 bg-slate-200/80 text-xs font-semibold text-slate-500">
+                                Không làm việc
+                              </div>
+                            ) : (
+                              <select
+                                value={status}
+                                onClick={(e) => {
+                                  if (rowWeekend) e.stopPropagation();
+                                }}
+                                onChange={(e) => {
+                                  if (rowWeekend) return;
+                                  saveStatus(currentMemberId, day.ymd, e.target.value as LunchStatus);
+                                }}
+                                disabled={rowWeekend || savingKey === key}
+                                className={`h-10 w-40 rounded-lg border px-3 text-sm font-bold outline-none transition ${lunchStatusClass(status)} ${savingKey === key ? 'cursor-wait opacity-70' : ''}`}
+                              >
+                                {MEMBER_LUNCH_STATUS_OPTIONS.map((item) => <option key={item.value || 'empty'} value={item.value}>{item.label}</option>)}
+                              </select>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        ) : (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+            Không thể xác định member của bạn. Vui lòng liên hệ admin để thiết lập tài khoản.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-3xl font-bold text-[#061733]">Check Lunch</h2>
+          <p className="mt-2 text-sm text-[#565e74]">Quản lý đăng ký cơm trưa và tự động tính Bonus theo tuần làm việc.</p>
+        </div>
+      </div>
+
+      <section className="mb-4 rounded-xl border border-[#c2c6d6]/70 bg-white p-4">
+        <div className="grid gap-3 md:grid-cols-[130px_130px_130px_minmax(220px,1fr)] md:items-end">
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-[#565e74]">Team</span>
+            <select value={selectedTeam} onChange={(e) => setSelectedTeam(e.target.value)} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
+              {teams.map((team) => <option key={team} value={team}>{team === 'All' ? 'Tất cả team' : team}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-[#565e74]">Tháng</span>
+            <select value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => <option key={month} value={month}>Tháng {String(month).padStart(2, '0')}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-[#565e74]">Năm</span>
+            <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
+              {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-[#565e74]">Tìm thành viên</span>
+            <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Nhập tên thành viên..." className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none" />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-3 text-[11px] text-[#565e74]">
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-blue-200 bg-blue-50" />Đặt</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-emerald-200 bg-emerald-50" />Không đặt</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-orange-200 bg-orange-50" />Onsite</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-violet-200 bg-violet-50" />Bonus</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-slate-200 bg-slate-50" />Chưa chọn</span>
+        </div>
+      </section>
+
+      <section className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Thành viên hiển thị</div>
+          <div className="mt-2 text-3xl font-black text-slate-700">{visibleMembers.length}</div>
+          <div className="mt-1 text-xs text-slate-500">theo bộ lọc hiện tại</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Ngày làm việc</div>
+          <div className="mt-2 text-3xl font-black text-slate-700">{workDays.length}</div>
+          <div className="mt-1 text-xs text-slate-500">Thứ 2 - Thứ 6</div>
+        </div>
+        <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 via-white to-rose-100 p-4 shadow-sm shadow-rose-100/60 ring-1 ring-rose-100">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">Không đặt</div>
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-rose-100 text-sm font-bold text-rose-700">!</span>
+          </div>
+          <div className="mt-2 text-3xl font-black text-rose-700">{summary.noLunch}</div>
+          <div className="mt-1 text-xs text-rose-700/80">được tính 40.000đ/ngày</div>
+        </div>
+        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-violet-100 p-4 shadow-sm shadow-violet-100/60 ring-1 ring-violet-100">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-violet-600">Bonus</div>
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-sm font-bold text-violet-700">★</span>
+          </div>
+          <div className="mt-2 text-3xl font-black text-violet-700">{summary.bonus}</div>
+          <div className="mt-1 text-xs text-violet-700/80">tự động theo tuần</div>
+        </div>
+        <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-yellow-100 p-4 shadow-sm shadow-amber-100/60 ring-1 ring-amber-100">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700">Tổng tiền</div>
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-100 text-sm font-bold text-amber-700">₫</span>
+          </div>
+          <div className="mt-2 text-3xl font-black text-amber-700">{summary.totalCost.toLocaleString('vi-VN')}đ</div>
+          <div className="mt-1 text-xs text-amber-700/80">Không đặt + Bonus x 40.000đ</div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-[#c2c6d6]/70 bg-white">
+        <div className="flex items-center justify-between border-b border-[#c2c6d6]/70 px-4 py-3">
+          <h3 className="text-sm font-bold">Check Lunch - Tháng {String(selectedMonth).padStart(2, '0')}/{selectedYear}</h3>
+          <span className="text-xs text-[#565e74]">{visibleMembers.length} thành viên · {workDays.length} ngày làm việc · {calendarDays.length - workDays.length} cuối tuần</span>
+        </div>
+        <div className="max-h-[68vh] overflow-auto">
+          <table className="min-w-max border-separate border-spacing-0 text-sm">
+            <thead>
+              <tr>
+                <th className="sticky left-0 top-0 z-30 w-28 border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-3 text-left text-xs font-bold">Ngày</th>
+                {visibleMembers.map((member) => (
+                  <th key={member.id} className="sticky top-0 z-20 w-32 min-w-32 border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-3 text-center">
+                    <div className="max-w-28 truncate text-xs font-bold">{member.name}</div>
+                    <div className="mt-1 max-w-28 truncate text-[10px] font-medium text-[#565e74]">{member.team || 'N/A'}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {workDays.map((day) => (
+                <tr key={day.ymd}>
+                  <th className="sticky left-0 z-10 w-28 border-b border-r border-[#c2c6d6]/70 bg-white px-3 py-3 text-left">
+                    <div className="text-xs font-bold">{`${String(day.day).padStart(2, '0')}/${String(selectedMonth).padStart(2, '0')}/${selectedYear}`}</div>
+                    <div className="mt-1 text-[11px] font-medium text-[#565e74]">T{day.weekday + 1}</div>
+                  </th>
+                  {visibleMembers.map((member) => {
+                    const key = `${member.id}-${day.ymd}`;
+                    const status = getLunchStatus(recordsByCell.get(key));
+                    return (
+                      <td key={key} className="w-32 min-w-32 border-b border-r border-slate-100 p-1.5">
+                        <select
+                          value={status}
+                          onChange={(e) => saveStatus(member.id, day.ymd, e.target.value as LunchStatus)}
+                          disabled={savingKey === key}
+                          className={`h-11 w-28 rounded-lg border px-2 text-xs font-bold outline-none transition ${lunchStatusClass(status)} ${savingKey === key ? 'cursor-wait opacity-70' : ''}`}
+                        >
+                          {LUNCH_STATUS_OPTIONS.map((item) => <option key={item.value || 'empty'} value={item.value}>{item.label}</option>)}
+                        </select>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LegacyLunchCheckIn({ members, leaveRequests, calendarDate, isAdmin }: { members: TeamMember[]; leaveRequests: LeaveRequest[]; calendarDate: string; isAdmin: boolean }) {
   const [lunchRecords, setLunchRecords] = useState<{ id: number; member_id: number; date: string; has_lunch: boolean; status?: string }[]>([]);
   const [selectedTeam, setSelectedTeam] = useState('All');
   const [saving, setSaving] = useState(false);
@@ -444,6 +852,10 @@ function dateToYMD(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
+function formatVietnameseWeekday(value: string | Date) {
+  return getBusinessWeekdayLabel(value);
+}
+
 export default function LeaveRequestPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -470,7 +882,8 @@ export default function LeaveRequestPage() {
 
   useEffect(() => {
     const role = localStorage.getItem('role');
-    setIsAdmin(role === 'super_admin');
+    const canManage = role === 'admin' || role === 'super_admin' || role === 'leader';
+    setIsAdmin(canManage);
   }, []);
 
   const QUERY_KEY = ['leave-requests'] as const;
@@ -479,11 +892,14 @@ export default function LeaveRequestPage() {
     queryKey: QUERY_KEY,
     queryFn: async () => {
       try {
-        const leaveData = await getLeaveRequests();
-        const membersData = await getMembers();
+        const [leaveData, membersData] = await Promise.all([
+          getLeaveRequests(),
+          getMembers({ light: true }),
+        ]);
+
         const mapped: TeamMember[] = membersData.map((m: any) => ({
           id: m.id,
-          name: m.full_name || m.display_name,
+          name: m.full_name || m.display_name || m.name || 'Unknown',
           team: m.team || 'Unassigned',
           role: m.position || 'Member',
           email: m.email,
@@ -492,14 +908,17 @@ export default function LeaveRequestPage() {
           position: m.position,
           user_id: m.user_id,
         }));
+
         return { requests: leaveData as LeaveRequest[], teamMembers: mapped };
       } catch (error) {
         console.error('Error fetching data:', error);
-        // Fallback to mock data
         return { requests: mockLeaveRequests, teamMembers: [] as TeamMember[] };
       }
     },
-    staleTime: 2 * 60_000,
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
 
   const requests: LeaveRequest[] = leaveData?.requests || [];

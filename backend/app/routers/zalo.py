@@ -15,6 +15,7 @@ from ..models.project import Project, project_members
 from ..models.phase import Phase
 from ..models.task_group import TaskGroup
 from ..models.task import Task
+from ..models.skill_master import Group, Skill
 from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloDemoRequest, ZaloConversationSummary
 from ..utils.auth import get_current_user, require_zalo_user
 from ..config import settings
@@ -1118,6 +1119,25 @@ def summarize_conversation_now(
     return _summary_to_dict(row)
 
 
+def _first_phase_and_group(db: Session, project_id: int) -> tuple:
+    """Fallback placement when the reviewer doesn't pick a Phase/Task cha —
+    the project's own first Phase/TaskGroup (creating one if the project
+    truly has none yet), NOT the dedicated "Zalo" bucket, since the whole
+    point of exposing these pickers is to land the task in the real plan.
+    Mirrors push_meeting_tasks's fallback (meetings.py)."""
+    phase = db.query(Phase).filter(Phase.project_id == project_id).order_by(Phase.sort_order).first()
+    if not phase:
+        phase = Phase(project_id=project_id, name="Master", sort_order=1)
+        db.add(phase)
+        db.flush()
+    task_group = db.query(TaskGroup).filter(TaskGroup.phase_id == phase.id).order_by(TaskGroup.sort_order).first()
+    if not task_group:
+        task_group = TaskGroup(phase_id=phase.id, name="General Tasks", status="Waiting")
+        db.add(task_group)
+        db.flush()
+    return phase.id, task_group.id
+
+
 @router.post("/summaries/{summary_id}/push-tasks")
 def push_zalo_summary_tasks(
     summary_id: int,
@@ -1127,12 +1147,15 @@ def push_zalo_summary_tasks(
 ):
     """Mirrors Meeting Intelligence's POST /meetings/{id}/push-tasks: turns
     entries from a Zalo summary's `recommended_tasks` into real Task rows.
-    Simpler than the meeting version — a Zalo conversation is already tied
-    to exactly one project (ZaloConversation.project_id), so there's no
-    per-task project/phase/task_group picker, and create_task_direct
-    already defaults those. Not scoped to the caller's own account — the
-    project's "Tóm tắt Zalo" tab is a shared view (same as delete/unlink
-    above), so pushing from it is too."""
+    Per the finalized Push Task field spec, Assigned/Support/Skill
+    Solution/Skill Vendor/Start Date/Manday EST are required real picks from
+    the frontend (SearchableSelect + PhaseSelectCell/TaskGroupSelectCell,
+    same components as Meeting's push) — reject with a clear per-item error
+    if missing, rather than silently defaulting like create_task_direct's
+    other callers do. Phase/Task cha stay optional (fall back to the
+    project's first Phase/TaskGroup). Not scoped to the caller's own
+    account — the project's "Tóm tắt Zalo" tab is a shared view (same as
+    delete/unlink above), so pushing from it is too."""
     summary = db.query(ZaloConversationSummary).filter(ZaloConversationSummary.id == summary_id).first()
     if not summary:
         raise HTTPException(status_code=404, detail="Không tìm thấy bản tóm tắt.")
@@ -1159,12 +1182,67 @@ def push_zalo_summary_tasks(
             results.append({"index": idx, "ok": False, "error": "Thiếu tên task."})
             continue
 
-        assigned_name = str(item.get("assigned_name") or entry.get("assigned_name") or "").strip()
-        names = [n.strip() for n in assigned_name.split(",") if n.strip()]
-        members = zalo_task_parser.resolve_mentioned_members(db, names) if names else []
-        if not members:
-            results.append({"index": idx, "ok": False, "error": f"Không tìm thấy thành viên khớp tên '{assigned_name}'."})
+        assigned_id = item.get("assigned_id")
+        assigned = db.query(Member).filter(Member.id == assigned_id).first() if assigned_id else None
+        if not assigned:
+            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Assigned (người thực hiện)."})
             continue
+
+        support_id = item.get("support_id")
+        support = db.query(Member).filter(Member.id == support_id).first() if support_id else None
+        if not support:
+            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Support (người hỗ trợ)."})
+            continue
+        if support.id == assigned.id:
+            results.append({"index": idx, "ok": False, "error": "Người hỗ trợ phải khác người thực hiện."})
+            continue
+
+        skill_solution_id = item.get("skill_solution_id")
+        skill_group = db.query(Group).filter(Group.id == skill_solution_id).first() if skill_solution_id else None
+        if not skill_group:
+            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Skill Solution."})
+            continue
+
+        skill_vendor_id = item.get("skill_vendor_id")
+        skill = db.query(Skill).filter(Skill.id == skill_vendor_id, Skill.group_id == skill_group.id).first() if skill_vendor_id else None
+        if not skill:
+            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Skill Vendor."})
+            continue
+
+        start_date_raw = str(item.get("start_date") or "").strip()
+        start_date = None
+        if start_date_raw:
+            try:
+                start_date = datetime.date.fromisoformat(start_date_raw)
+            except ValueError:
+                start_date = None
+        if not start_date:
+            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Start Date."})
+            continue
+
+        manday_raw = item.get("manday_est")
+        try:
+            manday = float(manday_raw)
+        except (TypeError, ValueError):
+            results.append({"index": idx, "ok": False, "error": "Manday EST phải là số nguyên từ 1 đến 10."})
+            continue
+        if manday != int(manday) or manday < 1 or manday > 10:
+            results.append({"index": idx, "ok": False, "error": "Manday EST phải là số nguyên từ 1 đến 10."})
+            continue
+
+        # Phase / "Task cha" — re-validate against the DB rather than trusting
+        # the client blindly (mirrors push_meeting_tasks); fall back to the
+        # project's first Phase/TaskGroup when the reviewer left these blank.
+        phase_id = item.get("phase_id")
+        if phase_id:
+            ph = db.query(Phase).filter(Phase.id == phase_id, Phase.project_id == conv.project_id).first()
+            phase_id = ph.id if ph else None
+        task_group_id = item.get("task_group_id") if phase_id else None
+        if task_group_id:
+            tg = db.query(TaskGroup).filter(TaskGroup.id == task_group_id, TaskGroup.phase_id == phase_id).first()
+            task_group_id = tg.id if tg else None
+        if not phase_id or not task_group_id:
+            phase_id, task_group_id = _first_phase_and_group(db, conv.project_id)
 
         deadline_raw = str(item.get("deadline") or entry.get("deadline") or "").strip()
         deadline = None
@@ -1174,19 +1252,25 @@ def push_zalo_summary_tasks(
             except ValueError:
                 deadline = None  # AI free-text dates we can't parse fall back to create_task_direct's default
 
-        try:
-            manday = float(item.get("manday_est") or entry.get("manday_est") or 1.0)
-        except (TypeError, ValueError):
-            manday = 1.0
-
         task = zalo_task_parser.create_task_direct(
-            db, conv.project_id, title, members[0], manday, deadline,
+            db, conv.project_id, title, assigned, manday, deadline,
             conv.zalo_thread_id, str(item.get("priority") or entry.get("priority") or "Normal"),
+            support=support,
+            skill_solution_id=skill_group.id,
+            skill_vendor_id=skill.id,
+            phase_id=phase_id,
+            task_group_id=task_group_id,
+            start_date=start_date,
+            kpi_ratio_assign=90,
+            kpi_ratio_support=10,
         )
         if not task:
-            results.append({"index": idx, "ok": False, "error": "Dự án chưa có dữ liệu skill mặc định để tạo task."})
+            results.append({"index": idx, "ok": False, "error": "Không tạo được task — vui lòng thử lại."})
             continue
 
+        # Reflect the reviewer's actual pick (may differ from the AI's
+        # original guess) so the "✓ Đã tạo" card shows the real assignee.
+        entry["assigned_name"] = assigned.full_name or assigned.display_name
         entry["imported_task_id"] = task.id
         entry["task_code"] = task.task_code
         entry["pushed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()

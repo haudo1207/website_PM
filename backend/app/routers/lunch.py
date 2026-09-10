@@ -11,13 +11,15 @@ from ..models.lunch_record import LunchRecord
 from ..models.member import Member
 from ..models.user import User
 from ..models.leave_request import LeaveRequest
-from ..utils.auth import get_current_user, require_admin
+from ..utils.auth import get_current_user
 
 router = APIRouter()
 
 LUNCH_PRICE = 40000  # VND per lunch
 
-VALID_STATUSES = ['off', 'lunch', 'no_lunch', 'bonus']
+ADMIN_ROLES = {"admin", "super_admin"}
+
+VALID_STATUSES = ['off', 'lunch', 'no_lunch', 'onsite', 'bonus']
 
 
 class LunchUpsert(BaseModel):
@@ -27,21 +29,39 @@ class LunchUpsert(BaseModel):
     status: Optional[str] = None  # off, lunch, no_lunch, bonus
 
 
+def _month_range(year: int, month: int):
+    """Return (inclusive start, exclusive end) date range for a month."""
+    start = date_type(year, month, 1)
+    end = date_type(year + 1, 1, 1) if month == 12 else date_type(year, month + 1, 1)
+    return start, end
+
+
 @router.get("")
 def list_lunch_records(
     date: Optional[str] = None,
     member_id: Optional[int] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get lunch records. Admin can see all; regular users see only their own."""
     q = db.query(LunchRecord)
 
-    if current_user.role != "super_admin":
+    if current_user.role not in ADMIN_ROLES:
         q = q.filter(LunchRecord.member_id == current_user.member_id)
 
     if date:
         q = q.filter(LunchRecord.date == date)
+    if year and month:
+        # Use a sargable date-range predicate so a normal btree index on "date"
+        # can be used, instead of extract() wrapping the column.
+        start_date, end_date = _month_range(year, month)
+        q = q.filter(LunchRecord.date >= start_date, LunchRecord.date < end_date)
+    elif year:
+        q = q.filter(extract('year', LunchRecord.date) == year)
+    elif month:
+        q = q.filter(extract('month', LunchRecord.date) == month)
     if member_id:
         q = q.filter(LunchRecord.member_id == member_id)
 
@@ -65,19 +85,27 @@ def monthly_summary(
     year: int,
     month: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ):
     """Get monthly lunch summary for all members. Admin only."""
+    if current_user.role not in ADMIN_ROLES:
+        raise HTTPException(403, "Yeu cau quyen Admin")
+
+    start_date, end_date = _month_range(year, month)
     records = db.query(LunchRecord).filter(
-        and_(
-            extract('year', LunchRecord.date) == year,
-            extract('month', LunchRecord.date) == month,
-        )
+        LunchRecord.date >= start_date,
+        LunchRecord.date < end_date,
     ).all()
 
-    # Get all approved leave requests to know which days members are off
-    leave_requests = db.query(LeaveRequest).filter(
+    # Approved leave requests overlapping this month only, joined to User so we
+    # get member_id in one query (avoids the previous N+1 per leave request).
+    leave_requests = db.query(LeaveRequest, User).join(
+        User, User.id == LeaveRequest.user_id
+    ).filter(
         LeaveRequest.status == 'Approved'
+    ).filter(
+        LeaveRequest.start_date <= end_date.isoformat(),
+        LeaveRequest.end_date >= start_date.isoformat(),
     ).all()
 
     members = db.query(Member).order_by(Member.display_name).all()
@@ -85,21 +113,25 @@ def monthly_summary(
     # Build a set of (member_id, date) that are off due to approved leave
     off_dates = set()
     from datetime import date, timedelta
-    for lr in leave_requests:
-        user = db.query(User).filter(User.id == lr.user_id).first()
+    for lr, user in leave_requests:
         if not user or not user.member_id:
             continue
         start = lr.start_date if isinstance(lr.start_date, date) else date.fromisoformat(str(lr.start_date))
         end = lr.end_date if isinstance(lr.end_date, date) else date.fromisoformat(str(lr.end_date))
-        current = start
-        while current <= end:
-            if current.year == year and current.month == month:
-                off_dates.add((user.member_id, current))
+        current = max(start, start_date)
+        last = min(end, end_date - timedelta(days=1))
+        while current <= last:
+            off_dates.add((user.member_id, current))
             current += timedelta(days=1)
+
+    # Group records by member so we do not rescan the whole list for every member.
+    records_by_member = {}
+    for r in records:
+        records_by_member.setdefault(r.member_id, []).append(r)
 
     member_summaries = []
     for m in members:
-        member_records = [r for r in records if r.member_id == m.id]
+        member_records = records_by_member.get(m.id, [])
 
         lunch_count = 0
         bonus_count = 0
@@ -118,6 +150,8 @@ def monthly_summary(
                 bonus_count += 1
             elif r.status == 'no_lunch':
                 no_lunch_count += 1
+            elif r.status == 'onsite':
+                pass
             elif r.status == 'off':
                 off_count += 1
             elif r.has_lunch and not r.status:
@@ -126,7 +160,7 @@ def monthly_summary(
                 no_lunch_count += 1
 
         total_days = len(member_records)
-        payable_days = lunch_count + bonus_count
+        payable_days = no_lunch_count + bonus_count
         total_cost = payable_days * LUNCH_PRICE
 
         member_summaries.append({
@@ -173,7 +207,7 @@ def upsert_lunch_record(
     current_user: User = Depends(get_current_user),
 ):
     """Create or update lunch record for a member on a given date."""
-    if (current_user.role != "super_admin" and body.member_id != (current_user.member_id or 0)):
+    if (current_user.role not in ADMIN_ROLES and body.member_id != (current_user.member_id or 0)):
         raise HTTPException(403, "Ban khong co quyen dang ky cho nguoi khac")
 
     parsed_date = body.date
@@ -182,6 +216,10 @@ def upsert_lunch_record(
         parts = parsed_date.split("-")
         parsed_date = date(int(parts[0]), int(parts[1]), int(parts[2]))
 
+    weekday = parsed_date.weekday()
+    if weekday in (5, 6):
+        raise HTTPException(400, "Cuối tuần không được cập nhật Check Lunch / ngày làm việc")
+
     status = body.status or ('lunch' if body.has_lunch else 'no_lunch')
     if status not in VALID_STATUSES:
         raise HTTPException(400, f"Status must be one of: {', '.join(VALID_STATUSES)}")
@@ -189,7 +227,7 @@ def upsert_lunch_record(
     existing = db.query(LunchRecord).filter(
         and_(
             LunchRecord.member_id == body.member_id,
-            LunchRecord.date == body.date,
+            LunchRecord.date == parsed_date,
         )
     ).first()
 
@@ -231,7 +269,7 @@ def delete_lunch_record(
     if not record:
         raise HTTPException(404, "Khong tim thay ban ghi")
 
-    if current_user.role != "super_admin" and record.member_id != (current_user.member_id or 0):
+    if current_user.role not in ADMIN_ROLES and record.member_id != (current_user.member_id or 0):
         raise HTTPException(403, "Khong co quyen xoa")
 
     db.delete(record)

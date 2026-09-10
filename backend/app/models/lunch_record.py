@@ -9,7 +9,7 @@ class LunchRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     member_id = Column(Integer, ForeignKey("members.id"), nullable=False)
-    date = Column(Date, nullable=False)
+    date = Column(Date, nullable=False, index=True)
     has_lunch = Column(Boolean, nullable=False, default=True)
     status = Column(String(20), nullable=False, default='no_lunch')
     created_at = Column(DateTime(timezone=True), server_default=func.now())

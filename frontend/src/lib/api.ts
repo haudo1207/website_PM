@@ -399,6 +399,42 @@ export const reorderTasks = (groupId: number, order: number[]) =>
   api.patch(`/task-groups/${groupId}/tasks/reorder`, { order }).then(r => r.data);
 
 // ═══════════════════════════════════════════════════════════
+// CALENDAR (008-task-calendar-overview) — Personal "My Task Calendar".
+// Read-only view layer; writes reuse updateTask/createTask above (there is
+// deliberately no POST/PATCH /calendar/* endpoint — see plan.md section 0).
+// ═══════════════════════════════════════════════════════════
+export interface CalendarTask {
+  id: number;
+  task_group_id: number;
+  task_code: string | null;
+  detail: string;
+  priority: string;
+  status: string;
+  manday_est: number | null;
+  start_date: string | null;
+  scheduled_at: string | null; // null = unscheduled (shows in the tray)
+  assigned_id: number | null;
+  assigned_name: string | null;
+  support_id: number | null;
+  support_name: string | null;
+  kpi_base: number;
+  kpi_perform: number;
+  kpi_final: number;
+  notes: string | null;
+  project_id: number;
+  project_name: string;
+  project_color: string | null;
+  // Whether current_user is assigned or support on this task — decides
+  // Done/Drag affordance in the UI (Support is read-only, spec.md FR-CAL-11/12).
+  calendar_role: 'assigned' | 'support';
+}
+// `from`/`to` are YYYY-MM-DD, both inclusive. Backend enforces the
+// (assigned_id OR support_id) = current_user filter server-side — this is
+// NOT a client-side filter, see specs/008-task-calendar-overview/spec.md.
+export const getCalendarTasks = (from: string, to: string) =>
+  api.get<CalendarTask[]>('/calendar/tasks', { params: { from, to } }).then(r => r.data);
+
+// ═══════════════════════════════════════════════════════════
 // LEGACY COMPATIBLE (kept for Settings, Skills, System Categories, Members)
 // ═══════════════════════════════════════════════════════════
 
@@ -462,7 +498,7 @@ export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
 
 // Members
-export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string }) =>
+export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string; light?: boolean }) =>
   api.get('/members', { params }).then(r => r.data);
 export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.data);
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
@@ -486,9 +522,9 @@ export const deleteCustomer = (id: number, cascadeProjects: boolean = false) =>
   api.delete(`/system-categories/customers/${id}`, { params: { cascade_projects: cascadeProjects } }).then(r => r.data);
 
 // Lunch Records
-export const getLunchRecords = (params?: { date?: string; member_id?: number }) =>
+export const getLunchRecords = (params?: { date?: string; member_id?: number; year?: number; month?: number }) =>
   api.get('/lunch', { params }).then(r => r.data);
-export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean; status?: string }) =>
+export const upsertLunchRecord = (data: { member_id: number; date: string; has_lunch: boolean; status?: 'off' | 'lunch' | 'no_lunch' | 'onsite' | 'bonus' | string }) =>
   api.post('/lunch', data).then(r => r.data);
 export const deleteLunchRecord = (id: number) =>
   api.delete(`/lunch/${id}`).then(r => r.data);
@@ -982,7 +1018,14 @@ export interface ZaloPushTaskItem {
   index: number;
   detail_task: string;
   priority: string;
+  assigned_id: number;
   assigned_name: string;
+  support_id: number;
+  skill_solution_id: number;
+  skill_vendor_id: number;
+  phase_id?: number;
+  task_group_id?: number;
+  start_date: string;
   deadline: string;
   manday_est?: number;
 }

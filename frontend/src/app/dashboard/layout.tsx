@@ -7,11 +7,12 @@ import { ReactNode, useEffect, useState } from 'react';
 import { isSuperAdmin, isLeader, isMember, isViewer } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 
-type Tab = 'report' | 'overview' | 'system-audit' | 'kpi-matrix' | 'team-load';
+type Tab = 'report' | 'overview' | 'calendar' | 'system-audit' | 'kpi-matrix' | 'team-load';
 
 const ALL_TABS: { id: Tab; label: string; path: string }[] = [
   { id: 'overview',     label: 'Overview',     path: '/dashboard/overview' },
   { id: 'report',       label: 'Report',       path: '/dashboard/report' },
+  { id: 'calendar',     label: 'Calendar',     path: '/dashboard/calendar' },
   { id: 'system-audit', label: 'System Audit', path: '/dashboard/system-audit' },
   { id: 'kpi-matrix',   label: 'KPI Matrix',   path: '/dashboard/kpi-matrix' },
   { id: 'team-load',    label: 'Team Load',    path: '/dashboard/team-load' },
@@ -53,6 +54,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       if (t.id === 'overview') return canOverview;
       if (t.id === 'kpi-matrix') return canKpiMatrix;
       if (t.id === 'team-load') return canTeamLoad;
+      // 'calendar' deliberately has NO role gate here — every logged-in
+      // role can open the tab. That is route access only; the actual data
+      // returned by GET /api/calendar/tasks is independently locked to
+      // (assigned_id OR support_id) = current user server-side, regardless
+      // of role/Project permission (specs/008-task-calendar-overview).
       return true;
     });
 
@@ -83,6 +89,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   let activeTab: Tab = 'report';
   if (pathname === '/dashboard/overview' || pathname === '/dashboard/leader') {
     activeTab = 'overview';
+  } else if (pathname === '/dashboard/calendar') {
+    activeTab = 'calendar';
   } else if (pathname === '/dashboard/system-audit' || pathname === '/dashboard/super-admin') {
     activeTab = 'system-audit';
   } else if (pathname === '/dashboard/kpi-matrix') {
@@ -96,6 +104,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const tabSubtitle: Record<Tab, string> = {
     report:         'Dashboard hiệu suất & công việc cá nhân',
     overview:       'Dashboard quản lý & Audit log dành cho Team Leader',
+    calendar:       'Lịch làm việc cá nhân — chỉ hiện Task bạn Assigned hoặc Support',
     'system-audit': 'Dashboard kiểm toán hệ thống dành cho Super Admin & Leader (giới hạn theo Workspace được giao)',
     'kpi-matrix':   'Ma trận KPI thành viên theo tháng dành cho Super Admin & Leader',
     'team-load':    'So sánh Project theo nhiều Team — chỉ dành cho Super Admin',
