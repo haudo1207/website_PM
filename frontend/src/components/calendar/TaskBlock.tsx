@@ -28,6 +28,10 @@ export function TaskBlockContent({
   const color = task.project_color || FALLBACK_COLOR;
   const isDone = (task.status || '').toLowerCase() === 'done';
   const canToggle = task.calendar_role === 'assigned';
+  // Priority is system config, not a Calendar concept (§5) — Calendar only
+  // reacts to it visually: Critical bolds the task name, everything else is
+  // normal weight. Never used to pick a color.
+  const isCritical = (task.priority || '').toLowerCase() === 'critical';
 
   return (
     <>
@@ -55,7 +59,7 @@ export function TaskBlockContent({
           <span className="mt-0.5 shrink-0 w-3 h-3 rounded-[4px] border-[1.5px] opacity-40" style={{ borderColor: color }} />
         )}
         <span
-          className={`text-[11px] font-bold leading-[1.25] truncate ${isDone ? 'line-through opacity-60' : ''}`}
+          className={`text-[11px] leading-[1.25] truncate ${isCritical ? 'font-bold' : 'font-semibold'} ${isDone ? 'line-through opacity-60' : ''}`}
           style={{ color: '#0b1c30' }}
         >
           {task.detail}

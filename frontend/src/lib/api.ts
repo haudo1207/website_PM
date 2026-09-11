@@ -336,7 +336,7 @@ export const createPlatform = (data: { name: string; icon?: string; color?: stri
 // TASK GROUPS (v5)
 // ═══════════════════════════════════════════════════════════
 export const getTaskGroups = (phaseId: number) => api.get(`/phases/${phaseId}/task-groups`).then(r => r.data);
-export const createTaskGroup = (phaseId: number, data: { name: string; description?: string }) =>
+export const createTaskGroup = (phaseId: number, data: { name: string; description?: string; manday_est?: number }) =>
   api.post(`/phases/${phaseId}/task-groups`, data).then(r => r.data);
 export const updateTaskGroup = (phaseId: number, gid: number, data: object) =>
   api.patch(`/phases/${phaseId}/task-groups/${gid}`, data).then(r => r.data);
