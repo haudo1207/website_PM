@@ -73,8 +73,19 @@ function clickIfFound(regex) {
 // <button> tags AND excluding aria-haspopup/aria-expanded is what actually
 // tells these apart from the genuine "Admit all" / "Admit {name}" buttons —
 // matching on text alone (as findClickableByText does) clicks the wrong one.
+// Confirmed live 2026-09-11: clicking the panel's "Admit all" button doesn't
+// admit anyone directly — it opens an "Admit all?" CONFIRMATION dialog
+// (Cancel / Admit all) listing the waiting guest(s) by name. That dialog's
+// own "Admit all" button is a SEPARATE element with the same label. Using
+// el.click() bypasses the dialog's visual overlay (unlike a real click,
+// which the overlay would block), so without this the panel's original
+// button kept re-triggering the confirmation instead of ever confirming it.
+// Searching inside an open dialog first ensures we click the confirm
+// button, not the thing that opened it.
 function findActionButton(regex) {
-  for (const el of document.querySelectorAll("button")) {
+  const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
+  const scope = dialog || document;
+  for (const el of scope.querySelectorAll("button")) {
     if (el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-expanded")) continue;
     const label = el.getAttribute("aria-label") || visibleText(el);
     if (label && regex.test(label)) return el;
