@@ -23,9 +23,14 @@ const JOIN_TEXT_RE = /(^join now$|^ask to join$|tham gia ngay|xin tham gia|yêu 
 const LEAVE_CALL_RE = /(leave call|rời khỏi cuộc gọi|rời cuộc gọi)/i;
 const ADMIT_ALL_RE = /(admit all|cho tất cả vào|cho vào tất cả)/i;
 const ADMIT_ONE_RE = /(^admit$|^chấp nhận$|^cho vào$)/i;
+// Broad net for the debug scan below — deliberately looser than the real
+// ADMIT_* regexes above, so it catches the real button even if its actual
+// wording doesn't match what we guessed.
+const DEBUG_CANDIDATE_RE = /(admit|cho vào|chấp nhận|tham gia|join|wants to|muốn tham gia|waiting|phòng chờ|yêu cầu|request to)/i;
 
 let joinClicked = false;
 let hostDetected = false;
+const _loggedCandidates = new Set();
 
 function visibleText(el) {
   return (el.innerText || el.textContent || "").trim();
@@ -77,8 +82,23 @@ function checkHostState() {
   }
 }
 
+// Logs any on-screen button whose label smells related to joining/admitting
+// but didn't match ADMIT_ALL_RE/ADMIT_ONE_RE — so if those regexes are wrong,
+// the real wording shows up directly in the console instead of needing a
+// manual Inspect Element. Each unique label logs once (not every 1.5s tick).
+function debugLogCandidates() {
+  for (const el of allButtons()) {
+    const label = (el.getAttribute("aria-label") || visibleText(el)).trim();
+    if (!label || !DEBUG_CANDIDATE_RE.test(label)) continue;
+    if (_loggedCandidates.has(label)) continue;
+    _loggedCandidates.add(label);
+    log("DEBUG candidate button:", JSON.stringify(label));
+  }
+}
+
 function admitWaitingParticipants() {
   if (!hostDetected) return; // nothing to admit before actually being in the call
+  debugLogCandidates();
 
   if (findClickableByText(ADMIT_ALL_RE)) {
     log("Waiting room participant detected");
