@@ -27,7 +27,9 @@ const LEAVE_CALL_RE = /(leave call|rời khỏi cuộc gọi|rời cuộc gọi)
 // "Admit 1 guest\ncheck" (an icon's alt text tacked on by innerText), so
 // this is intentionally NOT anchored to the full string.
 const ADMIT_ALL_RE = /(admit all|cho tất cả vào|cho vào tất cả|admit\s+\d+\s+guests?)/i;
-const ADMIT_ONE_RE = /(^admit$|^chấp nhận$|^cho vào$)/i;
+// Real per-person button's aria-label is "Admit {name}" (e.g. "Admit h"),
+// not the bare word "Admit" — confirmed live via outerHTML dump 2026-09-11.
+const ADMIT_ONE_RE = /(^admit\b|^chấp nhận|^cho vào)/i;
 // Broad net for the debug scan below — deliberately looser than the real
 // ADMIT_* regexes above, so it catches the real button even if its actual
 // wording doesn't match what we guessed.
@@ -55,6 +57,33 @@ function findClickableByText(regex) {
 
 function clickIfFound(regex) {
   const el = findClickableByText(regex);
+  if (el) {
+    el.click();
+    return true;
+  }
+  return false;
+}
+
+// Confirmed live 2026-09-11 via outerHTML dump: Meet's waiting-room area has
+// TWO look-alike elements that also match "admit"-ish text but are NOT
+// action buttons — a floating notification badge (`aria-haspopup="dialog"`,
+// just opens the People panel) and the "Waiting to be admitted" section
+// header (`aria-expanded`, just expands/collapses the list). Both are
+// `<div role="button">`, not real `<button>` elements. Restricting to real
+// <button> tags AND excluding aria-haspopup/aria-expanded is what actually
+// tells these apart from the genuine "Admit all" / "Admit {name}" buttons —
+// matching on text alone (as findClickableByText does) clicks the wrong one.
+function findActionButton(regex) {
+  for (const el of document.querySelectorAll("button")) {
+    if (el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-expanded")) continue;
+    const label = el.getAttribute("aria-label") || visibleText(el);
+    if (label && regex.test(label)) return el;
+  }
+  return null;
+}
+
+function clickActionButton(regex) {
+  const el = findActionButton(regex);
   if (el) {
     el.click();
     return true;
@@ -114,21 +143,22 @@ function admitWaitingParticipants() {
   if (!hostDetected) return; // nothing to admit before actually being in the call
   debugLogCandidates();
 
-  if (findClickableByText(ADMIT_ALL_RE)) {
+  if (findActionButton(ADMIT_ALL_RE)) {
     if (Date.now() - lastAdmitAllClickAt < ADMIT_ALL_COOLDOWN_MS) return;
     log("Waiting room participant detected");
-    clickIfFound(ADMIT_ALL_RE);
+    clickActionButton(ADMIT_ALL_RE);
     lastAdmitAllClickAt = Date.now();
     log("Admit clicked");
     return;
   }
 
   // Fall back to admitting one at a time — there can be several individual
-  // "Admit" buttons stacked in the notification list. Bounded loop guards
-  // against an infinite spin if a click doesn't actually remove the button.
+  // "Admit {name}" buttons stacked in the notification list. Bounded loop
+  // guards against an infinite spin if a click doesn't actually remove the
+  // button from the DOM.
   let guard = 0;
   while (guard < 10) {
-    const el = findClickableByText(ADMIT_ONE_RE);
+    const el = findActionButton(ADMIT_ONE_RE);
     if (!el) break;
     log("Waiting room participant detected");
     el.click();
