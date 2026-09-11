@@ -21,7 +21,12 @@ const MIC_OFF_RE = /(turn off microphone|tắt micrô|tắt microphone)/i;
 const CAM_OFF_RE = /(turn off camera|tắt camera)/i;
 const JOIN_TEXT_RE = /(^join now$|^ask to join$|tham gia ngay|xin tham gia|yêu cầu tham gia)/i;
 const LEAVE_CALL_RE = /(leave call|rời khỏi cuộc gọi|rời cuộc gọi)/i;
-const ADMIT_ALL_RE = /(admit all|cho tất cả vào|cho vào tất cả)/i;
+// Confirmed live 2026-09-11: this account's real Meet UI shows "Admit N
+// guest(s)" (not "Admit all") as the bulk button — it admits every guest
+// currently waiting, whatever N is. Label can arrive as
+// "Admit 1 guest\ncheck" (an icon's alt text tacked on by innerText), so
+// this is intentionally NOT anchored to the full string.
+const ADMIT_ALL_RE = /(admit all|cho tất cả vào|cho vào tất cả|admit\s+\d+\s+guests?)/i;
 const ADMIT_ONE_RE = /(^admit$|^chấp nhận$|^cho vào$)/i;
 // Broad net for the debug scan below — deliberately looser than the real
 // ADMIT_* regexes above, so it catches the real button even if its actual
