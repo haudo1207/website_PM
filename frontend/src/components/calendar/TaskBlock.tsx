@@ -78,6 +78,13 @@ export function TaskBlockContent({
 // time). Auto-height, stacked — no pixel-per-minute positioning since
 // there's no time to place it at. Same visual language as TaskBlock
 // (checkbox, SP badge, Critical bold) via the shared TaskBlockContent.
+//
+// Draggable down into the timeline to assign a time — same `task-${id}`
+// drag id and `{ task }` payload as TaskBlock/TrayChip, so it flows through
+// the EXACT SAME onDragEnd → applyScheduledAtChange path already used
+// everywhere else on the Calendar (30-min snap, day comes from whichever
+// column it's dropped on, start_date untouched — only scheduled_at is
+// PATCHed). See "Chốt behavior": "Task chỉ có ngày → kéo xuống Timeline".
 export function DateOnlyChip({
   task,
   onToggleDone,
@@ -88,11 +95,29 @@ export function DateOnlyChip({
   onOpenDetail: (task: CalendarTask) => void;
 }) {
   const color = task.project_color || FALLBACK_COLOR;
+  // Only Assigned may drag — Support is read-only, same rule as the
+  // timeline's own TaskBlock (spec.md section 2.6).
+  const canDrag = task.calendar_role === 'assigned';
+
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `task-${task.id}`,
+    data: { task },
+    disabled: !canDrag,
+  });
+
   return (
     <div
+      ref={setNodeRef}
+      {...(canDrag ? { ...listeners, ...attributes } : {})}
       onClick={e => { e.stopPropagation(); onOpenDetail(task); }}
-      className="relative rounded-lg px-2 py-1 mb-1 last:mb-0 cursor-pointer shadow-sm"
-      style={{ background: hexToRgba(color, 0.12), borderLeft: `3px solid ${color}` }}
+      className={`relative rounded-lg px-2 py-1 mb-1 last:mb-0 shadow-sm ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+      style={{
+        background: hexToRgba(color, 0.12),
+        borderLeft: `3px solid ${color}`,
+        opacity: isDragging ? 0.25 : 1,
+        transform: transform ? CSS.Translate.toString(transform) : undefined,
+        touchAction: 'none',
+      }}
       title={`${task.detail} — ${task.project_name}${task.calendar_role === 'support' ? ' (Support)' : ''}`}
     >
       <TaskBlockContent task={task} onToggleDone={onToggleDone} />
