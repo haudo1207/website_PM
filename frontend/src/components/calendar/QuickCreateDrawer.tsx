@@ -21,13 +21,19 @@ const labelCls = 'text-[10.5px] font-extrabold text-slate-500 uppercase tracking
 const selectCls = 'w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12.5px] text-[#0b1c30] focus:border-[#0058be] outline-none disabled:bg-slate-50 disabled:text-slate-400';
 const inputCls = selectCls;
 
-// Plain "00".."23" / "00".."59" option lists — deliberately NOT
-// <input type="time">/"datetime-local">, whose displayed format follows the
-// browser/OS locale and can render 12h with SA/CH (AM/PM) on some machines.
-// The whole app is VN-only, 24h — these two <select>s guarantee that
-// regardless of locale, since they're just numbers, not a native time widget.
+// Plain "00".."23" hour list + a fixed 00/15/30/45 minute list —
+// deliberately NOT <input type="time">/"datetime-local">, whose displayed
+// format follows the browser/OS locale and can render 12h with SA/CH
+// (AM/PM) on some machines. The whole app is VN-only, 24h — these two
+// <select>s guarantee that regardless of locale, since they're just
+// numbers, not a native time widget.
+//
+// Quick Create's own hard cap is 23:00 (matching the Calendar grid's last
+// visible mark) — when hour is "23", the minute list is narrowed to ["00"]
+// only (see minuteOptions below), since 23:15/23:30/23:45 fall outside the
+// calendar entirely. See the 2026-09 "chốt 3 vấn đề về thời gian".
 const HOURS_24 = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
-const MINUTES_60 = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+const QUARTER_MINUTES = ['00', '15', '30', '45'];
 
 export default function QuickCreateDrawer({
   isOpen,
@@ -47,13 +53,14 @@ export default function QuickCreateDrawer({
   const [assignedId, setAssignedId] = useState<number | ''>('');
   const [supportId, setSupportId] = useState<number | ''>('');
   const [mandayEst, setMandayEst] = useState('');
-  // Work time, split into 3 free-entry parts — any minute is valid (14:17,
-  // 09:05, ...); the 30-minute snap only applies to Drag & Drop on the
-  // Calendar grid, never to Quick Create. All three must be set for the
-  // task to count as scheduled; any one missing = unscheduled.
+  // Work time, split into 3 parts. Minute is restricted to 00/15/30/45 (not
+  // free-entry) and hour is capped at 23:00 — matches the Calendar grid's
+  // own 06:00–23:00 range and 30-minute drag snap being a coarser cousin of
+  // this 15-minute one. All three must be set for the task to count as
+  // scheduled; any one missing = unscheduled.
   const [wtDate, setWtDate] = useState(''); // <input type="date"> value, "YYYY-MM-DD"
   const [wtHour, setWtHour] = useState(''); // "00".."23"
-  const [wtMinute, setWtMinute] = useState(''); // "00".."59"
+  const [wtMinute, setWtMinute] = useState(''); // "00"/"15"/"30"/"45" — "00" only when wtHour is "23"
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [skillGroupId, setSkillGroupId] = useState<number | ''>(''); // -> skill_solution_id
   const [skillId, setSkillId] = useState<number | ''>(''); // -> skill_vendor_id
@@ -81,6 +88,9 @@ export default function QuickCreateDrawer({
     () => (skillGroupId ? skillGroups.find(g => g.id === skillGroupId)?.skills || [] : []),
     [skillGroups, skillGroupId]
   );
+  // 23:00 is Quick Create's hard cap — at hour 23 only minute 00 is a valid
+  // combination (23:15/23:30/23:45 fall past the calendar's own boundary).
+  const minuteOptions = wtHour === '23' ? ['00'] : QUARTER_MINUTES;
 
   // Reset the entire form every time the drawer opens. Work time prefills
   // from the clicked grid cell (exact minute, not snapped) when opened that
@@ -259,16 +269,25 @@ export default function QuickCreateDrawer({
                 />
                 {/* 24h HH:mm via two plain <select>s — never a native time
                     control, so it can never render 12h SA/CH regardless of
-                    the browser/OS locale. */}
+                    the browser/OS locale. Minute is fixed to 00/15/30/45;
+                    at hour 23 it's narrowed to 00 only (23:00 is the hard cap). */}
                 <div className="flex items-center gap-1.5 mt-1.5">
-                  <select className={`${selectCls} flex-1`} value={wtHour} onChange={e => setWtHour(e.target.value)}>
+                  <select
+                    className={`${selectCls} flex-1`}
+                    value={wtHour}
+                    onChange={e => {
+                      const h = e.target.value;
+                      setWtHour(h);
+                      if (h === '23' && wtMinute !== '' && wtMinute !== '00') setWtMinute('00');
+                    }}
+                  >
                     <option value="">Giờ --</option>
                     {HOURS_24.map(h => <option key={h} value={h}>{h}</option>)}
                   </select>
                   <span className="text-slate-400 font-bold shrink-0">:</span>
                   <select className={`${selectCls} flex-1`} value={wtMinute} onChange={e => setWtMinute(e.target.value)}>
                     <option value="">Phút --</option>
-                    {MINUTES_60.map(m => <option key={m} value={m}>{m}</option>)}
+                    {minuteOptions.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 {(wtDate || wtHour !== '' || wtMinute !== '') && (
@@ -282,7 +301,7 @@ export default function QuickCreateDrawer({
                 )}
                 <p className="text-[10.5px] text-slate-400 mt-1">
                   {wtDate && wtHour !== '' && wtMinute !== ''
-                    ? 'Định dạng 24 giờ (00:00–23:59), giờ phút tự do — không dùng SA/CH.'
+                    ? 'Định dạng 24 giờ, phút chỉ 00/15/30/45, tối đa 23:00 — không dùng SA/CH.'
                     : 'Để trống — task sẽ nằm trong khu "Chưa xếp lịch".'}
                 </p>
               </div>

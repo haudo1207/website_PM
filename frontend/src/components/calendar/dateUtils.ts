@@ -1,7 +1,7 @@
 import { CalendarTask } from '@/lib/api';
 
 export const HOUR_START = 6;
-export const HOUR_END = 22; // exclusive — grid covers 06:00–22:00
+export const HOUR_END = 23; // grid spans 06:00–23:00 — 23:00 is the last mark, nothing renders after it
 export const HOUR_HEIGHT = 60; // px per hour — 30px per 30-minute snap step
 export const EVENT_HEIGHT = 48; // px — fixed, no duration in MVP (spec.md FR-CAL-07)
 
@@ -77,10 +77,11 @@ export function isSameDay(a: Date, b: Date): boolean {
 
 // Vertical offset (px) of a given time-of-day within the HOUR_START..HOUR_END
 // grid. Clamped so a task scheduled outside the visible window still renders
-// at the nearest edge instead of disappearing.
+// at the nearest edge instead of disappearing. 23:00 (HOUR_END) is itself a
+// valid, in-bounds position — it's the calendar's last visible mark.
 export function minutesToTop(hours: number, minutes: number): number {
   const totalMin = (hours - HOUR_START) * 60 + minutes;
-  const maxMin = (HOUR_END - HOUR_START) * 60 - 1;
+  const maxMin = (HOUR_END - HOUR_START) * 60;
   return Math.max(0, Math.min(totalMin, maxMin)) * (HOUR_HEIGHT / 60);
 }
 
@@ -92,26 +93,57 @@ export function snapTopToHalfHour(topPx: number): number {
 }
 
 // Inverse of minutesToTop, with the same snap-to-30-minutes applied. Used to
-// turn a drag drop's pixel position back into a wall-clock time.
+// turn a drag drop's pixel position back into a wall-clock time. Capped at
+// 23:00 (HOUR_END) — the calendar's own hard bottom boundary — same rule as
+// the visible grid itself.
 export function topToTimeOfDay(topPx: number): { hours: number; minutes: number } {
-  const maxTop = (HOUR_END - HOUR_START) * HOUR_HEIGHT - 1;
+  const maxTop = (HOUR_END - HOUR_START) * HOUR_HEIGHT;
   const clamped = Math.max(0, Math.min(topPx, maxTop));
   const snapped = snapTopToHalfHour(clamped);
-  const totalMin = HOUR_START * 60 + (snapped / HOUR_HEIGHT) * 60;
+  const maxMin = (HOUR_END - HOUR_START) * 60;
+  const totalMin = Math.min(HOUR_START * 60 + (snapped / HOUR_HEIGHT) * 60, maxMin);
   return { hours: Math.floor(totalMin / 60), minutes: totalMin % 60 };
 }
 
-// Exact (unsnapped) pixel → time-of-day, rounded only to the nearest whole
-// minute. Used to prefill Quick Create's Work time when clicking a grid
-// cell — unlike Drag & Drop, Quick Create is deliberately free-entry (any
-// minute, e.g. 14:17), not locked to the 30-minute grid. See
-// specs/008-task-calendar-overview spec.md: "30 phút chỉ áp dụng cho Drag &
-// Drop, không áp dụng cho Quick Create."
-export function topToExactTimeOfDay(topPx: number): { hours: number; minutes: number } {
-  const maxTop = (HOUR_END - HOUR_START) * HOUR_HEIGHT - 1;
+// Pixel → time-of-day snapped to the nearest 15-minute mark (00/15/30/45).
+// Used ONLY to prefill Quick Create when clicking an empty grid cell — a
+// click never yields a free/exact minute, and it never yields a value past
+// 23:00, matching Quick Create's own hard cap on the Work time field. See
+// the 2026-09 "chốt 3 vấn đề về thời gian": "Click Calendar → Quick Create
+// snap 15 phút", "Quick Create max: 23:00".
+export function topToQuarterHour(topPx: number): { hours: number; minutes: number } {
+  const maxTop = (HOUR_END - HOUR_START) * HOUR_HEIGHT;
   const clamped = Math.max(0, Math.min(topPx, maxTop));
-  const totalMin = Math.round(HOUR_START * 60 + (clamped / HOUR_HEIGHT) * 60);
-  return { hours: Math.floor(totalMin / 60), minutes: totalMin % 60 };
+  const rawMin = HOUR_START * 60 + (clamped / HOUR_HEIGHT) * 60;
+  const maxMin = HOUR_END * 60; // Quick Create's own hard cap — 23:00
+  const snappedMin = Math.min(Math.round(rawMin / 15) * 15, maxMin);
+  return { hours: Math.floor(snappedMin / 60), minutes: snappedMin % 60 };
+}
+
+export interface HourTick {
+  hours: number;
+  minutes: number;
+  top: number;
+  label: string;
+  isHour: boolean; // true for :00 marks (bolder), false for :30 marks
+}
+
+// Every 30-minute mark from 06:00 to 23:00 inclusive — drives both the hour
+// rail labels and the horizontal grid lines, so the two always line up.
+export function buildHourTicks(): HourTick[] {
+  const ticks: HourTick[] = [];
+  for (let totalMin = HOUR_START * 60; totalMin <= HOUR_END * 60; totalMin += 30) {
+    const hours = Math.floor(totalMin / 60);
+    const minutes = totalMin % 60;
+    ticks.push({
+      hours,
+      minutes,
+      top: (totalMin - HOUR_START * 60) * (HOUR_HEIGHT / 60),
+      label: `${pad2(hours)}:${pad2(minutes)}`,
+      isHour: minutes === 0,
+    });
+  }
+  return ticks;
 }
 
 export function combineDateAndTime(day: Date, hours: number, minutes: number): Date {

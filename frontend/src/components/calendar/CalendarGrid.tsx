@@ -13,10 +13,14 @@ import {
   layoutDayTasks,
   parseScheduledAt,
   toApiDate,
-  topToExactTimeOfDay,
+  topToQuarterHour,
+  buildHourTicks,
 } from './dateUtils';
 
-const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i);
+// 30-minute marks from 06:00 to 23:00 (inclusive) — shared by the hour rail
+// and the grid lines so they always line up. Pure function of the module's
+// own constants, safe to compute once at module scope.
+const TICKS = buildHourTicks();
 
 function DayColumn({
   day,
@@ -52,14 +56,19 @@ function DayColumn({
         title="Click để tạo task nhanh tại khung giờ này"
         onClick={e => {
           const rect = e.currentTarget.getBoundingClientRect();
-          // Exact click position, not snapped — Quick Create is free-entry
-          // (any minute); only Drag & Drop on this grid snaps to 30 minutes.
-          const { hours, minutes } = topToExactTimeOfDay(e.clientY - rect.top);
+          // Click position snaps to the nearest 15-minute mark (00/15/30/45)
+          // — never a free/exact minute. Drag & Drop on this same grid snaps
+          // to 30 minutes instead (topToTimeOfDay); the two are deliberately
+          // different granularities.
+          const { hours, minutes } = topToQuarterHour(e.clientY - rect.top);
           onEmptyCellClick(day, hours, minutes);
         }}
       >
-        {HOURS.map((h, i) => (
-          <div key={h} className="absolute left-0 right-0 border-b border-slate-50" style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }} />
+        {TICKS.filter(t => !t.isHour).map(t => (
+          <div key={`half-${t.label}`} className="absolute left-0 right-0 border-t border-dashed border-slate-50" style={{ top: t.top }} />
+        ))}
+        {TICKS.filter(t => t.isHour && t.hours > HOUR_START).map(t => (
+          <div key={`hour-${t.label}`} className="absolute left-0 right-0 border-t border-slate-100" style={{ top: t.top }} />
         ))}
         {positioned.map(p => (
           <TaskBlock
@@ -95,18 +104,22 @@ export default function CalendarGrid({
 
   return (
     <div className="flex bg-white">
-      {/* Hour rail */}
-      <div className="w-14 shrink-0 border-r border-slate-100">
+      {/* Hour rail — a label at every 30-minute mark, 06:00 through 23:00
+          (the calendar's own hard bottom boundary — spec.md "chốt 3 vấn đề
+          về thời gian": "06:00 → 23:00", "Timeline chia mốc 30 phút"). */}
+      <div className="w-14 shrink-0 border-r border-slate-100 relative" style={{ height: gridHeight + 36 }}>
         <div className="h-9 border-b border-slate-100" />
-        {HOURS.map(h => (
-          <div
-            key={h}
-            className="text-[10.5px] text-slate-400 text-right pr-2 border-b border-slate-50"
-            style={{ height: HOUR_HEIGHT, transform: 'translateY(-6px)' }}
-          >
-            {String(h).padStart(2, '0')}:00
-          </div>
-        ))}
+        <div className="relative" style={{ height: gridHeight }}>
+          {TICKS.map(t => (
+            <div
+              key={t.label}
+              className={`absolute right-2 text-right ${t.isHour ? 'text-[10.5px] font-semibold text-slate-500' : 'text-[9px] text-slate-300'}`}
+              style={{ top: t.top, transform: 'translateY(-6px)' }}
+            >
+              {t.label}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Day columns */}
