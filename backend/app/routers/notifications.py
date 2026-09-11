@@ -11,6 +11,7 @@ from ..models.task_group import TaskGroup
 from ..models.phase import Phase
 from ..models.project import Project, project_members
 from ..models.user import User
+from ..models.member import Member
 from ..models.zalo import ZaloConversation
 
 router = APIRouter()
@@ -304,6 +305,15 @@ def remind_group_leader(
         raise HTTPException(404, "Không tìm thấy Dự án.")
 
     recipients = _find_project_leaders(db, project)
+
+    # Add the Member's responsible Leader from "Quản lý thành viên"
+    if current_user.member_id:
+        sender_member = db.query(Member).filter(Member.id == current_user.member_id).first()
+        if sender_member and sender_member.leader_member_id:
+            leader_user = db.query(User).filter(User.member_id == sender_member.leader_member_id).first()
+            if leader_user and leader_user.id not in [u.id for u in recipients]:
+                recipients.append(leader_user)
+
     if not recipients:
         raise HTTPException(400, "Dự án chưa có Project Manager hoặc Technical Leader được chỉ định.")
 

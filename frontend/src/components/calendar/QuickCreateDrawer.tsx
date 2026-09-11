@@ -1,15 +1,23 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import Portal from '@/components/Portal';
-import { getProjects, getPhases, getTaskGroups, getProjectMembers, getCategories, getMe, createTask, getApiErrorMessage } from '@/lib/api';
+import {
+  getProjects, getPhases, getTaskGroups, getProjectMembers, getCategories, getMe, createTask, getApiErrorMessage,
+  getCalendarProjectColors, setCalendarProjectColor, getPriorities, getStatuses, createPhase, createTaskGroup,
+} from '@/lib/api';
 import { toApiDate, toApiDateTime, parseApiDate, combineDateAndTime } from './dateUtils';
+import { PROJECT_COLOR_PRESETS, DEFAULT_PROJECT_COLOR, isValidHexColor } from './colorPalette';
 
 interface SkillItem { id: number; name: string; group_id: number }
 interface SkillGroup { id: number; name: string; category_id: number; skills: SkillItem[] }
 interface SkillCategory { id: number; name: string; groups: SkillGroup[] }
 interface ProjectMember { id: number; display_name: string | null; full_name: string | null }
+interface PriorityItem { id: number; name: string; kpi_base: number; color: string }
+interface StatusItem { id: number; name: string }
+interface PhaseItem { id: number; name: string }
+interface TaskGroupItem { id: number; name: string }
 
 export interface QuickCreatePrefill {
   day: Date;
@@ -21,13 +29,255 @@ const labelCls = 'text-[10.5px] font-extrabold text-slate-500 uppercase tracking
 const selectCls = 'w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12.5px] text-[#0b1c30] focus:border-[#0058be] outline-none disabled:bg-slate-50 disabled:text-slate-400';
 const inputCls = selectCls;
 
-// Plain "00".."23" / "00".."59" option lists — deliberately NOT
-// <input type="time">/"datetime-local">, whose displayed format follows the
-// browser/OS locale and can render 12h with SA/CH (AM/PM) on some machines.
-// The whole app is VN-only, 24h — these two <select>s guarantee that
-// regardless of locale, since they're just numbers, not a native time widget.
+// Plain "00".."23" hour list + a fixed 00/15/30/45 minute list —
+// deliberately NOT <input type="time">/"datetime-local">, whose displayed
+// format follows the browser/OS locale and can render 12h with SA/CH
+// (AM/PM) on some machines. The whole app is VN-only, 24h — these two
+// <select>s guarantee that regardless of locale, since they're just
+// numbers, not a native time widget.
+//
+// Quick Create's own hard cap is 23:00 (matching the Calendar grid's last
+// visible mark) — when hour is "23", the minute list is narrowed to ["00"]
+// only (see minuteOptions below), since 23:15/23:30/23:45 fall outside the
+// calendar entirely. See the 2026-09 "chốt 3 vấn đề về thời gian".
 const HOURS_24 = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
-const MINUTES_60 = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+const QUARTER_MINUTES = ['00', '15', '30', '45'];
+
+// Per-Member Calendar color for one Project (calendar_project_preferences —
+// NOT Project.color, which doesn't exist; two members can pick different
+// colors for the same project). Saves instantly on pick, independent of
+// task creation — see "Màu Project trong Personal Calendar" §3/§10.
+function ProjectColorPicker({ projectId }: { projectId: number }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [customHex, setCustomHex] = useState('');
+
+  const colorsQuery = useQuery({
+    queryKey: ['calendar-project-colors'],
+    queryFn: getCalendarProjectColors,
+    staleTime: 30_000,
+  });
+  const currentColor = (colorsQuery.data?.[projectId] || DEFAULT_PROJECT_COLOR).toLowerCase();
+
+  const saveMutation = useMutation({
+    mutationFn: (color: string) => setCalendarProjectColor(projectId, color),
+    onSuccess: (_data, color) => {
+      // Optimistic cache update so the swatch (and any already-open Calendar
+      // tab) reflects the new color immediately, not just after a refetch.
+      queryClient.setQueryData<Record<number, string>>(['calendar-project-colors'], prev => ({ ...(prev || {}), [projectId]: color }));
+      queryClient.invalidateQueries({ queryKey: ['calendar-tasks'] });
+      setOpen(false);
+    },
+  });
+
+  return (
+    <div className="relative">
+      <label className={labelCls}>Màu Project</label>
+      <button
+        type="button"
+        onClick={() => { setCustomHex(currentColor); setOpen(o => !o); }}
+        className="flex items-center gap-2 border border-slate-200 rounded-lg px-2.5 py-2 bg-white hover:bg-slate-50 w-full"
+      >
+        <span className="w-4 h-4 rounded-full border border-black/10 shrink-0" style={{ background: currentColor }} />
+        <span className="text-[12.5px] text-[#0b1c30] font-mono">{currentColor.toUpperCase()}</span>
+        {saveMutation.isPending && <span className="text-[10px] text-slate-400 ml-auto">Đang lưu…</span>}
+      </button>
+
+      {open && (
+        <div className="absolute z-10 mt-1.5 w-full p-3 border border-slate-200 rounded-lg bg-white shadow-lg">
+          <div className="grid grid-cols-8 gap-1.5">
+            {PROJECT_COLOR_PRESETS.map(hex => (
+              <button
+                key={hex}
+                type="button"
+                onClick={() => saveMutation.mutate(hex)}
+                className={`w-6 h-6 rounded-full border-2 ${currentColor === hex ? 'border-[#0058be]' : 'border-transparent'}`}
+                style={{ background: hex }}
+                aria-label={hex}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
+            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider shrink-0">Custom</span>
+            <input
+              type="color"
+              value={isValidHexColor(customHex) ? customHex : DEFAULT_PROJECT_COLOR}
+              onChange={e => setCustomHex(e.target.value)}
+              className="w-8 h-8 border border-slate-200 rounded cursor-pointer shrink-0"
+            />
+            <input
+              className={`${inputCls} flex-1`}
+              value={customHex}
+              onChange={e => setCustomHex(e.target.value)}
+              placeholder="#EF4444"
+              maxLength={7}
+            />
+            <button
+              type="button"
+              disabled={!isValidHexColor(customHex)}
+              onClick={() => saveMutation.mutate(customHex)}
+              className="text-[11.5px] font-bold text-white bg-[#0058be] px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0"
+            >
+              Áp dụng
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Small anchored popover shared by the two inline "+ Tạo ..." buttons below
+// — Phase and Task Group creation reuse the exact same Project/Phase APIs
+// the Tasks tab already uses (POST /projects/{pid}/phases,
+// POST /phases/{phid}/task-groups); Quick Create is just a faster way to
+// call them without leaving the Calendar (§12/§13).
+function InlineCreatePopover({
+  triggerLabel,
+  fields,
+  onClose,
+  onSubmit,
+}: {
+  triggerLabel: string;
+  fields: React.ReactNode;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="absolute z-10 right-0 mt-1.5 w-64 p-3 border border-slate-200 rounded-lg bg-white shadow-lg">
+      <p className="text-[10.5px] font-extrabold text-[#0058be] uppercase tracking-wider mb-2">{triggerLabel}</p>
+      {fields}
+      <div className="flex justify-end gap-2 mt-2.5">
+        <button type="button" onClick={onClose} className="text-[11px] font-semibold text-slate-500 px-2.5 py-1.5 rounded-lg hover:bg-slate-50">
+          Hủy
+        </button>
+        <button
+          type="button"
+          onClick={onSubmit}
+          className="text-[11px] font-bold text-white bg-[#0058be] px-3 py-1.5 rounded-lg disabled:opacity-40"
+        >
+          Tạo
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// "+ Tạo Phase" — only a name is required (createPhase's other fields are
+// all optional server-side). Newly created Phase is auto-selected by the
+// parent via onCreated.
+function InlineCreatePhase({ projectId, onCreated }: { projectId: number; onCreated: (phase: PhaseItem) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) { setError('Nhập tên Phase.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await createPhase(projectId, { name: name.trim() });
+      onCreated({ id: created.id, name: created.name });
+      setOpen(false);
+      setName('');
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Không thể tạo Phase.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="text-[11px] font-bold text-[#0058be] border border-[#0058be]/30 rounded-lg px-2.5 h-full hover:bg-[#eaf2fc] whitespace-nowrap"
+      >
+        + Tạo Phase
+      </button>
+      {open && (
+        <InlineCreatePopover
+          triggerLabel="Tạo Phase mới"
+          onClose={() => { setOpen(false); setError(null); }}
+          onSubmit={submit}
+          fields={
+            <>
+              <label className={labelCls}>Tên Phase</label>
+              <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="Ví dụ: 1. Triển khai" autoFocus disabled={saving} />
+              {error && <p className="text-[10.5px] text-rose-600 mt-1">{error}</p>}
+            </>
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+// "+ Tạo Group" — name + Manday EST, same integer-1..10 rule the backend's
+// validate_group_manday() already enforces on TaskGroup.manday_est (this is
+// TaskGroup's own rule, distinct from Task's own Manday EST field below).
+function InlineCreateTaskGroup({ phaseId, onCreated }: { phaseId: number; onCreated: (group: TaskGroupItem) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [manday, setManday] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) { setError('Nhập tên Task Group.'); return; }
+    const mandayNum = Number(manday);
+    if (manday === '' || !Number.isInteger(mandayNum) || mandayNum < 1 || mandayNum > 10) {
+      setError('Manday EST phải là số nguyên từ 1 đến 10.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await createTaskGroup(phaseId, { name: name.trim(), manday_est: mandayNum });
+      onCreated({ id: created.id, name: created.name });
+      setOpen(false);
+      setName('');
+      setManday('');
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Không thể tạo Task Group.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="text-[11px] font-bold text-[#0058be] border border-[#0058be]/30 rounded-lg px-2.5 h-full hover:bg-[#eaf2fc] whitespace-nowrap"
+      >
+        + Tạo Group
+      </button>
+      {open && (
+        <InlineCreatePopover
+          triggerLabel="Tạo Task Group mới"
+          onClose={() => { setOpen(false); setError(null); }}
+          onSubmit={submit}
+          fields={
+            <>
+              <label className={labelCls}>Tên Task Group</label>
+              <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="Ví dụ: Development" autoFocus disabled={saving} />
+              <label className={`${labelCls} mt-2`}>Manday EST <span className="text-amber-500">*</span></label>
+              <input
+                className={inputCls} type="number" min={1} max={10} step={1}
+                value={manday} onChange={e => setManday(e.target.value)} placeholder="1 - 10" disabled={saving}
+              />
+              {error && <p className="text-[10.5px] text-rose-600 mt-1">{error}</p>}
+            </>
+          }
+        />
+      )}
+    </div>
+  );
+}
 
 export default function QuickCreateDrawer({
   isOpen,
@@ -40,23 +290,28 @@ export default function QuickCreateDrawer({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [projectId, setProjectId] = useState<number | ''>('');
   const [phaseId, setPhaseId] = useState<number | ''>('');
   const [taskGroupId, setTaskGroupId] = useState<number | ''>('');
   const [detail, setDetail] = useState('');
   const [assignedId, setAssignedId] = useState<number | ''>('');
   const [supportId, setSupportId] = useState<number | ''>('');
+  const [priority, setPriority] = useState('');
+  const [status, setStatus] = useState('');
   const [mandayEst, setMandayEst] = useState('');
-  // Work time, split into 3 free-entry parts — any minute is valid (14:17,
-  // 09:05, ...); the 30-minute snap only applies to Drag & Drop on the
-  // Calendar grid, never to Quick Create. All three must be set for the
-  // task to count as scheduled; any one missing = unscheduled.
+  // Work time, split into 3 parts. Minute is restricted to 00/15/30/45 (not
+  // free-entry) and hour is capped at 23:00 — matches the Calendar grid's
+  // own 06:00–23:00 range and 30-minute drag snap being a coarser cousin of
+  // this 15-minute one. All three must be set for the task to count as
+  // scheduled; any one missing = unscheduled.
   const [wtDate, setWtDate] = useState(''); // <input type="date"> value, "YYYY-MM-DD"
   const [wtHour, setWtHour] = useState(''); // "00".."23"
-  const [wtMinute, setWtMinute] = useState(''); // "00".."59"
+  const [wtMinute, setWtMinute] = useState(''); // "00"/"15"/"30"/"45" — "00" only when wtHour is "23"
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [skillGroupId, setSkillGroupId] = useState<number | ''>(''); // -> skill_solution_id
   const [skillId, setSkillId] = useState<number | ''>(''); // -> skill_vendor_id
+  const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -66,12 +321,19 @@ export default function QuickCreateDrawer({
   const taskGroupsQuery = useQuery({ queryKey: ['qc-groups', phaseId], queryFn: () => getTaskGroups(phaseId as number), enabled: isOpen && !!phaseId });
   const membersQuery = useQuery({ queryKey: ['qc-members', projectId], queryFn: () => getProjectMembers(projectId as number), enabled: isOpen && !!projectId });
   const categoriesQuery = useQuery({ queryKey: ['qc-categories'], queryFn: getCategories, enabled: isOpen, staleTime: 5 * 60_000 });
+  // Priority/Status are system-wide config (Settings → Priority/Status
+  // Configuration), never hard-coded here — Quick Create must always reflect
+  // whatever an Admin has currently configured (§5/§6).
+  const prioritiesQuery = useQuery({ queryKey: ['qc-priorities'], queryFn: getPriorities, enabled: isOpen, staleTime: 60_000 });
+  const statusesQuery = useQuery({ queryKey: ['qc-statuses'], queryFn: getStatuses, enabled: isOpen, staleTime: 60_000 });
 
   const projects: { id: number; name: string }[] = projectsQuery.data || [];
-  const phases: { id: number; name: string }[] = phasesQuery.data || [];
-  const taskGroups: { id: number; name: string }[] = taskGroupsQuery.data || [];
+  const phases: PhaseItem[] = phasesQuery.data || [];
+  const taskGroups: TaskGroupItem[] = taskGroupsQuery.data || [];
   const members: ProjectMember[] = membersQuery.data || [];
   const categories: SkillCategory[] = categoriesQuery.data || [];
+  const priorities: PriorityItem[] = prioritiesQuery.data || [];
+  const statuses: StatusItem[] = statusesQuery.data || [];
 
   const skillGroups = useMemo(
     () => (categoryId ? categories.find(c => c.id === categoryId)?.groups || [] : []),
@@ -81,6 +343,9 @@ export default function QuickCreateDrawer({
     () => (skillGroupId ? skillGroups.find(g => g.id === skillGroupId)?.skills || [] : []),
     [skillGroups, skillGroupId]
   );
+  // 23:00 is Quick Create's hard cap — at hour 23 only minute 00 is a valid
+  // combination (23:15/23:30/23:45 fall past the calendar's own boundary).
+  const minuteOptions = wtHour === '23' ? ['00'] : QUARTER_MINUTES;
 
   // Reset the entire form every time the drawer opens. Work time prefills
   // from the clicked grid cell (exact minute, not snapped) when opened that
@@ -89,8 +354,8 @@ export default function QuickCreateDrawer({
   useEffect(() => {
     if (!isOpen) return;
     setProjectId(''); setPhaseId(''); setTaskGroupId('');
-    setDetail(''); setAssignedId(''); setSupportId('');
-    setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId('');
+    setDetail(''); setAssignedId(''); setSupportId(''); setPriority(''); setStatus('');
+    setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId(''); setNote('');
     if (prefill) {
       setWtDate(toApiDate(prefill.day));
       setWtHour(String(prefill.hours).padStart(2, '0'));
@@ -107,6 +372,23 @@ export default function QuickCreateDrawer({
     if (isOpen && meQuery.data?.member_id && !assignedId) setAssignedId(meQuery.data.member_id);
   }, [isOpen, meQuery.data, assignedId]);
 
+  // Priority/Status default to "Normal"/"Waiting" when that exact name
+  // exists in the fetched system config — same bare defaults create_task()
+  // itself falls back to (task_groups.py) — but the field stays a real,
+  // freely-changeable required select, not a hidden hard-coded value.
+  useEffect(() => {
+    if (isOpen && !priority && priorities.length) {
+      const normal = priorities.find(p => p.name.toLowerCase() === 'normal');
+      if (normal) setPriority(normal.name);
+    }
+  }, [isOpen, priorities, priority]);
+  useEffect(() => {
+    if (isOpen && !status && statuses.length) {
+      const waiting = statuses.find(s => s.name.toLowerCase() === 'waiting');
+      if (waiting) setStatus(waiting.name);
+    }
+  }, [isOpen, statuses, status]);
+
   if (!isOpen) return null;
 
   const handleProjectChange = (v: number | '') => {
@@ -119,6 +401,27 @@ export default function QuickCreateDrawer({
   const handleCategoryChange = (v: number | '') => { setCategoryId(v); setSkillGroupId(''); setSkillId(''); };
   const handleSkillGroupChange = (v: number | '') => { setSkillGroupId(v); setSkillId(''); };
 
+  // Newly created Phase/Task Group are spliced straight into the relevant
+  // query cache (instant, no extra round trip) and auto-selected — §12:
+  // "Tạo xong → tự động chọn ... vừa tạo".
+  const handlePhaseCreated = (phase: PhaseItem) => {
+    queryClient.setQueryData<PhaseItem[]>(['qc-phases', projectId], prev => [...(prev || []), phase]);
+    setPhaseId(phase.id);
+    setTaskGroupId('');
+  };
+  const handleTaskGroupCreated = (group: TaskGroupItem) => {
+    queryClient.setQueryData<TaskGroupItem[]>(['qc-groups', phaseId], prev => [...(prev || []), group]);
+    setTaskGroupId(group.id);
+  };
+
+  const mandayNum = Number(mandayEst);
+  // Task's own Manday EST in Quick Create is deliberately integer 1-10 only
+  // (§7) — narrower than Task.manday_est's general 0.25-365 range (still
+  // used by the full Tasks-tab edit form); Quick Create is for small,
+  // fast-entry work items. The backend itself still accepts the wider
+  // range, so this is a Quick-Create-only UI constraint, not a model change.
+  const mandayValid = mandayEst !== '' && Number.isInteger(mandayNum) && mandayNum >= 1 && mandayNum <= 10;
+
   // start_date is NOT a form field — it's silently derived from the date
   // part of Work time (or today, if Work time is left empty). See
   // spec.md FR-CAL-15 — inferring this avoids asking for information the
@@ -129,7 +432,8 @@ export default function QuickCreateDrawer({
   // request without support_id 500s). This matches the real Tasks-tab form,
   // which already validates "Cột SUPPORT là bắt buộc" the same way.
   const canSubmit = !!projectId && !!phaseId && !!taskGroupId && !!detail.trim()
-    && !!assignedId && !!supportId && !!mandayEst && Number(mandayEst) > 0 && !!skillGroupId && !!skillId;
+    && !!assignedId && !!supportId && !!priority && !!status
+    && mandayValid && !!skillGroupId && !!skillId;
 
   const handleSubmit = async () => {
     if (!canSubmit) {
@@ -153,11 +457,14 @@ export default function QuickCreateDrawer({
         detail: detail.trim(),
         assigned_id: assignedId,
         support_id: supportId,
-        manday_est: Number(mandayEst),
+        priority,
+        status,
+        manday_est: mandayNum,
         start_date: startDate,
         skill_solution_id: skillGroupId,
         skill_vendor_id: skillId,
         scheduled_at: scheduledAt,
+        notes: note.trim() || null,
         // No KPI Ratio field in Quick Create (MVP) — send the same 90/10
         // default the Tasks-tab form falls back to, instead of letting
         // create_task() apply its own bare default (100/0, which leaves
@@ -188,7 +495,9 @@ export default function QuickCreateDrawer({
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            {/* Nhóm: Vị trí */}
+            {/* Nhóm: Vị trí — Project → Phase → Task Group, cascading. Phase
+                and Task Group each get an inline "+ Tạo ..." next to the
+                select, per §2/§3/§12. */}
             <div className="space-y-3 bg-slate-50/50 border border-slate-100 rounded-xl p-3.5">
               <h4 className="text-[10.5px] font-extrabold text-[#0058be] uppercase tracking-wider">📍 Vị trí</h4>
               <div>
@@ -200,24 +509,34 @@ export default function QuickCreateDrawer({
               </div>
               <div>
                 <label className={labelCls}>Phase <span className="text-amber-500">*</span></label>
-                <select className={selectCls} value={phaseId} disabled={!projectId} onChange={e => handlePhaseChange(e.target.value ? Number(e.target.value) : '')}>
-                  <option value="">{projectId ? '— Chọn Phase —' : 'Chọn Project trước'}</option>
-                  {phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <div className="flex items-stretch gap-1.5">
+                  <select className={`${selectCls} flex-1`} value={phaseId} disabled={!projectId} onChange={e => handlePhaseChange(e.target.value ? Number(e.target.value) : '')}>
+                    <option value="">{projectId ? '— Chọn Phase —' : 'Chọn Project trước'}</option>
+                    {phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  {!!projectId && <InlineCreatePhase projectId={projectId} onCreated={handlePhaseCreated} />}
+                </div>
               </div>
               <div>
                 <label className={labelCls}>Task Group <span className="text-amber-500">*</span></label>
-                <select className={selectCls} value={taskGroupId} disabled={!phaseId} onChange={e => setTaskGroupId(e.target.value ? Number(e.target.value) : '')}>
-                  <option value="">{phaseId ? '— Chọn Task Group —' : 'Chọn Phase trước'}</option>
-                  {taskGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                </select>
-                {phaseId && taskGroups.length === 0 && !taskGroupsQuery.isFetching && (
-                  <p className="text-[10.5px] text-amber-600 mt-1">
-                    Phase này chưa có Task Group nào. Sang tab Tasks của dự án để tạo Task Group trước — Calendar không tự tạo cấu trúc mới.
-                  </p>
-                )}
+                <div className="flex items-stretch gap-1.5">
+                  <select className={`${selectCls} flex-1`} value={taskGroupId} disabled={!phaseId} onChange={e => setTaskGroupId(e.target.value ? Number(e.target.value) : '')}>
+                    <option value="">{phaseId ? '— Chọn Task Group —' : 'Chọn Phase trước'}</option>
+                    {taskGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                  {!!phaseId && <InlineCreateTaskGroup phaseId={phaseId} onCreated={handleTaskGroupCreated} />}
+                </div>
               </div>
             </div>
+
+            {/* Nhóm: Màu Project — Personal Calendar preference, not a
+                Project attribute (§4). Sits after Vị trí, before Task. */}
+            {!!projectId && (
+              <div className="space-y-3 bg-slate-50/50 border border-slate-100 rounded-xl p-3.5">
+                <h4 className="text-[10.5px] font-extrabold text-[#0058be] uppercase tracking-wider">🎨 Màu Project</h4>
+                <ProjectColorPicker projectId={projectId} />
+              </div>
+            )}
 
             {/* Nhóm: Task */}
             <div className="space-y-3">
@@ -244,53 +563,33 @@ export default function QuickCreateDrawer({
                   </select>
                 </div>
               </div>
-              <div>
-                <label className={labelCls}>Giờ làm việc</label>
-                {/* Date on its own row, Hour:Minute on the next — cramming
-                    all 3 controls into one row overflowed the drawer's
-                    max-w-md width (native <input type="date"> doesn't shrink
-                    below its content size), pushing the minute <select> out
-                    of view. Two rows guarantees everything stays visible. */}
-                <input
-                  className={inputCls}
-                  type="date"
-                  value={wtDate}
-                  onChange={e => setWtDate(e.target.value)}
-                />
-                {/* 24h HH:mm via two plain <select>s — never a native time
-                    control, so it can never render 12h SA/CH regardless of
-                    the browser/OS locale. */}
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <select className={`${selectCls} flex-1`} value={wtHour} onChange={e => setWtHour(e.target.value)}>
-                    <option value="">Giờ --</option>
-                    {HOURS_24.map(h => <option key={h} value={h}>{h}</option>)}
-                  </select>
-                  <span className="text-slate-400 font-bold shrink-0">:</span>
-                  <select className={`${selectCls} flex-1`} value={wtMinute} onChange={e => setWtMinute(e.target.value)}>
-                    <option value="">Phút --</option>
-                    {MINUTES_60.map(m => <option key={m} value={m}>{m}</option>)}
+              {/* Priority/Status are system config (Settings → Priority/
+                  Status Configuration) — never hard-coded here, §5/§6. */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>Priority <span className="text-amber-500">*</span></label>
+                  <select className={selectCls} value={priority} onChange={e => setPriority(e.target.value)}>
+                    <option value="">— Chọn —</option>
+                    {priorities.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
                   </select>
                 </div>
-                {(wtDate || wtHour !== '' || wtMinute !== '') && (
-                  <button
-                    type="button"
-                    onClick={() => { setWtDate(''); setWtHour(''); setWtMinute(''); }}
-                    className="text-[10.5px] font-semibold text-slate-400 hover:text-rose-500 mt-1"
-                  >
-                    ✕ Xoá giờ
-                  </button>
-                )}
-                <p className="text-[10.5px] text-slate-400 mt-1">
-                  {wtDate && wtHour !== '' && wtMinute !== ''
-                    ? 'Định dạng 24 giờ (00:00–23:59), giờ phút tự do — không dùng SA/CH.'
-                    : 'Để trống — task sẽ nằm trong khu "Chưa xếp lịch".'}
-                </p>
+                <div>
+                  <label className={labelCls}>Status <span className="text-amber-500">*</span></label>
+                  <select className={selectCls} value={status} onChange={e => setStatus(e.target.value)}>
+                    <option value="">— Chọn —</option>
+                    {statuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className={labelCls}>Manday EST <span className="text-amber-500">*</span></label>
+                {/* Integer 1-10 only in Quick Create — narrower than the
+                    Task model's general 0.25-365 range (still used by the
+                    full Tasks-tab edit form); see the mandayValid comment
+                    above for why. */}
                 <input
-                  className={inputCls} type="number" min={0.25} max={365} step={0.25}
-                  value={mandayEst} onChange={e => setMandayEst(e.target.value)} placeholder="Ví dụ: 0.5"
+                  className={inputCls} type="number" min={1} max={10} step={1}
+                  value={mandayEst} onChange={e => setMandayEst(e.target.value)} placeholder="1 - 10"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -312,6 +611,71 @@ export default function QuickCreateDrawer({
                     {skills.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
+              </div>
+              <div>
+                <label className={labelCls}>Giờ làm việc</label>
+                {/* Date on its own row, Hour:Minute on the next — cramming
+                    all 3 controls into one row overflowed the drawer's
+                    max-w-md width (native <input type="date"> doesn't shrink
+                    below its content size), pushing the minute <select> out
+                    of view. Two rows guarantees everything stays visible. */}
+                <input
+                  className={inputCls}
+                  type="date"
+                  value={wtDate}
+                  onChange={e => setWtDate(e.target.value)}
+                />
+                {/* 24h HH:mm via two plain <select>s — never a native time
+                    control, so it can never render 12h SA/CH regardless of
+                    the browser/OS locale. Minute is fixed to 00/15/30/45;
+                    at hour 23 it's narrowed to 00 only (23:00 is the hard cap). */}
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <select
+                    className={`${selectCls} flex-1`}
+                    value={wtHour}
+                    onChange={e => {
+                      const h = e.target.value;
+                      setWtHour(h);
+                      if (h === '23' && wtMinute !== '' && wtMinute !== '00') setWtMinute('00');
+                    }}
+                  >
+                    <option value="">Giờ --</option>
+                    {HOURS_24.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  <span className="text-slate-400 font-bold shrink-0">:</span>
+                  <select className={`${selectCls} flex-1`} value={wtMinute} onChange={e => setWtMinute(e.target.value)}>
+                    <option value="">Phút --</option>
+                    {minuteOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                {(wtDate || wtHour !== '' || wtMinute !== '') && (
+                  <button
+                    type="button"
+                    onClick={() => { setWtDate(''); setWtHour(''); setWtMinute(''); }}
+                    className="text-[10.5px] font-semibold text-slate-400 hover:text-rose-500 mt-1"
+                  >
+                    ✕ Xoá giờ
+                  </button>
+                )}
+                <p className="text-[10.5px] text-slate-400 mt-1">
+                  {wtDate && wtHour !== '' && wtMinute !== ''
+                    ? 'Định dạng 24 giờ, phút chỉ 00/15/30/45, tối đa 23:00 — không dùng SA/CH.'
+                    : 'Để trống — task sẽ nằm trong khu "Chưa xếp lịch".'}
+                </p>
+              </div>
+            </div>
+
+            {/* Nhóm: Note — bổ sung, đặt cuối form; lưu thẳng vào Task.notes,
+                cùng cột Note hiển thị ở Tasks tab, §11. */}
+            <div className="space-y-3">
+              <h4 className="text-[10.5px] font-extrabold text-[#0058be] uppercase tracking-wider">🗒️ Note</h4>
+              <div>
+                <label className={labelCls}>Note</label>
+                <textarea
+                  className={inputCls} rows={2}
+                  value={note} onChange={e => setNote(e.target.value)}
+                  placeholder="Nhập ghi chú cho Task..."
+                />
               </div>
             </div>
 

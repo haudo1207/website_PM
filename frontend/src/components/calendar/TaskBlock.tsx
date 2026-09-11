@@ -28,6 +28,10 @@ export function TaskBlockContent({
   const color = task.project_color || FALLBACK_COLOR;
   const isDone = (task.status || '').toLowerCase() === 'done';
   const canToggle = task.calendar_role === 'assigned';
+  // Priority is system config, not a Calendar concept (§5) — Calendar only
+  // reacts to it visually: Critical bolds the task name, everything else is
+  // normal weight. Never used to pick a color.
+  const isCritical = (task.priority || '').toLowerCase() === 'critical';
 
   return (
     <>
@@ -55,7 +59,7 @@ export function TaskBlockContent({
           <span className="mt-0.5 shrink-0 w-3 h-3 rounded-[4px] border-[1.5px] opacity-40" style={{ borderColor: color }} />
         )}
         <span
-          className={`text-[11px] font-bold leading-[1.25] truncate ${isDone ? 'line-through opacity-60' : ''}`}
+          className={`text-[11px] leading-[1.25] truncate ${isCritical ? 'font-bold' : 'font-semibold'} ${isDone ? 'line-through opacity-60' : ''}`}
           style={{ color: '#0b1c30' }}
         >
           {task.detail}
@@ -65,6 +69,59 @@ export function TaskBlockContent({
         {task.project_name}
       </div>
     </>
+  );
+}
+
+// A task with a date (start_date) but no time (scheduled_at IS NULL) — sits
+// in the fixed row directly under that day's header, not the Unscheduled
+// Tray (that tray is now reserved for tasks with NEITHER a date nor a
+// time). Auto-height, stacked — no pixel-per-minute positioning since
+// there's no time to place it at. Same visual language as TaskBlock
+// (checkbox, SP badge, Critical bold) via the shared TaskBlockContent.
+//
+// Draggable down into the timeline to assign a time — same `task-${id}`
+// drag id and `{ task }` payload as TaskBlock/TrayChip, so it flows through
+// the EXACT SAME onDragEnd → applyScheduledAtChange path already used
+// everywhere else on the Calendar (30-min snap, day comes from whichever
+// column it's dropped on, start_date untouched — only scheduled_at is
+// PATCHed). See "Chốt behavior": "Task chỉ có ngày → kéo xuống Timeline".
+export function DateOnlyChip({
+  task,
+  onToggleDone,
+  onOpenDetail,
+}: {
+  task: CalendarTask;
+  onToggleDone: (task: CalendarTask) => void;
+  onOpenDetail: (task: CalendarTask) => void;
+}) {
+  const color = task.project_color || FALLBACK_COLOR;
+  // Only Assigned may drag — Support is read-only, same rule as the
+  // timeline's own TaskBlock (spec.md section 2.6).
+  const canDrag = task.calendar_role === 'assigned';
+
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `task-${task.id}`,
+    data: { task },
+    disabled: !canDrag,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...(canDrag ? { ...listeners, ...attributes } : {})}
+      onClick={e => { e.stopPropagation(); onOpenDetail(task); }}
+      className={`relative rounded-lg px-2 py-1 mb-1 last:mb-0 shadow-sm ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+      style={{
+        background: hexToRgba(color, 0.12),
+        borderLeft: `3px solid ${color}`,
+        opacity: isDragging ? 0.25 : 1,
+        transform: transform ? CSS.Translate.toString(transform) : undefined,
+        touchAction: 'none',
+      }}
+      title={`${task.detail} — ${task.project_name}${task.calendar_role === 'support' ? ' (Support)' : ''}`}
+    >
+      <TaskBlockContent task={task} onToggleDone={onToggleDone} />
+    </div>
   );
 }
 

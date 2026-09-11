@@ -11,9 +11,25 @@ import axios from 'axios';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 
 // ── KPI Member Detail Modal (Year/Month only, one-way sync) ─────────
-const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth }: {
+// Canonical KPI helper: mirrors backend UNION behavior for dual-role tasks.
+// If member is both assigned AND support on the same task, both kpi_assigned
+// and kpi_support are counted (same as the backend's UNION ALL approach).
+const getCanonicalTaskKpi = (t: any, memberId: any): number => {
+  const isDone = t.status === 'Done' || t.status === 'done';
+  if (!isDone) return 0;
+  const isAssigned = t.assigned_id != null && String(t.assigned_id) === String(memberId);
+  const isSupport = t.support_id != null && String(t.support_id) === String(memberId);
+  if (isAssigned && isSupport) {
+    return (t.kpi_assigned || 0) + (t.kpi_support || 0);
+  }
+  if (isAssigned) return (t.kpi_assigned || 0);
+  if (isSupport) return (t.kpi_support || 0);
+  return 0;
+};
+
+const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth, workspaceCode }: {
   member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string, memberId?: string | number) => void,
-  initialYear: number, initialMonth: number,
+  initialYear: number, initialMonth: number, workspaceCode?: string | null,
 }) => {
   const [detailYear, setDetailYear] = useState<number>(initialYear);
   const [detailMonth, setDetailMonth] = useState<number>(initialMonth);
@@ -30,11 +46,27 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
     return { start: s, end: e };
   }, [detailYear, detailMonth]);
 
-  // Filter tasks by member AND fiscal period
-  const memberAllTasks = tasks.filter(t =>
-    (t.assigned_id != null && String(t.assigned_id) === String(member.id)) ||
-    (t.support_id != null && String(t.support_id) === String(member.id))
-  );
+  // Filter tasks by member AND fiscal period AND workspace scope
+  // Workspace scope: filter tasks by the selected workspace (same scope as External KPI Ranking)
+  const scopedProjects = useMemo(() => {
+    if (!workspaceCode) return null;
+    return new Set(
+      projects
+        .filter(p => (p.data_scope || '').toLowerCase() === workspaceCode.toLowerCase() || (p.business || '').toLowerCase() === 'all')
+        .map(p => String(p.id))
+    );
+  }, [projects, workspaceCode]);
+
+  const memberAllTasks = tasks.filter(t => {
+    const matchesMember = (t.assigned_id != null && String(t.assigned_id) === String(member.id)) ||
+      (t.support_id != null && String(t.support_id) === String(member.id));
+    if (!matchesMember) return false;
+    // Apply workspace scope if a specific workspace is selected
+    if (scopedProjects && t.project_id != null) {
+      return scopedProjects.has(String(t.project_id));
+    }
+    return true;
+  });
   const memberTasks = memberAllTasks.filter(t => {
     if (!fiscalRange) return true;
     // Use end_date_actual for Done tasks, end_date_est for others
@@ -52,25 +84,18 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
   const normalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
   const interruptTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
 
-  // KPI from done tasks in this period
-  const periodKpi = doneTasks.reduce((acc, t) => {
-    const isAssigned = String(t.assigned_id) === String(member.id);
-    return acc + (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0));
-  }, 0);
+  // Canonical KPI: use the pre-aggregated backend value (same as External KPI Ranking)
+  const periodKpi = typeof member.kpi_total === 'number' ? member.kpi_total : 0;
 
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
 
-  // Precompute per-project stats once so the "Dự án đang tham gia" list can
-  // be sorted by KPI/task/done count (highest-first or lowest-first).
+  // Precompute per-project stats using canonical KPI formula
   const projectRows = activeProjects.map(p => {
     const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
     const pDone = pTasks.filter(t => t.status === 'Done' || t.status === 'done');
     const pOpen = pTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel').length;
     const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
-    const pKpi = pDone.reduce((acc, t) => {
-      const isAssigned = String(t.assigned_id) === String(member.id);
-      return acc + (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0));
-    }, 0);
+    const pKpi = pDone.reduce((acc, t) => acc + getCanonicalTaskKpi(t, member.id), 0);
     return { project: p, pTasks, pDone, pOpen, pCritical, pKpi };
   });
   const sortedProjectRows = [...projectRows].sort((a, b) => {
@@ -251,7 +276,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
               <div>
                 <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider">Task trong kỳ</h3>
-                <p className="text-[10px] text-slate-400 font-medium">KPI = SUM(kpi_assigned + kpi_support) cho task Done trong {periodLabel}</p>
+                <p className="text-[10px] text-slate-400 font-medium">KPI kỳ = Tổng KPI từ Bảng Xếp Hạng (tính theo workspace và chu kỳ tài chính)</p>
               </div>
               <div className="flex gap-1">
                 {(['all', 'overdue', 'critical', 'high'] as const).map(filter => (
@@ -282,8 +307,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
                       const prio = (t.priority || 'normal').toUpperCase();
                       const isDone = t.status === 'Done' || t.status === 'done';
                       const dlStr = t.end_date_est ? t.end_date_est.split('-').reverse().slice(0, 2).join('/') : '-';
-                      const isAssigned = String(t.assigned_id) === String(member.id);
-                      const taskKpi = isDone ? (isAssigned ? (t.kpi_assigned || 0) : (t.kpi_support || 0)) : 0;
+                      const taskKpi = getCanonicalTaskKpi(t, member.id);
                       const proj = projects.find((p: any) => String(p.id) === String(t.project_id));
                       return (
                         <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id, memberName, member.id); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
@@ -455,6 +479,19 @@ export default function KPIPage() {
         const code = name ? (workspaceOptions.find(o => o.name === name)?.code || null) : null;
         setWorkspaceCode(code);
     };
+
+    // Effective workspace code for Member Detail scope alignment
+    const effectiveWorkspaceCode = useMemo(() => {
+        if (isScopedUser) {
+            if (lockedWorkspaceOptions.length === 1) return lockedWorkspaceOptions[0].code;
+            if (workspace) {
+                const found = workspaceOptions.find(o => o.name === workspace);
+                return found ? found.code : null;
+            }
+            return null;
+        }
+        return ctxWorkspaceCode || null;
+    }, [isScopedUser, lockedWorkspaceOptions, workspace, workspaceOptions, ctxWorkspaceCode]);
 
     const memberParams = useMemo(() => {
         const params: any = {};
@@ -863,6 +900,7 @@ export default function KPIPage() {
                     onNavigate={(projectId, memberName, memberId) => router.push(`/project/detail/tasks?id=${projectId}${memberName ? `&member=${encodeURIComponent(memberName)}` : ''}${memberId != null ? `&member_id=${encodeURIComponent(String(memberId))}` : ''}`)}
                     initialYear={year ? parseInt(year) : new Date().getFullYear()}
                     initialMonth={month ? parseInt(month) : new Date().getMonth() + 1}
+                    workspaceCode={effectiveWorkspaceCode}
                 />
             )}
         </div>

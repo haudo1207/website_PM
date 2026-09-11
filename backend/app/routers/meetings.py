@@ -1379,6 +1379,13 @@ def google_auth_url(workspace: str = None, db: Session = Depends(get_db), curren
         scopes=[
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
+            # Narrow write scope (not the broad "drive" scope) — added
+            # 2026-09-12 so a workspace-connected account can be used to
+            # upload Meeting Host Bot recordings (see
+            # routers/meeting_bot.py's /drive-token). "drive.file" only
+            # lets this app see/manage files IT creates, not the account's
+            # whole Drive — sufficient since we only ever create new files.
+            "https://www.googleapis.com/auth/drive.file",
             "https://www.googleapis.com/auth/meetings.space.readonly",
             "https://www.googleapis.com/auth/spreadsheets.readonly",
         ],

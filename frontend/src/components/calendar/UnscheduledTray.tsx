@@ -8,6 +8,9 @@ import { FALLBACK_COLOR } from './TaskBlock';
 function TrayChip({ task, onOpenDetail }: { task: CalendarTask; onOpenDetail: (task: CalendarTask) => void }) {
   const color = task.project_color || FALLBACK_COLOR;
   const canDrag = task.calendar_role === 'assigned';
+  // Same Critical-bolds-the-name rule as TaskBlock.tsx — this tray is still
+  // part of the Calendar, not a separate surface.
+  const isCritical = (task.priority || '').toLowerCase() === 'critical';
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `task-${task.id}`,
     data: { task },
@@ -36,7 +39,7 @@ function TrayChip({ task, onOpenDetail }: { task: CalendarTask; onOpenDetail: (t
           SP
         </span>
       )}
-      <div className="text-[11.5px] font-bold text-[#0b1c30] leading-tight truncate pr-5">{task.detail}</div>
+      <div className={`text-[11.5px] ${isCritical ? 'font-bold' : 'font-semibold'} text-[#0b1c30] leading-tight truncate pr-5`}>{task.detail}</div>
       <div className="text-[10px] font-semibold mt-0.5 truncate" style={{ color }}>
         {task.project_name}
       </div>

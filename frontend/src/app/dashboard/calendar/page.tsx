@@ -11,20 +11,24 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { getCalendarTasks, updateTask, CalendarTask, getApiErrorMessage } from '@/lib/api';
+import { getCalendarTasks, getCalendarMeetings, updateTask, CalendarTask, CalendarMeeting, getApiErrorMessage } from '@/lib/api';
 import CalendarToolbar from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import UnscheduledTray from '@/components/calendar/UnscheduledTray';
 import { TaskBlockContent } from '@/components/calendar/TaskBlock';
 import TaskDetailDrawer from '@/components/calendar/TaskDetailDrawer';
 import QuickCreateDrawer, { QuickCreatePrefill } from '@/components/calendar/QuickCreateDrawer';
+import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import {
   buildRangeDays,
   toApiDate,
   toApiDateTime,
+  parseApiDate,
   formatRangeLabel,
   topToTimeOfDay,
   combineDateAndTime,
+  startOfWeekMonday,
+  addDays,
   EVENT_HEIGHT,
 } from '@/components/calendar/dateUtils';
 
@@ -39,6 +43,7 @@ export default function CalendarPage() {
   const [overrides, setOverrides] = useState<Record<number, string | null>>({});
   const [activeTask, setActiveTask] = useState<CalendarTask | null>(null);
   const [detailTask, setDetailTask] = useState<CalendarTask | null>(null);
+  const [detailMeeting, setDetailMeeting] = useState<CalendarMeeting | null>(null);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [quickCreatePrefill, setQuickCreatePrefill] = useState<QuickCreatePrefill | null>(null);
   // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
@@ -51,7 +56,15 @@ export default function CalendarPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  const days = useMemo(() => buildRangeDays(anchorDate, rangeDays), [anchorDate, rangeDays]);
+  // 4-day mode: rolling window starting at the picked date. 7-day mode:
+  // always the full Mon→Sun calendar week containing the picked date — never
+  // a rolling 7-day window (chốt: "7 ngày = luôn là một tuần lịch chuẩn Thứ 2
+  // → Chủ nhật"). The picked date itself (anchorDate) is never snapped to
+  // Monday — only the displayed range is derived from it.
+  const days = useMemo(
+    () => (rangeDays === 7 ? buildRangeDays(startOfWeekMonday(anchorDate), 7) : buildRangeDays(anchorDate, 4)),
+    [anchorDate, rangeDays]
+  );
   const from = toApiDate(days[0]);
   const to = toApiDate(days[days.length - 1]);
 
@@ -61,24 +74,55 @@ export default function CalendarPage() {
     staleTime: 30_000,
   });
 
+  // Meeting is a separate Personal Calendar event type — own endpoint, own
+  // query, own data source (the existing Meeting model) — merged with Task
+  // only for display, never combined server-side. See "Chốt thêm
+  // requirement: ... hai loại dữ liệu và quyền xử lý độc lập."
+  const { data: meetings } = useQuery({
+    queryKey: ['calendar-meetings', from, to],
+    queryFn: () => getCalendarMeetings(from, to),
+    staleTime: 30_000,
+  });
+
   const displayTasks = useMemo(
     () => (tasks || []).map(t => (t.id in overrides ? { ...t, scheduled_at: overrides[t.id] } : t)),
     [tasks, overrides]
   );
   const scheduledTasks = useMemo(() => displayTasks.filter(t => !!t.scheduled_at), [displayTasks]);
-  const unscheduledTasks = useMemo(() => displayTasks.filter(t => !t.scheduled_at), [displayTasks]);
+  // Has a date (start_date) but no time (scheduled_at IS NULL) — shows in
+  // the fixed row under that day's header, NOT the Unscheduled Tray, but
+  // only when its start_date actually falls within the days currently on
+  // screen (there's no column to place it under otherwise). start_date is
+  // NOT NULL on every Task, so this is a within-view check, not a
+  // has-a-value check — see the 2026-09 design note on this rule.
+  const visibleDateKeys = useMemo(() => new Set(days.map(toApiDate)), [days]);
+  const dateOnlyTasksByDay = useMemo(() => {
+    const map = new Map<string, CalendarTask[]>();
+    for (const t of displayTasks) {
+      if (t.scheduled_at || !t.start_date) continue;
+      const key = t.start_date.slice(0, 10);
+      if (!visibleDateKeys.has(key)) continue;
+      map.set(key, [...(map.get(key) || []), t]);
+    }
+    return map;
+  }, [displayTasks, visibleDateKeys]);
+  // Genuinely unscheduled: no time AND (no date or its date isn't in the
+  // currently displayed range) — falls back to the Tray so it's never lost.
+  const unscheduledTasks = useMemo(
+    () => displayTasks.filter(t => !t.scheduled_at && !(t.start_date && visibleDateKeys.has(t.start_date.slice(0, 10)))),
+    [displayTasks, visibleDateKeys]
+  );
 
   const goToday = () => setAnchorDate(new Date());
-  const goPrev = () => setAnchorDate(d => {
-    const c = new Date(d);
-    c.setDate(c.getDate() - rangeDays);
-    return c;
-  });
-  const goNext = () => setAnchorDate(d => {
-    const c = new Date(d);
-    c.setDate(c.getDate() + rangeDays);
-    return c;
-  });
+  // 4-day mode: ±4 days. 7-day mode: ±7 days (a full week) — since
+  // startOfWeekMonday derives the displayed range from anchorDate, shifting
+  // by exactly 7 keeps the same weekday and lands on the prev/next week.
+  const goPrev = () => setAnchorDate(d => addDays(d, -rangeDays));
+  const goNext = () => setAnchorDate(d => addDays(d, rangeDays));
+  const goPickDate = (dateStr: string) => {
+    const picked = parseApiDate(dateStr);
+    if (picked) setAnchorDate(picked);
+  };
 
   const handleToggleDone = async (task: CalendarTask) => {
     // Only Assigned may toggle from the Calendar (UI-level gate — backend
@@ -151,6 +195,11 @@ export default function CalendarPage() {
     setDetailTask(task);
   };
 
+  const handleOpenMeetingDetail = (meeting: CalendarMeeting) => {
+    if (suppressClickRef.current) return;
+    setDetailMeeting(meeting);
+  };
+
   const handleEmptyCellClick = (day: Date, hours: number, minutes: number) => {
     setQuickCreatePrefill({ day, hours, minutes });
     setQuickCreateOpen(true);
@@ -168,18 +217,23 @@ export default function CalendarPage() {
               onPrev={goPrev}
               onNext={goNext}
               onToday={goToday}
+              anchorDate={anchorDate}
+              onPickDate={goPickDate}
               onQuickCreate={() => { setQuickCreatePrefill(null); setQuickCreateOpen(true); }}
             />
 
-            <div className="flex-1 min-h-0 overflow-y-auto border-t border-slate-100">
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-t border-slate-100">
               {error ? (
                 <p className="p-6 text-[13px] text-rose-600">{getApiErrorMessage(error, 'Không tải được lịch.')}</p>
               ) : (
                 <CalendarGrid
                   days={days}
                   tasks={scheduledTasks}
+                  meetings={meetings || []}
+                  dateOnlyTasksByDay={dateOnlyTasksByDay}
                   onToggleDone={handleToggleDone}
                   onOpenDetail={handleOpenDetail}
+                  onOpenMeetingDetail={handleOpenMeetingDetail}
                   onEmptyCellClick={handleEmptyCellClick}
                 />
               )}
@@ -205,6 +259,17 @@ export default function CalendarPage() {
       </DragOverlay>
 
       <TaskDetailDrawer task={detailTask} onClose={() => setDetailTask(null)} onToggleDone={handleToggleDone} />
+
+      {/* Reuses the EXISTING Meeting Detail as-is — no separate Calendar-only
+          Meeting Detail (see "Click Meeting → mở Meeting Detail hiện có").
+          Edit/Summarize/Sync/Delete are intentionally omitted here (Calendar
+          itself doesn't own those flows); the modal's own can_manage-gated
+          quick actions (Assign Project/Add Member) still work unmodified. */}
+      <MeetingDetailModal
+        isOpen={!!detailMeeting}
+        onClose={() => setDetailMeeting(null)}
+        meeting={detailMeeting}
+      />
 
       <QuickCreateDrawer
         isOpen={quickCreateOpen}

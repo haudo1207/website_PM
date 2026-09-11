@@ -1,6 +1,6 @@
 """Internal API for the Meeting Host Bot (Chrome extension running on a VPS,
 one signed-in Google profile per operational mailbox — see
-meeting-bot-extension/README.md).
+extensions/meeting-host-bot/README.md).
 
 Mirrors the auth pattern already used for the Zalo sidecar
 (routers/zalo.py's /internal/* endpoints, X-Zalo-Worker-Token): a single
@@ -9,39 +9,48 @@ login involved. Deliberately its own router (not mounted under meetings.py's
 router, which requires get_current_user for every route) so the extension
 never needs a portal user session.
 """
+import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
-import datetime
-import logging
 
 from ..config import settings
 from ..database import get_db
 from ..models.meeting import Meeting
-from ..services.meeting_sync import _resolve_meeting_workspace_id
 from ..models.system_category import Workspace
 from ..models.workspace_google_account import WorkspaceGoogleAccount
+from ..services.meeting_sync import _resolve_meeting_workspace_id, get_workspace_google_access_token
 from ..utils.timezone import VN_TZ as _VN_TZ
 
-logger = logging.getLogger("meeting_bot")
 router = APIRouter()
 
 # How far ahead the bot should be told about a meeting, so its browser
 # profile has time to open the join link and get admitted through before
 # the actual start time.
 LOOKAHEAD_MINUTES = 10
-# How long after start_time a meeting still counts as "join me" — covers
-# meetings the bot missed picking up right at start (VPS restart, etc.) and
-# ones with no end_time set.
+# How long after start_time a meeting still counts as "join me" when it has
+# no end_time — covers meetings the bot missed picking up right at start
+# (VPS restart, etc.). Meetings that DO have an end_time are cut off there
+# instead (see the per-row check below) — more precise than a blanket grace
+# period, and stops the bot re-opening a Meet tab for a short meeting that
+# legitimately ended a while ago.
 GRACE_MINUTES_AFTER_START = 90
 
 
-def _check_bot_token(x_meeting_bot_token: str = Header(default=None)):
+def _check_bot_token(x_meeting_bot_token: Optional[str] = Header(default=None)):
     expected = (settings.MEETING_BOT_TOKEN or "").strip()
-    if expected and x_meeting_bot_token != expected:
+    if not expected:
+        # Fail closed: an unset token must never be treated as "auth
+        # disabled" — verified live against an earlier deploy of this same
+        # endpoint that an unset MEETING_BOT_TOKEN let ANY caller list every
+        # upcoming meeting's title + join link with zero credentials.
+        raise HTTPException(status_code=503, detail="MEETING_BOT_TOKEN chưa được cấu hình trên server.")
+    if x_meeting_bot_token != expected:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-def _workspace_google_email(db: Session, workspace_id: int) -> str | None:
+def _workspace_google_email(db: Session, workspace_id: Optional[int]) -> Optional[str]:
     """Which Google mailbox is responsible for this workspace's meetings:
     prefer the actually-connected override (WorkspaceGoogleAccount.google_email)
     over the display-only Workspace.expected_google_email hint."""
@@ -63,7 +72,7 @@ def get_bot_queue(
     _=Depends(_check_bot_token),
 ):
     """Called by the extension's background service worker (polling every
-    ~60s) for the Chrome profile signed in as `google_email`. Returns the
+    ~15-30s) for the Chrome profile signed in as `google_email`. Returns the
     Google Meet meetings that mailbox should join-as-host right now.
 
     Matching order per meeting:
@@ -74,7 +83,6 @@ def get_bot_queue(
        whose link predates that column or wasn't Google-Meet-generated.
     """
     now = datetime.datetime.now(_VN_TZ)
-    today = now.date()
     window_start = now - datetime.timedelta(minutes=GRACE_MINUTES_AFTER_START)
     window_end = now + datetime.timedelta(minutes=LOOKAHEAD_MINUTES)
 
@@ -84,17 +92,26 @@ def get_bot_queue(
             Meeting.status.in_(["UPCOMING", "ONGOING"]),
             Meeting.meeting_url.isnot(None),
             Meeting.meeting_url.ilike("%meet.google.com%"),
-            Meeting.meeting_date >= (window_start.date()),
-            Meeting.meeting_date <= (window_end.date()),
+            Meeting.meeting_date >= window_start.date(),
+            Meeting.meeting_date <= window_end.date(),
         )
         .all()
     )
 
     due = []
     for m in candidates:
+        if not m.start_time:
+            continue
         start_dt = datetime.datetime.combine(m.meeting_date, m.start_time, tzinfo=_VN_TZ)
         if not (window_start <= start_dt <= window_end):
             continue
+
+        if m.end_time:
+            end_dt = datetime.datetime.combine(m.meeting_date, m.end_time, tzinfo=_VN_TZ)
+            if m.end_time < m.start_time:
+                end_dt += datetime.timedelta(days=1)
+            if now >= end_dt:
+                continue
 
         mailbox = m.organizer_google_email
         if not mailbox:
@@ -108,6 +125,43 @@ def get_bot_queue(
             "title": m.title,
             "join_url": m.meeting_url,
             "start_at": start_dt.isoformat(),
+            "organizer_google_email": mailbox,
         })
 
     return {"due": due}
+
+
+@router.get("/drive-token")
+def get_drive_upload_token(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(_check_bot_token),
+):
+    """Short-lived Google Drive access token + target filename for the
+    recorder VPS to upload a finished recording directly to Drive — see
+    extensions/meeting-host-bot/recorder_service.py. Deliberately hands out
+    only a Bearer access token (already refreshed here, ~1h validity),
+    never the underlying refresh_token/client_secret: the VPS talks to
+    googleapis.com directly with it, the video bytes never touch this
+    backend.
+
+    Filename MUST contain "MK-{meeting_id}" — that exact substring is what
+    n8n's "W3. Search Video By Tag" node searches all of Drive for (see
+    Meeting_AI_Summary_dev.json), matching the same [MK-{id}] tag already
+    put in the Calendar event title by create_google_meet_shared. No new
+    DB column needed for this — the tag has always just been meeting_id.
+    """
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    workspace_id = _resolve_meeting_workspace_id(db, meeting)
+    try:
+        access_token = get_workspace_google_access_token(db, workspace_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Không lấy được Google access token: {exc}")
+
+    title = (meeting.title or "Meeting").replace("\n", " ").replace("\r", " ").strip()
+    drive_filename = f"[MK-{meeting.id}] {title}.mp4"
+
+    return {"access_token": access_token, "drive_filename": drive_filename}
