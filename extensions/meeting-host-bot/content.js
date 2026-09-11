@@ -165,6 +165,24 @@ function admitWaitingParticipants() {
     log("Admit clicked");
     guard += 1;
   }
+  if (guard > 0) return;
+
+  // Neither real Admit button exists yet — the floating notification badge
+  // (aria-haspopup="dialog", the thing findActionButton correctly refuses to
+  // click as an "admit" action) may still need a click to actually OPEN the
+  // People panel, which is possibly where Meet renders the real "Admit
+  // all"/"Admit {name}" buttons into the DOM in the first place. This is
+  // just revealing the panel, not admitting anyone — only fires once per
+  // appearance (guarded by aria-expanded="false", so it won't re-fire once
+  // the panel is already open).
+  for (const el of allButtons()) {
+    if (el.getAttribute("aria-expanded") !== "false") continue;
+    const label = el.getAttribute("aria-label") || visibleText(el);
+    if (label && /admit/i.test(label)) {
+      el.click();
+      break;
+    }
+  }
 }
 
 function tick() {
