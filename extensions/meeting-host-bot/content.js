@@ -140,11 +140,12 @@ function clickActionButton(regex) {
 // click in this file (mic/cam mute, Admit) stays on fireClick(): Admit was
 // already confirmed working that way live, so there's no reason to route it
 // through CDP too.
-function requestCdpJoinClick(el) {
-  const rect = el.getBoundingClientRect();
-  const x = rect.left + rect.width / 2;
-  const y = rect.top + rect.height / 2;
-  chrome.runtime.sendMessage({ action: "CDP_CLICK", x, y }, (response) => {
+// No coordinates sent here on purpose — background.js re-locates the button
+// itself, after it has attached the debugger, since attaching can shift the
+// page (Chrome's own "being debugged" infobar) and stale coordinates
+// computed here would miss.
+function requestCdpJoinClick() {
+  chrome.runtime.sendMessage({ action: "CDP_CLICK_JOIN" }, (response) => {
     if (chrome.runtime.lastError) {
       log("CDP click request failed:", chrome.runtime.lastError.message);
       return;
@@ -161,7 +162,7 @@ function tryClickJoin() {
   if (el) {
     joinClicked = true;
     log("Join detected");
-    requestCdpJoinClick(el);
+    requestCdpJoinClick();
     return;
   }
   // Mute opportunistically every tick until Join itself is found — the

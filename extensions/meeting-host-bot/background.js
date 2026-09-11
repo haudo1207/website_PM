@@ -158,20 +158,55 @@ function sendDebuggerCommand(target, method, params) {
   });
 }
 
-async function cdpClick(tabId, x, y) {
+// Must match content.js's JOIN_TEXT_RE — duplicated as a string (not
+// imported) since this is a separate execution context (background service
+// worker vs. content script isolated world) with no shared module.
+const JOIN_TEXT_SOURCE = "(join now|ask to join|tham gia ngay|xin tham gia|yêu cầu tham gia|tham gia mà không)";
+
+async function cdpClickJoin(tabId) {
   const target = { tabId };
+  log("cdpClickJoin: attaching debugger to tab", tabId);
   await new Promise((resolve, reject) => {
     chrome.debugger.attach(target, "1.3", () => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else resolve();
     });
   });
+  log("cdpClickJoin: attached");
   try {
-    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
-    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    // Re-locate the button's coordinates AFTER attaching, not before:
+    // chrome.debugger.attach() itself makes Chrome insert its "this tab is
+    // being debugged" infobar, which shifts the whole page down — any
+    // coordinates computed beforehand (e.g. by content.js, before this
+    // round-trip) are stale by the time the click actually fires.
+    const findExpr = `(() => {
+      const re = new RegExp(${JSON.stringify(JOIN_TEXT_SOURCE)}, "i");
+      const els = document.querySelectorAll('button, [role="button"]');
+      for (const el of els) {
+        const label = el.getAttribute("aria-label") || (el.innerText || el.textContent || "").trim();
+        if (label && re.test(label)) {
+          const r = el.getBoundingClientRect();
+          return JSON.stringify({ found: true, x: r.left + r.width / 2, y: r.top + r.height / 2, label });
+        }
+      }
+      return JSON.stringify({ found: false });
+    })()`;
+    const evalResult = await sendDebuggerCommand(target, "Runtime.evaluate", {
+      expression: findExpr,
+      returnByValue: true,
+    });
+    const info = JSON.parse(evalResult.result.value);
+    if (!info.found) {
+      throw new Error("Join button not found at click time (page may have changed)");
+    }
+    log("cdpClickJoin: clicking", JSON.stringify(info.label), "at", info.x, info.y);
+    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x: info.x, y: info.y, button: "none" });
+    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x: info.x, y: info.y, button: "left", clickCount: 1 });
+    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: info.x, y: info.y, button: "left", clickCount: 1 });
+    log("cdpClickJoin: click dispatched");
   } finally {
     await new Promise((resolve) => chrome.debugger.detach(target, () => resolve()));
+    log("cdpClickJoin: detached");
   }
 }
 
@@ -186,13 +221,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pollOnce().then(() => sendResponse({ success: true }));
     return true;
   }
-  if (message?.action === "CDP_CLICK") {
+  if (message?.action === "CDP_CLICK_JOIN") {
     const tabId = sender.tab?.id;
     if (!tabId) {
       sendResponse({ success: false, error: "no sender tab id" });
       return true;
     }
-    cdpClick(tabId, message.x, message.y)
+    cdpClickJoin(tabId)
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err?.message || String(err) }));
     return true;
