@@ -3,7 +3,7 @@
   "name": "Markee Meeting Host Bot",
   "version": "1.0.0",
   "description": "Poll GET /api/meeting-bot/queue and auto Join + auto Admit on Google Meet as the logged-in host account.",
-  "permissions": ["storage", "tabs", "alarms"],
+  "permissions": ["storage", "tabs", "alarms", "debugger"],
   "host_permissions": ["https://meet.google.com/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {

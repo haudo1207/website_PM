@@ -137,15 +137,64 @@ function ensureRecoveryAlarm() {
 chrome.runtime.onInstalled.addListener(ensureRecoveryAlarm);
 chrome.runtime.onStartup.addListener(ensureRecoveryAlarm);
 
+// Confirmed live 2026-09-11 via a direct xdotool-vs-JS-click A/B test on the
+// VPS: content.js's fireClick() (full pointerdown/mousedown/pointerup/
+// mouseup/click, still JS-dispatched) does not trigger Meet's "Join now"
+// button under Xvfb — only genuinely-trusted input does. content.js runs in
+// the page's isolated world and has no access to CDP itself; only this
+// privileged background context can use chrome.debugger to reach it.
+// Attaching shows Chrome's own "<extension> started debugging this browser"
+// banner on the tab — that's Chrome's standard debugger-attached UI, not a
+// bug, and unavoidable when using this API.
+function sendDebuggerCommand(target, method, params) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand(target, method, params, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(result);
+      }
+    });
+  });
+}
+
+async function cdpClick(tabId, x, y) {
+  const target = { tabId };
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach(target, "1.3", () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+  try {
+    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
+    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  } finally {
+    await new Promise((resolve) => chrome.debugger.detach(target, () => resolve()));
+  }
+}
+
 // Options page calls this after Save/Poll-now so changes take effect
 // immediately instead of waiting for the worker to restart.
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "RECONFIGURE") {
     scheduleNextPoll().then(() => sendResponse({ success: true }));
     return true;
   }
   if (message?.action === "POLL_NOW") {
     pollOnce().then(() => sendResponse({ success: true }));
+    return true;
+  }
+  if (message?.action === "CDP_CLICK") {
+    const tabId = sender.tab?.id;
+    if (!tabId) {
+      sendResponse({ success: false, error: "no sender tab id" });
+      return true;
+    }
+    cdpClick(tabId, message.x, message.y)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err?.message || String(err) }));
     return true;
   }
   return false;

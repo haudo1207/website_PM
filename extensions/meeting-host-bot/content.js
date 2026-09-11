@@ -19,7 +19,13 @@ function log(...args) {
 
 const MIC_OFF_RE = /(turn off microphone|tắt micrô|tắt microphone)/i;
 const CAM_OFF_RE = /(turn off camera|tắt camera)/i;
-const JOIN_TEXT_RE = /(^join now$|^ask to join$|tham gia ngay|xin tham gia|yêu cầu tham gia)/i;
+// Confirmed live 2026-09-11: on a VPS with no real camera/mic hardware, Meet
+// renames the button to "Join now without microphone & camera" — anchoring
+// to the exact string "^join now$" (as this used to) never matches that
+// variant, which every headless/VPS profile will always hit. Matching "join
+// now" as a substring instead covers it without hard-coding one exact
+// string, since Meet's exact wording can vary by environment/language.
+const JOIN_TEXT_RE = /(join now|ask to join|tham gia ngay|xin tham gia|yêu cầu tham gia|tham gia mà không)/i;
 const LEAVE_CALL_RE = /(leave call|rời khỏi cuộc gọi|rời cuộc gọi)/i;
 // Confirmed live 2026-09-11: this account's real Meet UI shows "Admit N
 // guest(s)" (not "Admit all") as the bulk button — it admits every guest
@@ -123,11 +129,39 @@ function clickActionButton(regex) {
   return false;
 }
 
+// Confirmed live 2026-09-11 via a direct xdotool-vs-JS-click A/B test on the
+// VPS: fireClick() (full pointerdown/mousedown/pointerup/mouseup/click,
+// still JS-dispatched) does NOT trigger Meet's "Join now" button under
+// Xvfb — only genuinely-trusted input does (xdotool at the OS level, and
+// separately confirmed Chrome's own CDP Input.dispatchMouseEvent). content.js
+// has no access to CDP itself — only the extension's privileged background
+// page can use chrome.debugger — so Join specifically hands off the actual
+// click to background.js instead of calling fireClick() here. Every other
+// click in this file (mic/cam mute, Admit) stays on fireClick(): Admit was
+// already confirmed working that way live, so there's no reason to route it
+// through CDP too.
+function requestCdpJoinClick(el) {
+  const rect = el.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+  chrome.runtime.sendMessage({ action: "CDP_CLICK", x, y }, (response) => {
+    if (chrome.runtime.lastError) {
+      log("CDP click request failed:", chrome.runtime.lastError.message);
+      return;
+    }
+    if (response && response.success === false) {
+      log("CDP click failed:", response.error);
+    }
+  });
+}
+
 function tryClickJoin() {
   if (joinClicked) return;
-  if (clickIfFound(JOIN_TEXT_RE)) {
+  const el = findClickableByText(JOIN_TEXT_RE);
+  if (el) {
     joinClicked = true;
     log("Join detected");
+    requestCdpJoinClick(el);
     return;
   }
   // Mute opportunistically every tick until Join itself is found — the
