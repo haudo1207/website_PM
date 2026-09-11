@@ -814,9 +814,6 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP NULL"
         ))
-        conn.execute(text(
-            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS color VARCHAR(20) NULL"
-        ))
         # Composite indexes for GET /api/calendar/tasks — the query always
         # filters by (assigned_id OR support_id) AND a scheduled_at range,
         # same grouping as ix_tasks_v2_assigned_id/support_id below.

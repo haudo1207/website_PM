@@ -7,6 +7,7 @@ NOT a second Task CRUD system. Creating/updating a task (including its
 POST/PATCH /task-groups/{gid}/tasks endpoints in task_groups.py — see
 specs/008-task-calendar-overview/plan.md section 0.
 """
+import re
 from datetime import datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.member import Member
 from ..models.phase import Phase
-from ..models.project import Project
+from ..models.project import CalendarProjectPreference, Project
 from ..models.skill_master import Group, Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
@@ -80,14 +81,76 @@ def list_calendar_tasks(
     members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
     groups_map = {g.id: g.name for g in db.query(Group).all()}
     skills_map = {s.id: s.name for s in db.query(Skill).all()}
+    # Personal Calendar Preference — per-Member project color, NOT a Project
+    # attribute (two members can pick different colors for the same
+    # project). Missing row = frontend's own fallback color, same as today.
+    color_map = {
+        pref.project_id: pref.color
+        for pref in db.query(CalendarProjectPreference).filter(CalendarProjectPreference.member_id == member_id).all()
+    }
 
     output = []
     for task, tg, phase, project in results:
         t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
         t_dict["project_id"] = project.id
         t_dict["project_name"] = project.name
-        t_dict["project_color"] = getattr(project, "color", None)
+        t_dict["project_color"] = color_map.get(project.id)
         t_dict["calendar_role"] = "assigned" if task.assigned_id == member_id else "support"
         output.append(t_dict)
 
     return output
+
+
+@router.get("/project-colors")
+def list_calendar_project_colors(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """This member's saved Personal Calendar color per project — a bulk map
+    so Quick Create can show "already has a color" for any project the
+    moment it's selected, without a round-trip per project. Projects with
+    no saved preference are simply absent (frontend falls back to a default
+    color), matching the same "no record = default" rule as the tasks list.
+    """
+    member_id = getattr(current_user, "member_id", None)
+    if not member_id:
+        return {}
+    return {
+        pref.project_id: pref.color
+        for pref in db.query(CalendarProjectPreference).filter(CalendarProjectPreference.member_id == member_id).all()
+    }
+
+
+@router.put("/project-colors/{project_id}")
+def set_calendar_project_color(
+    project_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Upsert THIS member's Personal Calendar color for one project. Never
+    touches `projects` or `tasks_v2` — purely a per-Member preference (see
+    008-task-calendar-overview "Màu Project trong Personal Calendar" §5/§10).
+    """
+    member_id = getattr(current_user, "member_id", None)
+    if not member_id:
+        raise HTTPException(403, "Tài khoản này chưa liên kết Member — không có Personal Calendar.")
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found.")
+
+    color = str(body.get("color") or "").strip()
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        raise HTTPException(400, "Color must be a hex value like #EF4444.")
+
+    pref = (
+        db.query(CalendarProjectPreference)
+        .filter(CalendarProjectPreference.member_id == member_id, CalendarProjectPreference.project_id == project_id)
+        .first()
+    )
+    if pref:
+        pref.color = color
+    else:
+        pref = CalendarProjectPreference(member_id=member_id, project_id=project_id, color=color)
+        db.add(pref)
+    db.commit()
+    db.refresh(pref)
+    return {"project_id": project_id, "color": pref.color}

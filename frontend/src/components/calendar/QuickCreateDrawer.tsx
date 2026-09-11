@@ -1,10 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import Portal from '@/components/Portal';
-import { getProjects, getPhases, getTaskGroups, getProjectMembers, getCategories, getMe, createTask, getApiErrorMessage } from '@/lib/api';
+import {
+  getProjects, getPhases, getTaskGroups, getProjectMembers, getCategories, getMe, createTask, getApiErrorMessage,
+  getCalendarProjectColors, setCalendarProjectColor,
+} from '@/lib/api';
 import { toApiDate, toApiDateTime, parseApiDate, combineDateAndTime } from './dateUtils';
+import { PROJECT_COLOR_PRESETS, DEFAULT_PROJECT_COLOR, isValidHexColor } from './colorPalette';
 
 interface SkillItem { id: number; name: string; group_id: number }
 interface SkillGroup { id: number; name: string; category_id: number; skills: SkillItem[] }
@@ -34,6 +38,90 @@ const inputCls = selectCls;
 // calendar entirely. See the 2026-09 "chốt 3 vấn đề về thời gian".
 const HOURS_24 = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
 const QUARTER_MINUTES = ['00', '15', '30', '45'];
+
+// Per-Member Calendar color for one Project (calendar_project_preferences —
+// NOT Project.color, which doesn't exist; two members can pick different
+// colors for the same project). Saves instantly on pick, independent of
+// task creation — see "Màu Project trong Personal Calendar" §3/§10.
+function ProjectColorPicker({ projectId }: { projectId: number }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [customHex, setCustomHex] = useState('');
+
+  const colorsQuery = useQuery({
+    queryKey: ['calendar-project-colors'],
+    queryFn: getCalendarProjectColors,
+    staleTime: 30_000,
+  });
+  const currentColor = (colorsQuery.data?.[projectId] || DEFAULT_PROJECT_COLOR).toLowerCase();
+
+  const saveMutation = useMutation({
+    mutationFn: (color: string) => setCalendarProjectColor(projectId, color),
+    onSuccess: (_data, color) => {
+      // Optimistic cache update so the swatch (and any already-open Calendar
+      // tab) reflects the new color immediately, not just after a refetch.
+      queryClient.setQueryData<Record<number, string>>(['calendar-project-colors'], prev => ({ ...(prev || {}), [projectId]: color }));
+      queryClient.invalidateQueries({ queryKey: ['calendar-tasks'] });
+      setOpen(false);
+    },
+  });
+
+  return (
+    <div className="relative">
+      <label className={labelCls}>Màu Project</label>
+      <button
+        type="button"
+        onClick={() => { setCustomHex(currentColor); setOpen(o => !o); }}
+        className="flex items-center gap-2 border border-slate-200 rounded-lg px-2.5 py-2 bg-white hover:bg-slate-50 w-full"
+      >
+        <span className="w-4 h-4 rounded-full border border-black/10 shrink-0" style={{ background: currentColor }} />
+        <span className="text-[12.5px] text-[#0b1c30] font-mono">{currentColor.toUpperCase()}</span>
+        {saveMutation.isPending && <span className="text-[10px] text-slate-400 ml-auto">Đang lưu…</span>}
+      </button>
+
+      {open && (
+        <div className="absolute z-10 mt-1.5 w-full p-3 border border-slate-200 rounded-lg bg-white shadow-lg">
+          <div className="grid grid-cols-8 gap-1.5">
+            {PROJECT_COLOR_PRESETS.map(hex => (
+              <button
+                key={hex}
+                type="button"
+                onClick={() => saveMutation.mutate(hex)}
+                className={`w-6 h-6 rounded-full border-2 ${currentColor === hex ? 'border-[#0058be]' : 'border-transparent'}`}
+                style={{ background: hex }}
+                aria-label={hex}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
+            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider shrink-0">Custom</span>
+            <input
+              type="color"
+              value={isValidHexColor(customHex) ? customHex : DEFAULT_PROJECT_COLOR}
+              onChange={e => setCustomHex(e.target.value)}
+              className="w-8 h-8 border border-slate-200 rounded cursor-pointer shrink-0"
+            />
+            <input
+              className={`${inputCls} flex-1`}
+              value={customHex}
+              onChange={e => setCustomHex(e.target.value)}
+              placeholder="#EF4444"
+              maxLength={7}
+            />
+            <button
+              type="button"
+              disabled={!isValidHexColor(customHex)}
+              onClick={() => saveMutation.mutate(customHex)}
+              className="text-[11.5px] font-bold text-white bg-[#0058be] px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0"
+            >
+              Áp dụng
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function QuickCreateDrawer({
   isOpen,
@@ -208,6 +296,7 @@ export default function QuickCreateDrawer({
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
+              {!!projectId && <ProjectColorPicker projectId={projectId} />}
               <div>
                 <label className={labelCls}>Phase <span className="text-amber-500">*</span></label>
                 <select className={selectCls} value={phaseId} disabled={!projectId} onChange={e => handlePhaseChange(e.target.value ? Number(e.target.value) : '')}>

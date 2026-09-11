@@ -400,8 +400,12 @@ export const reorderTasks = (groupId: number, order: number[]) =>
 
 // ═══════════════════════════════════════════════════════════
 // CALENDAR (008-task-calendar-overview) — Personal "My Task Calendar".
-// Read-only view layer; writes reuse updateTask/createTask above (there is
-// deliberately no POST/PATCH /calendar/* endpoint — see plan.md section 0).
+// Task data is a read-only view layer; task writes reuse updateTask/
+// createTask above (deliberately no POST/PATCH /calendar/tasks — see
+// plan.md section 0). Project COLOR is the one genuine exception: it's a
+// per-Member Calendar display preference, not task/project data, so it has
+// its own small write endpoint below (calendar_project_preferences table —
+// see "Màu Project trong Personal Calendar" design).
 // ═══════════════════════════════════════════════════════════
 export interface CalendarTask {
   id: number;
@@ -423,6 +427,9 @@ export interface CalendarTask {
   notes: string | null;
   project_id: number;
   project_name: string;
+  // This member's own Personal Calendar color for the project (from
+  // calendar_project_preferences) — NOT Project.color, which doesn't exist.
+  // null = this member never set one; frontend falls back to a default.
   project_color: string | null;
   // Whether current_user is assigned or support on this task — decides
   // Done/Drag affordance in the UI (Support is read-only, spec.md FR-CAL-11/12).
@@ -433,6 +440,18 @@ export interface CalendarTask {
 // NOT a client-side filter, see specs/008-task-calendar-overview/spec.md.
 export const getCalendarTasks = (from: string, to: string) =>
   api.get<CalendarTask[]>('/calendar/tasks', { params: { from, to } }).then(r => r.data);
+
+// This member's saved project_id -> color map, across every project they
+// have a preference for (not just projects in the current date range) —
+// lets Quick Create show "already has a color" the moment a Project is
+// picked, before any task in it is even created.
+export const getCalendarProjectColors = () =>
+  api.get<Record<number, string>>('/calendar/project-colors').then(r => r.data);
+
+// Upserts THIS member's Calendar color for one project. Never touches
+// Project or Task data — see the interface comment on CalendarTask above.
+export const setCalendarProjectColor = (projectId: number, color: string) =>
+  api.put(`/calendar/project-colors/${projectId}`, { color }).then(r => r.data);
 
 // ═══════════════════════════════════════════════════════════
 // LEGACY COMPATIBLE (kept for Settings, Skills, System Categories, Members)
