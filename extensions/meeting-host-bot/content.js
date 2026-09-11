@@ -101,13 +101,24 @@ function debugLogCandidates() {
   }
 }
 
+// Confirmed live 2026-09-11: without a cooldown, this fired dozens of times
+// back-to-back (every 1.5s tick) for what was a single waiting guest —
+// Meet's own UI doesn't always drop the "Admit N guest(s)" button the
+// instant it's clicked, so re-scanning immediately re-finds and re-clicks
+// the same button. A short cooldown gives Meet time to actually process the
+// admit before we look again, without needing to know why the button lingers.
+const ADMIT_ALL_COOLDOWN_MS = 4000;
+let lastAdmitAllClickAt = 0;
+
 function admitWaitingParticipants() {
   if (!hostDetected) return; // nothing to admit before actually being in the call
   debugLogCandidates();
 
   if (findClickableByText(ADMIT_ALL_RE)) {
+    if (Date.now() - lastAdmitAllClickAt < ADMIT_ALL_COOLDOWN_MS) return;
     log("Waiting room participant detected");
     clickIfFound(ADMIT_ALL_RE);
+    lastAdmitAllClickAt = Date.now();
     log("Admit clicked");
     return;
   }
