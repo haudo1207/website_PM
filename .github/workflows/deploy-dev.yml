@@ -50,6 +50,7 @@ jobs:
               "TELEGRAM_GROUP_CHAT_ID": "-1003890947468",
               "TELEGRAM_MESSAGE_THREAD_ID": "2",
               "N8N_WEBHOOK_SECRET": "p2zs7z43HUQAubdAdzkL4OTLNA5qpS4F4vaZML_M5-I",
+              "MEETING_BOT_TOKEN": "rA2gx4nvfYN9XgBlPHcQGh-1ibDx7f6iyeligTp-H04",
           }
 
           for path in (Path("/home/webpm/kpi-dev/.env"), Path("/home/webpm/kpi-dev/app.env")):
