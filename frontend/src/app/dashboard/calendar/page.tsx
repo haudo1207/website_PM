@@ -11,13 +11,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { getCalendarTasks, updateTask, CalendarTask, getApiErrorMessage } from '@/lib/api';
+import { getCalendarTasks, getCalendarMeetings, updateTask, CalendarTask, CalendarMeeting, getApiErrorMessage } from '@/lib/api';
 import CalendarToolbar from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import UnscheduledTray from '@/components/calendar/UnscheduledTray';
 import { TaskBlockContent } from '@/components/calendar/TaskBlock';
 import TaskDetailDrawer from '@/components/calendar/TaskDetailDrawer';
 import QuickCreateDrawer, { QuickCreatePrefill } from '@/components/calendar/QuickCreateDrawer';
+import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import {
   buildRangeDays,
   toApiDate,
@@ -42,6 +43,7 @@ export default function CalendarPage() {
   const [overrides, setOverrides] = useState<Record<number, string | null>>({});
   const [activeTask, setActiveTask] = useState<CalendarTask | null>(null);
   const [detailTask, setDetailTask] = useState<CalendarTask | null>(null);
+  const [detailMeeting, setDetailMeeting] = useState<CalendarMeeting | null>(null);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [quickCreatePrefill, setQuickCreatePrefill] = useState<QuickCreatePrefill | null>(null);
   // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
@@ -69,6 +71,16 @@ export default function CalendarPage() {
   const { data: tasks, isFetching, error, refetch } = useQuery({
     queryKey: ['calendar-tasks', from, to],
     queryFn: () => getCalendarTasks(from, to),
+    staleTime: 30_000,
+  });
+
+  // Meeting is a separate Personal Calendar event type — own endpoint, own
+  // query, own data source (the existing Meeting model) — merged with Task
+  // only for display, never combined server-side. See "Chốt thêm
+  // requirement: ... hai loại dữ liệu và quyền xử lý độc lập."
+  const { data: meetings } = useQuery({
+    queryKey: ['calendar-meetings', from, to],
+    queryFn: () => getCalendarMeetings(from, to),
     staleTime: 30_000,
   });
 
@@ -183,6 +195,11 @@ export default function CalendarPage() {
     setDetailTask(task);
   };
 
+  const handleOpenMeetingDetail = (meeting: CalendarMeeting) => {
+    if (suppressClickRef.current) return;
+    setDetailMeeting(meeting);
+  };
+
   const handleEmptyCellClick = (day: Date, hours: number, minutes: number) => {
     setQuickCreatePrefill({ day, hours, minutes });
     setQuickCreateOpen(true);
@@ -212,9 +229,11 @@ export default function CalendarPage() {
                 <CalendarGrid
                   days={days}
                   tasks={scheduledTasks}
+                  meetings={meetings || []}
                   dateOnlyTasksByDay={dateOnlyTasksByDay}
                   onToggleDone={handleToggleDone}
                   onOpenDetail={handleOpenDetail}
+                  onOpenMeetingDetail={handleOpenMeetingDetail}
                   onEmptyCellClick={handleEmptyCellClick}
                 />
               )}
@@ -240,6 +259,17 @@ export default function CalendarPage() {
       </DragOverlay>
 
       <TaskDetailDrawer task={detailTask} onClose={() => setDetailTask(null)} onToggleDone={handleToggleDone} />
+
+      {/* Reuses the EXISTING Meeting Detail as-is — no separate Calendar-only
+          Meeting Detail (see "Click Meeting → mở Meeting Detail hiện có").
+          Edit/Summarize/Sync/Delete are intentionally omitted here (Calendar
+          itself doesn't own those flows); the modal's own can_manage-gated
+          quick actions (Assign Project/Add Member) still work unmodified. */}
+      <MeetingDetailModal
+        isOpen={!!detailMeeting}
+        onClose={() => setDetailMeeting(null)}
+        meeting={detailMeeting}
+      />
 
       <QuickCreateDrawer
         isOpen={quickCreateOpen}

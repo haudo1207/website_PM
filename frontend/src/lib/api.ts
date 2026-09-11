@@ -453,6 +453,33 @@ export const getCalendarProjectColors = () =>
 export const setCalendarProjectColor = (projectId: number, color: string) =>
   api.put(`/calendar/project-colors/${projectId}`, { color }).then(r => r.data);
 
+// Meeting is a SEPARATE Personal Calendar event type from Task — its own
+// endpoint, own data source (the existing Meeting model), own scoping
+// (participant-only, never expanded by role) — never merged into
+// GET /calendar/tasks. Shape matches meeting_to_dict() (backend/app/
+// routers/meetings.py) exactly, the same shape the Meetings tab already
+// uses, plus every other meeting_to_dict field (AI summary, score, etc.)
+// that MeetingDetailModal needs internally — hence the index signature
+// rather than modeling every field here.
+export interface CalendarMeeting {
+  id: number;
+  title: string;
+  date: string | null; // YYYY-MM-DD
+  time: string | null; // HH:MM (start)
+  end_time: string | null; // HH:MM
+  duration: number | null; // minutes; null when end_time is unknown
+  status: string; // live-computed: UPCOMING / ONGOING / DONE / CANCELLED
+  link: string | null; // Google Meet / Zoom / Teams join URL
+  platform: string | null;
+  project_name: string;
+  projects: { id: number; name: string }[];
+  member_count: number;
+  can_manage: boolean;
+  [key: string]: unknown;
+}
+export const getCalendarMeetings = (from: string, to: string) =>
+  api.get<CalendarMeeting[]>('/calendar/meetings', { params: { from, to } }).then(r => r.data);
+
 // ═══════════════════════════════════════════════════════════
 // LEGACY COMPATIBLE (kept for Settings, Skills, System Categories, Members)
 // ═══════════════════════════════════════════════════════════

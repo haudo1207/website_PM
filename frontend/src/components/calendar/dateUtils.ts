@@ -7,6 +7,16 @@ export const EVENT_HEIGHT = 48; // px — fixed, no duration in MVP (spec.md FR-
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
+// Parses Meeting's "HH:MM" (meeting_to_dict's `time`/`start_time` field —
+// always a fixed hh:mm string, never a date-time value) into hour/minute
+// numbers, same shape topToTimeOfDay/combineDateAndTime already use.
+export function parseHHMM(value: string | null | undefined): { hours: number; minutes: number } | null {
+  if (!value) return null;
+  const m = value.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return { hours: Number(m[1]), minutes: Number(m[2]) };
+}
+
 export function toDateKey(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
@@ -178,20 +188,24 @@ export interface PositionedTask {
   laneCount: number;
 }
 
-// Groups a day's tasks into non-overlapping "lanes" so concurrent tasks
-// render side-by-side instead of stacking on top of each other
-// (spec.md FR-CAL-14 — overlaps allowed, frontend splits the width).
-export function layoutDayTasks(tasks: { task: CalendarTask; date: Date; top: number }[]): PositionedTask[] {
-  const sorted = [...tasks].sort((a, b) => a.top - b.top);
+// Groups a day's events into non-overlapping "lanes" so concurrent ones
+// render side-by-side instead of stacking on top of each other (spec.md
+// FR-CAL-14 — overlaps allowed, frontend splits the width). Generic over
+// `top`/`height` so a single pass can lane-pack Task blocks (fixed
+// EVENT_HEIGHT) and Meeting blocks (variable, duration-based height)
+// together in the same day column — Meeting is a visually distinct but
+// still time-position-aware event type, not a second Task system.
+export function layoutDayItems<T extends { top: number; height: number }>(items: T[]): (T & { lane: number; laneCount: number })[] {
+  const sorted = [...items].sort((a, b) => a.top - b.top);
   const laneEnds: number[] = []; // last occupied bottom-px per lane
-  const placed: PositionedTask[] = [];
+  const placed: (T & { lane: number; laneCount: number })[] = [];
   for (const item of sorted) {
     let lane = laneEnds.findIndex(end => end <= item.top);
     if (lane === -1) {
       lane = laneEnds.length;
-      laneEnds.push(item.top + EVENT_HEIGHT);
+      laneEnds.push(item.top + item.height);
     } else {
-      laneEnds[lane] = item.top + EVENT_HEIGHT;
+      laneEnds[lane] = item.top + item.height;
     }
     placed.push({ ...item, lane, laneCount: 1 });
   }

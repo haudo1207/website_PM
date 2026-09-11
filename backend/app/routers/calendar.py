@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.member import Member
+from ..models.meeting import Meeting, MeetingMember
 from ..models.phase import Phase
 from ..models.project import CalendarProjectPreference, Project
 from ..models.skill_master import Group, Skill
@@ -24,6 +25,7 @@ from ..models.task_group import TaskGroup
 from ..models.user import User
 from ..utils.auth import get_current_user
 from ..utils.kpi_engine import parse_date
+from .meetings import meeting_to_dict
 from .task_groups import serialize_task
 
 router = APIRouter()
@@ -99,6 +101,49 @@ def list_calendar_tasks(
         output.append(t_dict)
 
     return output
+
+
+@router.get("/meetings")
+def list_calendar_meetings(
+    from_: str = Query(..., alias="from", description="YYYY-MM-DD, inclusive"),
+    to: str = Query(..., description="YYYY-MM-DD, inclusive"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Personal Calendar — Meeting is a SEPARATE event type from Task, on
+    its own endpoint (not merged into GET /tasks), with its own data model
+    and its own permission scoping. Frontend fetches both and merges by
+    time client-side — see "Chốt thêm requirement: Personal Calendar hiển
+    thị cả Task + Meeting, nhưng hai loại dữ liệu và quyền xử lý độc lập."
+
+    Scope is deliberately narrower than the main Meetings-tab list
+    (`GET /meetings`, which also grants visibility via Project ACL/role):
+    here it's ONLY meetings this member created or was added to as a
+    participant — never expanded just because the user is a Leader/Super
+    Admin on the meeting's project. Reuses meeting_to_dict() as-is so the
+    shape matches the Meetings tab exactly; no separate Calendar-only
+    Meeting serialization.
+    """
+    member_id = getattr(current_user, "member_id", None)
+    if not member_id:
+        return []
+
+    from_date = parse_date(from_)
+    to_date = parse_date(to)
+    if not from_date or not to_date:
+        raise HTTPException(400, "Invalid 'from'/'to' — expected YYYY-MM-DD.")
+
+    meetings = (
+        db.query(Meeting)
+        .filter(Meeting.meeting_date >= from_date, Meeting.meeting_date <= to_date)
+        .filter(or_(
+            Meeting.created_by == member_id,
+            Meeting.id.in_(db.query(MeetingMember.meeting_id).filter(MeetingMember.member_id == member_id)),
+        ))
+        .order_by(Meeting.meeting_date, Meeting.start_time)
+        .all()
+    )
+    return [meeting_to_dict(m, db, current_user) for m in meetings]
 
 
 @router.get("/project-colors")

@@ -1,21 +1,33 @@
 'use client';
 
 import { useDroppable } from '@dnd-kit/core';
-import { CalendarTask } from '@/lib/api';
+import { CalendarTask, CalendarMeeting } from '@/lib/api';
 import TaskBlock, { DateOnlyChip } from './TaskBlock';
+import MeetingBlock from './MeetingBlock';
 import {
   HOUR_START,
   HOUR_END,
   HOUR_HEIGHT,
+  EVENT_HEIGHT,
   formatDayLabel,
   isSameDay,
   minutesToTop,
-  layoutDayTasks,
+  layoutDayItems,
   parseScheduledAt,
+  parseHHMM,
   toApiDate,
   topToQuarterHour,
   buildHourTicks,
 } from './dateUtils';
+
+// A day column's timeline mixes two independent event types — Task
+// (draggable, project-colored) and Meeting (read-only, fixed indigo style)
+// — positioned/lane-packed together by time via the shared, type-agnostic
+// layoutDayItems(). See "Chốt thêm requirement": Meeting has its own data
+// source and permission scope, merged with Task only for display.
+type DayItem =
+  | { kind: 'task'; task: CalendarTask; top: number; height: number }
+  | { kind: 'meeting'; meeting: CalendarMeeting; top: number; height: number };
 
 // 30-minute marks from 06:00 to 23:00 (inclusive) — shared by the hour rail
 // and the grid lines so they always line up. Pure function of the module's
@@ -59,21 +71,23 @@ function DateOnlyCell({
 
 function DayColumnBody({
   day,
-  dayTasks,
+  dayItems,
   onToggleDone,
   onOpenDetail,
+  onOpenMeetingDetail,
   onEmptyCellClick,
   gridHeight,
 }: {
   day: Date;
-  dayTasks: { task: CalendarTask; date: Date; top: number }[];
+  dayItems: DayItem[];
   onToggleDone: (task: CalendarTask) => void;
   onOpenDetail: (task: CalendarTask) => void;
+  onOpenMeetingDetail: (meeting: CalendarMeeting) => void;
   onEmptyCellClick: (day: Date, hours: number, minutes: number) => void;
   gridHeight: number;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `day:${toApiDate(day)}`, data: { day } });
-  const positioned = layoutDayTasks(dayTasks);
+  const positioned = layoutDayItems(dayItems);
 
   return (
     <div className="border-r border-slate-100 last:border-r-0">
@@ -98,17 +112,29 @@ function DayColumnBody({
         {TICKS.filter(t => t.isHour && t.hours > HOUR_START).map(t => (
           <div key={`hour-${t.label}`} className="absolute left-0 right-0 border-t border-slate-100" style={{ top: t.top }} />
         ))}
-        {positioned.map(p => (
-          <TaskBlock
-            key={p.task.id}
-            task={p.task}
-            top={p.top}
-            lane={p.lane}
-            laneCount={p.laneCount}
-            onToggleDone={onToggleDone}
-            onOpenDetail={onOpenDetail}
-          />
-        ))}
+        {positioned.map(p =>
+          p.kind === 'task' ? (
+            <TaskBlock
+              key={`task-${p.task.id}`}
+              task={p.task}
+              top={p.top}
+              lane={p.lane}
+              laneCount={p.laneCount}
+              onToggleDone={onToggleDone}
+              onOpenDetail={onOpenDetail}
+            />
+          ) : (
+            <MeetingBlock
+              key={`meeting-${p.meeting.id}`}
+              meeting={p.meeting}
+              top={p.top}
+              height={p.height}
+              lane={p.lane}
+              laneCount={p.laneCount}
+              onOpenDetail={onOpenMeetingDetail}
+            />
+          )
+        )}
       </div>
     </div>
   );
@@ -117,16 +143,20 @@ function DayColumnBody({
 export default function CalendarGrid({
   days,
   tasks,
+  meetings,
   dateOnlyTasksByDay,
   onToggleDone,
   onOpenDetail,
+  onOpenMeetingDetail,
   onEmptyCellClick,
 }: {
   days: Date[];
   tasks: CalendarTask[]; // already filtered to scheduled_at != null
+  meetings: CalendarMeeting[];
   dateOnlyTasksByDay: Map<string, CalendarTask[]>; // key = toApiDate(day); has a date, no time
   onToggleDone: (task: CalendarTask) => void;
   onOpenDetail: (task: CalendarTask) => void;
+  onOpenMeetingDetail: (meeting: CalendarMeeting) => void;
   onEmptyCellClick: (day: Date, hours: number, minutes: number) => void;
 }) {
   const today = new Date();
@@ -181,22 +211,38 @@ export default function CalendarGrid({
           {/* Day columns */}
           <div className="flex-1 grid" style={cols}>
             {days.map(day => {
-              const dayTasks = tasks
-                .map(task => {
+              type TaskItem = Extract<DayItem, { kind: 'task' }>;
+              type MeetingItem = Extract<DayItem, { kind: 'meeting' }>;
+              const dayTaskItems: DayItem[] = tasks
+                .map((task): TaskItem | null => {
                   if (!task.scheduled_at) return null;
                   const dt = parseScheduledAt(task.scheduled_at);
                   if (!dt || !isSameDay(dt, day)) return null;
-                  return { task, date: dt, top: minutesToTop(dt.getHours(), dt.getMinutes()) };
+                  return { kind: 'task', task, top: minutesToTop(dt.getHours(), dt.getMinutes()), height: EVENT_HEIGHT };
                 })
-                .filter((x): x is { task: CalendarTask; date: Date; top: number } => x !== null);
+                .filter((x): x is TaskItem => x !== null);
+              const dayMeetingItems: DayItem[] = meetings
+                .map((meeting): MeetingItem | null => {
+                  if (meeting.date !== toApiDate(day)) return null;
+                  const t = parseHHMM(meeting.time);
+                  if (!t) return null;
+                  const top = minutesToTop(t.hours, t.minutes);
+                  // No end_time on this meeting → same fixed height as a Task
+                  // block, same fallback rule the spec calls out ("Thời
+                  // lượng ... nếu Meeting đang có").
+                  const height = meeting.duration ? meeting.duration * (HOUR_HEIGHT / 60) : EVENT_HEIGHT;
+                  return { kind: 'meeting', meeting, top, height };
+                })
+                .filter((x): x is MeetingItem => x !== null);
 
               return (
                 <DayColumnBody
                   key={day.toISOString()}
                   day={day}
-                  dayTasks={dayTasks}
+                  dayItems={[...dayTaskItems, ...dayMeetingItems]}
                   onToggleDone={onToggleDone}
                   onOpenDetail={onOpenDetail}
+                  onOpenMeetingDetail={onOpenMeetingDetail}
                   onEmptyCellClick={onEmptyCellClick}
                   gridHeight={gridHeight}
                 />
