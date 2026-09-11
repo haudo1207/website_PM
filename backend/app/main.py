@@ -1605,6 +1605,7 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
         scopes=[
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive.file",
             "https://www.googleapis.com/auth/meetings.space.readonly",
             "https://www.googleapis.com/auth/spreadsheets.readonly",
         ],
