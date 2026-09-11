@@ -55,10 +55,31 @@ function findClickableByText(regex) {
   return null;
 }
 
+// Confirmed live 2026-09-11 via a direct xdotool (real X11-level) click test
+// on the VPS: el.click() alone worked fine on real desktop Chrome (WS1-3)
+// but silently failed to trigger Meet's "Join now" button under Xvfb — no
+// error, but the button never actually reacted. Meet's buttons are Material
+// "ripple" buttons wired to pointerdown/pointerup (not just click), which
+// el.click() never dispatches (it only synthesizes a bare "click" event).
+// Firing the full pointerdown -> mousedown -> pointerup -> mouseup -> click
+// sequence matches what a real click produces and is a strict superset of
+// plain el.click(), so this doesn't regress the already-working desktop path.
+function fireClick(el) {
+  const rect = el.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+  const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0 };
+  el.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1, isPrimary: true }));
+  el.dispatchEvent(new MouseEvent("mousedown", base));
+  el.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1, isPrimary: true }));
+  el.dispatchEvent(new MouseEvent("mouseup", base));
+  el.dispatchEvent(new MouseEvent("click", base));
+}
+
 function clickIfFound(regex) {
   const el = findClickableByText(regex);
   if (el) {
-    el.click();
+    fireClick(el);
     return true;
   }
   return false;
@@ -96,7 +117,7 @@ function findActionButton(regex) {
 function clickActionButton(regex) {
   const el = findActionButton(regex);
   if (el) {
-    el.click();
+    fireClick(el);
     return true;
   }
   return false;
@@ -172,7 +193,7 @@ function admitWaitingParticipants() {
     const el = findActionButton(ADMIT_ONE_RE);
     if (!el) break;
     log("Waiting room participant detected");
-    el.click();
+    fireClick(el);
     log("Admit clicked");
     guard += 1;
   }
@@ -190,7 +211,7 @@ function admitWaitingParticipants() {
     if (el.getAttribute("aria-expanded") !== "false") continue;
     const label = el.getAttribute("aria-label") || visibleText(el);
     if (label && /admit/i.test(label)) {
-      el.click();
+      fireClick(el);
       break;
     }
   }
