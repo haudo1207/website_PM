@@ -77,7 +77,29 @@ export default function CalendarPage() {
     [tasks, overrides]
   );
   const scheduledTasks = useMemo(() => displayTasks.filter(t => !!t.scheduled_at), [displayTasks]);
-  const unscheduledTasks = useMemo(() => displayTasks.filter(t => !t.scheduled_at), [displayTasks]);
+  // Has a date (start_date) but no time (scheduled_at IS NULL) — shows in
+  // the fixed row under that day's header, NOT the Unscheduled Tray, but
+  // only when its start_date actually falls within the days currently on
+  // screen (there's no column to place it under otherwise). start_date is
+  // NOT NULL on every Task, so this is a within-view check, not a
+  // has-a-value check — see the 2026-09 design note on this rule.
+  const visibleDateKeys = useMemo(() => new Set(days.map(toApiDate)), [days]);
+  const dateOnlyTasksByDay = useMemo(() => {
+    const map = new Map<string, CalendarTask[]>();
+    for (const t of displayTasks) {
+      if (t.scheduled_at || !t.start_date) continue;
+      const key = t.start_date.slice(0, 10);
+      if (!visibleDateKeys.has(key)) continue;
+      map.set(key, [...(map.get(key) || []), t]);
+    }
+    return map;
+  }, [displayTasks, visibleDateKeys]);
+  // Genuinely unscheduled: no time AND (no date or its date isn't in the
+  // currently displayed range) — falls back to the Tray so it's never lost.
+  const unscheduledTasks = useMemo(
+    () => displayTasks.filter(t => !t.scheduled_at && !(t.start_date && visibleDateKeys.has(t.start_date.slice(0, 10)))),
+    [displayTasks, visibleDateKeys]
+  );
 
   const goToday = () => setAnchorDate(new Date());
   // 4-day mode: ±4 days. 7-day mode: ±7 days (a full week) — since
@@ -183,13 +205,14 @@ export default function CalendarPage() {
               onQuickCreate={() => { setQuickCreatePrefill(null); setQuickCreateOpen(true); }}
             />
 
-            <div className="flex-1 min-h-0 overflow-y-auto border-t border-slate-100">
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-t border-slate-100">
               {error ? (
                 <p className="p-6 text-[13px] text-rose-600">{getApiErrorMessage(error, 'Không tải được lịch.')}</p>
               ) : (
                 <CalendarGrid
                   days={days}
                   tasks={scheduledTasks}
+                  dateOnlyTasksByDay={dateOnlyTasksByDay}
                   onToggleDone={handleToggleDone}
                   onOpenDetail={handleOpenDetail}
                   onEmptyCellClick={handleEmptyCellClick}

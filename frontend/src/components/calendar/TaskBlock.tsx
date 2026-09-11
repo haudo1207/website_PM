@@ -72,6 +72,34 @@ export function TaskBlockContent({
   );
 }
 
+// A task with a date (start_date) but no time (scheduled_at IS NULL) — sits
+// in the fixed row directly under that day's header, not the Unscheduled
+// Tray (that tray is now reserved for tasks with NEITHER a date nor a
+// time). Auto-height, stacked — no pixel-per-minute positioning since
+// there's no time to place it at. Same visual language as TaskBlock
+// (checkbox, SP badge, Critical bold) via the shared TaskBlockContent.
+export function DateOnlyChip({
+  task,
+  onToggleDone,
+  onOpenDetail,
+}: {
+  task: CalendarTask;
+  onToggleDone: (task: CalendarTask) => void;
+  onOpenDetail: (task: CalendarTask) => void;
+}) {
+  const color = task.project_color || FALLBACK_COLOR;
+  return (
+    <div
+      onClick={e => { e.stopPropagation(); onOpenDetail(task); }}
+      className="relative rounded-lg px-2 py-1 mb-1 last:mb-0 cursor-pointer shadow-sm"
+      style={{ background: hexToRgba(color, 0.12), borderLeft: `3px solid ${color}` }}
+      title={`${task.detail} — ${task.project_name}${task.calendar_role === 'support' ? ' (Support)' : ''}`}
+    >
+      <TaskBlockContent task={task} onToggleDone={onToggleDone} />
+    </div>
+  );
+}
+
 export default function TaskBlock({
   task,
   top,
