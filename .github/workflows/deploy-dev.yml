@@ -47,8 +47,8 @@ jobs:
               "ASSEMBLYAI_API_KEY": "9fcea11b84c54a7882455d271d5722e0",
               "TELEGRAM_BOT_TOKEN": "8923394127:AAHPjZsLIRmDm9nk4Rzc1Oce68PwvhL3vbQ",
               "TELEGRAM_BOT_USERNAME": "cloudgate_pm_bot",
-              "TELEGRAM_GROUP_CHAT_ID": "-1003890947468",
-              "TELEGRAM_MESSAGE_THREAD_ID": "2",
+              "TELEGRAM_GROUP_CHAT_ID": "-1002292753951",
+              "TELEGRAM_MESSAGE_THREAD_ID": "665",
               "N8N_WEBHOOK_SECRET": "p2zs7z43HUQAubdAdzkL4OTLNA5qpS4F4vaZML_M5-I",
               "MEETING_BOT_TOKEN": "rA2gx4nvfYN9XgBlPHcQGh-1ibDx7f6iyeligTp-H04",
           }
