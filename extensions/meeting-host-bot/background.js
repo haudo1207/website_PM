@@ -179,22 +179,33 @@ async function cdpClickJoin(tabId) {
     // being debugged" infobar, which shifts the whole page down — any
     // coordinates computed beforehand (e.g. by content.js, before this
     // round-trip) are stale by the time the click actually fires.
-    // Confirmed live 2026-09-11: content.js can match a transient, zero-size
-    // "Join now" element mid-render (before Meet finishes laying out the
-    // real button and settles its final label, e.g.
-    // "Join now without microphone & camera") — skip anything with no
-    // rendered width/height so we only ever click the real, visible button.
+    // Confirmed live 2026-09-11: more than one element can match "join now"
+    // at once (or in quick succession across reloads) — a transient
+    // zero-size element mid-render, and separately a short-labeled "Join
+    // now" element at a DIFFERENT position than the real, final
+    // "Join now without microphone & camera" button. Text-only matching
+    // (as content.js's own findClickableByText does) isn't enough here.
+    // Picking the LARGEST non-zero-area match is a simple, resilient
+    // heuristic: the real, prominent join button is a substantial clickable
+    // area, while decorative/duplicate/transient matches are smaller or
+    // zero-sized.
     const findExpr = `(() => {
       const re = new RegExp(${JSON.stringify(JOIN_TEXT_SOURCE)}, "i");
       const els = document.querySelectorAll('button, [role="button"]');
+      let best = null;
+      let bestArea = 0;
       for (const el of els) {
         const label = el.getAttribute("aria-label") || (el.innerText || el.textContent || "").trim();
         if (!label || !re.test(label)) continue;
         const r = el.getBoundingClientRect();
-        if (r.width <= 0 || r.height <= 0) continue;
-        return JSON.stringify({ found: true, x: r.left + r.width / 2, y: r.top + r.height / 2, label });
+        const area = r.width * r.height;
+        if (area <= 0) continue;
+        if (area > bestArea) {
+          bestArea = area;
+          best = { x: r.left + r.width / 2, y: r.top + r.height / 2, label };
+        }
       }
-      return JSON.stringify({ found: false });
+      return best ? JSON.stringify({ found: true, ...best }) : JSON.stringify({ found: false });
     })()`;
     const evalResult = await sendDebuggerCommand(target, "Runtime.evaluate", {
       expression: findExpr,
