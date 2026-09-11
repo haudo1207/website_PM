@@ -42,6 +42,8 @@ const ADMIT_ONE_RE = /(^admit\b|^chấp nhận|^cho vào)/i;
 const DEBUG_CANDIDATE_RE = /(admit|cho vào|chấp nhận|tham gia|join|wants to|muốn tham gia|waiting|phòng chờ|yêu cầu|request to)/i;
 
 let joinClicked = false;
+let joinAttemptInFlight = false;
+let joinDetectedLogged = false;
 let hostDetected = false;
 const _loggedCandidates = new Set();
 
@@ -143,25 +145,35 @@ function clickActionButton(regex) {
 // No coordinates sent here on purpose — background.js re-locates the button
 // itself, after it has attached the debugger, since attaching can shift the
 // page (Chrome's own "being debugged" infobar) and stale coordinates
-// computed here would miss.
+// computed here would miss. Confirmed live 2026-09-11: the button can also
+// briefly exist mid-render with zero width/height before Meet finishes
+// laying it out — background.js retries the lookup itself, but if it still
+// comes back empty, joinClicked stays false here so the next 1.5s tick just
+// tries again instead of giving up after one bad-timing attempt.
 function requestCdpJoinClick() {
   chrome.runtime.sendMessage({ action: "CDP_CLICK_JOIN" }, (response) => {
+    joinAttemptInFlight = false;
     if (chrome.runtime.lastError) {
       log("CDP click request failed:", chrome.runtime.lastError.message);
       return;
     }
     if (response && response.success === false) {
-      log("CDP click failed:", response.error);
+      log("CDP click failed, will retry:", response.error);
+      return;
     }
+    joinClicked = true;
   });
 }
 
 function tryClickJoin() {
-  if (joinClicked) return;
+  if (joinClicked || joinAttemptInFlight) return;
   const el = findClickableByText(JOIN_TEXT_RE);
   if (el) {
-    joinClicked = true;
-    log("Join detected");
+    if (!joinDetectedLogged) {
+      log("Join detected");
+      joinDetectedLogged = true;
+    }
+    joinAttemptInFlight = true;
     requestCdpJoinClick();
     return;
   }

@@ -179,15 +179,20 @@ async function cdpClickJoin(tabId) {
     // being debugged" infobar, which shifts the whole page down — any
     // coordinates computed beforehand (e.g. by content.js, before this
     // round-trip) are stale by the time the click actually fires.
+    // Confirmed live 2026-09-11: content.js can match a transient, zero-size
+    // "Join now" element mid-render (before Meet finishes laying out the
+    // real button and settles its final label, e.g.
+    // "Join now without microphone & camera") — skip anything with no
+    // rendered width/height so we only ever click the real, visible button.
     const findExpr = `(() => {
       const re = new RegExp(${JSON.stringify(JOIN_TEXT_SOURCE)}, "i");
       const els = document.querySelectorAll('button, [role="button"]');
       for (const el of els) {
         const label = el.getAttribute("aria-label") || (el.innerText || el.textContent || "").trim();
-        if (label && re.test(label)) {
-          const r = el.getBoundingClientRect();
-          return JSON.stringify({ found: true, x: r.left + r.width / 2, y: r.top + r.height / 2, label });
-        }
+        if (!label || !re.test(label)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        return JSON.stringify({ found: true, x: r.left + r.width / 2, y: r.top + r.height / 2, label });
       }
       return JSON.stringify({ found: false });
     })()`;
