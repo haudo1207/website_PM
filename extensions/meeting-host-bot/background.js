@@ -96,12 +96,36 @@ async function startRecording(meetingId) {
   }
 }
 
+// Short-lived Google Drive access token + target filename for this specific
+// meeting_id, so recorder_service.py can upload straight to Drive itself —
+// the video bytes never pass through this backend, it only ever hands out
+// a Bearer token (see backend/app/routers/meeting_bot.py's /drive-token).
+// Best-effort: a failure here just means the recording stays local instead
+// of blocking the stop itself.
+async function getDriveUploadInfo(meetingId) {
+  try {
+    const config = await getConfig();
+    if (!config.apiBaseUrl || !config.botToken) return null;
+    const url = `${config.apiBaseUrl}/api/meeting-bot/drive-token?meeting_id=${encodeURIComponent(meetingId)}`;
+    const resp = await fetch(url, { headers: { "x-meeting-bot-token": config.botToken } });
+    if (!resp.ok) {
+      log("Drive token fetch failed:", resp.status);
+      return null;
+    }
+    return await resp.json();
+  } catch (error) {
+    log("Drive token fetch failed:", error?.message || error);
+    return null;
+  }
+}
+
 async function stopRecording(meetingId) {
+  const upload = await getDriveUploadInfo(meetingId);
   try {
     const resp = await fetch(`${RECORDER_BASE_URL}/record/stop`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ meeting_id: String(meetingId) }),
+      body: JSON.stringify({ meeting_id: String(meetingId), upload: upload || undefined }),
     });
     const data = await resp.json().catch(() => ({}));
     log("Recording stop:", resp.status, JSON.stringify(data));

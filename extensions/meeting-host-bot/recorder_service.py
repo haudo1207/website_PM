@@ -17,6 +17,8 @@ import os
 import signal
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = "127.0.0.1"
@@ -49,7 +51,50 @@ def start_recording(meeting_id):
     return path, True
 
 
-def stop_recording(meeting_id):
+DRIVE_RESUMABLE_INITIATE_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
+
+
+def upload_to_drive(path, access_token, drive_filename):
+    """Uploads directly to Drive from the VPS using a short-lived Bearer
+    token handed out by backend's GET /api/meeting-bot/drive-token — this
+    process never sees a refresh_token or client_secret, only a token good
+    for ~1h (see meeting_bot.py). Resumable (not simple multipart) since a
+    real meeting recording can be well past the ~5MB size Google documents
+    simple multipart upload for. Streams the file via a file-object `data`
+    (urllib/http.client reads it in chunks) instead of loading it into
+    memory — this VPS is RAM-constrained (see meeting-host-bot-design
+    memory: ~1.9GB available, shared with the live dev app).
+    """
+    metadata = json.dumps({"name": drive_filename, "mimeType": "video/mp4"}).encode()
+    init_req = urllib.request.Request(
+        DRIVE_RESUMABLE_INITIATE_URL,
+        data=metadata,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Upload-Content-Type": "video/mp4",
+            "X-Upload-Content-Length": str(os.path.getsize(path)),
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(init_req, timeout=30) as resp:
+        session_uri = resp.headers.get("Location")
+    if not session_uri:
+        raise RuntimeError("Drive resumable session did not return a Location header")
+
+    file_size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        put_req = urllib.request.Request(
+            session_uri,
+            data=f,
+            headers={"Content-Type": "video/mp4", "Content-Length": str(file_size)},
+            method="PUT",
+        )
+        with urllib.request.urlopen(put_req, timeout=1800) as put_resp:
+            return json.loads(put_resp.read().decode())
+
+
+def stop_recording(meeting_id, upload=None):
     entry = _recordings.pop(meeting_id, None)
     if not entry:
         return None
@@ -63,7 +108,21 @@ def stop_recording(meeting_id):
         proc.kill()
         proc.wait(timeout=5)
     size = os.path.getsize(entry["file"]) if os.path.exists(entry["file"]) else 0
-    return {"file": entry["file"], "size": size}
+    result = {"file": entry["file"], "size": size}
+
+    # Upload is additive, same as recording itself relative to Join/Admit —
+    # a Drive failure (expired token, network blip, quota) must not make
+    # the /record/stop call itself look like it failed; the file is already
+    # safely finalized on local disk regardless.
+    if upload and upload.get("access_token") and upload.get("drive_filename") and size > 0:
+        try:
+            drive_file = upload_to_drive(entry["file"], upload["access_token"], upload["drive_filename"])
+            result["drive"] = {"id": drive_file.get("id"), "name": drive_file.get("name")}
+        except urllib.error.HTTPError as exc:
+            result["drive_upload_error"] = f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:500]}"
+        except Exception as exc:
+            result["drive_upload_error"] = str(exc)
+    return result
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -91,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
                 path, started = start_recording(meeting_id)
                 return self._send_json(200, {"status": "recording" if started else "already_recording", "file": path})
             if self.path == "/record/stop":
-                result = stop_recording(meeting_id)
+                result = stop_recording(meeting_id, body.get("upload"))
                 if result is None:
                     return self._send_json(404, {"error": "not recording"})
                 return self._send_json(200, {"status": "stopped", **result})

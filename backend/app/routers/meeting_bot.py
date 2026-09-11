@@ -20,7 +20,7 @@ from ..database import get_db
 from ..models.meeting import Meeting
 from ..models.system_category import Workspace
 from ..models.workspace_google_account import WorkspaceGoogleAccount
-from ..services.meeting_sync import _resolve_meeting_workspace_id
+from ..services.meeting_sync import _resolve_meeting_workspace_id, get_workspace_google_access_token
 from ..utils.timezone import VN_TZ as _VN_TZ
 
 router = APIRouter()
@@ -129,3 +129,39 @@ def get_bot_queue(
         })
 
     return {"due": due}
+
+
+@router.get("/drive-token")
+def get_drive_upload_token(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(_check_bot_token),
+):
+    """Short-lived Google Drive access token + target filename for the
+    recorder VPS to upload a finished recording directly to Drive — see
+    extensions/meeting-host-bot/recorder_service.py. Deliberately hands out
+    only a Bearer access token (already refreshed here, ~1h validity),
+    never the underlying refresh_token/client_secret: the VPS talks to
+    googleapis.com directly with it, the video bytes never touch this
+    backend.
+
+    Filename MUST contain "MK-{meeting_id}" — that exact substring is what
+    n8n's "W3. Search Video By Tag" node searches all of Drive for (see
+    Meeting_AI_Summary_dev.json), matching the same [MK-{id}] tag already
+    put in the Calendar event title by create_google_meet_shared. No new
+    DB column needed for this — the tag has always just been meeting_id.
+    """
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    workspace_id = _resolve_meeting_workspace_id(db, meeting)
+    try:
+        access_token = get_workspace_google_access_token(db, workspace_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Không lấy được Google access token: {exc}")
+
+    title = (meeting.title or "Meeting").replace("\n", " ").replace("\r", " ").strip()
+    drive_filename = f"[MK-{meeting.id}] {title}.mp4"
+
+    return {"access_token": access_token, "drive_filename": drive_filename}

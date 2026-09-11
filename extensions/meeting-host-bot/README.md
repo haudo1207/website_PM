@@ -94,9 +94,33 @@ có cuộc gọi thật đang chạy: ra file mp4 hợp lệ, có cả video (h2
 phân giải Xvfb) lẫn audio (aac) — xem checkpoint trong memory
 `meeting-host-bot-design` nếu cần đối chiếu chi tiết.
 
-**Chưa làm (việc kế tiếp, không phải bug):** đẩy file ghi được lên nơi pipeline
-AI Summary hiện tại (n8n + Drive) tự tìm thấy — hiện file chỉ nằm trên đĩa
-VPS. Cũng chưa test 4 workspace ghi hình đồng thời (RAM/disk headroom, xem
+### Upload lên Drive cho pipeline AI Summary (tự động)
+
+Ngay trước khi gọi `/record/stop`, `background.js` gọi thêm
+`GET /api/meeting-bot/drive-token?meeting_id=...` (cùng `apiBaseUrl`/`botToken`
+đã cấu hình) để lấy 1 access token Google ngắn hạn (~1h) + tên file đích, rồi
+gửi kèm trong body `/record/stop` dưới key `upload`. `recorder_service.py`
+tự upload thẳng file vừa quay lên Google Drive bằng chính token đó (resumable
+upload qua `urllib` thư viện chuẩn, không cần cài `google-api-python-client`)
+— **file không đi qua backend**, backend chỉ phát token, không đụng vào bytes
+video. Đây cũng là lý do endpoint đó không nhận `refresh_token`/`client_secret`
+gửi ra ngoài — chỉ 1 access token sống ngắn.
+
+Tên file luôn có dạng `[MK-{meeting_id}] {title}.mp4` — đúng định dạng mà n8n
+node "W3. Search Video By Tag" (`Meeting_AI_Summary_dev.json`) đang search
+trên toàn bộ Drive (`name contains 'MK-{tag}' and mimeType contains 'video/'`),
+tag giống hệt tag đã gắn vào tiêu đề Calendar event lúc tạo meeting
+(`create_google_meet_shared`) — không cần thêm cột DB nào, vì tag luôn chính
+là `meeting_id`.
+
+Việc upload cũng additive như chính recording — nếu fetch token lỗi hoặc
+Drive upload lỗi (`drive_upload_error` trong response), file mp4 vẫn nằm an
+toàn trên đĩa VPS, không mất gì, chỉ là chưa lên được Drive.
+
+**Chưa làm (việc kế tiếp, không phải bug):** test với 1 `meeting_id` thật (có
+dòng `Meeting` thật trong DB) để xác nhận n8n thực sự nhặt được file — lúc
+build tính năng này chưa có sẵn 1 meeting thật đang chạy trên VPS để test hết
+chain. Cũng chưa test 4 workspace ghi hình đồng thời (RAM/disk headroom, xem
 mục Setup VPS).
 
 ## Đọc log ở đâu (dễ nhầm — đọc kỹ)
