@@ -22,9 +22,12 @@ import {
   buildRangeDays,
   toApiDate,
   toApiDateTime,
+  parseApiDate,
   formatRangeLabel,
   topToTimeOfDay,
   combineDateAndTime,
+  startOfWeekMonday,
+  addDays,
   EVENT_HEIGHT,
 } from '@/components/calendar/dateUtils';
 
@@ -51,7 +54,15 @@ export default function CalendarPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  const days = useMemo(() => buildRangeDays(anchorDate, rangeDays), [anchorDate, rangeDays]);
+  // 4-day mode: rolling window starting at the picked date. 7-day mode:
+  // always the full Mon→Sun calendar week containing the picked date — never
+  // a rolling 7-day window (chốt: "7 ngày = luôn là một tuần lịch chuẩn Thứ 2
+  // → Chủ nhật"). The picked date itself (anchorDate) is never snapped to
+  // Monday — only the displayed range is derived from it.
+  const days = useMemo(
+    () => (rangeDays === 7 ? buildRangeDays(startOfWeekMonday(anchorDate), 7) : buildRangeDays(anchorDate, 4)),
+    [anchorDate, rangeDays]
+  );
   const from = toApiDate(days[0]);
   const to = toApiDate(days[days.length - 1]);
 
@@ -69,16 +80,15 @@ export default function CalendarPage() {
   const unscheduledTasks = useMemo(() => displayTasks.filter(t => !t.scheduled_at), [displayTasks]);
 
   const goToday = () => setAnchorDate(new Date());
-  const goPrev = () => setAnchorDate(d => {
-    const c = new Date(d);
-    c.setDate(c.getDate() - rangeDays);
-    return c;
-  });
-  const goNext = () => setAnchorDate(d => {
-    const c = new Date(d);
-    c.setDate(c.getDate() + rangeDays);
-    return c;
-  });
+  // 4-day mode: ±4 days. 7-day mode: ±7 days (a full week) — since
+  // startOfWeekMonday derives the displayed range from anchorDate, shifting
+  // by exactly 7 keeps the same weekday and lands on the prev/next week.
+  const goPrev = () => setAnchorDate(d => addDays(d, -rangeDays));
+  const goNext = () => setAnchorDate(d => addDays(d, rangeDays));
+  const goPickDate = (dateStr: string) => {
+    const picked = parseApiDate(dateStr);
+    if (picked) setAnchorDate(picked);
+  };
 
   const handleToggleDone = async (task: CalendarTask) => {
     // Only Assigned may toggle from the Calendar (UI-level gate — backend
@@ -168,6 +178,8 @@ export default function CalendarPage() {
               onPrev={goPrev}
               onNext={goNext}
               onToday={goToday}
+              anchorDate={anchorDate}
+              onPickDate={goPickDate}
               onQuickCreate={() => { setQuickCreatePrefill(null); setQuickCreateOpen(true); }}
             />
 

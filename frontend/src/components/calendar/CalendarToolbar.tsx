@@ -1,5 +1,7 @@
 'use client';
 
+import { toApiDate } from './dateUtils';
+
 export default function CalendarToolbar({
   rangeLabel,
   rangeDays,
@@ -7,6 +9,8 @@ export default function CalendarToolbar({
   onPrev,
   onNext,
   onToday,
+  anchorDate,
+  onPickDate,
   onQuickCreate,
 }: {
   rangeLabel: string;
@@ -15,6 +19,8 @@ export default function CalendarToolbar({
   onPrev: () => void;
   onNext: () => void;
   onToday: () => void;
+  anchorDate: Date;
+  onPickDate: (dateStr: string) => void;
   onQuickCreate: () => void;
 }) {
   return (
@@ -44,6 +50,16 @@ export default function CalendarToolbar({
           ›
         </button>
         <span className="text-[14.5px] font-bold text-[#0b1c30] ml-1">{rangeLabel}</span>
+        <label className="flex items-center gap-1.5 border border-slate-200 bg-white pl-2.5 pr-2 py-1.5 rounded-lg ml-1 cursor-pointer hover:bg-slate-50">
+          <span className="text-[13px] leading-none" aria-hidden>📅</span>
+          <input
+            type="date"
+            aria-label="Lọc ngày"
+            value={toApiDate(anchorDate)}
+            onChange={e => e.target.value && onPickDate(e.target.value)}
+            className="text-[12.5px] font-semibold text-[#0b1c30] outline-none bg-transparent cursor-pointer"
+          />
+        </label>
       </div>
 
       <div className="flex items-center gap-2">

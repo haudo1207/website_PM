@@ -32,6 +32,17 @@ export function buildRangeDays(anchor: Date, rangeDays: number): Date[] {
   return Array.from({ length: rangeDays }, (_, i) => addDays(start, i));
 }
 
+// Monday of the calendar week containing `d` (ISO-style week start, not
+// locale-dependent — getDay() is 0=Sun..6=Sat regardless of locale).
+// Used by the 7-day view: it always shows a full Mon→Sun week, never a
+// rolling 7-day window from the picked date.
+export function startOfWeekMonday(d: Date): Date {
+  const c = startOfDay(d);
+  const dow = c.getDay(); // 0=Sun..6=Sat
+  const diffFromMonday = (dow + 6) % 7;
+  return addDays(c, -diffFromMonday);
+}
+
 // Parses the naive "YYYY-MM-DD HH:MM:SS" the backend sends (VN wall-clock,
 // never UTC — see backend/app/utils/timezone.py) as LOCAL time. Using
 // `new Date("...T...")` would let the browser reinterpret it via its own
