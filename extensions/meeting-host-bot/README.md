@@ -63,23 +63,41 @@ trong `--user-data-dir`) — không cần làm tay lại mỗi ngày. Nên chạ
 `Xvfb` + `google-chrome` dưới dạng systemd service (`Restart=always`) để VPS
 restart hay Chrome crash thì tự phục hồi.
 
-## Recording (chưa tự động hoá)
+## Recording (tự động, xác nhận hoạt động 2026-09-11 trên VPS)
 
-Vì Gmail cá nhân không có nút "Ghi lại" của Meet, phải tự quay màn hình ảo +
-lấy nguồn âm thanh PulseAudio — mỗi profile 1 tiến trình ffmpeg riêng:
+Vì Gmail cá nhân không có nút "Ghi lại" của Meet, VPS tự quay màn hình ảo +
+lấy nguồn âm thanh PulseAudio bằng ffmpeg, điều khiển qua `recorder_service.py`
+— một HTTP service nhỏ (chỉ dùng thư viện chuẩn Python, không cần cài thêm
+gói) chạy local trên **cùng VPS** với Chrome, bind `127.0.0.1` only:
 
 ```bash
-ffmpeg -f x11grab -video_size 1280x800 -i :101 \
-       -f pulse -i <monitor-source-cho-:101> \
-       -c:v libx264 -preset veryfast -c:a aac \
-       ~/meeting-bot/recordings/ws1-$(date +%Y%m%d-%H%M%S).mp4
+python3 recorder_service.py
+# hoặc chỉnh qua env: RECORDER_PORT, RECORDER_DISPLAY, RECORDER_AUDIO_SOURCE,
+# RECORDER_OUTPUT_DIR, RECORDER_RESOLUTION, RECORDER_FRAMERATE
 ```
 
-`background.js` **chưa tự gọi ffmpeg**. Bước tiếp theo hợp lý là 1 server nhỏ
-chạy local trên VPS mà background.js gọi tới lúc mở/đóng tab meeting, để bản
-ghi khớp đúng thời gian cuộc họp thật — chưa làm vì còn vài quyết định cuối
-(ghi xong lưu/đẩy đi đâu, giữ file bao lâu, dung lượng ổ đĩa nếu 4 workspace
-họp cùng lúc).
+`background.js` gọi `POST http://127.0.0.1:8765/record/start` ngay khi
+`content.js` báo `HOST_DETECTED` (đã thực sự vào cuộc gọi, không phải lúc
+còn ở lobby), và `POST /record/stop` khi `content.js` báo `CALL_ENDED` (nút
+"Leave call" biến mất trở lại — ví dụ khi Meet tự đá host ra sau khi ở một
+mình quá lâu) hoặc khi tab bị đóng (`chrome.tabs.onRemoved`, phòng trường hợp
+content.js không kịp báo). Cả hai request đều gửi `meeting_id` để service
+đặt tên file `<meeting_id>_<timestamp>.mp4` trong `RECORDER_OUTPUT_DIR`
+(mặc định `~/meeting-bot/recordings/`).
+
+Recording không bao giờ chặn Join/Admit — nếu `recorder_service.py` chưa
+chạy hoặc không gọi được, `background.js` chỉ log lỗi rồi tiếp tục bình
+thường (xem `startRecording`/`stopRecording` trong `background.js`).
+
+Kiểm tra thủ công 1 lần cùng ffmpeg 4.2.7 trên VPS thật, quay 15s trong lúc
+có cuộc gọi thật đang chạy: ra file mp4 hợp lệ, có cả video (h264, đúng độ
+phân giải Xvfb) lẫn audio (aac) — xem checkpoint trong memory
+`meeting-host-bot-design` nếu cần đối chiếu chi tiết.
+
+**Chưa làm (việc kế tiếp, không phải bug):** đẩy file ghi được lên nơi pipeline
+AI Summary hiện tại (n8n + Drive) tự tìm thấy — hiện file chỉ nằm trên đĩa
+VPS. Cũng chưa test 4 workspace ghi hình đồng thời (RAM/disk headroom, xem
+mục Setup VPS).
 
 ## Đọc log ở đâu (dễ nhầm — đọc kỹ)
 
@@ -95,10 +113,14 @@ Chuỗi log đầy đủ khi mọi thứ chạy đúng:
 [MeetingBot] Found meeting #12
 [MeetingBot] Opening Meet
 [MeetingBot] Join detected                  ← Meet tab console
-[MeetingBot] Host detected
+[MeetingBot] Host detected                  ← cũng kích hoạt recording start
 [MeetingBot] Waiting room participant detected
 [MeetingBot] Admit clicked
+[MeetingBot] Call ended                     ← khi rời cuộc gọi, kích hoạt recording stop
 ```
+
+Log `Recording start:`/`Recording stop:` (kết quả gọi `recorder_service.py`)
+nằm ở **Service Worker console** (background.js gọi, không phải content.js).
 
 Nếu bot "im lặng không hoạt động", log sẽ cho biết dừng ở bước nào (queue rỗng?
 không mở được tab? Join không detect được? vào phòng nhưng không phải host?
@@ -106,7 +128,7 @@ không detect được người chờ?).
 
 ## Giới hạn / rủi ro cần biết — đọc trước khi tin tưởng dùng thật
 
-- **Selector Join/Admit trong `content.js` là dò theo text/aria-label** (tiếng Việt + tiếng Anh), vì Google Meet không có API DOM ổn định và hay đổi class/layout. **Chưa từng chạy thử với một cuộc Google Meet thật** — gần như chắc chắn cần tinh chỉnh regex khi test thật lần đầu (mở thử 1 cuộc họp tay trong đúng profile đó, kiểm tra lại aria-label/chữ trên nút nếu bot không phản ứng).
+- **Selector Join/Admit trong `content.js` là dò theo text/aria-label** (tiếng Việt + tiếng Anh), vì Google Meet không có API DOM ổn định và hay đổi class/layout. Đã xác nhận chạy PASS end-to-end (Join → Host → Waiting room → Admit) trên cả Chrome desktop thật (WS1-3, 2026-09-11) lẫn VPS/Xvfb (WS1, 2026-09-11, dùng CDP `chrome.debugger` cho riêng bước Join — xem comment trong `content.js`/`background.js`). Meet có thể đổi wording/DOM bất kỳ lúc nào — nếu bot đột nhiên "im lặng", tra lại theo mục log bên dưới trước khi nghi ngờ selector.
 - **Google có thể coi đây là hành vi bất thường.** Điều khiển tự động liên tục 1 phiên Gmail cá nhân (tự bấm nút trong Meet) nằm ngoài cách dùng thông thường, có thể khiến Google yêu cầu xác minh lại — lúc đó auto-admit sẽ âm thầm ngừng hoạt động tới khi có người vào xác minh tay. Giữ nguyên `user-data-dir` của từng profile (đừng xoá) để giảm rủi ro này.
 - **1 mail chỉ host được 1 cuộc cùng lúc** — đây là giới hạn của Google Meet, không phải bug của queue/extension. Nếu 2 meeting cùng workspace trùng giờ, chỉ 1 cuộc được auto-admit.
 - `chrome.alarms` bị Chrome giới hạn tối thiểu 1 phút/lần — cadence 15-30s thực tế chạy qua vòng lặp `setTimeout` tự lặp lại trong `background.js`, alarm chỉ đóng vai trò "hồi phục" nếu service worker bị Chrome thu hồi giữa chừng.

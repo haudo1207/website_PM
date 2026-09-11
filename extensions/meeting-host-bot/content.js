@@ -45,6 +45,7 @@ let joinClicked = false;
 let joinAttemptInFlight = false;
 let joinDetectedLogged = false;
 let hostDetected = false;
+let callEndedNotified = false;
 const _loggedCandidates = new Set();
 
 function visibleText(el) {
@@ -192,6 +193,27 @@ function checkHostState() {
   if (findClickableByText(LEAVE_CALL_RE)) {
     hostDetected = true;
     log("Host detected");
+    // Recording starts from here, not from Join — Join can fire multiple
+    // failed CDP attempts before actually landing in the call (see
+    // requestCdpJoinClick's retry comments above), and the lobby itself has
+    // nothing worth recording.
+    chrome.runtime.sendMessage({ action: "HOST_DETECTED" });
+  }
+}
+
+// Confirmed live 2026-09-11: a solo host (no other participants) gets
+// dropped back to meet.google.com/home by Meet itself after roughly
+// 20-25 minutes — not a bug in this bot, but it does mean "Host detected"
+// firing once isn't a guarantee the call is still running later. The leave
+// button disappearing again is the same in-call signal as above, just
+// inverted, and is what tells background.js to stop the recording rather
+// than let ffmpeg run indefinitely against a stale/blank tab.
+function checkCallEnded() {
+  if (!hostDetected || callEndedNotified) return;
+  if (!findClickableByText(LEAVE_CALL_RE)) {
+    callEndedNotified = true;
+    log("Call ended");
+    chrome.runtime.sendMessage({ action: "CALL_ENDED" });
   }
 }
 
@@ -267,6 +289,7 @@ function admitWaitingParticipants() {
 function tick() {
   tryClickJoin();
   checkHostState();
+  checkCallEnded();
   admitWaitingParticipants();
 }
 

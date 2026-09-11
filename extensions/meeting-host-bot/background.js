@@ -44,6 +44,108 @@ async function markOpened(meetingId) {
   await chrome.storage.local.set({ openedMeetings: opened });
 }
 
+// Maps the tab a meeting was opened in back to its meeting_id, so a
+// "HOST_DETECTED"/"CALL_ENDED" message (which only carries sender.tab.id,
+// not the meeting) can be turned into the right recorder start/stop call.
+// Kept in chrome.storage.local, not a module-level Map, for the same reason
+// openedMeetings is: the service worker can be evicted between messages.
+const RECORDER_BASE_URL = "http://127.0.0.1:8765";
+
+async function getRecordingTabs() {
+  const { recordingTabs } = await chrome.storage.local.get(["recordingTabs"]);
+  return recordingTabs || {};
+}
+
+// `path` is the meeting URL's pathname at the time the tab was opened (e.g.
+// "/zhh-nuue-adp") — kept alongside meetingId so chrome.tabs.onUpdated below
+// can tell "still on this meeting" apart from "navigated away" without
+// depending on content.js still being alive to report it.
+async function setMeetingForTab(tabId, meetingId, path) {
+  const map = await getRecordingTabs();
+  map[tabId] = { meetingId, path };
+  await chrome.storage.local.set({ recordingTabs: map });
+}
+
+async function getMeetingForTab(tabId) {
+  const map = await getRecordingTabs();
+  return map[tabId]?.meetingId ?? null;
+}
+
+async function popMeetingForTab(tabId) {
+  const map = await getRecordingTabs();
+  const entry = map[tabId];
+  if (!entry) return null;
+  delete map[tabId];
+  await chrome.storage.local.set({ recordingTabs: map });
+  return entry.meetingId;
+}
+
+async function startRecording(meetingId) {
+  try {
+    const resp = await fetch(`${RECORDER_BASE_URL}/record/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meeting_id: String(meetingId) }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    log("Recording start:", resp.status, JSON.stringify(data));
+  } catch (error) {
+    // Recorder service not reachable (not running, or wrong machine) should
+    // never block Join/Admit — recording is additive, not load-bearing.
+    log("Recording start failed (recorder service unreachable?):", error?.message || error);
+  }
+}
+
+async function stopRecording(meetingId) {
+  try {
+    const resp = await fetch(`${RECORDER_BASE_URL}/record/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meeting_id: String(meetingId) }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    log("Recording stop:", resp.status, JSON.stringify(data));
+  } catch (error) {
+    log("Recording stop failed (recorder service unreachable?):", error?.message || error);
+  }
+}
+
+// Backup stop path #1: if the tab is closed (crash, manual close, VPS reboot
+// script cleanup) before content.js ever gets to send CALL_ENDED, this is
+// what actually stops ffmpeg instead of leaving it recording a dead tab.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  popMeetingForTab(tabId).then((meetingId) => {
+    if (meetingId) stopRecording(meetingId);
+  });
+});
+
+// Backup stop path #2, the important one in practice: confirmed live
+// 2026-09-11 that a solo host (no other participants) gets fully navigated
+// to meet.google.com/home by Meet itself after ~20-25 minutes — a real page
+// navigation, not just a DOM change. That destroys and re-injects content.js
+// from scratch, resetting its in-memory hostDetected/callEndedNotified state,
+// so its own CALL_ENDED message never fires for this case (it looks, from
+// the fresh script's point of view, like a call it never saw). Watching the
+// tab's URL at the background.js level instead survives that: it doesn't
+// depend on the content script's state surviving the navigation.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url) return;
+  getRecordingTabs().then((map) => {
+    const entry = map[tabId];
+    if (!entry) return;
+    let stillOnMeeting = false;
+    try {
+      stillOnMeeting = new URL(changeInfo.url).pathname === entry.path;
+    } catch (_err) {
+      stillOnMeeting = false;
+    }
+    if (stillOnMeeting) return;
+    popMeetingForTab(tabId).then((meetingId) => {
+      if (meetingId) stopRecording(meetingId);
+    });
+  });
+});
+
 // The Fetch API only allows ISO-8859-1 (code point <= 255) bytes in a header
 // value — a token copy-pasted from an editor with "smart punctuation" (e.g.
 // "-" auto-replaced by an en/em dash) silently picks up a code point outside
@@ -105,7 +207,17 @@ async function pollOnce() {
     log(`Found meeting #${meeting.meeting_id}`, meeting.title || "");
     log("Opening Meet", meeting.join_url);
     await markOpened(meeting.meeting_id);
-    chrome.tabs.create({ url: meeting.join_url, active: true });
+    let path = "";
+    try {
+      path = new URL(meeting.join_url).pathname;
+    } catch (_err) {
+      // Already filtered to meet.google.com URLs above; a bad path just
+      // means the onUpdated "left the meeting" check below never matches
+      // (path stays ""), falling back to onRemoved/CALL_ENDED for stop.
+    }
+    chrome.tabs.create({ url: meeting.join_url, active: true }, (tab) => {
+      if (tab?.id !== undefined) setMeetingForTab(tab.id, meeting.meeting_id, path);
+    });
   }
 }
 
@@ -207,11 +319,27 @@ async function cdpClickJoin(tabId) {
       }
       return best ? JSON.stringify({ found: true, ...best }) : JSON.stringify({ found: false });
     })()`;
-    const evalResult = await sendDebuggerCommand(target, "Runtime.evaluate", {
-      expression: findExpr,
-      returnByValue: true,
-    });
-    const info = JSON.parse(evalResult.result.value);
+    // Confirmed live 2026-09-11 (second round of VPS testing): attach()
+    // resolving does not guarantee the renderer has finished the reflow it
+    // triggers by inserting the "being debugged" banner — evaluating
+    // immediately can see a not-yet-settled layout and miss a button that
+    // IS in the DOM with a real non-zero rect a moment later. A separate,
+    // plain non-debugger CDP eval run manually right after a "not found"
+    // result found it instantly, which is what pointed at timing rather
+    // than the matching logic itself. Retrying a couple of times inside
+    // the SAME attach session (instead of attach/detach on every 1.5s
+    // content.js tick) both gives layout time to settle and avoids
+    // hammering chrome.debugger with rapid attach/detach churn.
+    let info = { found: false };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const evalResult = await sendDebuggerCommand(target, "Runtime.evaluate", {
+        expression: findExpr,
+        returnByValue: true,
+      });
+      info = JSON.parse(evalResult.result.value);
+      if (info.found) break;
+    }
     if (!info.found) {
       throw new Error("Join button not found at click time (page may have changed)");
     }
@@ -220,6 +348,29 @@ async function cdpClickJoin(tabId) {
     await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x: info.x, y: info.y, button: "left", clickCount: 1 });
     await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: info.x, y: info.y, button: "left", clickCount: 1 });
     log("cdpClickJoin: click dispatched");
+    // Confirmed live 2026-09-11 (second round): dispatching a click without
+    // any error does NOT mean it landed on the real button — the retry loop
+    // above can settle on a rect measured mid-transition (Meet's lobby
+    // button visibly slides/animates into place), which is still a "found,
+    // non-zero area" match but not the button's final resting position. A
+    // click that misses just moves the mouse over empty lobby UI: no
+    // exception, "success" as far as background.js can tell, yet the join
+    // button is still sitting right there afterward. content.js treats any
+    // success response as permanent (sets joinClicked=true and stops
+    // retrying for good), so a false "success" here silently kills the
+    // whole bot for that meeting. Re-checking whether the SAME button is
+    // still present after the click is what actually distinguishes a real
+    // click from a miss — only report success once it's gone.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const verifyResult = await sendDebuggerCommand(target, "Runtime.evaluate", {
+      expression: findExpr,
+      returnByValue: true,
+    });
+    const stillThere = JSON.parse(verifyResult.result.value);
+    if (stillThere.found) {
+      throw new Error(`click landed but "${info.label}" is still on screen — likely missed, will retry`);
+    }
+    log("cdpClickJoin: verified — join button gone");
   } finally {
     await new Promise((resolve) => chrome.debugger.detach(target, () => resolve()));
     log("cdpClickJoin: detached");
@@ -235,6 +386,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.action === "POLL_NOW") {
     pollOnce().then(() => sendResponse({ success: true }));
+    return true;
+  }
+  if (message?.action === "HOST_DETECTED") {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) return false;
+    getMeetingForTab(tabId).then((meetingId) => {
+      if (meetingId) startRecording(meetingId);
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+  if (message?.action === "CALL_ENDED") {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) return false;
+    popMeetingForTab(tabId).then((meetingId) => {
+      if (meetingId) stopRecording(meetingId);
+      sendResponse({ success: true });
+    });
     return true;
   }
   if (message?.action === "CDP_CLICK_JOIN") {
