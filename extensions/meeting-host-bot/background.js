@@ -307,22 +307,46 @@ function ensureRecoveryAlarm() {
 // onStartup/onInstalled only — NOT to the unconditional "runs on every
 // worker load" block at the bottom of this file, which also fires on a
 // normal idle-eviction wake in the middle of a live call and must never
-// close that tab out from under an in-progress recording.
+// close that tab out from under an in-progress recording. Skips anything
+// present in `recordingTabs`, so this never fights pollOnce() over a tab the
+// bot has legitimately just opened for a real queued meeting.
 async function cleanupStaleMeetTabs() {
   const tabs = await chrome.tabs.query({ url: "*://meet.google.com/*" });
+  const tracked = await getRecordingTabs();
+  let closed = 0;
   for (const tab of tabs) {
-    if (tab.id !== undefined) closeTab(tab.id);
+    if (tab.id !== undefined && !tracked[tab.id]) {
+      closeTab(tab.id);
+      closed++;
+    }
   }
+  if (closed) log(`Startup cleanup: closed ${closed} stale Meet tab(s)`);
+}
+
+async function onBotStartup() {
+  // recordingTabs entries loaded from disk here refer to tab ids from the
+  // PREVIOUS Chrome process — Chrome never reuses tab ids across a restart,
+  // so none of them can possibly be a real tab anymore.
   await chrome.storage.local.set({ recordingTabs: {} });
-  if (tabs.length) {
-    log(`Startup cleanup: closed ${tabs.length} stale Meet tab(s)`);
-  }
+  await cleanupStaleMeetTabs();
+  // Deliberately NOT also doing a delayed re-check via setTimeout here:
+  // confirmed live 2026-09-12 that it doesn't work — MV3 service workers can
+  // go idle and get torn down well before a bare setTimeout fires (no
+  // pending extension-API callback keeps it alive), silently dropping the
+  // scheduled call. A tab appearing meet.google.com slightly AFTER this
+  // first pass (Chrome's own session-restore, or a launch command that
+  // passed a Meet URL as an argument) will NOT be caught by this extension —
+  // this must be prevented at the launch/deployment level instead: the
+  // production launch command (systemd unit or script) must not pass a
+  // meet.google.com URL as an argument, and the profile's "Continue where
+  // you left off" setting should stay off. See meeting-host-bot-design
+  // memory for the confirmed reproduction.
 }
 
 chrome.runtime.onInstalled.addListener(ensureRecoveryAlarm);
 chrome.runtime.onStartup.addListener(ensureRecoveryAlarm);
-chrome.runtime.onInstalled.addListener(cleanupStaleMeetTabs);
-chrome.runtime.onStartup.addListener(cleanupStaleMeetTabs);
+chrome.runtime.onInstalled.addListener(onBotStartup);
+chrome.runtime.onStartup.addListener(onBotStartup);
 
 // Confirmed live 2026-09-11 via a direct xdotool-vs-JS-click A/B test on the
 // VPS: content.js's fireClick() (full pointerdown/mousedown/pointerup/
