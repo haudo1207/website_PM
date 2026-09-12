@@ -372,6 +372,59 @@ def _sync_meeting_projects(db: Session, meeting_id: int, project_ids) -> None:
             db.add(MeetingProject(meeting_id=meeting_id, project_id=pid))
 
 
+def _check_organizer_time_conflict(
+    db: Session,
+    organizer_google_email: Optional[str],
+    meeting_date,
+    start_time,
+    end_time,
+    exclude_meeting_id: Optional[int] = None,
+) -> None:
+    """Raise 400 if [meeting_date/start_time, end_time) overlaps another
+    UPCOMING/ONGOING meeting for the same organizer_google_email.
+
+    A single Gmail account can only ever host one Google Meet call at a time
+    (Meeting Host Bot enforces "1 profile = 1 active Meet tab" — see the
+    extension's README) — two overlapping meetings for the same organizer
+    can never both actually be attended by the bot, so this is blocked
+    outright rather than just warned about. Skipped entirely when any of
+    the four inputs is missing (nothing to compare against).
+    """
+    if not organizer_google_email or not meeting_date or not start_time or not end_time:
+        return
+
+    new_end_date = meeting_date + datetime.timedelta(days=1) if end_time < start_time else meeting_date
+    new_start_dt = datetime.datetime.combine(meeting_date, start_time)
+    new_end_dt = datetime.datetime.combine(new_end_date, end_time)
+
+    candidates = db.query(Meeting).filter(
+        Meeting.organizer_google_email == organizer_google_email,
+        Meeting.status.in_(["UPCOMING", "ONGOING"]),
+        Meeting.meeting_date.isnot(None),
+        Meeting.start_time.isnot(None),
+        Meeting.end_time.isnot(None),
+        # A window one day either side is enough to catch every case that
+        # could possibly overlap, including a midnight-crossing neighbor.
+        Meeting.meeting_date >= meeting_date - datetime.timedelta(days=1),
+        Meeting.meeting_date <= meeting_date + datetime.timedelta(days=1),
+    )
+    if exclude_meeting_id is not None:
+        candidates = candidates.filter(Meeting.id != exclude_meeting_id)
+
+    for other in candidates.all():
+        other_end_date = other.meeting_date + datetime.timedelta(days=1) if other.end_time < other.start_time else other.meeting_date
+        other_start_dt = datetime.datetime.combine(other.meeting_date, other.start_time)
+        other_end_dt = datetime.datetime.combine(other_end_date, other.end_time)
+        if new_start_dt < other_end_dt and other_start_dt < new_end_dt:
+            raise HTTPException(
+                400,
+                f"Trùng giờ với cuộc họp #{other.id} \"{other.title}\" "
+                f"({other.meeting_date} {other.start_time}–{other.end_time}) — "
+                f"cùng tài khoản Google host ({organizer_google_email}) chỉ có thể "
+                f"tự động vào 1 cuộc họp tại một thời điểm.",
+            )
+
+
 # ─── LIST ───────────────────────────────────────────────
 @router.get("")
 def list_meetings(
@@ -855,6 +908,8 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                 logger.error(f"Auto-generate Google Meet link failed: {e}")
                 raise HTTPException(status_code=400, detail=str(e))
 
+    _check_organizer_time_conflict(db, organizer_google_email, meeting_date, start_time, end_time)
+
     # Handle AI summary formatting
     ai_summary = body.get("ai_summary") or body.get("summary")
     if ai_summary and isinstance(ai_summary, list):
@@ -1036,6 +1091,8 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             m.end_time = end_dt.time()
         except Exception:
             pass
+
+    _check_organizer_time_conflict(db, m.organizer_google_email, m.meeting_date, m.start_time, m.end_time, exclude_meeting_id=m.id)
 
     m.status = new_status
     m.transcript = body.get("transcript", m.transcript)
