@@ -240,6 +240,13 @@ function tryStartNativeRecording() {
       fireClick(startBtn);
       nativeRecordingStarted = true;
       log("Native recording: Start confirmed");
+      // The Record sub-panel stays open showing "Stop recording" after this
+      // (confirmed live 2026-09-13) — it and the People panel share the same
+      // single side-panel slot, so leaving it open permanently blocks
+      // ensurePeoplePanelOpen() below from ever showing the "Contributors N"
+      // participant count. Close it now; tryStopNativeRecording() re-opens
+      // Meeting tools on its own when it actually needs to click Stop.
+      clickIfFound(/^close$/i);
       return;
     }
   }
@@ -413,6 +420,33 @@ let aloneLoggedForThisStretch = false;
 // elsewhere, but "Contributors N" is the signal to trust first.
 const CONTRIBUTORS_COUNT_RE = /contributors\s*\n?\s*(\d+)/i;
 
+// Confirmed live 2026-09-13: the bottom-bar "People" toggle carries NO
+// aria-label at all on this account — the aria-label scan in
+// getParticipantCount() below never matches it live. Its only text is
+// visibleText's innerText/textContent fallback, which reads as "People"
+// with the unread-count badge digit appended directly (e.g. "People1"), so
+// findClickableByText/clickIfFound (which already fall back to visibleText)
+// can still find and click it by that pattern.
+const PEOPLE_TOGGLE_RE = /^people\d*$/i;
+
+// getParticipantCount()'s "Contributors N" signal (the only one confirmed
+// reliable — see its own comment) requires the People panel to actually be
+// open, which nothing else guarantees: the admit flow only opens it as a
+// side effect of a waiting-room guest existing, so a guest who joins without
+// needing admission (open call, or same-org auto-join) leaves it closed for
+// the entire call, silently pushing getParticipantCount() onto its
+// unreliable tile-count fallback. Called every tick once hostDetected so the
+// panel comes up as soon as the slot is free, regardless of how the guest
+// joined. The People panel and Meeting tools panel share one side-panel
+// slot — if Meeting tools is currently open (e.g. native recording's Record
+// sub-panel, see tryStartNativeRecording), the People toggle isn't even in
+// the DOM, so clickIfFound below is simply a harmless no-op that retries on
+// a later tick.
+function ensurePeoplePanelOpen() {
+  if (CONTRIBUTORS_COUNT_RE.test(document.body.innerText || "")) return;
+  clickIfFound(PEOPLE_TOGGLE_RE);
+}
+
 function getParticipantCount() {
   const contribMatch = (document.body.innerText || "").match(CONTRIBUTORS_COUNT_RE);
   if (contribMatch) return parseInt(contribMatch[1], 10);
@@ -473,6 +507,7 @@ function tick() {
   checkCallEnded();
   admitWaitingParticipants();
   tryStartNativeRecording();
+  ensurePeoplePanelOpen();
   checkSoloTimeout();
   confirmLeaveSubmenu();
 }
