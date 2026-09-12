@@ -573,6 +573,35 @@ def update_google_meet_event(db, google_event_id: str, start_iso: str, end_iso: 
         raise ValueError(f"Google Calendar patch failed: {resp.text}")
 
 
+def rename_google_meet_event_tag(db, google_event_id: str, meeting_id: int, title: str, workspace_id: int = None) -> None:
+    """
+    Patch a Calendar event's summary to "[MK-{meeting_id}] {title}" once the
+    real Meeting row id is known. create_google_meet_shared/create_google_meet_link
+    are called before any Meeting row exists, so the event is first created with a
+    throwaway placeholder tag (see create_google_meet_link) — Google Meet's native
+    recording/notetaker names its own Drive output after this event summary, so
+    without this rename it forever carries the placeholder instead of the real id,
+    making it undiscoverable by n8n's "[MK-{id}]" Drive search (which uses the real
+    id, matching our own recorder_service.py's upload tag). Best-effort: must not
+    break meeting creation, so any failure here is logged and swallowed.
+    """
+    if not google_event_id:
+        return
+    try:
+        token = get_workspace_google_access_token(db, workspace_id)
+        resp = requests.patch(
+            f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}",
+            params={"sendUpdates": "none"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"summary": f"[MK-{meeting_id}] {title}"},
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning(f"rename_google_meet_event_tag failed (non-fatal): {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.warning(f"rename_google_meet_event_tag failed (non-fatal): {e}")
+
+
 def is_google_connected(db, user_id: int, workspace_id: int = None) -> bool:
     """Check if Google Calendar & Drive API connection is active with valid refresh token."""
     try:
