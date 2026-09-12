@@ -210,12 +210,11 @@ function checkHostState() {
 // Native Google Meet recording (built 2026-09-12). Confirmed live that this
 // account has a genuinely enabled (non-disabled) "Start recording" control —
 // earlier project notes assumed personal Gmail accounts never get this, which
-// turned out to be stale. NOT yet confirmed to reliably produce a finished
-// recording end-to-end (one manual test's tab lost its CDP target right after
-// confirming the dialog, before a "recording in progress" indicator could be
-// verified) — kept running ALONGSIDE the existing FFmpeg/recorder_service.py
-// capture as a safety net, not as a replacement, until several real runs
-// confirm this path is trustworthy on its own.
+// turned out to be stale. Since 2026-09-13 this is the SOLE recording
+// mechanism (background.js's RECORDING_ENABLED=false disables the old
+// FFmpeg/recorder_service.py capture, to save VPS disk) — its Drive output is
+// tagged via the Calendar event's title, kept in sync with the real
+// Meeting.id by the backend's rename_google_meet_event_tag.
 const MEETING_TOOLS_RE = /^meeting tools$/i;
 const START_RECORDING_RE = /^start recording$/i;
 const STOP_RECORDING_RE = /^stop recording$/i;

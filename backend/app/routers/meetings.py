@@ -982,8 +982,9 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # AI-summary auto-discovery for every meeting created this way.
     meeting_url_lower = (m.meeting_url or "").lower()
     if "meet.google.com" in meeting_url_lower or (m.platform or "").lower() in ("google meet", "google"):
-        from ..services.meeting_sync import notify_n8n_meeting_created
+        from ..services.meeting_sync import notify_n8n_meeting_created, rename_google_meet_event_tag
         notify_n8n_meeting_created(db, m.id, m.title, m.meeting_date, m.start_time, workspace_id)
+        rename_google_meet_event_tag(db, m.google_event_id, m.id, m.title, workspace_id)
     if extra_project_ids:
         _sync_meeting_projects(db, m.id, extra_project_ids)
     from ..services.meeting_score_engine import recalculate_meeting_score
