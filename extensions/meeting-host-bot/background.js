@@ -134,9 +134,24 @@ async function stopRecording(meetingId) {
   }
 }
 
+// Bot-managed tabs get closed once their job is done. A profile is only ever
+// supposed to hold one active Meet tab at a time (see pollOnce()'s guard and
+// the startup cleanup below) — leaving a finished call's tab open serves no
+// purpose and, at 4-workspace scale, adds up to real Chrome RAM/CPU plus a
+// standing risk of the bot's tab-matching logic getting confused about which
+// tab is "the" current meeting.
+function closeTab(tabId) {
+  chrome.tabs.remove(tabId, () => {
+    // Swallow "no tab with id" — e.g. the onRemoved path below, where the
+    // tab is already gone by the time this would run.
+    void chrome.runtime.lastError;
+  });
+}
+
 // Backup stop path #1: if the tab is closed (crash, manual close, VPS reboot
 // script cleanup) before content.js ever gets to send CALL_ENDED, this is
 // what actually stops ffmpeg instead of leaving it recording a dead tab.
+// The tab is already gone here, so there's nothing to close.
 chrome.tabs.onRemoved.addListener((tabId) => {
   popMeetingForTab(tabId).then((meetingId) => {
     if (meetingId) stopRecording(meetingId);
@@ -164,8 +179,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
       stillOnMeeting = false;
     }
     if (stillOnMeeting) return;
-    popMeetingForTab(tabId).then((meetingId) => {
-      if (meetingId) stopRecording(meetingId);
+    popMeetingForTab(tabId).then(async (meetingId) => {
+      if (meetingId) await stopRecording(meetingId);
+      closeTab(tabId);
     });
   });
 });
@@ -228,6 +244,20 @@ async function pollOnce() {
       log(`Meeting #${meeting.meeting_id} không phải link Google Meet hợp lệ, bỏ qua.`);
       continue;
     }
+    // One profile == one Gmail account == can only actually be in one Meet
+    // call at a time. Re-checked fresh (not cached from before the loop)
+    // and awaited all the way through tab creation below — otherwise, if
+    // the queue ever returns 2 due meetings for this email in the same
+    // cycle (calendar conflict, or a bug upstream), both `chrome.tabs.create`
+    // calls would fire before either one's entry lands in storage, opening
+    // two tabs at once. If a tab is already open/tracked, leave the rest of
+    // the queue for a later poll — it'll be picked up once CALL_ENDED/
+    // onUpdated/onRemoved closes the current one and clears its entry.
+    const activeTabs = await getRecordingTabs();
+    if (Object.keys(activeTabs).length > 0) {
+      log(`Meeting #${meeting.meeting_id} due, but this profile already has an active Meet tab — will retry next poll.`);
+      break;
+    }
     log(`Found meeting #${meeting.meeting_id}`, meeting.title || "");
     log("Opening Meet", meeting.join_url);
     await markOpened(meeting.meeting_id);
@@ -239,9 +269,9 @@ async function pollOnce() {
       // means the onUpdated "left the meeting" check below never matches
       // (path stays ""), falling back to onRemoved/CALL_ENDED for stop.
     }
-    chrome.tabs.create({ url: meeting.join_url, active: true }, (tab) => {
-      if (tab?.id !== undefined) setMeetingForTab(tab.id, meeting.meeting_id, path);
-    });
+    const tab = await chrome.tabs.create({ url: meeting.join_url, active: true });
+    if (tab?.id !== undefined) await setMeetingForTab(tab.id, meeting.meeting_id, path);
+    break; // enforce max one active Meet tab per profile per cycle
   }
 }
 
@@ -270,8 +300,29 @@ function ensureRecoveryAlarm() {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
 }
 
+// A profile should never carry stale Meet tabs across a bot/Chrome restart —
+// leftover test tabs, or a call that was live when the VPS rebooted, waste
+// RAM/CPU and risk the tab-matching logic (recordingTabs) getting confused
+// about which tab is the current meeting. Deliberately wired to
+// onStartup/onInstalled only — NOT to the unconditional "runs on every
+// worker load" block at the bottom of this file, which also fires on a
+// normal idle-eviction wake in the middle of a live call and must never
+// close that tab out from under an in-progress recording.
+async function cleanupStaleMeetTabs() {
+  const tabs = await chrome.tabs.query({ url: "*://meet.google.com/*" });
+  for (const tab of tabs) {
+    if (tab.id !== undefined) closeTab(tab.id);
+  }
+  await chrome.storage.local.set({ recordingTabs: {} });
+  if (tabs.length) {
+    log(`Startup cleanup: closed ${tabs.length} stale Meet tab(s)`);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(ensureRecoveryAlarm);
 chrome.runtime.onStartup.addListener(ensureRecoveryAlarm);
+chrome.runtime.onInstalled.addListener(cleanupStaleMeetTabs);
+chrome.runtime.onStartup.addListener(cleanupStaleMeetTabs);
 
 // Confirmed live 2026-09-11 via a direct xdotool-vs-JS-click A/B test on the
 // VPS: content.js's fireClick() (full pointerdown/mousedown/pointerup/
@@ -424,8 +475,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "CALL_ENDED") {
     const tabId = sender.tab?.id;
     if (tabId === undefined) return false;
-    popMeetingForTab(tabId).then((meetingId) => {
-      if (meetingId) stopRecording(meetingId);
+    popMeetingForTab(tabId).then(async (meetingId) => {
+      if (meetingId) await stopRecording(meetingId);
+      closeTab(tabId);
       sendResponse({ success: true });
     });
     return true;
