@@ -13,6 +13,7 @@ import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -131,6 +132,27 @@ def get_bot_queue(
     return {"due": due}
 
 
+def _resolve_workspace_id_by_email(db: Session, google_email: Optional[str]) -> Optional[int]:
+    """Reverse of _workspace_google_email: given a mailbox, which workspace's
+    Drive should own the upload — prefers the connected OAuth override,
+    falls back to the display hint. A meeting's organizer_google_email is
+    frozen at creation time and is very often the ONLY signal available
+    (project_id can be None — "company-wide" meetings, or test rows), so
+    this must be tried before the project→workspace path, matching the
+    same priority /queue already uses for the reverse direction.
+    """
+    if not google_email:
+        return None
+    email = google_email.strip().lower()
+    wga = db.query(WorkspaceGoogleAccount).filter(
+        func.lower(WorkspaceGoogleAccount.google_email) == email
+    ).first()
+    if wga:
+        return wga.workspace_id
+    ws = db.query(Workspace).filter(func.lower(Workspace.expected_google_email) == email).first()
+    return ws.id if ws else None
+
+
 @router.get("/drive-token")
 def get_drive_upload_token(
     meeting_id: int,
@@ -155,7 +177,15 @@ def get_drive_upload_token(
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    workspace_id = _resolve_meeting_workspace_id(db, meeting)
+    # Confirmed live 2026-09-12: a meeting with organizer_google_email set
+    # but project_id=None (e.g. this exact test row) made
+    # _resolve_meeting_workspace_id return None, silently falling back to
+    # the shared operational account's token (wrong Drive entirely — that
+    # account's grant didn't even have the drive.file scope). Try the
+    # organizer's own workspace first.
+    workspace_id = _resolve_workspace_id_by_email(db, meeting.organizer_google_email)
+    if workspace_id is None:
+        workspace_id = _resolve_meeting_workspace_id(db, meeting)
     try:
         access_token = get_workspace_google_access_token(db, workspace_id)
     except Exception as exc:
