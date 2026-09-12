@@ -1499,7 +1499,6 @@ def auto_sync_all_ended_meetings(db):
     from ..models.meeting import Meeting
     now = _now_vn()
     today = now.date()
-    current_time = now.time()
 
     meetings = db.query(Meeting).all()
     count_synced = 0
@@ -1509,8 +1508,24 @@ def auto_sync_all_ended_meetings(db):
         if m.status in ("UPCOMING", "ONGOING"):
             if m.meeting_date and m.meeting_date < today:
                 needs_end_update = True
-            elif m.meeting_date and m.meeting_date == today and m.end_time and current_time >= m.end_time:
-                needs_end_update = True
+            elif m.meeting_date and m.meeting_date == today and m.end_time:
+                # A meeting whose window crosses midnight (e.g. 23:52 ->
+                # 00:22) stores end_time < start_time on the SAME
+                # meeting_date — comparing bare time-of-day values here
+                # (current_time >= m.end_time) made 00:22 look "already
+                # passed" the instant the meeting started, since a bare
+                # time comparison has no notion of which calendar day it's
+                # on. Confirmed live 2026-09-12: a meeting was marked DONE
+                # within ~30s of being reset to UPCOMING, before its
+                # start_time had even arrived. Roll end_date forward a day
+                # whenever end_time is earlier than start_time so the
+                # comparison uses the real elapsed instant instead.
+                end_date = today
+                if m.start_time and m.end_time < m.start_time:
+                    end_date = today + datetime.timedelta(days=1)
+                end_dt = datetime.datetime.combine(end_date, m.end_time)
+                if now >= end_dt:
+                    needs_end_update = True
 
         if needs_end_update or (m.status == "DONE" and (not m.ai_summary or m.ai_summary == [])):
             platform = (m.platform or "").lower()
@@ -1525,7 +1540,8 @@ def auto_sync_all_ended_meetings(db):
             }
             if m.start_time and m.end_time:
                 start_dt = datetime.datetime.combine(today, m.start_time)
-                end_dt = datetime.datetime.combine(today, m.end_time)
+                end_date = today + datetime.timedelta(days=1) if m.end_time < m.start_time else today
+                end_dt = datetime.datetime.combine(end_date, m.end_time)
                 meeting_info["duration"] = int((end_dt - start_dt).total_seconds() / 60)
 
             result = None
