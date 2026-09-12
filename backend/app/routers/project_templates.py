@@ -20,25 +20,6 @@ from ..utils.audit_service import AuditService
 router = APIRouter(tags=["project-templates"])
 
 
-def _validate_template_group_manday(manday_est, group_name: str, phase_name: str) -> None:
-    """Mirrors validate_group_manday() in task_groups.py: Task Group MANDAY EST
-    must be a whole number from 1 to 10 (inclusive) — enforced here too since
-    applying a template creates real TaskGroup rows directly, bypassing the
-    create_task_group endpoint."""
-    label = f"group '{group_name}' (phase '{phase_name}')"
-    if manday_est is None:
-        raise HTTPException(400, f"Manday EST is required for {label}.")
-    try:
-        manday_val = float(manday_est)
-    except (TypeError, ValueError):
-        raise HTTPException(400, f"Manday EST must be a number for {label}.")
-    if manday_val != int(manday_val):
-        raise HTTPException(400, f"Manday EST must be a whole number (no decimals) for {label}.")
-    manday_int = int(manday_val)
-    if manday_int < 1 or manday_int > 10:
-        raise HTTPException(400, f"Manday EST must be between 1 and 10 for {label}.")
-
-
 def _validate_template_phases_payload(phases_payload):
     phase_names = [(p.get("name") or "").strip() for p in phases_payload]
     if len(phase_names) != len(set(phase_names)):
@@ -48,7 +29,6 @@ def _validate_template_phases_payload(phases_payload):
         phase_name = (phase_payload.get("name") or "").strip()
         for group_payload in phase_payload.get("task_groups", []) or []:
             group_name = (group_payload.get("name") or "").strip()
-            _validate_template_group_manday(group_payload.get("manday_est"), group_name, phase_name)
             for task_payload in group_payload.get("tasks", []) or []:
                 if not task_payload.get("skill_solution_id") or not task_payload.get("skill_vendor_id"):
                     task_detail = (task_payload.get("detail") or "").strip() or "(chưa đặt tên)"
@@ -304,8 +284,10 @@ def apply_project_template(
         if not (phase.name or "").strip():
             raise HTTPException(400, "Template has a phase with an empty name")
         # TaskGroup is optional — a phase with 0 groups (e.g. Lab/PoC) is valid, no check needed.
+        # Manday EST on a Task Group is NOT required to apply a template (deliberately reverted
+        # 2026-09-12 — templates commonly lack it and blocking apply on it was more disruptive
+        # than useful); a group applies with manday_est left as whatever the template has, incl. None.
         for group in phase.task_groups:
-            _validate_template_group_manday(group.manday_est, group.name, phase.name)
             # Task is optional too, but if one exists it must be fully specified. Any single
             # task missing a skill rejects the WHOLE apply — no silent skip, no fallback.
             for task in group.tasks:
