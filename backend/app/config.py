@@ -142,10 +142,11 @@ class Settings(BaseSettings):
     ZALO_WORKER_URL: str = "http://zalo-worker:8090"
     ZALO_WORKER_INTERNAL_TOKEN: str = ""
 
-    # Meeting Host Bot — Chrome extension on a VPS, one signed-in Google
-    # profile per operational mailbox, polling GET /api/meeting-bot/queue to
-    # know when to join-as-host/auto-admit/record. See
-    # meeting-bot-extension/README.md.
+    # Meeting Host Bot — shared secret for the VPS Chrome-bot fleet that polls
+    # GET /api/meeting-bot/queue to know which meetings its logged-in Gmail
+    # account needs to Join + Admit. Unset (empty) means the endpoint is
+    # locked (fails closed), not "auth disabled" — see
+    # extensions/meeting-host-bot/README.md and routers/meeting_bot.py.
     MEETING_BOT_TOKEN: str = ""
 
     @property

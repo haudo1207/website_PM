@@ -67,11 +67,6 @@ class Project(Base):
     # extension's project share-link feature (see routers/public_share.py).
     share_token           = Column(String(64), unique=True, nullable=True, index=True)
 
-    # Personal Calendar (008-task-calendar-overview) — hex color identifying
-    # this project's tasks on a member's Calendar (left border + tint on
-    # each task block). Not set on older projects until backfilled.
-    color                 = Column(String(20), nullable=True)
-
     # Relationships
     pm_member             = relationship("Member", foreign_keys=[pm_id], lazy="select")
     technical_leader      = relationship("Member", foreign_keys=[technical_leader_id], lazy="select")
@@ -112,6 +107,30 @@ class ProjectPin(Base):
     user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class CalendarProjectPreference(Base):
+    """Per-Member Personal Calendar setting — what hex color THIS member sees
+    a given project's tasks tinted with on their own Calendar. Deliberately
+    NOT a Project attribute: two members can (and often will) pick different
+    colors for the same project, and it has zero effect on Project Detail or
+    the Tasks tab (see 008-task-calendar-overview "Chốt phân tích & thiết kế
+    – Màu Project trong Personal Calendar").
+
+    Keyed by Member.id, not User.id (unlike ProjectPin above) — Calendar
+    itself is already hard-gated on having a Member (calendar.py returns []
+    for any User without one), so there's no member-less account to support
+    here, and member_id matches Calendar's own existing scoping convention.
+    """
+    __tablename__ = "calendar_project_preferences"
+    __table_args__ = (UniqueConstraint("member_id", "project_id", name="uq_calendar_project_pref_member_project"),)
+
+    id         = Column(Integer, primary_key=True, index=True)
+    member_id  = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    color      = Column(String(9), nullable=False)  # "#RRGGBB"
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 from sqlalchemy import event

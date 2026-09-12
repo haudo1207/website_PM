@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Markee Meeting Host Bot",
+  "version": "1.0.0",
+  "description": "Poll GET /api/meeting-bot/queue and auto Join + auto Admit on Google Meet as the logged-in host account.",
+  "permissions": ["storage", "tabs", "alarms", "debugger"],
+  "host_permissions": ["https://meet.google.com/*", "http://127.0.0.1:8765/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "Markee Meeting Host Bot",
+    "default_popup": "options.html"
+  },
+  "options_page": "options.html"
+}
