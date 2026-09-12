@@ -195,10 +195,14 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     open: () => { if (!disabled) setOpen(true); }
   }), [disabled]);
 
-  // Close popup when clicking outside
+  // Close popup when clicking outside — when usePortal is true, also check
+  // if the click is inside the portal menu (menuRef) since it's rendered
+  // outside the container at document.body level.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const isInsideContainer = containerRef.current && containerRef.current.contains(event.target as Node);
+      const isInsidePortalMenu = usePortal && menuRef.current && menuRef.current.contains(event.target as Node);
+      if (!isInsideContainer && !isInsidePortalMenu) {
         setOpen(false);
         setSearch('');
         setFocusedIndex(-1);
@@ -206,7 +210,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [usePortal]);
 
   // Helper to identify default/reset values (should NEVER display clear '✕' button)
   const isDefaultValue = useCallback((v: any) => {
