@@ -195,10 +195,19 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     open: () => { if (!disabled) setOpen(true); }
   }), [disabled]);
 
-  // Close popup when clicking outside
+  // Close popup when clicking outside. When usePortal is on, the menu is
+  // rendered via createPortal to document.body — it is no longer a DOM
+  // descendant of containerRef, so a click/mousedown on ANY option inside it
+  // (or its search input) was being misread as "outside" and closed the menu
+  // on mousedown, before the option's own onClick could fire. That silently
+  // ate every selection (assignee/support pickers use usePortal in the task
+  // table) — menuRef must be checked too, not just containerRef.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const insideContainer = containerRef.current && containerRef.current.contains(target);
+      const insideMenu = menuRef.current && menuRef.current.contains(target);
+      if (!insideContainer && !insideMenu) {
         setOpen(false);
         setSearch('');
         setFocusedIndex(-1);
