@@ -179,10 +179,17 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
       stillOnMeeting = false;
     }
     if (stillOnMeeting) return;
-    popMeetingForTab(tabId).then(async (meetingId) => {
-      if (meetingId) await stopRecording(meetingId);
+    // Don't pop the tracking entry until stopRecording() (incl. its Drive
+    // upload) has actually finished — see the CALL_ENDED handler below for
+    // why: this is what keeps pollOnce()'s "already has an active tab" guard
+    // honest for a profile's ENTIRE stop→upload→close sequence, not just
+    // the recording phase, which matters for back-to-back meetings on the
+    // same Gmail account.
+    (async () => {
+      if (entry.meetingId) await stopRecording(entry.meetingId);
+      await popMeetingForTab(tabId);
       closeTab(tabId);
-    });
+    })();
   });
 });
 
@@ -221,7 +228,32 @@ async function fetchQueue(config) {
 
 let pollChainTimer = null;
 
+// True single-flight guard. Without this, the self-rescheduling setTimeout
+// chain below and a manually-triggered POLL_NOW message (Options page's
+// "poll now" button) could both have a pollOnce() in flight at once — e.g.
+// a human clicks "poll now" while the automatic chain's own call is mid-await
+// on a slow /queue fetch. Two concurrent pollOnce() calls would each read
+// getRecordingTabs() as empty before either's chrome.tabs.create/
+// setMeetingForTab lands, defeating the "max one active Meet tab per
+// profile" guard inside the loop below exactly the way that guard is meant
+// to prevent. A module-level flag is enough since everything here runs on
+// one JS thread — no real concurrency, just interleaved async callbacks.
+let pollInFlight = false;
+
 async function pollOnce() {
+  if (pollInFlight) {
+    log("pollOnce already running (triggered again before it finished) — skipping this call.");
+    return;
+  }
+  pollInFlight = true;
+  try {
+    await pollOnceLocked();
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+async function pollOnceLocked() {
   const config = await getConfig();
   if (!config.apiBaseUrl || !config.googleEmail || !config.botToken) {
     log("Chưa cấu hình đủ apiBaseUrl/googleEmail/botToken — mở Options để cấu hình.");
@@ -499,8 +531,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "CALL_ENDED") {
     const tabId = sender.tab?.id;
     if (tabId === undefined) return false;
-    popMeetingForTab(tabId).then(async (meetingId) => {
+    // Peek the meetingId without clearing it yet — the tracking entry stays
+    // in recordingTabs (and so pollOnce()'s "already has an active tab"
+    // guard stays true) for the WHOLE stop→upload→close sequence below, not
+    // just while ffmpeg itself is running. Matters for back-to-back meetings
+    // on the same Gmail account: without this, a slow Drive upload leaves a
+    // window where the guard reads "free" while this tab is still open.
+    getMeetingForTab(tabId).then(async (meetingId) => {
       if (meetingId) await stopRecording(meetingId);
+      await popMeetingForTab(tabId);
       closeTab(tabId);
       sendResponse({ success: true });
     });
