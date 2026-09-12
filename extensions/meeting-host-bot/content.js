@@ -27,6 +27,12 @@ const CAM_OFF_RE = /(turn off camera|tắt camera)/i;
 // string, since Meet's exact wording can vary by environment/language.
 const JOIN_TEXT_RE = /(join now|ask to join|tham gia ngay|xin tham gia|yêu cầu tham gia|tham gia mà không)/i;
 const LEAVE_CALL_RE = /(leave call|rời khỏi cuộc gọi|rời cuộc gọi)/i;
+// Confirmed live 2026-09-12: as the meeting's host, clicking "Leave call"
+// doesn't leave directly — it opens a submenu with two real choices ("Just
+// leave the call" / "End the call for everyone"), same two-step shape as
+// the "Admit all?" confirmation dialog elsewhere in this file. Only the
+// former should ever be clicked automatically.
+const JUST_LEAVE_RE = /(just leave the call|chỉ rời khỏi cuộc gọi|chỉ rời cuộc gọi)/i;
 // Confirmed live 2026-09-11: this account's real Meet UI shows "Admit N
 // guest(s)" (not "Admit all") as the bulk button — it admits every guest
 // currently waiting, whatever N is. Label can arrive as
@@ -286,11 +292,80 @@ function admitWaitingParticipants() {
   }
 }
 
+// Google Meet's own "solo call" idle-leave (see checkCallEnded's comment
+// above) doesn't kick in for ~20-25 minutes — real production impact:
+// once every guest leaves, recording keeps running (and the Drive
+// upload/summary stays delayed) for that whole stretch. This proactively
+// leaves much sooner once the bot detects it's alone, by reusing the
+// existing stop path: clicking Leave here just makes checkCallEnded's
+// normal "leave button gone" check fire on the next tick, no separate
+// stop logic needed.
+//
+// NOT yet live-tested against a real multi-participant Meet call — the
+// participant-count heuristics below are a best guess (matching common
+// Meet DOM patterns), same as every other selector in this file when
+// first written. If the count reads wrong, the log lines below should
+// make that visible in the tab's own console instead of failing silently.
+const SOLO_LEAVE_TIMEOUT_MS = 3 * 60 * 1000; // tune once verified live
+let aloneSinceTs = null;
+let aloneLoggedForThisStretch = false;
+
+function getParticipantCount() {
+  // Meet's "People" bottom-bar toggle usually carries the head-count in
+  // its aria-label (e.g. "People, 2 participants" / "Mọi người, 2 người").
+  for (const el of allButtons()) {
+    const label = el.getAttribute("aria-label") || "";
+    if (!/people|participants|người tham gia|mọi người/i.test(label)) continue;
+    const m = label.match(/(\d+)/);
+    if (m) return parseInt(m[1], 10);
+  }
+  // Fallback: count distinct participant tiles — Meet tags each tile
+  // (self included) with data-participant-id in the main call grid.
+  const tiles = document.querySelectorAll("[data-participant-id]");
+  if (tiles.length > 0) return tiles.length;
+  return null; // couldn't determine — don't risk acting on a guess
+}
+
+function checkSoloTimeout() {
+  if (!hostDetected || callEndedNotified) return;
+  const count = getParticipantCount();
+  if (count === null) return;
+  if (count <= 1) {
+    if (aloneSinceTs === null) {
+      aloneSinceTs = Date.now();
+      aloneLoggedForThisStretch = false;
+    }
+    if (!aloneLoggedForThisStretch) {
+      log(`Alone in call (participant count ${count}) — will auto-leave in ${Math.round(SOLO_LEAVE_TIMEOUT_MS / 1000)}s if still alone`);
+      aloneLoggedForThisStretch = true;
+    }
+    if (Date.now() - aloneSinceTs >= SOLO_LEAVE_TIMEOUT_MS) {
+      log("Still alone after timeout — leaving call proactively");
+      const leaveBtn = findClickableByText(LEAVE_CALL_RE);
+      if (leaveBtn) fireClick(leaveBtn);
+    }
+  } else {
+    aloneSinceTs = null;
+    aloneLoggedForThisStretch = false;
+  }
+}
+
+// Confirms the "Leave call" submenu opened by checkSoloTimeout() above.
+// Runs every tick unconditionally (not just while "alone") since the
+// submenu only ever appears after that click fires, and confirming it is
+// harmless/idempotent otherwise — same reasoning as the opportunistic
+// mic/cam mute clicks in tryClickJoin().
+function confirmLeaveSubmenu() {
+  clickIfFound(JUST_LEAVE_RE);
+}
+
 function tick() {
   tryClickJoin();
   checkHostState();
   checkCallEnded();
   admitWaitingParticipants();
+  checkSoloTimeout();
+  confirmLeaveSubmenu();
 }
 
 // Meet is a heavy, dynamic SPA — a plain interval is simpler and more

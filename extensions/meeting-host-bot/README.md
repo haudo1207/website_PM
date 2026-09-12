@@ -148,6 +148,25 @@ thể thực sự đang host 1 cuộc gọi. `background.js` áp dụng điều 
   công lúc dev (qua `onInstalled`) — nếu đang test tay 1 cuộc gọi thật mà
   reload extension, tab đó sẽ bị đóng theo.
 
+### Tự rời cuộc gọi khi chỉ còn 1 mình (built 2026-09-12)
+
+Google Meet chỉ tự đá 1 host đang ngồi một mình ra sau **~20-25 phút** (xem
+comment trong `content.js`'s `checkCallEnded`) — với production, nghĩa là sau
+khi guest cuối cùng rời phòng, recording vẫn chạy (và Drive upload/summary
+vẫn bị delay) suốt khoảng thời gian đó. `content.js` giờ tự đếm số người
+trong cuộc gọi (`getParticipantCount()` — đọc từ aria-label nút "People", hoặc
+đếm số tile `[data-participant-id]` nếu không đọc được) và **tự bấm Leave**
+nếu chỉ còn 1 mình liên tục quá `SOLO_LEAVE_TIMEOUT_MS` (mặc định 3 phút, có
+thể chỉnh trong `content.js`). Bấm Leave chỉ tái sử dụng đúng luồng dừng đã
+có — `checkCallEnded()` sẽ thấy nút "Leave call" biến mất ở tick kế tiếp và tự
+gửi `CALL_ENDED` như bình thường, không có logic dừng riêng nào khác.
+
+**Chưa live-test với cuộc gọi nhiều người thật** — 2 cách đọc participant count
+ở trên là suy đoán dựa trên pattern DOM phổ biến của Meet, giống cách mọi
+selector khác trong file này được viết lần đầu (đoán trước, tinh chỉnh sau khi
+có log thật). Nếu đếm sai, log `Alone in call (participant count N)` sẽ hiện
+rõ trong console tab Meet để chẩn đoán thay vì âm thầm rời nhầm.
+
 ## Đọc log ở đâu (dễ nhầm — đọc kỹ)
 
 Có **hai nơi log riêng biệt**:

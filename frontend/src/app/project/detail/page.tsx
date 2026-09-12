@@ -5944,10 +5944,9 @@ function ProjectDetailContent() {
         </>
         )}
 
-        {/* MAIN CONTAINER — on the Tasks tab, use flex-col so the task table
-            can fill the remaining viewport height (no nested scroll). Other tabs
-            keep overflow-y-auto for normal page scrolling. */}
-        <div className={`flex-1 min-w-0 p-4 md:p-6 ${activeMainTab === 'tasks' ? 'flex flex-col overflow-hidden space-y-0' : 'overflow-y-auto space-y-6'}`}>
+        {/* MAIN CONTAINER — all tabs use overflow-y-auto for normal page scrolling.
+            The task table has its own internal scroll for task data. */}
+        <div className={`flex-1 min-w-0 p-4 md:p-6 ${activeMainTab === 'tasks' ? 'flex flex-col overflow-y-auto space-y-0' : 'overflow-y-auto space-y-6'}`}>
           {msg && (
             // z-[1000] - PHẢI cao hơn mọi drawer full-screen (Task Edit/Leader
             // Review Detail/AI Review đều z-50) VÀ mọi modal (z-[999], vd
@@ -7142,7 +7141,7 @@ function ProjectDetailContent() {
 
               {/* TAB: TASKS */}
               {activeMainTab === 'tasks' && (
-                <div className="flex-1 min-h-0 flex flex-col gap-4 -mt-2">
+                <div className="flex-1 min-h-0 flex flex-col gap-2 -mt-2">
                   {/* Phase Tabs + Search */}
                   <div className="flex items-center justify-between flex-nowrap gap-2 shrink-0">
                     <div ref={phaseNavContainerRef} className="flex items-center gap-4 h-9 flex-nowrap overflow-hidden flex-1 min-w-0">
@@ -7374,9 +7373,9 @@ function ProjectDetailContent() {
                       column width (width cột là inline style theo px cố định,
                       độc lập với width container cha) và scroll ngang riêng
                       của table vẫn hoạt động bình thường. */}
-                  <div className="flex items-start gap-4 flex-1 min-h-0">
+                  <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
-                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0">
+                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0 max-h-[calc(100vh-300px)]">
                     <div className="flex-1 min-h-0 overflow-auto task-table-scroll">
                       {/* table-layout: fixed - bắt buộc để mỗi cột giữ đúng width đã set (kể cả
                           width mặc định thu gọn cho MD/Priority/Status/KPI Ratio/ngày và width
