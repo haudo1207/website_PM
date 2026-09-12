@@ -192,6 +192,39 @@ def validate_manday_budget(gid: int, task_code: str, manday_est, db: Session, ex
         )
 
 
+def validate_child_start_date(gid: int, task_code: str, start_date, db: Session):
+    """A subtask's Start Date must not fall after its direct parent Task's
+    End Date EST — End Date EST = Start Date + CEIL(Manday EST) - 1 (see
+    kpi_engine.calc_end_date_est: the start date itself counts as day 1, so
+    e.g. parent Start 10/9 + Manday 5 => End Date EST 14/9, not a plain
+    10 + 5 = 15/9 addition). Reads the parent's already-computed
+    end_date_est column rather than recomputing, since recalculate_task
+    keeps it in sync on every create/update.
+
+    Skipped when there's no parent task (top-level task), or the parent has
+    no computed End Date EST yet (missing start_date/manday_est)."""
+    if not start_date or not task_code:
+        return
+
+    parent_code = get_parent_code(task_code)
+    if not parent_code:
+        return
+
+    parent_task = db.query(Task).filter(
+        Task.task_group_id == gid,
+        Task.task_code == parent_code
+    ).first()
+    if not parent_task or not parent_task.end_date_est:
+        return
+
+    if start_date > parent_task.end_date_est:
+        raise HTTPException(
+            400,
+            f"Ngày bắt đầu task con không được sau ngày kết thúc dự kiến của "
+            f"task cha {parent_code} ({parent_task.end_date_est.strftime('%d/%m/%Y')})."
+        )
+
+
 MAX_GROUP_MANDAY = 10
 
 
@@ -1408,6 +1441,8 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     # of sync with the actual position it was inserted at.
     task_code = next_code
     validate_manday_budget(gid, task_code, manday_est, db)
+    start_date_parsed = parse_date(body.get("start_date"))
+    validate_child_start_date(gid, task_code, start_date_parsed, db)
     ratio_assign, ratio_support = validate_kpi_ratio(
         body.get("kpi_ratio_assign", 100),
         body.get("kpi_ratio_support", 0),
@@ -1420,7 +1455,7 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
         priority=body.get("priority", "Normal"),
         manday_est=manday_est,
         status=body.get("status", "Waiting"),
-        start_date=parse_date(body.get("start_date")),
+        start_date=start_date_parsed,
         assigned_id=assigned_id,
         support_id=support_id,
         kpi_ratio_assign=ratio_assign,
