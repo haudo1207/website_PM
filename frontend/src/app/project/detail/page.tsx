@@ -7142,7 +7142,7 @@ function ProjectDetailContent() {
 
               {/* TAB: TASKS */}
               {activeMainTab === 'tasks' && (
-                <div className="flex-1 min-h-0 flex flex-col gap-4 -mt-2">
+                <div className="flex-1 min-h-0 flex flex-col gap-2 -mt-2">
                   {/* Phase Tabs + Search */}
                   <div className="flex items-center justify-between flex-nowrap gap-2 shrink-0">
                     <div ref={phaseNavContainerRef} className="flex items-center gap-4 h-9 flex-nowrap overflow-hidden flex-1 min-w-0">
