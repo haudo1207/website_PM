@@ -12,6 +12,7 @@ never needs a portal user session.
 import datetime
 from typing import Optional
 
+import requests
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -153,6 +154,57 @@ def _resolve_workspace_id_by_email(db: Session, google_email: Optional[str]) -> 
     return ws.id if ws else None
 
 
+# Fixed name, not configurable per workspace — every workspace gets its own
+# folder with this same name in its own Drive (each workspace has a
+# separate Google account, so there's no naming collision to worry about).
+RECORDINGS_FOLDER_NAME = "Meeting Host Bot Recordings"
+
+
+def _get_or_create_recordings_folder(access_token: str) -> Optional[str]:
+    """Finds (or creates, on first call) a folder to keep recordings out of
+    the Drive root for easier browsing — purely organizational, NOT required
+    for n8n's own discovery (confirmed live: n8n's "W3. Search Video By Tag"
+    searches all of Drive by filename with no folder restriction, and
+    "2. GDrive Download" fetches by file id directly — folder placement
+    doesn't affect either). Best-effort: returns None on any failure, and
+    the caller uploads to Drive root instead rather than blocking the
+    recording from being saved at all.
+
+    Only ever finds folders THIS app itself created: the drive.file scope
+    means Drive Search literally cannot see any pre-existing folder in the
+    user's Drive that wasn't created by (or explicitly opened with) this
+    app, so there's no risk of colliding with some unrelated folder the
+    account owner already has with the same name.
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/drive/v3/files",
+            headers=headers,
+            params={
+                "q": f"name='{RECORDINGS_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+                "fields": "files(id)",
+                "pageSize": 1,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        files = resp.json().get("files") or []
+        if files:
+            return files[0]["id"]
+
+        create_resp = requests.post(
+            "https://www.googleapis.com/drive/v3/files",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"name": RECORDINGS_FOLDER_NAME, "mimeType": "application/vnd.google-apps.folder"},
+            timeout=10,
+        )
+        create_resp.raise_for_status()
+        return create_resp.json().get("id")
+    except Exception:
+        return None
+
+
 @router.get("/drive-token")
 def get_drive_upload_token(
     meeting_id: int,
@@ -193,5 +245,6 @@ def get_drive_upload_token(
 
     title = (meeting.title or "Meeting").replace("\n", " ").replace("\r", " ").strip()
     drive_filename = f"[MK-{meeting.id}] {title}.mp4"
+    folder_id = _get_or_create_recordings_folder(access_token)
 
-    return {"access_token": access_token, "drive_filename": drive_filename}
+    return {"access_token": access_token, "drive_filename": drive_filename, "folder_id": folder_id}

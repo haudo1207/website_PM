@@ -54,7 +54,7 @@ def start_recording(meeting_id):
 DRIVE_RESUMABLE_INITIATE_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
 
 
-def upload_to_drive(path, access_token, drive_filename):
+def upload_to_drive(path, access_token, drive_filename, folder_id=None):
     """Uploads directly to Drive from the VPS using a short-lived Bearer
     token handed out by backend's GET /api/meeting-bot/drive-token — this
     process never sees a refresh_token or client_secret, only a token good
@@ -73,7 +73,13 @@ def upload_to_drive(path, access_token, drive_filename):
     # Not a scope problem at all; Google is blocking the default urllib UA.
     headers = {"User-Agent": "meeting-host-bot/1.0 (+recorder_service.py)"}
 
-    metadata = json.dumps({"name": drive_filename, "mimeType": "video/mp4"}).encode()
+    # Purely organizational — n8n's own search/download don't care where the
+    # file lives (see backend/app/routers/meeting_bot.py's
+    # _get_or_create_recordings_folder docstring for how this was confirmed).
+    metadata_dict = {"name": drive_filename, "mimeType": "video/mp4"}
+    if folder_id:
+        metadata_dict["parents"] = [folder_id]
+    metadata = json.dumps(metadata_dict).encode()
     init_req = urllib.request.Request(
         DRIVE_RESUMABLE_INITIATE_URL,
         data=metadata,
@@ -125,7 +131,7 @@ def stop_recording(meeting_id, upload=None):
     # safely finalized on local disk regardless.
     if upload and upload.get("access_token") and upload.get("drive_filename") and size > 0:
         try:
-            drive_file = upload_to_drive(entry["file"], upload["access_token"], upload["drive_filename"])
+            drive_file = upload_to_drive(entry["file"], upload["access_token"], upload["drive_filename"], upload.get("folder_id"))
             result["drive"] = {"id": drive_file.get("id"), "name": drive_file.get("name")}
         except urllib.error.HTTPError as exc:
             result["drive_upload_error"] = f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:500]}"
