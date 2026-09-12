@@ -1,5 +1,6 @@
 'use client';
-import React, { useState, useEffect, useRef, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface SelectOptionItem {
   id: string | number;
@@ -27,6 +28,10 @@ export interface SearchableSelectProps {
   // Opt-in initials avatar next to each dropdown row — for people lists
   // (members/assignees), not generic option lists (channels, skills...).
   showAvatar?: boolean;
+  // Render dropdown menu via createPortal to document.body so it is never
+  // clipped by overflow-hidden/auto ancestors (e.g. the task table scroll
+  // container). Uses getBoundingClientRect() for positioning.
+  usePortal?: boolean;
 }
 
 // Lets a parent trigger the dropdown open programmatically — e.g. a
@@ -112,7 +117,8 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
   disabled = false,
   align = 'left',
   className = '',
-  showAvatar = false
+  showAvatar = false,
+  usePortal = false
 }, ref) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -126,6 +132,9 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Portal positioning state — populated when usePortal is true
+  const [portalPos, setPortalPos] = useState<{ top: number; left?: number; right?: number; width: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open || !containerRef.current) return;
@@ -135,6 +144,49 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     const spaceAbove = rect.top;
     setDropUp(spaceBelow < estimatedPopupHeight && spaceAbove > spaceBelow);
   }, [open]);
+
+  // Portal positioning — compute fixed coordinates from the trigger's
+  // bounding rect so the dropdown renders at document.body level and is
+  // never clipped by any ancestor overflow container.
+  useEffect(() => {
+    if (!usePortal || !open || !containerRef.current) {
+      setPortalPos(null);
+      return;
+    }
+    const rect = containerRef.current.getBoundingClientRect();
+    const estimatedPopupHeight = 320;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const shouldDropUp = spaceBelow < estimatedPopupHeight && spaceAbove > spaceBelow;
+    const top = shouldDropUp ? rect.top - estimatedPopupHeight : rect.bottom + 4;
+    setPortalPos({
+      top: Math.max(4, top),
+      left: align === 'left' ? rect.left : undefined,
+      right: align === 'right' ? Math.max(4, window.innerWidth - rect.right) : undefined,
+      width: rect.width,
+    });
+
+    const reposition = () => {
+      if (!containerRef.current) return;
+      const r = containerRef.current.getBoundingClientRect();
+      const sb = window.innerHeight - r.bottom;
+      const sa = r.top;
+      const du = sb < estimatedPopupHeight && sa > sb;
+      const t = du ? r.top - estimatedPopupHeight : r.bottom + 4;
+      setPortalPos({
+        top: Math.max(4, t),
+        left: align === 'left' ? r.left : undefined,
+        right: align === 'right' ? Math.max(4, window.innerWidth - r.right) : undefined,
+        width: r.width,
+      });
+    };
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [usePortal, open, align]);
 
   // Debounced search query (200ms)
   const debouncedSearch = useDebounce(search, 200);
@@ -386,8 +438,139 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
         </div>
       </button>
 
-      {/* Popup Menu */}
-      {open && (
+      {/* Popup Menu — rendered inline (default) or via portal when usePortal
+          is true so it is never clipped by overflow-hidden/auto ancestors. */}
+      {open && (usePortal && portalPos ? createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, right: portalPos.right, width: portalPos.width, zIndex: 9999 }}
+          className="bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+        >
+          {/* Search Bar Input (if threshold met) */}
+          {showSearchBar && (
+            <div className="p-2 border-b border-slate-100 bg-slate-50/80 sticky top-0 z-10">
+              <div className="relative">
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder={(placeholder || `Tìm ${label.toLowerCase()}...`).replace(/^[🔍🔎]\s*/, '')}
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="w-full pl-7 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be]/20 font-medium"
+                />
+                <span className="absolute left-2.5 top-2 text-[12px] text-slate-400 pointer-events-none">🔍</span>
+              </div>
+            </div>
+          )}
+
+          {/* Options List */}
+          <div ref={listRef} className="max-h-56 overflow-y-auto p-1.5 space-y-0.5 text-xs">
+            {/* Single Select "All" reset option */}
+            {!isMulti && !debouncedSearch.trim() && (
+              <div
+                onClick={() => handleSelect('all')}
+                className={`px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition-colors flex items-center justify-between ${
+                  focusedIndex === 0 ? 'bg-[#0058be]/10 text-[#0058be]' : ''
+                } ${
+                  selectedValues.length === 0
+                    ? 'bg-[#eff4ff] text-[#0058be]'
+                    : 'hover:bg-slate-50 text-slate-600'
+                }`}
+              >
+                <span>Tất cả {label}</span>
+                {selectedValues.length === 0 && <span>✓</span>}
+              </div>
+            )}
+
+            {orderedOptions.length === 0 ? (
+              <div className="py-4 text-center text-slate-400 italic text-xs">
+                Không tìm thấy {label.toLowerCase()}.
+              </div>
+            ) : (
+              orderedOptions.map((opt, idx) => {
+                const itemIdx = !isMulti && !debouncedSearch.trim() ? idx + 1 : idx;
+                const isSelected = selectedValues.some(v => String(v) === String(opt.id));
+                const isFocused = focusedIndex === itemIdx;
+                // Group dividers for multi-select: selected items are always
+                // first in orderedOptions, so the "ĐÃ CHỌN" header goes above
+                // idx 0 and "TẤT CẢ ..." goes right where the group flips.
+                const showSelectedHeader = isMulti && idx === 0 && selectedCountInView > 0;
+                const showAllHeader = isMulti && idx === selectedCountInView && orderedOptions.length > selectedCountInView;
+
+                return (
+                  <React.Fragment key={opt.id}>
+                    {showSelectedHeader && (
+                      <div className="px-2.5 pt-1 pb-1 text-[10px] font-bold text-[#0058be] uppercase tracking-wider">
+                        Đã chọn · {selectedCountInView}
+                      </div>
+                    )}
+                    {showAllHeader && (
+                      <div className={`px-2.5 pb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider ${selectedCountInView > 0 ? 'pt-2 mt-1 border-t border-slate-100' : 'pt-1'}`}>
+                        Tất cả {label} · {orderedOptions.length - selectedCountInView}
+                      </div>
+                    )}
+                    <div
+                      onClick={() => handleSelect(opt.id)}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer font-medium transition-all ${
+                        isFocused ? 'bg-[#0058be]/10 text-[#0058be]' : ''
+                      } ${
+                        isSelected
+                          ? 'bg-[#eff4ff] text-[#0058be] font-bold'
+                          : 'hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        {isMulti && (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}}
+                            className="rounded border-slate-300 text-[#0058be] focus:ring-[#0058be]"
+                          />
+                        )}
+                        {showAvatar && (
+                          <span
+                            className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                            style={{ background: avatarColorFor(opt.name) }}
+                          >
+                            {avatarInitialsFor(opt.name)}
+                          </span>
+                        )}
+                        {opt.icon && <span>{opt.icon}</span>}
+                        <span className="truncate">{highlightMatch(opt.name, debouncedSearch)}</span>
+                        {opt.subtext && <span className="text-[10px] text-slate-400">({opt.subtext})</span>}
+                      </div>
+
+                      {opt.badge && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">
+                          {opt.badge}
+                        </span>
+                      )}
+
+                      {!isMulti && isSelected && <span>✓</span>}
+                    </div>
+                  </React.Fragment>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer controls for Multi-select */}
+          {isMulti && selectedValues.length > 0 && (
+            <div className="p-1.5 border-t border-slate-100 bg-slate-50 flex justify-between items-center text-[10px]">
+              <span className="text-slate-500 font-semibold">{selectedValues.length} đã chọn</span>
+              <button
+                type="button"
+                onClick={handleClear}
+                className="text-[#0058be] font-bold hover:underline"
+              >
+                Bỏ chọn tất cả
+              </button>
+            </div>
+          )}
+        </div>,
+        document.body
+      ) : (
         <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${dropUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} w-[max(16rem,100%)] bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
           {/* Search Bar Input (if threshold met) */}
           {showSearchBar && (
@@ -512,7 +695,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
             </div>
           )}
         </div>
-      )}
+      ))}
     </div>
   );
 });
