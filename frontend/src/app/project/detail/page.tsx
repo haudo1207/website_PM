@@ -3393,6 +3393,7 @@ function ProjectDetailContent() {
             onChange={(val: any) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
             placeholder="Tìm thành viên..."
             className="w-full text-[11px]"
+            usePortal
           />
         );
       } else if (isNumeric) {
@@ -3429,6 +3430,7 @@ function ProjectDetailContent() {
             }}
             placeholder="Tìm group..."
             className="w-full text-[11px]"
+            usePortal
           />
         );
       } else if (colUpper === 'SKILL VENDOR') {
@@ -3460,6 +3462,7 @@ function ProjectDetailContent() {
             onChange={(val: any) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
             placeholder="Tìm skill..."
             className="w-full text-[11px]"
+            usePortal
           />
         );
       } else if (colUpper === 'REMARK') {
@@ -5409,6 +5412,7 @@ function ProjectDetailContent() {
                         onChange={(vals: any) => handleSaveGroupPeople(group, field, vals)}
                         placeholder="Tìm thành viên..."
                         className="w-full"
+                        usePortal
                       />
                     </td>
                   );
@@ -5940,8 +5944,10 @@ function ProjectDetailContent() {
         </>
         )}
 
-        {/* MAIN CONTAINER */}
-        <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-6">
+        {/* MAIN CONTAINER — on the Tasks tab, use flex-col so the task table
+            can fill the remaining viewport height (no nested scroll). Other tabs
+            keep overflow-y-auto for normal page scrolling. */}
+        <div className={`flex-1 min-w-0 p-4 md:p-6 ${activeMainTab === 'tasks' ? 'flex flex-col overflow-hidden space-y-0' : 'overflow-y-auto space-y-6'}`}>
           {msg && (
             // z-[1000] - PHẢI cao hơn mọi drawer full-screen (Task Edit/Leader
             // Review Detail/AI Review đều z-50) VÀ mọi modal (z-[999], vd
@@ -5968,7 +5974,7 @@ function ProjectDetailContent() {
 
           {/* TAB NAVIGATION - khi ở Tasks, gộp luôn Search/Bộ lọc/Cột/+Thêm task vào
               cùng hàng này (bên phải) cho gọn, thay vì có riêng 1 hàng ngay dưới. */}
-          <div className="border-b border-[#c2c6d6]/60 flex items-center justify-between gap-3">
+          <div className={`border-b border-[#c2c6d6]/60 flex items-center justify-between gap-3 ${activeMainTab === 'tasks' ? 'shrink-0' : ''}`}>
           <div className="flex space-x-4 sm:space-x-8 overflow-x-auto">
             <button
               onClick={() => router.push(`/project/detail/overview?id=${id}`)}
@@ -7136,9 +7142,9 @@ function ProjectDetailContent() {
 
               {/* TAB: TASKS */}
               {activeMainTab === 'tasks' && (
-                <div className="space-y-6 -mt-2">
+                <div className="flex-1 min-h-0 flex flex-col gap-4 -mt-2">
                   {/* Phase Tabs + Search */}
-                  <div className="flex items-center justify-between flex-nowrap gap-2">
+                  <div className="flex items-center justify-between flex-nowrap gap-2 shrink-0">
                     <div ref={phaseNavContainerRef} className="flex items-center gap-4 h-9 flex-nowrap overflow-hidden flex-1 min-w-0">
                       {/* Master: luôn hiện, không tính vào cơ chế overflow */}
                       <div className="relative flex items-center gap-1 shrink-0 h-9">
@@ -7368,10 +7374,10 @@ function ProjectDetailContent() {
                       column width (width cột là inline style theo px cố định,
                       độc lập với width container cha) và scroll ngang riêng
                       của table vẫn hoạt động bình thường. */}
-                  <div className="flex items-start gap-4">
+                  <div className="flex items-start gap-4 flex-1 min-h-0">
                   {/* Task Table */}
-                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
-                    <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0">
+                    <div className="flex-1 min-h-0 overflow-auto task-table-scroll">
                       {/* table-layout: fixed - bắt buộc để mỗi cột giữ đúng width đã set (kể cả
                           width mặc định thu gọn cho MD/Priority/Status/KPI Ratio/ngày và width
                           do user tự resize) thay vì bị auto-layout của trình duyệt kéo giãn ra
