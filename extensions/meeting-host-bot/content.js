@@ -207,6 +207,86 @@ function checkHostState() {
   }
 }
 
+// Native Google Meet recording (built 2026-09-12). Confirmed live that this
+// account has a genuinely enabled (non-disabled) "Start recording" control —
+// earlier project notes assumed personal Gmail accounts never get this, which
+// turned out to be stale. NOT yet confirmed to reliably produce a finished
+// recording end-to-end (one manual test's tab lost its CDP target right after
+// confirming the dialog, before a "recording in progress" indicator could be
+// verified) — kept running ALONGSIDE the existing FFmpeg/recorder_service.py
+// capture as a safety net, not as a replacement, until several real runs
+// confirm this path is trustworthy on its own.
+const MEETING_TOOLS_RE = /^meeting tools$/i;
+const START_RECORDING_RE = /^start recording$/i;
+const STOP_RECORDING_RE = /^stop recording$/i;
+const RECORD_ITEM_PRESENT_RE = /capture the meeting/i;
+const NATIVE_RECORDING_PANEL_OPEN_ATTEMPTS_MAX = 15; // ~22s at the 1.5s tick rate
+
+let nativeRecordingStarted = false;
+let nativeRecordingUnavailableLogged = false;
+let nativeRecordingPanelOpenAttempts = 0;
+
+function tryStartNativeRecording() {
+  if (!hostDetected || nativeRecordingStarted) return;
+
+  // Step 3: the "Make sure everyone is ready" consent dialog is open —
+  // confirm it. Scoped to dialogs whose text mentions "ready" so this never
+  // matches an unrelated dialog's own generically-labeled "Start" button.
+  const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
+  if (dialog && /ready/i.test(dialog.innerText || "")) {
+    const startBtn = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => (b.getAttribute("aria-label") || visibleText(b)).trim().toLowerCase() === "start"
+    );
+    if (startBtn) {
+      fireClick(startBtn);
+      nativeRecordingStarted = true;
+      log("Native recording: Start confirmed");
+      return;
+    }
+  }
+
+  // Step 2: "Start recording" is already visible (panel is open) — click it,
+  // which opens the dialog handled in step 3 above on a later tick.
+  if (clickIfFound(START_RECORDING_RE)) {
+    log("Native recording: clicked Start recording");
+    return;
+  }
+
+  // Step 1: open the "Meeting tools" panel, but only if it isn't already
+  // open (the same button toggles it closed on a second click) — the
+  // "Capture the meeting" subtitle text only renders while the panel is
+  // showing the Record row.
+  if (!RECORD_ITEM_PRESENT_RE.test(document.body.innerText || "")) {
+    if (nativeRecordingPanelOpenAttempts >= NATIVE_RECORDING_PANEL_OPEN_ATTEMPTS_MAX) {
+      if (!nativeRecordingUnavailableLogged) {
+        log("Native recording: 'Start recording' never appeared after opening Meeting tools repeatedly — likely unavailable for this account, giving up (FFmpeg recording is unaffected).");
+        nativeRecordingUnavailableLogged = true;
+      }
+      return;
+    }
+    if (clickIfFound(MEETING_TOOLS_RE)) {
+      nativeRecordingPanelOpenAttempts += 1;
+      log("Native recording: opened Meeting tools panel");
+    }
+  }
+}
+
+// Mirrors tryStartNativeRecording()'s panel-then-click shape. Not yet
+// live-verified (no test run has reached an active-recording state long
+// enough to test stopping it) — logged defensively so a wrong selector shows
+// up in the console instead of silently leaving a native recording running
+// after the bot has left the call.
+function tryStopNativeRecording() {
+  if (!nativeRecordingStarted) return;
+  if (clickIfFound(STOP_RECORDING_RE)) {
+    log("Native recording: clicked Stop recording");
+    return;
+  }
+  if (!document.body.innerText || !RECORD_ITEM_PRESENT_RE.test(document.body.innerText)) {
+    clickIfFound(MEETING_TOOLS_RE);
+  }
+}
+
 // Confirmed live 2026-09-11: a solo host (no other participants) gets
 // dropped back to meet.google.com/home by Meet itself after roughly
 // 20-25 minutes — not a bug in this bot, but it does mean "Host detected"
@@ -341,6 +421,7 @@ function checkSoloTimeout() {
     }
     if (Date.now() - aloneSinceTs >= SOLO_LEAVE_TIMEOUT_MS) {
       log("Still alone after timeout — leaving call proactively");
+      tryStopNativeRecording();
       const leaveBtn = findClickableByText(LEAVE_CALL_RE);
       if (leaveBtn) fireClick(leaveBtn);
     }
@@ -364,6 +445,7 @@ function tick() {
   checkHostState();
   checkCallEnded();
   admitWaitingParticipants();
+  tryStartNativeRecording();
   checkSoloTimeout();
   confirmLeaveSubmenu();
 }

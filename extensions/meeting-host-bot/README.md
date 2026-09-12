@@ -13,11 +13,15 @@ mạnh của cả hai — xem lịch sử git nếu cần đối chiếu chi ti�
 
 4 mail vận hành là Gmail cá nhân (`@gmail.com`, cùng 1 nhóm Google Family),
 **không phải Google Workspace**. Gmail cá nhân không có API đổi quyền phòng
-họp Meet (`accessType=OPEN`) và cũng không có nút "Ghi lại cuộc họp" — cả 2
-đều là tính năng chỉ Workspace mới có. Cách duy nhất để "ai có link cũng vào
-thẳng được" là phải có chính tài khoản organizer đang thực sự có mặt trong
-phòng để bấm cho vào, và cách duy nhất để có bản ghi là tự quay màn hình VPS
-(FFmpeg — xem mục Recording bên dưới, **chưa tự động hoá**).
+họp Meet (`accessType=OPEN`) — cách duy nhất để "ai có link cũng vào thẳng
+được" là phải có chính tài khoản organizer đang thực sự có mặt trong phòng để
+bấm cho vào.
+
+**Cập nhật 2026-09-12**: ghi chú cũ ở đây từng nói Gmail cá nhân "cũng không có
+nút Ghi lại cuộc họp" — xác nhận lại trực tiếp trên VPS, điều đó **không còn
+đúng** cho tài khoản `sptech.teampro@gmail.com` (nút "Start recording" tồn
+tại, không bị khóa). Xem mục Recording bên dưới — bot giờ thử cả recording
+native của Meet lẫn tự quay màn hình VPS (FFmpeg) song song.
 
 ## Cài đặt (mỗi Chrome profile / mỗi tài khoản Gmail)
 
@@ -63,10 +67,30 @@ trong `--user-data-dir`) — không cần làm tay lại mỗi ngày. Nên chạ
 `Xvfb` + `google-chrome` dưới dạng systemd service (`Restart=always`) để VPS
 restart hay Chrome crash thì tự phục hồi.
 
-## Recording (tự động, xác nhận hoạt động 2026-09-11 trên VPS)
+## Recording native của Meet (built 2026-09-12, CHƯA xác nhận ổn định)
 
-Vì Gmail cá nhân không có nút "Ghi lại" của Meet, VPS tự quay màn hình ảo +
-lấy nguồn âm thanh PulseAudio bằng ffmpeg, điều khiển qua `recorder_service.py`
+`content.js`'s `tryStartNativeRecording()`/`tryStopNativeRecording()` tự bấm
+qua Meeting tools → Start recording → xác nhận dialog "Make sure everyone is
+ready" — xác nhận trực tiếp `sptech.teampro@gmail.com` có nút này và không bị
+khóa (khác với ghi chú cũ ở trên). **Nhưng lần test tay duy nhất tới giờ, tab
+mất kết nối CDP ngay sau khi confirm Start** và không thấy banner "Đang ghi"
+khi join lại — chưa có lần nào xác nhận recording native thực sự chạy xong và
+ra file. Vì vậy đây chỉ chạy **song song** với FFmpeg bên dưới (lưới an toàn),
+không thay thế — cả 2 cùng bật mỗi khi Host detected. Chỉ cân nhắc bỏ FFmpeg
+sau khi có vài lần thật xác nhận native recording ra file đúng vào Drive của
+host và tên file vẫn khớp tag `[MK-{meeting_id}]` mà n8n tìm (native recording
+đặt tên file theo tiêu đề Calendar event, chưa kiểm chứng có giữ đúng tag hay
+không).
+
+Selector chưa live-test đầy đủ (chỉ mới xác nhận bước mở panel + click Start +
+confirm dialog) — `tryStopNativeRecording()` đặc biệt chưa test lần nào vì
+chưa có run nào tới trạng thái "đang ghi" đủ lâu để thử dừng. Nếu thấy log
+`Native recording: ...` không như mong đợi, đọc console tab Meet để tinh
+chỉnh selector, theo đúng cách đã làm với Join/Admit.
+
+## Recording bằng FFmpeg quay màn hình VPS (tự động, xác nhận hoạt động 2026-09-11 trên VPS)
+
+VPS tự quay màn hình ảo + lấy nguồn âm thanh PulseAudio bằng ffmpeg, điều khiển qua `recorder_service.py`
 — một HTTP service nhỏ (chỉ dùng thư viện chuẩn Python, không cần cài thêm
 gói) chạy local trên **cùng VPS** với Chrome, bind `127.0.0.1` only:
 
