@@ -245,29 +245,41 @@ function tryStartNativeRecording() {
     }
   }
 
-  // Step 2: "Start recording" is already visible (panel is open) — click it,
-  // which opens the dialog handled in step 3 above on a later tick.
+  // Step 2c: "Start recording" is already visible (drilled into the Record
+  // sub-panel) — click it, which opens the dialog handled in step 3 above
+  // on a later tick.
   if (clickIfFound(START_RECORDING_RE)) {
     log("Native recording: clicked Start recording");
     return;
   }
 
-  // Step 1: open the "Meeting tools" panel, but only if it isn't already
-  // open (the same button toggles it closed on a second click) — the
-  // "Capture the meeting" subtitle text only renders while the panel is
-  // showing the Record row.
-  if (!RECORD_ITEM_PRESENT_RE.test(document.body.innerText || "")) {
-    if (nativeRecordingPanelOpenAttempts >= NATIVE_RECORDING_PANEL_OPEN_ATTEMPTS_MAX) {
-      if (!nativeRecordingUnavailableLogged) {
-        log("Native recording: 'Start recording' never appeared after opening Meeting tools repeatedly — likely unavailable for this account, giving up (FFmpeg recording is unaffected).");
-        nativeRecordingUnavailableLogged = true;
-      }
-      return;
+  // Step 2b: the "Meeting tools" panel is open and showing the Tools list
+  // (the "Record / Capture the meeting" row, with a chevron — it's a nav
+  // item, not a leaf action, confirmed live 2026-09-13: the earlier version
+  // of this function assumed "Start recording" appeared inline here and
+  // just kept re-toggling the panel forever without this extra click).
+  // Click the row itself to drill into the sub-panel where "Start
+  // recording" actually lives.
+  if (RECORD_ITEM_PRESENT_RE.test(document.body.innerText || "")) {
+    if (clickIfFound(RECORD_ITEM_PRESENT_RE)) {
+      log("Native recording: opened Record sub-panel");
     }
-    if (clickIfFound(MEETING_TOOLS_RE)) {
-      nativeRecordingPanelOpenAttempts += 1;
-      log("Native recording: opened Meeting tools panel");
+    return;
+  }
+
+  // Step 2a: open the "Meeting tools" panel, but only if it isn't already
+  // open (the same button toggles it closed on a second click) — checked
+  // via the same "Capture the meeting" text step 2b looks for.
+  if (nativeRecordingPanelOpenAttempts >= NATIVE_RECORDING_PANEL_OPEN_ATTEMPTS_MAX) {
+    if (!nativeRecordingUnavailableLogged) {
+      log("Native recording: 'Start recording' never appeared after opening Meeting tools repeatedly — likely unavailable for this account, giving up (FFmpeg recording is unaffected).");
+      nativeRecordingUnavailableLogged = true;
     }
+    return;
+  }
+  if (clickIfFound(MEETING_TOOLS_RE)) {
+    nativeRecordingPanelOpenAttempts += 1;
+    log("Native recording: opened Meeting tools panel");
   }
 }
 
@@ -282,9 +294,11 @@ function tryStopNativeRecording() {
     log("Native recording: clicked Stop recording");
     return;
   }
-  if (!document.body.innerText || !RECORD_ITEM_PRESENT_RE.test(document.body.innerText)) {
-    clickIfFound(MEETING_TOOLS_RE);
+  if (RECORD_ITEM_PRESENT_RE.test(document.body.innerText || "")) {
+    clickIfFound(RECORD_ITEM_PRESENT_RE);
+    return;
   }
+  clickIfFound(MEETING_TOOLS_RE);
 }
 
 // Confirmed live 2026-09-11: a solo host (no other participants) gets
@@ -390,7 +404,20 @@ const SOLO_LEAVE_TIMEOUT_MS = 3 * 60 * 1000; // tune once verified live
 let aloneSinceTs = null;
 let aloneLoggedForThisStretch = false;
 
+// Confirmed live 2026-09-13: [data-participant-id] is NOT reliable — a
+// guest's tile stayed in the DOM (count still read 2) well after they'd
+// actually left, while the People panel's own "Contributors N" line (visible
+// whenever that panel is open, which the admit flow already opens) correctly
+// showed 1. The aria-label scan below never actually matched anything live
+// either (Meet's People/participants toggle doesn't carry a count in its
+// label on this account) — kept as a second attempt in case wording differs
+// elsewhere, but "Contributors N" is the signal to trust first.
+const CONTRIBUTORS_COUNT_RE = /contributors\s*\n?\s*(\d+)/i;
+
 function getParticipantCount() {
+  const contribMatch = (document.body.innerText || "").match(CONTRIBUTORS_COUNT_RE);
+  if (contribMatch) return parseInt(contribMatch[1], 10);
+
   // Meet's "People" bottom-bar toggle usually carries the head-count in
   // its aria-label (e.g. "People, 2 participants" / "Mọi người, 2 người").
   for (const el of allButtons()) {
@@ -399,8 +426,9 @@ function getParticipantCount() {
     const m = label.match(/(\d+)/);
     if (m) return parseInt(m[1], 10);
   }
-  // Fallback: count distinct participant tiles — Meet tags each tile
-  // (self included) with data-participant-id in the main call grid.
+  // Last-resort fallback: count distinct participant tiles. Known to
+  // sometimes over-count (see comment above) — only reached when neither
+  // signal above is available at all (e.g. People panel never opened).
   const tiles = document.querySelectorAll("[data-participant-id]");
   if (tiles.length > 0) return tiles.length;
   return null; // couldn't determine — don't risk acting on a guess

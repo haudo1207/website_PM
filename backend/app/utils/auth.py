@@ -81,6 +81,21 @@ def require_zalo_user(user=Depends(get_current_user)):
         raise HTTPException(403, "Yêu cầu quyền Member trở lên")
     return user
 
+
+def require_skill_creator(user=Depends(get_current_user)):
+    """Authorises the Task Detail inline Skill creation flow.
+
+    Used by POST /api/skills/groups and POST /api/skills/skills so a Member
+    or Leader can create the missing skill they need while filling out a
+    task, instead of bouncing out to Settings. The full Skill CRUD on
+    Settings still requires super_admin via require_admin — this gate is
+    strictly the create-only entrypoint that the Task Detail `+` button
+    reaches into. viewer is excluded.
+    """
+    if user.role not in {"super_admin", "leader", "member"}:
+        raise HTTPException(403, "Yêu cầu quyền Member trở lên")
+    return user
+
 # ── Legacy aliases kept for backward compatibility during transition ──
 
 def require_admin(user=Depends(get_current_user)):

@@ -4,7 +4,7 @@ from sqlalchemy import text
 from ..database import get_db
 from ..models.skill_master import Category, Group, Skill, user_skills
 from ..models.task import Task
-from ..utils.auth import require_admin, get_current_user
+from ..utils.auth import require_admin, require_skill_creator, get_current_user
 from ..utils.audit_service import AuditService
 
 router = APIRouter()
@@ -192,7 +192,11 @@ def delete_category(cid: int, db: Session = Depends(get_db), current_user=Depend
 # --- GROUPS ---
 
 @router.post("/groups")
-def create_group(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
+def create_group(body: dict, db: Session = Depends(get_db), current_user=Depends(require_skill_creator)):
+    # require_skill_creator (super_admin + leader + member) so a user editing
+    # a Task can create the missing Group inline from the SKILL SOLUTION `+`
+    # button without bouncing out to Settings. Update / Delete endpoints on
+    # /groups/{gid} remain require_admin (Settings-only).
     name = body.get("name", "").strip()
     category_id = body.get("category_id")
     if not name:
@@ -278,7 +282,11 @@ def delete_group(gid: int, db: Session = Depends(get_db), current_user=Depends(r
 # --- SKILLS ---
 
 @router.post("/skills")
-def create_skill(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
+def create_skill(body: dict, db: Session = Depends(get_db), current_user=Depends(require_skill_creator)):
+    # require_skill_creator (super_admin + leader + member) so the SKILL
+    # VENDOR `+` button in Task Detail can create the missing Skill inline
+    # under the currently selected Group. Update / Delete endpoints on
+    # /skills/{sid} remain require_admin (Settings-only).
     name = body.get("name", "").strip()
     group_id = body.get("group_id")
     if not name:
