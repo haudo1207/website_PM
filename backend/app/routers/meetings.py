@@ -517,11 +517,17 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
             )
     elif "google" in platform.lower() or "meet" in platform.lower():
         try:
-            from ..services.meeting_sync import create_google_meet_link, notify_n8n_meeting_created
+            from ..services.meeting_sync import create_google_meet_link
             proj = db.query(Project).filter(Project.id == body.get("project_id")).first() if body.get("project_id") else None
             workspace_id = workspace_id_for_project(db, proj)
             result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
-            notify_n8n_meeting_created(db, result.get("mk_tag"), title, meeting_date, start_time, workspace_id)
+            # NOT notifying n8n here on purpose (confirmed live 2026-09-13):
+            # this endpoint only pre-fetches a join link — no Meeting row
+            # exists yet, so result["mk_tag"] is a throwaway placeholder
+            # timestamp, not the real id our own recorder tags the Drive
+            # upload with. Notifying with that placeholder made n8n search
+            # for a tag the video will never actually have. create_meeting()
+            # notifies instead, once the real row (and its real id) exists.
             return {
                 "success": True,
                 "join_url": result["join_url"],
@@ -811,6 +817,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # instead of silently leaving both NULL for every meeting created this way.
     google_event_id = body.get("google_event_id")
     organizer_google_email = body.get("organizer_google_email")
+    workspace_id = workspace_id_for_project(db, proj if 'proj' in locals() else None)
 
     if not meeting_url:
         # Build ISO start_time for API calls
@@ -834,13 +841,16 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                 )
         else:
             try:
-                from ..services.meeting_sync import create_google_meet_link, notify_n8n_meeting_created
-                workspace_id = workspace_id_for_project(db, proj if 'proj' in locals() else None)
+                from ..services.meeting_sync import create_google_meet_link
                 result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
                 meeting_url = result["join_url"]
                 google_event_id = result.get("id")
                 organizer_google_email = result.get("organizer_google_email")
-                notify_n8n_meeting_created(db, result.get("mk_tag"), title, meeting_date, start_time, workspace_id)
+                # NOT notifying n8n here on purpose (confirmed live 2026-09-13):
+                # result["mk_tag"] is a throwaway placeholder timestamp, not
+                # this row's real id — notified once below, after db.flush(),
+                # using the real m.id our own recorder tags the Drive upload
+                # with.
             except Exception as e:
                 logger.error(f"Auto-generate Google Meet link failed: {e}")
                 raise HTTPException(status_code=400, detail=str(e))
@@ -908,6 +918,17 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 
     db.add(m)
     db.flush()
+    # Notify n8n here, not earlier — this is the first point where m.id (the
+    # real tag our own recorder_service.py/meeting_bot.py stamp the Drive
+    # upload with, e.g. "[MK-{id}]") actually exists. Confirmed live
+    # 2026-09-13: both call sites above used to notify with a throwaway
+    # placeholder timestamp instead, so n8n's Drive search was hunting for a
+    # tag the uploaded video would never actually have — silently breaking
+    # AI-summary auto-discovery for every meeting created this way.
+    meeting_url_lower = (m.meeting_url or "").lower()
+    if "meet.google.com" in meeting_url_lower or (m.platform or "").lower() in ("google meet", "google"):
+        from ..services.meeting_sync import notify_n8n_meeting_created
+        notify_n8n_meeting_created(db, m.id, m.title, m.meeting_date, m.start_time, workspace_id)
     if extra_project_ids:
         _sync_meeting_projects(db, m.id, extra_project_ids)
     from ..services.meeting_score_engine import recalculate_meeting_score
