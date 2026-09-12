@@ -404,7 +404,20 @@ const SOLO_LEAVE_TIMEOUT_MS = 3 * 60 * 1000; // tune once verified live
 let aloneSinceTs = null;
 let aloneLoggedForThisStretch = false;
 
+// Confirmed live 2026-09-13: [data-participant-id] is NOT reliable — a
+// guest's tile stayed in the DOM (count still read 2) well after they'd
+// actually left, while the People panel's own "Contributors N" line (visible
+// whenever that panel is open, which the admit flow already opens) correctly
+// showed 1. The aria-label scan below never actually matched anything live
+// either (Meet's People/participants toggle doesn't carry a count in its
+// label on this account) — kept as a second attempt in case wording differs
+// elsewhere, but "Contributors N" is the signal to trust first.
+const CONTRIBUTORS_COUNT_RE = /contributors\s*\n?\s*(\d+)/i;
+
 function getParticipantCount() {
+  const contribMatch = (document.body.innerText || "").match(CONTRIBUTORS_COUNT_RE);
+  if (contribMatch) return parseInt(contribMatch[1], 10);
+
   // Meet's "People" bottom-bar toggle usually carries the head-count in
   // its aria-label (e.g. "People, 2 participants" / "Mọi người, 2 người").
   for (const el of allButtons()) {
@@ -413,8 +426,9 @@ function getParticipantCount() {
     const m = label.match(/(\d+)/);
     if (m) return parseInt(m[1], 10);
   }
-  // Fallback: count distinct participant tiles — Meet tags each tile
-  // (self included) with data-participant-id in the main call grid.
+  // Last-resort fallback: count distinct participant tiles. Known to
+  // sometimes over-count (see comment above) — only reached when neither
+  // signal above is available at all (e.g. People panel never opened).
   const tiles = document.querySelectorAll("[data-participant-id]");
   if (tiles.length > 0) return tiles.length;
   return null; // couldn't determine — don't risk acting on a guess
