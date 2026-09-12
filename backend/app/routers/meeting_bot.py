@@ -12,7 +12,9 @@ never needs a portal user session.
 import datetime
 from typing import Optional
 
+import requests
 from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -95,6 +97,15 @@ def get_bot_queue(
             Meeting.meeting_date >= window_start.date(),
             Meeting.meeting_date <= window_end.date(),
         )
+        # LOOKAHEAD_MINUTES is wide enough that two due meetings for the same
+        # mailbox can legitimately both be "due" in the same response (back-
+        # to-back or overlapping meetings). Without this, `.all()` returns
+        # DB/insertion order, not start-time order — the extension's
+        # pollOnce() opens whichever one is first in this list, so an
+        # unordered result could pick the LATER meeting before the one
+        # that's actually starting sooner. Order by start time so "due
+        # first" always means "starts first."
+        .order_by(Meeting.meeting_date, Meeting.start_time)
         .all()
     )
 
@@ -131,6 +142,78 @@ def get_bot_queue(
     return {"due": due}
 
 
+def _resolve_workspace_id_by_email(db: Session, google_email: Optional[str]) -> Optional[int]:
+    """Reverse of _workspace_google_email: given a mailbox, which workspace's
+    Drive should own the upload — prefers the connected OAuth override,
+    falls back to the display hint. A meeting's organizer_google_email is
+    frozen at creation time and is very often the ONLY signal available
+    (project_id can be None — "company-wide" meetings, or test rows), so
+    this must be tried before the project→workspace path, matching the
+    same priority /queue already uses for the reverse direction.
+    """
+    if not google_email:
+        return None
+    email = google_email.strip().lower()
+    wga = db.query(WorkspaceGoogleAccount).filter(
+        func.lower(WorkspaceGoogleAccount.google_email) == email
+    ).first()
+    if wga:
+        return wga.workspace_id
+    ws = db.query(Workspace).filter(func.lower(Workspace.expected_google_email) == email).first()
+    return ws.id if ws else None
+
+
+# Fixed name, not configurable per workspace — every workspace gets its own
+# folder with this same name in its own Drive (each workspace has a
+# separate Google account, so there's no naming collision to worry about).
+RECORDINGS_FOLDER_NAME = "Meeting Host Bot Recordings"
+
+
+def _get_or_create_recordings_folder(access_token: str) -> Optional[str]:
+    """Finds (or creates, on first call) a folder to keep recordings out of
+    the Drive root for easier browsing — purely organizational, NOT required
+    for n8n's own discovery (confirmed live: n8n's "W3. Search Video By Tag"
+    searches all of Drive by filename with no folder restriction, and
+    "2. GDrive Download" fetches by file id directly — folder placement
+    doesn't affect either). Best-effort: returns None on any failure, and
+    the caller uploads to Drive root instead rather than blocking the
+    recording from being saved at all.
+
+    Only ever finds folders THIS app itself created: the drive.file scope
+    means Drive Search literally cannot see any pre-existing folder in the
+    user's Drive that wasn't created by (or explicitly opened with) this
+    app, so there's no risk of colliding with some unrelated folder the
+    account owner already has with the same name.
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/drive/v3/files",
+            headers=headers,
+            params={
+                "q": f"name='{RECORDINGS_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+                "fields": "files(id)",
+                "pageSize": 1,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        files = resp.json().get("files") or []
+        if files:
+            return files[0]["id"]
+
+        create_resp = requests.post(
+            "https://www.googleapis.com/drive/v3/files",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"name": RECORDINGS_FOLDER_NAME, "mimeType": "application/vnd.google-apps.folder"},
+            timeout=10,
+        )
+        create_resp.raise_for_status()
+        return create_resp.json().get("id")
+    except Exception:
+        return None
+
+
 @router.get("/drive-token")
 def get_drive_upload_token(
     meeting_id: int,
@@ -155,7 +238,15 @@ def get_drive_upload_token(
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    workspace_id = _resolve_meeting_workspace_id(db, meeting)
+    # Confirmed live 2026-09-12: a meeting with organizer_google_email set
+    # but project_id=None (e.g. this exact test row) made
+    # _resolve_meeting_workspace_id return None, silently falling back to
+    # the shared operational account's token (wrong Drive entirely — that
+    # account's grant didn't even have the drive.file scope). Try the
+    # organizer's own workspace first.
+    workspace_id = _resolve_workspace_id_by_email(db, meeting.organizer_google_email)
+    if workspace_id is None:
+        workspace_id = _resolve_meeting_workspace_id(db, meeting)
     try:
         access_token = get_workspace_google_access_token(db, workspace_id)
     except Exception as exc:
@@ -163,5 +254,6 @@ def get_drive_upload_token(
 
     title = (meeting.title or "Meeting").replace("\n", " ").replace("\r", " ").strip()
     drive_filename = f"[MK-{meeting.id}] {title}.mp4"
+    folder_id = _get_or_create_recordings_folder(access_token)
 
-    return {"access_token": access_token, "drive_filename": drive_filename}
+    return {"access_token": access_token, "drive_filename": drive_filename, "folder_id": folder_id}

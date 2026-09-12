@@ -134,9 +134,24 @@ async function stopRecording(meetingId) {
   }
 }
 
+// Bot-managed tabs get closed once their job is done. A profile is only ever
+// supposed to hold one active Meet tab at a time (see pollOnce()'s guard and
+// the startup cleanup below) — leaving a finished call's tab open serves no
+// purpose and, at 4-workspace scale, adds up to real Chrome RAM/CPU plus a
+// standing risk of the bot's tab-matching logic getting confused about which
+// tab is "the" current meeting.
+function closeTab(tabId) {
+  chrome.tabs.remove(tabId, () => {
+    // Swallow "no tab with id" — e.g. the onRemoved path below, where the
+    // tab is already gone by the time this would run.
+    void chrome.runtime.lastError;
+  });
+}
+
 // Backup stop path #1: if the tab is closed (crash, manual close, VPS reboot
 // script cleanup) before content.js ever gets to send CALL_ENDED, this is
 // what actually stops ffmpeg instead of leaving it recording a dead tab.
+// The tab is already gone here, so there's nothing to close.
 chrome.tabs.onRemoved.addListener((tabId) => {
   popMeetingForTab(tabId).then((meetingId) => {
     if (meetingId) stopRecording(meetingId);
@@ -164,9 +179,17 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
       stillOnMeeting = false;
     }
     if (stillOnMeeting) return;
-    popMeetingForTab(tabId).then((meetingId) => {
-      if (meetingId) stopRecording(meetingId);
-    });
+    // Don't pop the tracking entry until stopRecording() (incl. its Drive
+    // upload) has actually finished — see the CALL_ENDED handler below for
+    // why: this is what keeps pollOnce()'s "already has an active tab" guard
+    // honest for a profile's ENTIRE stop→upload→close sequence, not just
+    // the recording phase, which matters for back-to-back meetings on the
+    // same Gmail account.
+    (async () => {
+      if (entry.meetingId) await stopRecording(entry.meetingId);
+      await popMeetingForTab(tabId);
+      closeTab(tabId);
+    })();
   });
 });
 
@@ -205,7 +228,75 @@ async function fetchQueue(config) {
 
 let pollChainTimer = null;
 
+// Confirmed live 2026-09-12 on the VPS (2 due meetings, same Gmail): an
+// in-memory `pollInFlight` boolean is NOT enough. MV3 service workers can be
+// evicted and reloaded between polls — a bare setTimeout doesn't count as
+// "work in progress" to Chrome's idle-eviction heuristic (same root cause
+// already confirmed this session for the startup-cleanup delayed pass) — and
+// every module-level variable, this one included, resets on that reload. A
+// live repro showed markOpened() firing for two different meetings ~70ms
+// apart with no "already has an active tab" log between them: two overlapping
+// pollOnceLocked() calls, not one loop misbehaving. Fixed with two
+// independent layers, since neither alone is airtight:
+// 1. A chrome.storage.local-persisted lock (below) — survives a worker
+//    reload, unlike a module variable. Still not truly atomic (storage has
+//    no compare-and-swap), so it reduces the window rather than guaranteeing
+//    it shut, hence a short staleness timeout so a genuinely dead holder
+//    can't wedge future polls forever.
+// 2. chrome.tabs.query() as the per-meeting "already active" ground truth
+//    inside the loop below, instead of trusting the recordingTabs map alone
+//    — a real tab, once chrome.tabs.create() actually resolves, is true
+//    regardless of whether the JS that was going to record it in storage
+//    ever got to run.
+const POLL_LOCK_KEY = "pollLock";
+const POLL_LOCK_STALE_MS = 90 * 1000; // well past one real poll cycle's worst case
+
+async function acquirePollLock() {
+  const now = Date.now();
+  const { [POLL_LOCK_KEY]: existing } = await chrome.storage.local.get([POLL_LOCK_KEY]);
+  if (existing && now - existing < POLL_LOCK_STALE_MS) {
+    return false;
+  }
+  await chrome.storage.local.set({ [POLL_LOCK_KEY]: now });
+  // Re-read to catch (not fully prevent — storage has no atomic
+  // compare-and-swap) a competing acquirer that wrote in the same window.
+  const { [POLL_LOCK_KEY]: after } = await chrome.storage.local.get([POLL_LOCK_KEY]);
+  return after === now;
+}
+
+async function releasePollLock() {
+  await chrome.storage.local.remove(POLL_LOCK_KEY);
+}
+
+let pollInFlight = false;
+
 async function pollOnce() {
+  // Layer 1 (in-memory): cheap, catches same-worker-instance overlap
+  // (POLL_NOW racing the timer chain) with zero storage round-trips.
+  if (pollInFlight) {
+    log("pollOnce already running (triggered again before it finished) — skipping this call.");
+    return;
+  }
+  pollInFlight = true;
+  try {
+    // Layer 2 (persisted): catches cross-worker-restart overlap that layer 1
+    // structurally cannot.
+    const gotLock = await acquirePollLock();
+    if (!gotLock) {
+      log("pollOnce lock already held (another instance is mid-poll) — skipping this call.");
+      return;
+    }
+    try {
+      await pollOnceLocked();
+    } finally {
+      await releasePollLock();
+    }
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+async function pollOnceLocked() {
   const config = await getConfig();
   if (!config.apiBaseUrl || !config.googleEmail || !config.botToken) {
     log("Chưa cấu hình đủ apiBaseUrl/googleEmail/botToken — mở Options để cấu hình.");
@@ -228,6 +319,21 @@ async function pollOnce() {
       log(`Meeting #${meeting.meeting_id} không phải link Google Meet hợp lệ, bỏ qua.`);
       continue;
     }
+    // One profile == one Gmail account == can only actually be in one Meet
+    // call at a time. Checked two ways, since a live repro showed the
+    // recordingTabs-only version isn't reliable on its own (see the
+    // acquirePollLock block above for the full story): the storage map
+    // (survives nothing dying mid-write) AND chrome.tabs.query() (ground
+    // truth — true the instant a tab really exists, independent of whether
+    // this or any other JS context is still around to record it). If either
+    // says busy, leave the rest of the queue for a later poll — it'll be
+    // picked up once CALL_ENDED/onUpdated/onRemoved closes the current one.
+    const activeTabs = await getRecordingTabs();
+    const realMeetTabs = await chrome.tabs.query({ url: "*://meet.google.com/*" });
+    if (Object.keys(activeTabs).length > 0 || realMeetTabs.length > 0) {
+      log(`Meeting #${meeting.meeting_id} due, but this profile already has an active Meet tab — will retry next poll.`);
+      break;
+    }
     log(`Found meeting #${meeting.meeting_id}`, meeting.title || "");
     log("Opening Meet", meeting.join_url);
     await markOpened(meeting.meeting_id);
@@ -239,9 +345,9 @@ async function pollOnce() {
       // means the onUpdated "left the meeting" check below never matches
       // (path stays ""), falling back to onRemoved/CALL_ENDED for stop.
     }
-    chrome.tabs.create({ url: meeting.join_url, active: true }, (tab) => {
-      if (tab?.id !== undefined) setMeetingForTab(tab.id, meeting.meeting_id, path);
-    });
+    const tab = await chrome.tabs.create({ url: meeting.join_url, active: true });
+    if (tab?.id !== undefined) await setMeetingForTab(tab.id, meeting.meeting_id, path);
+    break; // enforce max one active Meet tab per profile per cycle
   }
 }
 
@@ -270,8 +376,53 @@ function ensureRecoveryAlarm() {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
 }
 
+// A profile should never carry stale Meet tabs across a bot/Chrome restart —
+// leftover test tabs, or a call that was live when the VPS rebooted, waste
+// RAM/CPU and risk the tab-matching logic (recordingTabs) getting confused
+// about which tab is the current meeting. Deliberately wired to
+// onStartup/onInstalled only — NOT to the unconditional "runs on every
+// worker load" block at the bottom of this file, which also fires on a
+// normal idle-eviction wake in the middle of a live call and must never
+// close that tab out from under an in-progress recording. Skips anything
+// present in `recordingTabs`, so this never fights pollOnce() over a tab the
+// bot has legitimately just opened for a real queued meeting.
+async function cleanupStaleMeetTabs() {
+  const tabs = await chrome.tabs.query({ url: "*://meet.google.com/*" });
+  const tracked = await getRecordingTabs();
+  let closed = 0;
+  for (const tab of tabs) {
+    if (tab.id !== undefined && !tracked[tab.id]) {
+      closeTab(tab.id);
+      closed++;
+    }
+  }
+  if (closed) log(`Startup cleanup: closed ${closed} stale Meet tab(s)`);
+}
+
+async function onBotStartup() {
+  // recordingTabs entries loaded from disk here refer to tab ids from the
+  // PREVIOUS Chrome process — Chrome never reuses tab ids across a restart,
+  // so none of them can possibly be a real tab anymore.
+  await chrome.storage.local.set({ recordingTabs: {} });
+  await cleanupStaleMeetTabs();
+  // Deliberately NOT also doing a delayed re-check via setTimeout here:
+  // confirmed live 2026-09-12 that it doesn't work — MV3 service workers can
+  // go idle and get torn down well before a bare setTimeout fires (no
+  // pending extension-API callback keeps it alive), silently dropping the
+  // scheduled call. A tab appearing meet.google.com slightly AFTER this
+  // first pass (Chrome's own session-restore, or a launch command that
+  // passed a Meet URL as an argument) will NOT be caught by this extension —
+  // this must be prevented at the launch/deployment level instead: the
+  // production launch command (systemd unit or script) must not pass a
+  // meet.google.com URL as an argument, and the profile's "Continue where
+  // you left off" setting should stay off. See meeting-host-bot-design
+  // memory for the confirmed reproduction.
+}
+
 chrome.runtime.onInstalled.addListener(ensureRecoveryAlarm);
 chrome.runtime.onStartup.addListener(ensureRecoveryAlarm);
+chrome.runtime.onInstalled.addListener(onBotStartup);
+chrome.runtime.onStartup.addListener(onBotStartup);
 
 // Confirmed live 2026-09-11 via a direct xdotool-vs-JS-click A/B test on the
 // VPS: content.js's fireClick() (full pointerdown/mousedown/pointerup/
@@ -424,8 +575,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "CALL_ENDED") {
     const tabId = sender.tab?.id;
     if (tabId === undefined) return false;
-    popMeetingForTab(tabId).then((meetingId) => {
-      if (meetingId) stopRecording(meetingId);
+    // Peek the meetingId without clearing it yet — the tracking entry stays
+    // in recordingTabs (and so pollOnce()'s "already has an active tab"
+    // guard stays true) for the WHOLE stop→upload→close sequence below, not
+    // just while ffmpeg itself is running. Matters for back-to-back meetings
+    // on the same Gmail account: without this, a slow Drive upload leaves a
+    // window where the guard reads "free" while this tab is still open.
+    getMeetingForTab(tabId).then(async (meetingId) => {
+      if (meetingId) await stopRecording(meetingId);
+      await popMeetingForTab(tabId);
+      closeTab(tabId);
       sendResponse({ success: true });
     });
     return true;

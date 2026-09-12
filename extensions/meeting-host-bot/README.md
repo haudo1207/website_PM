@@ -115,13 +115,38 @@ là `meeting_id`.
 
 Việc upload cũng additive như chính recording — nếu fetch token lỗi hoặc
 Drive upload lỗi (`drive_upload_error` trong response), file mp4 vẫn nằm an
-toàn trên đĩa VPS, không mất gì, chỉ là chưa lên được Drive.
+toàn trên đĩa VPS, không mất gì, chỉ là chưa lên được Drive. **VPS chỉ là nơi
+lưu tạm**: `recorder_service.py` chỉ xóa file `.mp4` local sau khi Drive xác
+nhận upload thành công (`drive_file` có `id`) — upload lỗi thì giữ nguyên file
+để retry sau, không tự xóa.
 
-**Chưa làm (việc kế tiếp, không phải bug):** test với 1 `meeting_id` thật (có
-dòng `Meeting` thật trong DB) để xác nhận n8n thực sự nhặt được file — lúc
-build tính năng này chưa có sẵn 1 meeting thật đang chạy trên VPS để test hết
-chain. Cũng chưa test 4 workspace ghi hình đồng thời (RAM/disk headroom, xem
-mục Setup VPS).
+Đã test end-to-end với 1 `meeting_id` thật trên VPS (WS1) — Join → Host →
+record → upload → n8n search đều PASS, kể cả bước xóa file local sau khi
+confirm upload. Chưa test 4 workspace ghi hình đồng thời (RAM/disk headroom
+trên VPS dev hiện tại không đủ — xem mục Setup VPS — đang chờ VPS production
+để test).
+
+### Vòng đời tab Meet do bot mở (tự động đóng)
+
+Một profile Chrome (= một tài khoản Gmail) chỉ nên có **tối đa 1 tab Meet
+đang hoạt động** tại một thời điểm — khớp với thực tế là 1 tài khoản chỉ có
+thể thực sự đang host 1 cuộc gọi. `background.js` áp dụng điều này ở 2 chỗ:
+
+- **`pollOnce()`** kiểm tra `recordingTabs` (map tab→meeting đang track) trước
+  khi mở tab mới; nếu đã có 1 tab đang hoạt động thì bỏ qua toàn bộ phần còn
+  lại của queue trong chu kỳ poll đó, để chu kỳ sau xử lý tiếp — tránh mở 2 tab
+  cùng lúc nếu queue trả về 2 meeting trùng giờ cho cùng 1 Gmail.
+- Sau khi cuộc gọi kết thúc (dù phát hiện qua `CALL_ENDED` từ content.js, qua
+  `chrome.tabs.onUpdated` backstop, hay tab bị đóng tay), **tab luôn được đóng
+  sau khi** `/record/stop` (kèm upload Drive) đã chạy xong — không đóng tab
+  trước khi upload kết thúc.
+- Khi Chrome/bot khởi động lại (`chrome.runtime.onStartup`/`onInstalled` —
+  bao gồm cả trường hợp VPS reboot), extension tự đóng **mọi** tab
+  `meet.google.com/*` còn sót lại từ trước và xóa sạch `recordingTabs` —
+  không có lý do gì để giữ 1 tab Meet mở trước khi bot tự mở tab mới cho
+  meeting kế tiếp. Lưu ý: điều này cũng chạy mỗi lần reload extension thủ
+  công lúc dev (qua `onInstalled`) — nếu đang test tay 1 cuộc gọi thật mà
+  reload extension, tab đó sẽ bị đóng theo.
 
 ## Đọc log ở đâu (dễ nhầm — đọc kỹ)
 

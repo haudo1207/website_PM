@@ -54,7 +54,7 @@ def start_recording(meeting_id):
 DRIVE_RESUMABLE_INITIATE_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
 
 
-def upload_to_drive(path, access_token, drive_filename):
+def upload_to_drive(path, access_token, drive_filename, folder_id=None):
     """Uploads directly to Drive from the VPS using a short-lived Bearer
     token handed out by backend's GET /api/meeting-bot/drive-token — this
     process never sees a refresh_token or client_secret, only a token good
@@ -65,11 +65,26 @@ def upload_to_drive(path, access_token, drive_filename):
     memory — this VPS is RAM-constrained (see meeting-host-bot-design
     memory: ~1.9GB available, shared with the live dev app).
     """
-    metadata = json.dumps({"name": drive_filename, "mimeType": "video/mp4"}).encode()
+    # Confirmed live 2026-09-12: urllib.request's default User-Agent
+    # ("Python-urllib/3.x") gets this specific call rejected by Google with
+    # a 403 "insufficient authentication scopes" — a misleading error, since
+    # the exact same token/scopes succeed immediately on a plain multipart
+    # create, and succeed here too once a normal-looking User-Agent is set.
+    # Not a scope problem at all; Google is blocking the default urllib UA.
+    headers = {"User-Agent": "meeting-host-bot/1.0 (+recorder_service.py)"}
+
+    # Purely organizational — n8n's own search/download don't care where the
+    # file lives (see backend/app/routers/meeting_bot.py's
+    # _get_or_create_recordings_folder docstring for how this was confirmed).
+    metadata_dict = {"name": drive_filename, "mimeType": "video/mp4"}
+    if folder_id:
+        metadata_dict["parents"] = [folder_id]
+    metadata = json.dumps(metadata_dict).encode()
     init_req = urllib.request.Request(
         DRIVE_RESUMABLE_INITIATE_URL,
         data=metadata,
         headers={
+            **headers,
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json; charset=UTF-8",
             "X-Upload-Content-Type": "video/mp4",
@@ -87,7 +102,7 @@ def upload_to_drive(path, access_token, drive_filename):
         put_req = urllib.request.Request(
             session_uri,
             data=f,
-            headers={"Content-Type": "video/mp4", "Content-Length": str(file_size)},
+            headers={**headers, "Content-Type": "video/mp4", "Content-Length": str(file_size)},
             method="PUT",
         )
         with urllib.request.urlopen(put_req, timeout=1800) as put_resp:
@@ -116,8 +131,18 @@ def stop_recording(meeting_id, upload=None):
     # safely finalized on local disk regardless.
     if upload and upload.get("access_token") and upload.get("drive_filename") and size > 0:
         try:
-            drive_file = upload_to_drive(entry["file"], upload["access_token"], upload["drive_filename"])
+            drive_file = upload_to_drive(entry["file"], upload["access_token"], upload["drive_filename"], upload.get("folder_id"))
             result["drive"] = {"id": drive_file.get("id"), "name": drive_file.get("name")}
+            # Only delete local once Drive has confirmed the file (has an
+            # id) — the VPS's NVMe is sized as short-term holding space, not
+            # a video archive, but a failed/partial upload must leave the
+            # mp4 in place so it can be retried instead of silently lost.
+            if drive_file.get("id"):
+                try:
+                    os.remove(entry["file"])
+                    result["local_deleted"] = True
+                except OSError as exc:
+                    result["local_delete_error"] = str(exc)
         except urllib.error.HTTPError as exc:
             result["drive_upload_error"] = f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:500]}"
         except Exception as exc:

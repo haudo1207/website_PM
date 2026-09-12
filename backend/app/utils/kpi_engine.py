@@ -320,13 +320,13 @@ def recalculate_task(task, db):
             if is_matched:
                 rule_kpi = Decimal(str(rule.kpi))
                 
-                # Handle parent remarks first and exclusively for multipliers
+                # Handle parent remarks first and exclusively for multipliers.
+                # Coefficient always comes from the configured rule.kpi (Settings
+                # → Cấu hình hiệu suất) — "Fail 1"/"Fail 2" used to be hardcoded
+                # to 0.7/0.5 here regardless of what was actually configured, so
+                # changing their coefficient in Settings silently had no effect.
                 if getattr(rule, 'is_parent', False):
-                    if "(p) fail 1" in rule_perf:
-                        multiplier *= Decimal("0.7")
-                    elif "(p) fail 2" in rule_perf:
-                        multiplier *= Decimal("0.5")
-                    elif (0.0 <= rule_kpi <= 1.0): # Other parent remarks that are multipliers
+                    if (0.0 <= rule_kpi <= 1.0): # Parent remarks that are multipliers
                         multiplier *= rule_kpi
                     else: # Parent remarks that are additive
                         remark_perform += rule_kpi

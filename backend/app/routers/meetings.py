@@ -488,7 +488,11 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
     platform = str(body.get("platform", "")).strip()
     title = str(body.get("title", "Cuộc họp mới")).strip()
     date_val = body.get("meeting_date") or body.get("date")
-    meeting_date = parse_date(date_val) if date_val else datetime.date.today()
+    # Confirmed live 2026-09-12: this container's OS/Python clock is UTC, ~7h
+    # behind Vietnam (see _now_vn()'s docstring) — a bare date.today() default
+    # picks VN's YESTERDAY during VN's 00:00-06:59 window. Use _now_vn() like
+    # every other scheduling-relevant "now" in this file.
+    meeting_date = parse_date(date_val) if date_val else _now_vn().date()
     time_val = body.get("start_time") or body.get("time")
     start_time = parse_time(time_val) if time_val else datetime.time(9, 0)
     
@@ -745,7 +749,11 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         status = "UPCOMING"
 
     # Rule 02: If DONE, meeting_date must be <= today
-    if status == "DONE" and meeting_date > datetime.date.today():
+    # Same UTC-vs-VN gap as generate_meeting_link above: a bare date.today()
+    # here would wrongly reject "mark today's meeting DONE" during VN's
+    # 00:00-06:59 window, since the container's naive today() is still on
+    # VN's yesterday at that point.
+    if status == "DONE" and meeting_date > _now_vn().date():
         raise HTTPException(400, "Cuộc họp ở trạng thái DONE không được có ngày họp lớn hơn ngày hiện tại")
 
     # Multiple projects: front-end sends project_ids: [int]. First one becomes
@@ -969,8 +977,9 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     if old_status == "DONE" and new_date != m.meeting_date:
         raise HTTPException(400, "Không thể thay đổi ngày họp của cuộc họp đã hoàn thành (DONE)")
 
-    # Rule 02: If DONE, meeting_date must be <= today
-    if new_status == "DONE" and new_date > datetime.date.today():
+    # Rule 02: If DONE, meeting_date must be <= today (see _now_vn() docstring
+    # for why a bare date.today() is wrong here — same fix as create_meeting).
+    if new_status == "DONE" and new_date > _now_vn().date():
         raise HTTPException(400, "Cuộc họp ở trạng thái DONE không được có ngày họp lớn hơn ngày hiện tại")
 
     m.title = str(body.get("title", m.title)).strip()
