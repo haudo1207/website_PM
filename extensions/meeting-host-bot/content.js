@@ -245,29 +245,41 @@ function tryStartNativeRecording() {
     }
   }
 
-  // Step 2: "Start recording" is already visible (panel is open) — click it,
-  // which opens the dialog handled in step 3 above on a later tick.
+  // Step 2c: "Start recording" is already visible (drilled into the Record
+  // sub-panel) — click it, which opens the dialog handled in step 3 above
+  // on a later tick.
   if (clickIfFound(START_RECORDING_RE)) {
     log("Native recording: clicked Start recording");
     return;
   }
 
-  // Step 1: open the "Meeting tools" panel, but only if it isn't already
-  // open (the same button toggles it closed on a second click) — the
-  // "Capture the meeting" subtitle text only renders while the panel is
-  // showing the Record row.
-  if (!RECORD_ITEM_PRESENT_RE.test(document.body.innerText || "")) {
-    if (nativeRecordingPanelOpenAttempts >= NATIVE_RECORDING_PANEL_OPEN_ATTEMPTS_MAX) {
-      if (!nativeRecordingUnavailableLogged) {
-        log("Native recording: 'Start recording' never appeared after opening Meeting tools repeatedly — likely unavailable for this account, giving up (FFmpeg recording is unaffected).");
-        nativeRecordingUnavailableLogged = true;
-      }
-      return;
+  // Step 2b: the "Meeting tools" panel is open and showing the Tools list
+  // (the "Record / Capture the meeting" row, with a chevron — it's a nav
+  // item, not a leaf action, confirmed live 2026-09-13: the earlier version
+  // of this function assumed "Start recording" appeared inline here and
+  // just kept re-toggling the panel forever without this extra click).
+  // Click the row itself to drill into the sub-panel where "Start
+  // recording" actually lives.
+  if (RECORD_ITEM_PRESENT_RE.test(document.body.innerText || "")) {
+    if (clickIfFound(RECORD_ITEM_PRESENT_RE)) {
+      log("Native recording: opened Record sub-panel");
     }
-    if (clickIfFound(MEETING_TOOLS_RE)) {
-      nativeRecordingPanelOpenAttempts += 1;
-      log("Native recording: opened Meeting tools panel");
+    return;
+  }
+
+  // Step 2a: open the "Meeting tools" panel, but only if it isn't already
+  // open (the same button toggles it closed on a second click) — checked
+  // via the same "Capture the meeting" text step 2b looks for.
+  if (nativeRecordingPanelOpenAttempts >= NATIVE_RECORDING_PANEL_OPEN_ATTEMPTS_MAX) {
+    if (!nativeRecordingUnavailableLogged) {
+      log("Native recording: 'Start recording' never appeared after opening Meeting tools repeatedly — likely unavailable for this account, giving up (FFmpeg recording is unaffected).");
+      nativeRecordingUnavailableLogged = true;
     }
+    return;
+  }
+  if (clickIfFound(MEETING_TOOLS_RE)) {
+    nativeRecordingPanelOpenAttempts += 1;
+    log("Native recording: opened Meeting tools panel");
   }
 }
 
@@ -282,9 +294,11 @@ function tryStopNativeRecording() {
     log("Native recording: clicked Stop recording");
     return;
   }
-  if (!document.body.innerText || !RECORD_ITEM_PRESENT_RE.test(document.body.innerText)) {
-    clickIfFound(MEETING_TOOLS_RE);
+  if (RECORD_ITEM_PRESENT_RE.test(document.body.innerText || "")) {
+    clickIfFound(RECORD_ITEM_PRESENT_RE);
+    return;
   }
+  clickIfFound(MEETING_TOOLS_RE);
 }
 
 // Confirmed live 2026-09-11: a solo host (no other participants) gets
