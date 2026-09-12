@@ -133,6 +133,16 @@ def stop_recording(meeting_id, upload=None):
         try:
             drive_file = upload_to_drive(entry["file"], upload["access_token"], upload["drive_filename"], upload.get("folder_id"))
             result["drive"] = {"id": drive_file.get("id"), "name": drive_file.get("name")}
+            # Only delete local once Drive has confirmed the file (has an
+            # id) — the VPS's NVMe is sized as short-term holding space, not
+            # a video archive, but a failed/partial upload must leave the
+            # mp4 in place so it can be retried instead of silently lost.
+            if drive_file.get("id"):
+                try:
+                    os.remove(entry["file"])
+                    result["local_deleted"] = True
+                except OSError as exc:
+                    result["local_delete_error"] = str(exc)
         except urllib.error.HTTPError as exc:
             result["drive_upload_error"] = f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:500]}"
         except Exception as exc:
