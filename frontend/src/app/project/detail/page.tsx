@@ -26,6 +26,7 @@ import {
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
   getMembers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks,
+  createGroup, createSkill,
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   approveTask, requestTaskChanges, requestTaskReview, blockTask, unblockTask,
@@ -35,7 +36,7 @@ import {
   getProjectAuditLogs,
   getApiErrorMessage
 } from '@/lib/api';
-import { isAdmin, isSuperAdmin, isMember, getEmail } from '@/lib/auth';
+import { isAdmin, isSuperAdmin, isMember, isMemberOrAbove, getEmail } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import {
   Search, Filter, Columns3, Plus, ChevronDown, ChevronRight, MoreHorizontal,
@@ -788,6 +789,21 @@ function ProjectDetailContent() {
   const [importingInboxId, setImportingInboxId] = useState<number | null>(null);
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [pasteSelectedGroupId, setPasteSelectedGroupId] = useState<string>('manual');
+
+  // Task Detail inline Skill creation (REUSES existing Settings Skill
+  // architecture: POST /api/skills/groups and POST /api/skills/skills).
+  // Two independent `+` buttons (SKILL SOLUTION, SKILL VENDOR) open a
+  // lightweight modal. After successful creation, categories are re-
+  // fetched and the new item is auto-selected. State is intentionally
+  // kept here (not on the existing Settings page) so the existing
+  // Settings Skill CRUD flow is not disturbed.
+  const [showCreateSkillGroupModal, setShowCreateSkillGroupModal] = useState(false);
+  const [showCreateSkillVendorModal, setShowCreateSkillVendorModal] = useState(false);
+  const [creatingSkillGroup, setCreatingSkillGroup] = useState(false);
+  const [creatingSkillVendor, setCreatingSkillVendor] = useState(false);
+  const [newSkillGroupName, setNewSkillGroupName] = useState('');
+  const [newSkillGroupCategoryId, setNewSkillGroupCategoryId] = useState<string>('');
+  const [newSkillVendorName, setNewSkillVendorName] = useState('');
 
   // Mapping & AI Rules State
   const [selectedMappingGroup, setSelectedMappingGroup] = useState<string>('all');
@@ -3767,6 +3783,108 @@ function ProjectDetailContent() {
     }
   };
 
+  // Refetch the categories/groups/skills tree from the same endpoint
+  // Settings uses (GET /api/skills/categories) and update the local
+  // `categories` state so the Skill Solution / Vendor dropdowns in this
+  // Task Detail drawer reflect the newly created item without a full
+  // page reload. Reused by the SKILL SOLUTION `+` and SKILL VENDOR `+`
+  // handlers below.
+  const refetchCategories = async (): Promise<any[]> => {
+    try {
+      const data = await getCategories();
+      const fresh = data || [];
+      setCategories(fresh);
+      return fresh;
+    } catch (err) {
+      console.error('Error refetching categories:', err);
+      return categories;
+    }
+  };
+
+  // SKILL SOLUTION `+` handler: creates a new Group under the user-
+  // chosen Category using the existing POST /api/skills/groups endpoint.
+  // Reuses the existing validation + audit pipeline. After success,
+  // refreshes the categories tree and auto-selects the new Group as
+  // the SKILL SOLUTION (cascading-clear of the SKILL VENDOR follows
+  // the existing onChange contract).
+  const handleCreateSkillGroupFromDrawer = async () => {
+    const name = newSkillGroupName.trim();
+    const categoryId = newSkillGroupCategoryId ? parseInt(newSkillGroupCategoryId, 10) : null;
+    if (!name) {
+      flash('Tên Group không được để trống!', true);
+      return;
+    }
+    if (!categoryId) {
+      flash('Vui lòng chọn Category!', true);
+      return;
+    }
+    setCreatingSkillGroup(true);
+    try {
+      await createGroup({ name, category_id: categoryId });
+      const fresh = await refetchCategories();
+      const created = fresh
+        .flatMap((c: any) => c.groups || [])
+        .find((g: any) => g.name === name && Number(g.category_id) === categoryId);
+      if (created) {
+        setDrawerForm((prev: any) => ({
+          ...prev,
+          skill_solution_id: String(created.id),
+          skill_vendor_id: '',
+        }));
+      }
+      flash('Đã tạo Group mới!');
+      setShowCreateSkillGroupModal(false);
+      setNewSkillGroupName('');
+      setNewSkillGroupCategoryId('');
+    } catch (err: any) {
+      flash('Lỗi tạo Group: ' + getApiErrorMessage(err), true);
+    } finally {
+      setCreatingSkillGroup(false);
+    }
+  };
+
+  // SKILL VENDOR `+` handler: creates a new Skill under the currently
+  // selected SKILL SOLUTION (Group) using the existing POST
+  // /api/skills/skills endpoint. If no Solution is selected, the UI
+  // is responsible for not opening this modal — but the backend would
+  // also reject the request (400 "Group ID is required"). After
+  // success, refreshes the categories tree and auto-selects the new
+  // Skill as the SKILL VENDOR.
+  const handleCreateSkillVendorFromDrawer = async () => {
+    const name = newSkillVendorName.trim();
+    const solutionId = drawerForm.skill_solution_id ? parseInt(String(drawerForm.skill_solution_id), 10) : null;
+    if (!name) {
+      flash('Tên Skill không được để trống!', true);
+      return;
+    }
+    if (!solutionId) {
+      flash('Vui lòng chọn SKILL SOLUTION trước!', true);
+      return;
+    }
+    setCreatingSkillVendor(true);
+    try {
+      await createSkill({ name, group_id: solutionId });
+      const fresh = await refetchCategories();
+      const created = fresh
+        .flatMap((c: any) => c.groups || [])
+        .flatMap((g: any) => g.skills || [])
+        .find((s: any) => s.name === name && Number(s.group_id) === solutionId);
+      if (created) {
+        setDrawerForm((prev: any) => ({
+          ...prev,
+          skill_vendor_id: String(created.id),
+        }));
+      }
+      flash('Đã tạo Skill mới!');
+      setShowCreateSkillVendorModal(false);
+      setNewSkillVendorName('');
+    } catch (err: any) {
+      flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
+    } finally {
+      setCreatingSkillVendor(false);
+    }
+  };
+
   // Root-level tasks of a group, in display order, optionally excluding one
   // task (the one being moved — irrelevant as a "Sau X" reference point when
   // the target group is its own current group). Feeds the "Vị trí" dropdown.
@@ -5944,10 +6062,9 @@ function ProjectDetailContent() {
         </>
         )}
 
-        {/* MAIN CONTAINER — on the Tasks tab, use flex-col so the task table
-            can fill the remaining viewport height (no nested scroll). Other tabs
-            keep overflow-y-auto for normal page scrolling. */}
-        <div className={`flex-1 min-w-0 p-4 md:p-6 ${activeMainTab === 'tasks' ? 'flex flex-col overflow-hidden space-y-0' : 'overflow-y-auto space-y-6'}`}>
+        {/* MAIN CONTAINER — all tabs use overflow-y-auto for normal page scrolling.
+            The task table has its own internal scroll for task data. */}
+        <div className={`flex-1 min-w-0 p-4 md:p-6 ${activeMainTab === 'tasks' ? 'flex flex-col overflow-y-auto space-y-0' : 'overflow-y-auto space-y-6'}`}>
           {msg && (
             // z-[1000] - PHẢI cao hơn mọi drawer full-screen (Task Edit/Leader
             // Review Detail/AI Review đều z-50) VÀ mọi modal (z-[999], vd
@@ -7374,9 +7491,9 @@ function ProjectDetailContent() {
                       column width (width cột là inline style theo px cố định,
                       độc lập với width container cha) và scroll ngang riêng
                       của table vẫn hoạt động bình thường. */}
-                  <div className="flex items-start gap-4 flex-1 min-h-0">
+                  <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
-                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0">
+                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0 max-h-[calc(100vh-300px)]">
                     <div className="flex-1 min-h-0 overflow-auto task-table-scroll">
                       {/* table-layout: fixed - bắt buộc để mỗi cột giữ đúng width đã set (kể cả
                           width mặc định thu gọn cho MD/Priority/Status/KPI Ratio/ngày và width
@@ -9215,7 +9332,35 @@ function ProjectDetailContent() {
 
               {/* Skill Solution */}
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Skill Solution</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Solution</label>
+                  {isMemberOrAbove() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewSkillGroupName('');
+                        // Pre-select the current Solution's parent Category so the
+                        // user is usually only filling in the Group name. Fall
+                        // back to the first active Category if none is selected.
+                        const currentCatId = drawerForm.skill_solution_id
+                          ? (categories
+                              .flatMap((c: any) => c.groups || [])
+                              .find((g: any) => String(g.id) === String(drawerForm.skill_solution_id)) as any)?.category_id
+                          : null;
+                        const fallback = (categories.find((c: any) => c.is_active) as any)?.id;
+                        setNewSkillGroupCategoryId(
+                          currentCatId ? String(currentCatId) : (fallback ? String(fallback) : '')
+                        );
+                        setShowCreateSkillGroupModal(true);
+                      }}
+                      className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-slate-500 hover:border-[#0058be] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors"
+                      title="Tạo Group/Solution mới"
+                      aria-label="Tạo Group/Solution mới"
+                    >
+                      <Plus size={14} strokeWidth={2.5} />
+                    </button>
+                  )}
+                </div>
                 <SearchableSelect
                   label="Solution Group"
                   icon=""
@@ -9239,7 +9384,27 @@ function ProjectDetailContent() {
 
               {/* Skill Vendor */}
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Skill Vendor</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Vendor</label>
+                  {isMemberOrAbove() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!drawerForm.skill_solution_id) {
+                          flash('Vui lòng chọn SKILL SOLUTION trước khi tạo Vendor.', true);
+                          return;
+                        }
+                        setNewSkillVendorName('');
+                        setShowCreateSkillVendorModal(true);
+                      }}
+                      className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-slate-500 hover:border-[#0058be] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={drawerForm.skill_solution_id ? 'Tạo Skill Vendor mới' : 'Chọn SKILL SOLUTION trước'}
+                      aria-label="Tạo Skill Vendor mới"
+                    >
+                      <Plus size={14} strokeWidth={2.5} />
+                    </button>
+                  )}
+                </div>
                 {(() => {
                   let availSkills: any[] = [];
                   if (drawerForm.skill_solution_id) {
@@ -9311,6 +9476,159 @@ function ProjectDetailContent() {
                 className="w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#004a9e] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {drawerSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Task Detail → SKILL SOLUTION `+` modal: creates a new Group
+          (Solution) under an existing Category. Reuses POST
+          /api/skills/groups and the existing `categories` tree. Auto-
+          selects the new Group on success. */}
+      {showCreateSkillGroupModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
+              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Group/Solution mới</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateSkillGroupModal(false);
+                  setNewSkillGroupName('');
+                  setNewSkillGroupCategoryId('');
+                }}
+                className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500"
+                title="Đóng"
+                aria-label="Đóng"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Category <span className="text-red-500">*</span></label>
+                <select
+                  value={newSkillGroupCategoryId}
+                  onChange={e => setNewSkillGroupCategoryId(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                >
+                  <option value="">-- Chọn Category --</option>
+                  {categories
+                    .filter((c: any) => c.is_active)
+                    .map((c: any) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}</option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Tên Group <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={newSkillGroupName}
+                  onChange={e => setNewSkillGroupName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !creatingSkillGroup) handleCreateSkillGroupFromDrawer();
+                  }}
+                  placeholder="VD: Backend, Frontend, DevOps..."
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="bg-slate-50 px-5 py-3 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateSkillGroupModal(false);
+                  setNewSkillGroupName('');
+                  setNewSkillGroupCategoryId('');
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md text-slate-600 hover:bg-slate-200"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateSkillGroupFromDrawer}
+                disabled={creatingSkillGroup || !newSkillGroupName.trim() || !newSkillGroupCategoryId}
+                className="px-4 py-1.5 text-xs font-semibold rounded-md text-white bg-[#0058be] hover:bg-[#004a9e] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creatingSkillGroup ? 'Đang tạo...' : 'Tạo Group'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Task Detail → SKILL VENDOR `+` modal: creates a new Skill under
+          the currently selected SKILL SOLUTION (Group). Reuses POST
+          /api/skills/skills. Auto-selects the new Skill on success. */}
+      {showCreateSkillVendorModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
+              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill Vendor mới</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateSkillVendorModal(false);
+                  setNewSkillVendorName('');
+                }}
+                className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500"
+                title="Đóng"
+                aria-label="Đóng"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">SKILL SOLUTION</label>
+                <div className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-slate-700">
+                  {(() => {
+                    const grpObj = categories
+                      .filter((c: any) => c.is_active)
+                      .flatMap((c: any) => c.groups || [])
+                      .find((g: any) => String(g.id) === String(drawerForm.skill_solution_id));
+                    return grpObj ? grpObj.name : '—';
+                  })()}
+                </div>
+                <p className="text-[10.5px] text-slate-400 mt-1">Skill mới sẽ được gắn vào Solution đang chọn.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Tên Skill <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={newSkillVendorName}
+                  onChange={e => setNewSkillVendorName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !creatingSkillVendor) handleCreateSkillVendorFromDrawer();
+                  }}
+                  placeholder="VD: ReactJS, Python, Docker..."
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be]"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="bg-slate-50 px-5 py-3 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateSkillVendorModal(false);
+                  setNewSkillVendorName('');
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md text-slate-600 hover:bg-slate-200"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateSkillVendorFromDrawer}
+                disabled={creatingSkillVendor || !newSkillVendorName.trim()}
+                className="px-4 py-1.5 text-xs font-semibold rounded-md text-white bg-[#0058be] hover:bg-[#004a9e] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creatingSkillVendor ? 'Đang tạo...' : 'Tạo Skill'}
               </button>
             </div>
           </div>

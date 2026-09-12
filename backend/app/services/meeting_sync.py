@@ -573,6 +573,35 @@ def update_google_meet_event(db, google_event_id: str, start_iso: str, end_iso: 
         raise ValueError(f"Google Calendar patch failed: {resp.text}")
 
 
+def rename_google_meet_event_tag(db, google_event_id: str, meeting_id: int, title: str, workspace_id: int = None) -> None:
+    """
+    Patch a Calendar event's summary to "[MK-{meeting_id}] {title}" once the
+    real Meeting row id is known. create_google_meet_shared/create_google_meet_link
+    are called before any Meeting row exists, so the event is first created with a
+    throwaway placeholder tag (see create_google_meet_link) — Google Meet's native
+    recording/notetaker names its own Drive output after this event summary, so
+    without this rename it forever carries the placeholder instead of the real id,
+    making it undiscoverable by n8n's "[MK-{id}]" Drive search (which uses the real
+    id, matching our own recorder_service.py's upload tag). Best-effort: must not
+    break meeting creation, so any failure here is logged and swallowed.
+    """
+    if not google_event_id:
+        return
+    try:
+        token = get_workspace_google_access_token(db, workspace_id)
+        resp = requests.patch(
+            f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}",
+            params={"sendUpdates": "none"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"summary": f"[MK-{meeting_id}] {title}"},
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning(f"rename_google_meet_event_tag failed (non-fatal): {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.warning(f"rename_google_meet_event_tag failed (non-fatal): {e}")
+
+
 def is_google_connected(db, user_id: int, workspace_id: int = None) -> bool:
     """Check if Google Calendar & Drive API connection is active with valid refresh token."""
     try:
@@ -1499,17 +1528,35 @@ def auto_sync_all_ended_meetings(db):
     from ..models.meeting import Meeting
     now = _now_vn()
     today = now.date()
-    current_time = now.time()
 
     meetings = db.query(Meeting).all()
     count_synced = 0
 
     for m in meetings:
         needs_end_update = False
-        if m.status in ("UPCOMING", "ONGOING"):
-            if m.meeting_date and m.meeting_date < today:
-                needs_end_update = True
-            elif m.meeting_date and m.meeting_date == today and m.end_time and current_time >= m.end_time:
+        if m.status in ("UPCOMING", "ONGOING") and m.meeting_date:
+            if m.start_time and m.end_time:
+                # Compute the real end instant off m.meeting_date itself
+                # (not "today") so this stays correct no matter how many
+                # days have passed. A meeting whose window crosses
+                # midnight (e.g. 23:52 -> 00:22) stores end_time <
+                # start_time on the SAME meeting_date — comparing bare
+                # date/time-of-day values without this rollover made a
+                # meeting look "already ended" the instant it started (if
+                # checked same-day) or made it ignore end_time entirely
+                # once the calendar date rolled over (the old `meeting_date
+                # < today` branch never even looked at end_time). Confirmed
+                # live 2026-09-12/13: reproduced both — a meeting was
+                # marked DONE ~30s after being reset to UPCOMING, before
+                # its start_time had even arrived, and again right after
+                # midnight while genuinely still in progress.
+                end_date = m.meeting_date + datetime.timedelta(days=1) if m.end_time < m.start_time else m.meeting_date
+                end_dt = datetime.datetime.combine(end_date, m.end_time)
+                if now >= end_dt:
+                    needs_end_update = True
+            elif m.meeting_date < today:
+                # No end_time recorded at all — fall back to "the whole
+                # calendar day has passed" as the only signal available.
                 needs_end_update = True
 
         if needs_end_update or (m.status == "DONE" and (not m.ai_summary or m.ai_summary == [])):
@@ -1523,9 +1570,10 @@ def auto_sync_all_ended_meetings(db):
                 "transcript": m.transcript,
                 "status": m.status,
             }
-            if m.start_time and m.end_time:
-                start_dt = datetime.datetime.combine(today, m.start_time)
-                end_dt = datetime.datetime.combine(today, m.end_time)
+            if m.meeting_date and m.start_time and m.end_time:
+                start_dt = datetime.datetime.combine(m.meeting_date, m.start_time)
+                end_date = m.meeting_date + datetime.timedelta(days=1) if m.end_time < m.start_time else m.meeting_date
+                end_dt = datetime.datetime.combine(end_date, m.end_time)
                 meeting_info["duration"] = int((end_dt - start_dt).total_seconds() / 60)
 
             result = None

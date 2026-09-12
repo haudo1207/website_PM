@@ -195,19 +195,14 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     open: () => { if (!disabled) setOpen(true); }
   }), [disabled]);
 
-  // Close popup when clicking outside. When usePortal is on, the menu is
-  // rendered via createPortal to document.body — it is no longer a DOM
-  // descendant of containerRef, so a click/mousedown on ANY option inside it
-  // (or its search input) was being misread as "outside" and closed the menu
-  // on mousedown, before the option's own onClick could fire. That silently
-  // ate every selection (assignee/support pickers use usePortal in the task
-  // table) — menuRef must be checked too, not just containerRef.
+  // Close popup when clicking outside — when usePortal is true, also check
+  // if the click is inside the portal menu (menuRef) since it's rendered
+  // outside the container at document.body level.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node;
-      const insideContainer = containerRef.current && containerRef.current.contains(target);
-      const insideMenu = menuRef.current && menuRef.current.contains(target);
-      if (!insideContainer && !insideMenu) {
+      const isInsideContainer = containerRef.current && containerRef.current.contains(event.target as Node);
+      const isInsidePortalMenu = usePortal && menuRef.current && menuRef.current.contains(event.target as Node);
+      if (!isInsideContainer && !isInsidePortalMenu) {
         setOpen(false);
         setSearch('');
         setFocusedIndex(-1);
@@ -215,7 +210,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [usePortal]);
 
   // Helper to identify default/reset values (should NEVER display clear '✕' button)
   const isDefaultValue = useCallback((v: any) => {

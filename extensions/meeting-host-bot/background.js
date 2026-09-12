@@ -80,7 +80,18 @@ async function popMeetingForTab(tabId) {
   return entry.meetingId;
 }
 
+// FFmpeg screen-capture recording disabled (2026-09-13): native Google Meet
+// recording (content.js's tryStartNativeRecording/tryStopNativeRecording) is
+// now the sole recording mechanism, saving VPS disk. Its Drive output is
+// tagged via the Calendar event's title, kept in sync with the real
+// Meeting.id by rename_google_meet_event_tag on the backend, so n8n finds it
+// the same way it found FFmpeg's uploads. Flip RECORDING_ENABLED back to
+// true to restore FFmpeg as a parallel safety net if native recording proves
+// unreliable.
+const RECORDING_ENABLED = false;
+
 async function startRecording(meetingId) {
+  if (!RECORDING_ENABLED) return;
   try {
     const resp = await fetch(`${RECORDER_BASE_URL}/record/start`, {
       method: "POST",
@@ -120,6 +131,7 @@ async function getDriveUploadInfo(meetingId) {
 }
 
 async function stopRecording(meetingId) {
+  if (!RECORDING_ENABLED) return;
   const upload = await getDriveUploadInfo(meetingId);
   try {
     const resp = await fetch(`${RECORDER_BASE_URL}/record/stop`, {

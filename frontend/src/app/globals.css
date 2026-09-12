@@ -187,7 +187,7 @@
 }
 /* Firefox — always show scrollbar when content overflows */
 .task-table-scroll {
-  scrollbar-width: scroll;
+  scrollbar-width: auto;
   scrollbar-color: #94a3b8 #f1f5f9;
 }
 
