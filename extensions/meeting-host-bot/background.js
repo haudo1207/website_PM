@@ -228,26 +228,69 @@ async function fetchQueue(config) {
 
 let pollChainTimer = null;
 
-// True single-flight guard. Without this, the self-rescheduling setTimeout
-// chain below and a manually-triggered POLL_NOW message (Options page's
-// "poll now" button) could both have a pollOnce() in flight at once — e.g.
-// a human clicks "poll now" while the automatic chain's own call is mid-await
-// on a slow /queue fetch. Two concurrent pollOnce() calls would each read
-// getRecordingTabs() as empty before either's chrome.tabs.create/
-// setMeetingForTab lands, defeating the "max one active Meet tab per
-// profile" guard inside the loop below exactly the way that guard is meant
-// to prevent. A module-level flag is enough since everything here runs on
-// one JS thread — no real concurrency, just interleaved async callbacks.
+// Confirmed live 2026-09-12 on the VPS (2 due meetings, same Gmail): an
+// in-memory `pollInFlight` boolean is NOT enough. MV3 service workers can be
+// evicted and reloaded between polls — a bare setTimeout doesn't count as
+// "work in progress" to Chrome's idle-eviction heuristic (same root cause
+// already confirmed this session for the startup-cleanup delayed pass) — and
+// every module-level variable, this one included, resets on that reload. A
+// live repro showed markOpened() firing for two different meetings ~70ms
+// apart with no "already has an active tab" log between them: two overlapping
+// pollOnceLocked() calls, not one loop misbehaving. Fixed with two
+// independent layers, since neither alone is airtight:
+// 1. A chrome.storage.local-persisted lock (below) — survives a worker
+//    reload, unlike a module variable. Still not truly atomic (storage has
+//    no compare-and-swap), so it reduces the window rather than guaranteeing
+//    it shut, hence a short staleness timeout so a genuinely dead holder
+//    can't wedge future polls forever.
+// 2. chrome.tabs.query() as the per-meeting "already active" ground truth
+//    inside the loop below, instead of trusting the recordingTabs map alone
+//    — a real tab, once chrome.tabs.create() actually resolves, is true
+//    regardless of whether the JS that was going to record it in storage
+//    ever got to run.
+const POLL_LOCK_KEY = "pollLock";
+const POLL_LOCK_STALE_MS = 90 * 1000; // well past one real poll cycle's worst case
+
+async function acquirePollLock() {
+  const now = Date.now();
+  const { [POLL_LOCK_KEY]: existing } = await chrome.storage.local.get([POLL_LOCK_KEY]);
+  if (existing && now - existing < POLL_LOCK_STALE_MS) {
+    return false;
+  }
+  await chrome.storage.local.set({ [POLL_LOCK_KEY]: now });
+  // Re-read to catch (not fully prevent — storage has no atomic
+  // compare-and-swap) a competing acquirer that wrote in the same window.
+  const { [POLL_LOCK_KEY]: after } = await chrome.storage.local.get([POLL_LOCK_KEY]);
+  return after === now;
+}
+
+async function releasePollLock() {
+  await chrome.storage.local.remove(POLL_LOCK_KEY);
+}
+
 let pollInFlight = false;
 
 async function pollOnce() {
+  // Layer 1 (in-memory): cheap, catches same-worker-instance overlap
+  // (POLL_NOW racing the timer chain) with zero storage round-trips.
   if (pollInFlight) {
     log("pollOnce already running (triggered again before it finished) — skipping this call.");
     return;
   }
   pollInFlight = true;
   try {
-    await pollOnceLocked();
+    // Layer 2 (persisted): catches cross-worker-restart overlap that layer 1
+    // structurally cannot.
+    const gotLock = await acquirePollLock();
+    if (!gotLock) {
+      log("pollOnce lock already held (another instance is mid-poll) — skipping this call.");
+      return;
+    }
+    try {
+      await pollOnceLocked();
+    } finally {
+      await releasePollLock();
+    }
   } finally {
     pollInFlight = false;
   }
@@ -277,16 +320,17 @@ async function pollOnceLocked() {
       continue;
     }
     // One profile == one Gmail account == can only actually be in one Meet
-    // call at a time. Re-checked fresh (not cached from before the loop)
-    // and awaited all the way through tab creation below — otherwise, if
-    // the queue ever returns 2 due meetings for this email in the same
-    // cycle (calendar conflict, or a bug upstream), both `chrome.tabs.create`
-    // calls would fire before either one's entry lands in storage, opening
-    // two tabs at once. If a tab is already open/tracked, leave the rest of
-    // the queue for a later poll — it'll be picked up once CALL_ENDED/
-    // onUpdated/onRemoved closes the current one and clears its entry.
+    // call at a time. Checked two ways, since a live repro showed the
+    // recordingTabs-only version isn't reliable on its own (see the
+    // acquirePollLock block above for the full story): the storage map
+    // (survives nothing dying mid-write) AND chrome.tabs.query() (ground
+    // truth — true the instant a tab really exists, independent of whether
+    // this or any other JS context is still around to record it). If either
+    // says busy, leave the rest of the queue for a later poll — it'll be
+    // picked up once CALL_ENDED/onUpdated/onRemoved closes the current one.
     const activeTabs = await getRecordingTabs();
-    if (Object.keys(activeTabs).length > 0) {
+    const realMeetTabs = await chrome.tabs.query({ url: "*://meet.google.com/*" });
+    if (Object.keys(activeTabs).length > 0 || realMeetTabs.length > 0) {
       log(`Meeting #${meeting.meeting_id} due, but this profile already has an active Meet tab — will retry next poll.`);
       break;
     }
