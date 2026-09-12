@@ -27,6 +27,12 @@ const CAM_OFF_RE = /(turn off camera|tắt camera)/i;
 // string, since Meet's exact wording can vary by environment/language.
 const JOIN_TEXT_RE = /(join now|ask to join|tham gia ngay|xin tham gia|yêu cầu tham gia|tham gia mà không)/i;
 const LEAVE_CALL_RE = /(leave call|rời khỏi cuộc gọi|rời cuộc gọi)/i;
+// Confirmed live 2026-09-12: as the meeting's host, clicking "Leave call"
+// doesn't leave directly — it opens a submenu with two real choices ("Just
+// leave the call" / "End the call for everyone"), same two-step shape as
+// the "Admit all?" confirmation dialog elsewhere in this file. Only the
+// former should ever be clicked automatically.
+const JUST_LEAVE_RE = /(just leave the call|chỉ rời khỏi cuộc gọi|chỉ rời cuộc gọi)/i;
 // Confirmed live 2026-09-11: this account's real Meet UI shows "Admit N
 // guest(s)" (not "Admit all") as the bulk button — it admits every guest
 // currently waiting, whatever N is. Label can arrive as
@@ -344,12 +350,22 @@ function checkSoloTimeout() {
   }
 }
 
+// Confirms the "Leave call" submenu opened by checkSoloTimeout() above.
+// Runs every tick unconditionally (not just while "alone") since the
+// submenu only ever appears after that click fires, and confirming it is
+// harmless/idempotent otherwise — same reasoning as the opportunistic
+// mic/cam mute clicks in tryClickJoin().
+function confirmLeaveSubmenu() {
+  clickIfFound(JUST_LEAVE_RE);
+}
+
 function tick() {
   tryClickJoin();
   checkHostState();
   checkCallEnded();
   admitWaitingParticipants();
   checkSoloTimeout();
+  confirmLeaveSubmenu();
 }
 
 // Meet is a heavy, dynamic SPA — a plain interval is simpler and more
