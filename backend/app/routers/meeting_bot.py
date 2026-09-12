@@ -97,6 +97,15 @@ def get_bot_queue(
             Meeting.meeting_date >= window_start.date(),
             Meeting.meeting_date <= window_end.date(),
         )
+        # LOOKAHEAD_MINUTES is wide enough that two due meetings for the same
+        # mailbox can legitimately both be "due" in the same response (back-
+        # to-back or overlapping meetings). Without this, `.all()` returns
+        # DB/insertion order, not start-time order — the extension's
+        # pollOnce() opens whichever one is first in this list, so an
+        # unordered result could pick the LATER meeting before the one
+        # that's actually starting sooner. Order by start time so "due
+        # first" always means "starts first."
+        .order_by(Meeting.meeting_date, Meeting.start_time)
         .all()
     )
 
