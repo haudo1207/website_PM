@@ -825,9 +825,15 @@ def require_route_project_access(
     # so meetings are authorized here instead and the generic check is
     # skipped for this request.
     skip_generic_project_check = False
+    # Populated below when this request targets one specific meeting — lets
+    # the member write-check further down grant the meeting's own creator
+    # full control over it (edit/delete/sync/push-tasks/...), not just the
+    # narrow "add/remove participant" write _is_meeting_member_write covers.
+    meeting_creator_id = None
     if project_id is None and request.url.path.startswith("/api/meetings/") and params.get("id") is not None:
         meeting = db.query(Meeting).filter(Meeting.id == int(params["id"])).first()
         if meeting:
+            meeting_creator_id = meeting.created_by
             extra_ids = [
                 pid for (pid,) in db.query(MeetingProject.project_id)
                 .filter(MeetingProject.meeting_id == meeting.id).all()
@@ -888,6 +894,14 @@ def require_route_project_access(
         if role == ROLE_MEMBER:
             if project_id is not None and has_full_project_access(db, user, int(project_id)):
                 print("--- ACCESS GRANTED FOR MEMBER (project PM/Leader) ---")
+                return user
+            # Whoever created a meeting gets full control over THAT meeting
+            # specifically (edit/delete/sync/push-tasks/feedback/...), even
+            # without a PM/Leader project role — matches the read-side
+            # "creator counts as a participant" rule above.
+            member_id = getattr(user, "member_id", None)
+            if meeting_creator_id is not None and member_id is not None and meeting_creator_id == member_id:
+                print("--- ACCESS GRANTED FOR MEMBER (meeting creator) ---")
                 return user
             if (is_task_write_result or _is_document_write(request) or _is_meeting_member_write(request)) and project_id is not None:
                 print("--- ACCESS GRANTED FOR MEMBER ---")
