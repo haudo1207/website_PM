@@ -65,11 +65,20 @@ def upload_to_drive(path, access_token, drive_filename):
     memory — this VPS is RAM-constrained (see meeting-host-bot-design
     memory: ~1.9GB available, shared with the live dev app).
     """
+    # Confirmed live 2026-09-12: urllib.request's default User-Agent
+    # ("Python-urllib/3.x") gets this specific call rejected by Google with
+    # a 403 "insufficient authentication scopes" — a misleading error, since
+    # the exact same token/scopes succeed immediately on a plain multipart
+    # create, and succeed here too once a normal-looking User-Agent is set.
+    # Not a scope problem at all; Google is blocking the default urllib UA.
+    headers = {"User-Agent": "meeting-host-bot/1.0 (+recorder_service.py)"}
+
     metadata = json.dumps({"name": drive_filename, "mimeType": "video/mp4"}).encode()
     init_req = urllib.request.Request(
         DRIVE_RESUMABLE_INITIATE_URL,
         data=metadata,
         headers={
+            **headers,
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json; charset=UTF-8",
             "X-Upload-Content-Type": "video/mp4",
@@ -87,7 +96,7 @@ def upload_to_drive(path, access_token, drive_filename):
         put_req = urllib.request.Request(
             session_uri,
             data=f,
-            headers={"Content-Type": "video/mp4", "Content-Length": str(file_size)},
+            headers={**headers, "Content-Type": "video/mp4", "Content-Length": str(file_size)},
             method="PUT",
         )
         with urllib.request.urlopen(put_req, timeout=1800) as put_resp:
