@@ -145,18 +145,15 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
       }
       seenPhaseNames.add(trimmed);
     }
-    // Task Group MANDAY EST is mandatory and must be a whole number 1-10 — same rule
-    // enforced on the live Task Group grid. Checked here too since applying a template
-    // creates real TaskGroup rows directly, bypassing that grid's validation entirely.
+    // Manday EST on a Task Group is optional here (deliberately reverted 2026-09-12) — the
+    // live Task Group grid on a real project still requires 1-10, but templates may be saved
+    // and applied without it. If present, still keep it sane (whole number 1-10).
     for (const p of validPhases) {
       const groups = (p.task_groups || []).filter(g => g.name.trim());
       for (const g of groups) {
         const manday = g.manday_est;
-        if (manday === null || manday === undefined) {
-          onFlash(`Task cha "${g.name.trim()}" (Phase "${p.name.trim()}") chưa nhập Manday EST — bắt buộc.`);
-          return;
-        }
-        if (!Number.isInteger(Number(manday)) || Number(manday) < 1 || Number(manday) > 10) {
+        if (manday !== null && manday !== undefined &&
+            (!Number.isInteger(Number(manday)) || Number(manday) < 1 || Number(manday) > 10)) {
           onFlash(`Manday EST của task cha "${g.name.trim()}" (Phase "${p.name.trim()}") phải là số nguyên từ 1 đến 10.`);
           return;
         }
@@ -555,14 +552,13 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
                                 />
                                 <input
                                   type="number"
-                                  required
                                   min={1}
                                   max={10}
                                   step={1}
                                   value={group.manday_est ?? ''}
                                   onChange={e => updateTaskGroup(pIdx, gIdx, 'manday_est', e.target.value ? Number(e.target.value) : null)}
                                   placeholder="Manday (1-10)"
-                                  title="Manday EST cho task cha (bắt buộc, số nguyên 1-10)"
+                                  title="Manday EST cho task cha (không bắt buộc, nếu nhập phải là số nguyên 1-10)"
                                   className="w-16 bg-white border border-slate-200 rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] shrink-0"
                                 />
                                 <button
