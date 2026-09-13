@@ -2291,32 +2291,22 @@ def notify_review_to_leader(gid: int, tid: int, db: Session = Depends(get_db), c
         raise HTTPException(400, "Không tìm thấy dự án.")
     project = db.query(Project).filter(Project.id == project_id).first()
     sender_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một thành viên")
-    from sqlalchemy import or_
-    project_leaders = db.query(User).filter(
-        or_(User.role == "super_admin", User.role == "leader"),
-        User.is_active == True,
-        User.id.in_(
-            db.query(project_members.c.member_id).join(
-                Member, Member.id == project_members.c.member_id
-            ).join(
-                User, User.member_id == Member.id
-            ).where(
-                project_members.c.project_id == project_id,
-                project_members.c.role.in_(["PM", "Leader"]),
-            ).with_entities(User.id)
-        ),
-    ).all()
+    _pm_ids = []
+    if project.pm_id:
+        _pm_ids.append(project.pm_id)
+    if project.technical_leader_id:
+        _pm_ids.append(project.technical_leader_id)
+    project_leaders = db.query(User).filter(User.member_id.in_(list(set(_pm_ids)))).all() if _pm_ids else []
     leader_by_member = []
     if getattr(current_user, "member_id", None):
         sender_member = db.query(Member).filter(Member.id == current_user.member_id).first()
         if sender_member and sender_member.leader_member_id:
-            leader_user = db.query(User).filter(
-                User.member_id == sender_member.leader_member_id,
-                User.is_active == True,
-            ).first()
+            leader_user = db.query(User).filter(User.member_id == sender_member.leader_member_id).first()
             if leader_user:
                 leader_by_member = [leader_user]
     all_recipients = {u.id: u for u in list(project_leaders) + list(leader_by_member)}
+    if not all_recipients:
+        raise HTTPException(400, "Dự án chưa có Project Manager hoặc Technical Leader được chỉ định.")
     task_code = task.task_code or str(task.id)
     project_name = project.name if project else ""
     for uid, recipient in all_recipients.items():
