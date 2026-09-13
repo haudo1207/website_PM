@@ -1725,10 +1725,12 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         old_status_l = (old_dict["status"] or "").strip().lower()
         # Members cannot set status to Done directly - must go through Review workflow
         # Only Leaders/Super Admin can approve tasks (Review → Done)
+        is_leader_role = getattr(current_user, "role", None) == "leader"
         if (
             new_status_l in ("done", "completed")
             and old_status_l not in ("done", "completed")
             and not is_project_leader(db, current_user, project_id)
+            and not is_leader_role
         ):
             raise HTTPException(403, "Chỉ Leader mới có quyền chuyển task sang Done. Member cần chuyển task sang Review và chờ Leader duyệt.")
         if (
@@ -1736,6 +1738,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
             and new_status_l == "done"
             and (task.review_status == "pending")
             and not is_project_leader(db, current_user, project_id)
+            and not is_leader_role
         ):
             raise HTTPException(403, "Task đang chờ review. Chỉ Leader mới có quyền duyệt sang Done.")
         task.status = body["status"]
@@ -2017,6 +2020,8 @@ def approve_task(gid: int, tid: int, db: Session = Depends(get_db), current_user
     project_id = phase.project_id if phase else None
 
     is_leader = is_project_leader(db, current_user, project_id)
+    if not is_leader and getattr(current_user, "role", None) == "leader":
+        is_leader = True
     if not is_leader and task.assigned_id and getattr(current_user, "member_id", None):
         assignee = db.query(Member).filter(Member.id == task.assigned_id).first()
         if assignee and assignee.leader_member_id == current_user.member_id:
@@ -2101,6 +2106,8 @@ def request_task_changes(gid: int, tid: int, body: dict, db: Session = Depends(g
     project_id = phase.project_id if phase else None
 
     is_leader = is_project_leader(db, current_user, project_id)
+    if not is_leader and getattr(current_user, "role", None) == "leader":
+        is_leader = True
     if not is_leader and task.assigned_id and getattr(current_user, "member_id", None):
         assignee = db.query(Member).filter(Member.id == task.assigned_id).first()
         if assignee and assignee.leader_member_id == current_user.member_id:

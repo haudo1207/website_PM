@@ -9894,7 +9894,7 @@ function ProjectDetailContent() {
         const t = reviewDrawerTask;
         const statusL = (t.status || '').toLowerCase();
         const isReview = statusL.includes('review');
-        const canApprove = !isMember() || isSuperAdmin() || (() => {
+        const canApprove = isSuperAdmin() || isAdmin() || (() => {
           if (!myMemberId || !t.assigned_id) return false;
           const assignee = membersList.find((m: any) => Number(m.id) === Number(t.assigned_id));
           return assignee && Number(assignee.leader_member_id) === Number(myMemberId);
