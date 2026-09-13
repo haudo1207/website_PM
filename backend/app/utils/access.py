@@ -865,12 +865,19 @@ def require_route_project_access(
 
     print(f"Project ID: {project_id}")
 
-    # Check data scope access if project_id is resolved.
-    if project_id is not None and not skip_generic_project_check:
-        require_project(db, user, int(project_id))
-
     role = getattr(user, "role", ROLE_MEMBER)
     print(f"Role: {role}")
+
+    # Check data scope access if project_id is resolved.
+    # Exception: Leaders can approve tasks in any project (bypass workspace check)
+    is_task_approval = request.method == "POST" and (
+        request.url.path.endswith("/approve") or 
+        request.url.path.endswith("/request-changes")
+    )
+    skip_project_access_for_leader = (role == ROLE_LEADER and is_task_approval)
+    
+    if project_id is not None and not skip_generic_project_check and not skip_project_access_for_leader:
+        require_project(db, user, int(project_id))
 
     # ── Viewer: read-only, UNLESS their project-role for this project is
     #    PM/Leader — that grants full write access scoped to this project. ──
