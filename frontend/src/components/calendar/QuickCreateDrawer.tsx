@@ -594,7 +594,7 @@ export default function QuickCreateDrawer({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className={labelCls}>Skill Solution <span className="text-amber-500">*</span></label>
+                  <label className={labelCls}>Skill Area <span className="text-amber-500">*</span></label>
                   <select className={selectCls} value={categoryId} onChange={e => handleCategoryChange(e.target.value ? Number(e.target.value) : '')}>
                     <option value="">— Nhóm kỹ năng —</option>
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -605,9 +605,9 @@ export default function QuickCreateDrawer({
                   </select>
                 </div>
                 <div>
-                  <label className={labelCls}>Skill Vendor <span className="text-amber-500">*</span></label>
+                  <label className={labelCls}>Skill <span className="text-amber-500">*</span></label>
                   <select className={`${selectCls} mt-[26px]`} value={skillId} disabled={!skillGroupId} onChange={e => setSkillId(e.target.value ? Number(e.target.value) : '')}>
-                    <option value="">{skillGroupId ? '— Chọn Skill —' : 'Chọn Skill Solution trước'}</option>
+                    <option value="">{skillGroupId ? '— Chọn Skill —' : 'Chọn Skill Area trước'}</option>
                     {skills.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>

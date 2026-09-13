@@ -69,7 +69,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
   // Expanded state for viewing template details
   const [expandedTemplateId, setExpandedTemplateId] = useState<number | null>(null);
 
-  // Skill Solution/Vendor + Priority options, shared by every Task Con row
+  // Skill Area/Vendor + Priority options, shared by every Task Con row
   const [categories, setCategories] = useState<any[]>([]);
   const [priorities, setPriorities] = useState<any[]>([]);
   const skillGroups = categories.filter(c => c.is_active).flatMap(c => c.groups || []);
@@ -159,7 +159,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
         }
       }
     }
-    // Every task must have both Skill Solution and Skill Vendor set — otherwise, applying
+    // Every task must have both Skill Area and Skill set — otherwise, applying
     // the template later silently drops the task or falls back to an arbitrary skill/group.
     for (const p of validPhases) {
       const groups = (p.task_groups || []).filter(g => g.name.trim());
@@ -167,7 +167,7 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
         const tasks = (g.tasks || []).filter(t => t.detail.trim());
         for (const t of tasks) {
           if (!t.skill_solution_id || !t.skill_vendor_id) {
-            onFlash(`Task "${t.detail.trim()}" (task cha "${g.name.trim()}", Phase "${p.name.trim()}") chưa chọn đủ Skill Solution và Skill Vendor.`);
+            onFlash(`Task "${t.detail.trim()}" (task cha "${g.name.trim()}", Phase "${p.name.trim()}") chưa chọn đủ Skill Area và Skill.`);
             return;
           }
         }
@@ -628,20 +628,20 @@ export default function ProjectTemplatesView({ onFlash }: Props) {
                                           <select
                                             value={task.skill_solution_id ?? ''}
                                             onChange={e => updateTask(pIdx, gIdx, tIdx, 'skill_solution_id', e.target.value ? Number(e.target.value) : null)}
-                                            title="Skill Solution (bắt buộc)"
+                                            title="Skill Area (bắt buộc)"
                                             className={`bg-white border rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500 ${task.skill_solution_id ? 'border-slate-200' : 'border-red-300'}`}
                                           >
-                                            <option value="">Skill Solution *</option>
+                                            <option value="">Skill Area *</option>
                                             {skillGroups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
                                           </select>
                                           <select
                                             value={task.skill_vendor_id ?? ''}
                                             onChange={e => updateTask(pIdx, gIdx, tIdx, 'skill_vendor_id', e.target.value ? Number(e.target.value) : null)}
-                                            title="Skill Vendor (bắt buộc)"
+                                            title="Skill (bắt buộc)"
                                             disabled={!task.skill_solution_id}
                                             className={`bg-white border rounded px-1 py-0.5 text-[10px] text-slate-600 focus:outline-none focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-300 ${task.skill_vendor_id || !task.skill_solution_id ? 'border-slate-200' : 'border-red-300'}`}
                                           >
-                                            <option value="">Skill Vendor *</option>
+                                            <option value="">Skill *</option>
                                             {availableSkills.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                                           </select>
                                         </div>

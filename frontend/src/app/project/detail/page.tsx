@@ -792,7 +792,7 @@ function ProjectDetailContent() {
 
   // Task Detail inline Skill creation (REUSES existing Settings Skill
   // architecture: POST /api/skills/groups and POST /api/skills/skills).
-  // Two independent `+` buttons (SKILL SOLUTION, SKILL VENDOR) open a
+  // Two independent `+` buttons (SKILL AREA, SKILL) open a
   // lightweight modal. After successful creation, categories are re-
   // fetched and the new item is auto-selected. State is intentionally
   // kept here (not on the existing Settings page) so the existing
@@ -1110,7 +1110,7 @@ function ProjectDetailContent() {
 
   const TASK_COLUMNS = [
     "TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY EST", "STATUS", "START DATE",
-    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "LINK",
+    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL AREA", "SKILL", "LINK",
     "REMARK", "SEND", "END DATE EST", "MD ACTUAL", "END ACTUAL", "DAYS LATE",
     "KPI BASE", "KPI PERFORM", "KPI OVERTIME", "KPI FINAL", "SUB ID", "ROOT TASKS",
     "NOTES", "SOLUTION"
@@ -1142,8 +1142,8 @@ function ProjectDetailContent() {
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
       case 'LINK': return task.link || task.ticket_id || '';
-      case 'SKILL SOLUTION': return task.skill_solution_name || '';
-      case 'SKILL VENDOR': return task.skill_vendor_name || '';
+      case 'SKILL AREA': return task.skill_solution_name || '';
+      case 'SKILL': return task.skill_vendor_name || '';
 
       case 'REMARK': return task.remark || '';
       case 'SEND': return task.send || '';
@@ -1170,7 +1170,7 @@ function ProjectDetailContent() {
 
   // Các cột bắt buộc khi tạo task mới (xem handleSaveTask) - không cho ẩn vì
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
-  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
+  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL AREA', 'SKILL'];
 
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
@@ -1191,8 +1191,8 @@ function ProjectDetailContent() {
     'ASSIGNED':       { defaultWidth: 128, minWidth: 90,  align: 'left' },
     'SUPPORT':        { defaultWidth: 128, minWidth: 90,  align: 'left' },
     'KPI RATIO':      { defaultWidth: 85,  minWidth: 70,  align: 'center' },
-    'SKILL SOLUTION': { defaultWidth: 160, minWidth: 110, align: 'left' },
-    'SKILL VENDOR':   { defaultWidth: 120, minWidth: 90,  align: 'left' },
+    'SKILL AREA': { defaultWidth: 160, minWidth: 110, align: 'left' },
+    'SKILL':   { defaultWidth: 120, minWidth: 90,  align: 'left' },
     'LINK':           { defaultWidth: 90,  minWidth: 70,  align: 'left' },
     'REMARK':         { defaultWidth: 165, minWidth: 110, align: 'left' },
     'SEND':           { defaultWidth: 90,  minWidth: 70,  align: 'center' },
@@ -2350,9 +2350,9 @@ function ProjectDetailContent() {
             setEditValue(targetRow.task.assigned_id ? String(targetRow.task.assigned_id) : '');
           } else if (colUpper === 'SUPPORT') {
             setEditValue(targetRow.task.support_id ? String(targetRow.task.support_id) : '');
-          } else if (colUpper === 'SKILL SOLUTION') {
+          } else if (colUpper === 'SKILL AREA') {
             setEditValue(targetRow.task.skill_solution_id ? String(targetRow.task.skill_solution_id) : '');
-          } else if (colUpper === 'SKILL VENDOR') {
+          } else if (colUpper === 'SKILL') {
             setEditValue(targetRow.task.skill_vendor_id ? String(targetRow.task.skill_vendor_id) : '');
           } else {
             setEditValue(val);
@@ -2461,11 +2461,11 @@ function ProjectDetailContent() {
           payload.kpi_ratio_support = 10;
         }
         break;
-      case 'SKILL SOLUTION':
+      case 'SKILL AREA':
         payload.skill_solution_id = value ? parseInt(value, 10) : null;
         payload.skill_vendor_id = null;
         break;
-      case 'SKILL VENDOR':
+      case 'SKILL':
         payload.skill_vendor_id = value ? parseInt(value, 10) : null;
         break;
       case 'TICKET ID':
@@ -3160,7 +3160,7 @@ function ProjectDetailContent() {
   })();
 
   // Task theo loại - dùng skill_solution_name (field thật, đã dùng cho filter
-  // cột Skill Solution ở Tasks tab), không invent category mới.
+  // cột Skill Area ở Tasks tab), không invent category mới.
   const overviewSkillDistribution = (() => {
     const counts: Record<string, number> = {};
     kpiTasks.forEach((t: any) => {
@@ -3317,7 +3317,7 @@ function ProjectDetailContent() {
     // Editable columns
     const REQUIRED_COLS = [
       'DETAIL TASK', 'PRIORITY', 'MANDAY EST', 'STATUS',
-      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR'
+      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL AREA', 'SKILL'
     ];
     const isRequired = REQUIRED_COLS.includes(colUpper);
 
@@ -3424,7 +3424,7 @@ function ProjectDetailContent() {
               }`}
           />
         );
-      } else if (colUpper === 'SKILL SOLUTION') {
+      } else if (colUpper === 'SKILL AREA') {
         const activeGroups = categories
           .filter(c => c.is_active)
           .flatMap(c => c.groups || []);
@@ -3437,7 +3437,7 @@ function ProjectDetailContent() {
             value={newForm[col] || ''}
             onChange={(val: any) => {
               const selectedGrpId = val === 'all' ? '' : val;
-              const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL VENDOR') || 'SKILL VENDOR';
+              const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL') || 'SKILL';
               setNewForm({
                 ...newForm,
                 [col]: selectedGrpId,
@@ -3449,8 +3449,8 @@ function ProjectDetailContent() {
             usePortal
           />
         );
-      } else if (colUpper === 'SKILL VENDOR') {
-        const solCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL SOLUTION') || 'SKILL SOLUTION';
+      } else if (colUpper === 'SKILL') {
+        const solCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL AREA') || 'SKILL AREA';
         const selectedGroupId = newForm[solCol] || '';
         let availableSkills: any[] = [];
         if (selectedGroupId) {
@@ -3583,8 +3583,8 @@ function ProjectDetailContent() {
     const startDateVal = newForm['START DATE'] || null;
     const assignedVal = newForm['ASSIGNED'] || null;
     const supportVal = newForm['SUPPORT'] || null;
-    const skillSolutionVal = newForm['SKILL SOLUTION'] || null;
-    const skillVendorVal = newForm['SKILL VENDOR'] || null;
+    const skillSolutionVal = newForm['SKILL AREA'] || null;
+    const skillVendorVal = newForm['SKILL'] || null;
 
     if (!detailVal) {
       flash('Tên nhiệm vụ (DETAIL TASK) không được để trống!', true);
@@ -3607,11 +3607,11 @@ function ProjectDetailContent() {
       return;
     }
     if (!skillSolutionVal) {
-      flash('Cột SKILL SOLUTION là bắt buộc.', true);
+      flash('Cột SKILL AREA là bắt buộc.', true);
       return;
     }
     if (!skillVendorVal) {
-      flash('Cột SKILL VENDOR là bắt buộc.', true);
+      flash('Cột SKILL là bắt buộc.', true);
       return;
     }
 
@@ -3635,8 +3635,8 @@ function ProjectDetailContent() {
         notes: newForm['NOTES'] || '',
         assigned_id: newForm['ASSIGNED'] ? parseInt(newForm['ASSIGNED'], 10) : null,
         support_id: newForm['SUPPORT'] ? parseInt(newForm['SUPPORT'], 10) : null,
-        skill_solution_id: newForm['SKILL SOLUTION'] ? parseInt(newForm['SKILL SOLUTION'], 10) : null,
-        skill_vendor_id: newForm['SKILL VENDOR'] ? parseInt(newForm['SKILL VENDOR'], 10) : null,
+        skill_solution_id: newForm['SKILL AREA'] ? parseInt(newForm['SKILL AREA'], 10) : null,
+        skill_vendor_id: newForm['SKILL'] ? parseInt(newForm['SKILL'], 10) : null,
       };
 
       const s = (statusVal || '').trim().toLowerCase();
@@ -3785,9 +3785,9 @@ function ProjectDetailContent() {
 
   // Refetch the categories/groups/skills tree from the same endpoint
   // Settings uses (GET /api/skills/categories) and update the local
-  // `categories` state so the Skill Solution / Vendor dropdowns in this
+  // `categories` state so the Skill Area / Vendor dropdowns in this
   // Task Detail drawer reflect the newly created item without a full
-  // page reload. Reused by the SKILL SOLUTION `+` and SKILL VENDOR `+`
+  // page reload. Reused by the SKILL AREA `+` and SKILL `+`
   // handlers below.
   const refetchCategories = async (): Promise<any[]> => {
     try {
@@ -3801,11 +3801,11 @@ function ProjectDetailContent() {
     }
   };
 
-  // SKILL SOLUTION `+` handler: creates a new Group under the user-
+  // SKILL AREA `+` handler: creates a new Group under the user-
   // chosen Category using the existing POST /api/skills/groups endpoint.
   // Reuses the existing validation + audit pipeline. After success,
   // refreshes the categories tree and auto-selects the new Group as
-  // the SKILL SOLUTION (cascading-clear of the SKILL VENDOR follows
+  // the SKILL AREA (cascading-clear of the SKILL follows
   // the existing onChange contract).
   const handleCreateSkillGroupFromDrawer = async () => {
     const name = newSkillGroupName.trim();
@@ -3843,13 +3843,13 @@ function ProjectDetailContent() {
     }
   };
 
-  // SKILL VENDOR `+` handler: creates a new Skill under the currently
-  // selected SKILL SOLUTION (Group) using the existing POST
+  // SKILL `+` handler: creates a new Skill under the currently
+  // selected SKILL AREA (Group) using the existing POST
   // /api/skills/skills endpoint. If no Solution is selected, the UI
   // is responsible for not opening this modal — but the backend would
   // also reject the request (400 "Group ID is required"). After
   // success, refreshes the categories tree and auto-selects the new
-  // Skill as the SKILL VENDOR.
+  // Skill as the SKILL.
   const handleCreateSkillVendorFromDrawer = async () => {
     const name = newSkillVendorName.trim();
     const solutionId = drawerForm.skill_solution_id ? parseInt(String(drawerForm.skill_solution_id), 10) : null;
@@ -3858,7 +3858,7 @@ function ProjectDetailContent() {
       return;
     }
     if (!solutionId) {
-      flash('Vui lòng chọn SKILL SOLUTION trước!', true);
+      flash('Vui lòng chọn SKILL AREA trước!', true);
       return;
     }
     setCreatingSkillVendor(true);
@@ -4280,9 +4280,9 @@ function ProjectDetailContent() {
         setEditValue(task.assigned_id ? String(task.assigned_id) : '');
       } else if (colUpper === 'SUPPORT') {
         setEditValue(task.support_id ? String(task.support_id) : '');
-      } else if (colUpper === 'SKILL SOLUTION') {
+      } else if (colUpper === 'SKILL AREA') {
         setEditValue(task.skill_solution_id ? String(task.skill_solution_id) : '');
-      } else if (colUpper === 'SKILL VENDOR') {
+      } else if (colUpper === 'SKILL') {
         setEditValue(task.skill_vendor_id ? String(task.skill_vendor_id) : '');
       } else if (colUpper === 'LINK') {
         setEditValue('');
@@ -4634,7 +4634,7 @@ function ProjectDetailContent() {
               );
             }
 
-            if (colUpper === 'SKILL SOLUTION') {
+            if (colUpper === 'SKILL AREA') {
               const activeGroups = categories
                 .filter(c => c.is_active)
                 .flatMap(c => c.groups || []);
@@ -4652,7 +4652,7 @@ function ProjectDetailContent() {
               );
             }
 
-            if (colUpper === 'SKILL VENDOR') {
+            if (colUpper === 'SKILL') {
               const currentGroupId = task.skill_solution_id;
               let availableSkills: any[] = [];
               if (currentGroupId) {
@@ -5103,7 +5103,7 @@ function ProjectDetailContent() {
 
     // Columns NOT applicable to Task Group (show as disabled/empty)
     const GROUP_DISABLED_COLS = [
-      'PRIORITY', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
+      'PRIORITY', 'KPI RATIO', 'SKILL AREA', 'SKILL',
       'TICKET ID', 'SEND', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL',
       'DAYS LATE', 'SUB ID', 'ROOT TASKS', 'SOLUTION', 'NOTES'
     ];
@@ -6223,8 +6223,8 @@ function ProjectDetailContent() {
                   { label: 'Status', value: statusFilter, set: setStatusFilter, options: ['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'] },
                   { label: 'Assigned', value: assignedFilter, set: setAssignedFilter, options: ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()] },
                   { label: 'Support', value: supportFilter, set: setSupportFilter, options: ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()] },
-                  { label: 'Skill Solution', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
-                  { label: 'Skill Vendor', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
+                  { label: 'Skill Area', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
+                  { label: 'Skill', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
                 ].map(f => (
                   <div key={f.label} className="px-3.5 py-1.5 flex items-center justify-between gap-2">
                     <span className="text-[12.5px] font-medium text-[#0b1c30]">{f.label}</span>
@@ -6738,7 +6738,7 @@ function ProjectDetailContent() {
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
                       <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Task theo loại</h3>
                       {overviewSkillDistribution.length === 0 ? (
-                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có dữ liệu Skill Solution.</p>
+                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có dữ liệu Skill Area.</p>
                       ) : (
                         <div className="space-y-2.5">
                           {overviewSkillDistribution.map(s => {
@@ -7513,8 +7513,8 @@ function ProjectDetailContent() {
                                 (colUpper === 'STATUS' && statusFilter !== 'All') ||
                                 (colUpper === 'ASSIGNED' && assignedFilter !== 'All') ||
                                 (colUpper === 'SUPPORT' && supportFilter !== 'All') ||
-                                (colUpper === 'SKILL SOLUTION' && skillSolutionFilter !== 'All') ||
-                                (colUpper === 'SKILL VENDOR' && skillVendorFilter !== 'All');
+                                (colUpper === 'SKILL AREA' && skillSolutionFilter !== 'All') ||
+                                (colUpper === 'SKILL' && skillVendorFilter !== 'All');
                               return (
                                 <th
                                   key={col}
@@ -7688,7 +7688,7 @@ function ProjectDetailContent() {
                                         </div>
                                       );
                                     })()}
-                                    {colUpper === 'SKILL SOLUTION' && (() => {
+                                    {colUpper === 'SKILL AREA' && (() => {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={skillSolutionFilterRef}>
@@ -7712,7 +7712,7 @@ function ProjectDetailContent() {
                                         </div>
                                       );
                                     })()}
-                                    {colUpper === 'SKILL VENDOR' && (() => {
+                                    {colUpper === 'SKILL' && (() => {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={skillVendorFilterRef}>
@@ -9330,10 +9330,10 @@ function ProjectDetailContent() {
                 />
               </div>
 
-              {/* Skill Solution */}
+              {/* Skill Area */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Solution</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Area</label>
                   {isMemberOrAbove() && (
                     <button
                       type="button"
@@ -9382,24 +9382,24 @@ function ProjectDetailContent() {
                 />
               </div>
 
-              {/* Skill Vendor */}
+              {/* Skill */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Vendor</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill</label>
                   {isMemberOrAbove() && (
                     <button
                       type="button"
                       onClick={() => {
                         if (!drawerForm.skill_solution_id) {
-                          flash('Vui lòng chọn SKILL SOLUTION trước khi tạo Vendor.', true);
+                          flash('Vui lòng chọn SKILL AREA trước khi tạo Vendor.', true);
                           return;
                         }
                         setNewSkillVendorName('');
                         setShowCreateSkillVendorModal(true);
                       }}
                       className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-slate-500 hover:border-[#0058be] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={drawerForm.skill_solution_id ? 'Tạo Skill Vendor mới' : 'Chọn SKILL SOLUTION trước'}
-                      aria-label="Tạo Skill Vendor mới"
+                      title={drawerForm.skill_solution_id ? 'Tạo Skill mới' : 'Chọn SKILL AREA trước'}
+                      aria-label="Tạo Skill mới"
                     >
                       <Plus size={14} strokeWidth={2.5} />
                     </button>
@@ -9422,12 +9422,12 @@ function ProjectDetailContent() {
                   }
                   return (
                     <SearchableSelect
-                      label="Skill Vendor"
+                      label="Skill"
                       icon=""
                       options={availSkills.map((s: any) => ({ id: s.id, name: s.name }))}
                       value={drawerForm.skill_vendor_id || ''}
                       onChange={(val: any) => setDrawerForm({ ...drawerForm, skill_vendor_id: val === 'all' ? '' : val })}
-                      placeholder="Tìm Skill Vendor..."
+                      placeholder="Tìm Skill..."
                       className="w-full"
                     />
                   );
@@ -9482,7 +9482,7 @@ function ProjectDetailContent() {
         </div>
       )}
 
-      {/* Task Detail → SKILL SOLUTION `+` modal: creates a new Group
+      {/* Task Detail → SKILL AREA `+` modal: creates a new Group
           (Solution) under an existing Category. Reuses POST
           /api/skills/groups and the existing `categories` tree. Auto-
           selects the new Group on success. */}
@@ -9561,14 +9561,14 @@ function ProjectDetailContent() {
         </div>
       )}
 
-      {/* Task Detail → SKILL VENDOR `+` modal: creates a new Skill under
-          the currently selected SKILL SOLUTION (Group). Reuses POST
+      {/* Task Detail → SKILL `+` modal: creates a new Skill under
+          the currently selected SKILL AREA (Group). Reuses POST
           /api/skills/skills. Auto-selects the new Skill on success. */}
       {showCreateSkillVendorModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
-              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill Vendor mới</h3>
+              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill mới</h3>
               <button
                 type="button"
                 onClick={() => {
@@ -9584,7 +9584,7 @@ function ProjectDetailContent() {
             </div>
             <div className="p-5 space-y-3">
               <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">SKILL SOLUTION</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">SKILL AREA</label>
                 <div className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-slate-700">
                   {(() => {
                     const grpObj = categories

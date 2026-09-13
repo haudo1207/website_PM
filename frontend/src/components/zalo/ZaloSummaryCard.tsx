@@ -58,7 +58,7 @@ export default function ZaloSummaryCard({
 
   // Real picker state — mirrors MeetingDetailModal's "Task Đề Xuất Từ AI"
   // tab (taskAssigneeMap/taskSupportMap/etc.), per the finalized Push Task
-  // field spec: Assigned/Support/Skill Solution/Skill Vendor are required
+  // field spec: Assigned/Support/Skill Area/Skill are required
   // real picks, Phase/Task cha are optional (fall back on the backend).
   const [membersList, setMembersList] = useState<any[]>([]);
   const [categoriesList, setCategoriesList] = useState<any[]>([]);
@@ -80,7 +80,7 @@ export default function ZaloSummaryCard({
     }).catch(() => {});
   }, []);
 
-  // Skill Solution = Group, Skill Vendor = Skill nested under it — same
+  // Skill Area = Group, Skill = Skill nested under it — same
   // categories → groups → skills shape MeetingDetailModal derives from.
   const allSkillGroups: any[] = categoriesList.flatMap((c: any) => c.groups || []);
   const getSkillVendorsForGroup = (groupId?: number) => {
@@ -115,8 +115,8 @@ export default function ZaloSummaryCard({
     const missing: string[] = [];
     if (!taskAssigneeMap[i]) missing.push('Assigned');
     if (!taskSupportMap[i]) missing.push('Support');
-    if (!taskSkillSolutionMap[i]) missing.push('Skill Solution');
-    if (!taskSkillVendorMap[i]) missing.push('Skill Vendor');
+    if (!taskSkillSolutionMap[i]) missing.push('Skill Area');
+    if (!taskSkillVendorMap[i]) missing.push('Skill');
     if (!edit.start_date) missing.push('Start Date');
     const manday = Number(edit.manday_est);
     if (!manday || manday !== Math.trunc(manday) || manday < 1 || manday > 10) missing.push('Manday EST (1-10)');
@@ -130,7 +130,7 @@ export default function ZaloSummaryCard({
 
     const blocked = indices.filter((i) => missingRequiredFields(i).length > 0);
     if (blocked.length > 0) {
-      alert('Vui lòng bổ sung đủ Assigned/Support/Skill Solution/Skill Vendor/Start Date/Manday EST (1-10) cho các task còn thiếu trước khi push.');
+      alert('Vui lòng bổ sung đủ Assigned/Support/Skill Area/Skill/Start Date/Manday EST (1-10) cho các task còn thiếu trước khi push.');
       return;
     }
 
@@ -284,7 +284,7 @@ export default function ZaloSummaryCard({
           </div>
           {needsReviewCount > 0 ? (
             <p className="text-[11px] text-red-500 font-semibold">
-              ⚠ {needsReviewCount}/{pendingIndices.length} task còn thiếu Assigned/Support/Skill Solution/Skill Vendor/Start Date/Manday EST hợp lệ — cần bổ sung trước khi push.
+              ⚠ {needsReviewCount}/{pendingIndices.length} task còn thiếu Assigned/Support/Skill Area/Skill/Start Date/Manday EST hợp lệ — cần bổ sung trước khi push.
             </p>
           ) : (
             <p className="text-[11px] text-[#94a3b8]">Tất cả task đã đủ thông tin, sẵn sàng push.</p>
@@ -411,9 +411,9 @@ export default function ZaloSummaryCard({
                           />
                         </div>
                         <div>
-                          <label className={fieldLabelCls}>Skill Solution</label>
+                          <label className={fieldLabelCls}>Skill Area</label>
                           <SearchableSelect
-                            label="skill solution"
+                            label="skill area"
                             options={allSkillGroups.map((g: any) => ({ id: g.id, name: g.name }))}
                             value={currentSkillSolution?.id || ''}
                             onChange={(val: any) => {
@@ -428,9 +428,9 @@ export default function ZaloSummaryCard({
                           />
                         </div>
                         <div>
-                          <label className={fieldLabelCls}>Skill Vendor</label>
+                          <label className={fieldLabelCls}>Skill</label>
                           <SearchableSelect
-                            label="skill vendor"
+                            label="skill"
                             options={getSkillVendorsForGroup(currentSkillSolution?.id).map((sv: any) => ({ id: sv.id, name: sv.name }))}
                             value={currentSkillVendor?.id || ''}
                             onChange={(val: any) => {
@@ -439,7 +439,7 @@ export default function ZaloSummaryCard({
                               setTaskSkillVendorMap((prev) => ({ ...prev, [i]: found ? { id: found.id, name: found.name } : undefined }));
                             }}
                             disabled={!currentSkillSolution}
-                            placeholder={currentSkillSolution ? 'Gõ tìm...' : 'Chọn Skill Solution trước'}
+                            placeholder={currentSkillSolution ? 'Gõ tìm...' : 'Chọn Skill Area trước'}
                             searchThreshold={0}
                             className={`w-full ${!currentSkillSolution || currentSkillVendor ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
                           />
