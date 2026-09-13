@@ -1101,9 +1101,26 @@ export default function OverviewTab() {
       const primary = entries.find((e: any) => e.is_primary);
       return (primary?.code || '').toLowerCase() || null;
     })();
-    const homeWsCodeForSummary = (currentUserRole === 'leader'
-      ? (currentUser?.data_scope || '')
-      : (drilledLeaderHomeWs || effectiveWsCode || '')).toLowerCase();
+    // Drilled all the way down to one specific Member (either an Admin
+    // going Leader → Member, or a Leader picking one of their own team) —
+    // takes priority over drilledLeaderHomeWs above, since "home" must be
+    // THAT Member's own Chính Workspace, not their Leader's (usually the
+    // same team, but not guaranteed — e.g. a member reassigned across
+    // teams keeps whatever Workspace is actually theirs).
+    const drilledMemberHomeWs = (() => {
+      if (selectedMemberId === 'all') return null;
+      const mid = Number(selectedMemberId);
+      if (!Number.isFinite(mid)) return null;
+      const entries = workspaceRolesByMember[mid] || [];
+      const primary = entries.find((e: any) => e.is_primary);
+      return (primary?.code || '').toLowerCase() || null;
+    })();
+    const homeWsCodeForSummary = (
+      drilledMemberHomeWs
+      || (currentUserRole === 'leader' ? (currentUser?.data_scope || '') : drilledLeaderHomeWs)
+      || effectiveWsCode
+      || ''
+    ).toLowerCase();
     // Same drill-in as drilledLeaderHomeWs above, but the Leader's own
     // member_id — Admin drilled into a specific Leader must see THAT
     // Leader's real PM/Project-Leader relationships in the Phụ trách/Tham
