@@ -1223,6 +1223,10 @@ export default function OverviewTab() {
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
         hasPM: Boolean(pmName), hasTasks: pTasksToUse.length > 0,
         business: p.business || null,
+        // Already returned by GET /api/projects (serialize_project_summary
+        // joins Project.customer) — just wasn't being copied into the card
+        // object yet.
+        customerName: p.customer_name || null,
         dataScope,
         contributingNames,
         drilledPersonHasAccess,
@@ -2140,6 +2144,12 @@ export default function OverviewTab() {
                     </span>
                   </div>
                 </div>
+                {p.customerName && (
+                  <div className="flex items-center gap-1 mb-1.5 text-[10px] text-slate-400 font-semibold truncate" title={`Khách hàng: ${p.customerName}`}>
+                    <span className="material-symbols-outlined text-[12px] shrink-0">business</span>
+                    <span className="truncate">{p.customerName}</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-1.5 mb-3">
                   <span className="text-[10px] text-slate-400 font-semibold">{p.current_phase || '1. Tư vấn'}</span>
                   <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
