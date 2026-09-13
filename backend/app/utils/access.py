@@ -631,23 +631,25 @@ MEETING_CREATE_HELPER_PATHS = {
     "/api/meetings",
     "/api/meetings/generate-link",
     "/api/meetings/generate-ai-content",
+    "/api/meetings/check-conflict",
 }
 
 
 def _is_meeting_create(request: Request) -> bool:
     """Check if the request is meeting creation (POST /api/meetings, no id)
-    or one of the two helper calls the create-meeting form fires before that
-    (AI-suggested objective/agenda, on-demand Zoom/Google Meet link).
+    or one of the helper calls the create-meeting form fires before that
+    (AI-suggested objective/agenda, on-demand Zoom/Google Meet link, organizer
+    overlap preview).
 
-    None of these three have a project id in their URL — the project is
-    chosen in the JSON body — so this router-level check can't apply the
-    usual "member assigned to this project" gate the way task/document
-    writes do. It lets the request through instead; create_meeting() then
-    calls require_project() itself for whichever project(s) were actually
-    chosen, which 404s if the member doesn't belong to them. The two helper
-    endpoints don't touch project data at all (one calls an AI service, the
-    other calls the shared Google/Zoom account), so there's nothing further
-    to gate.
+    None of these have a project id in their URL — the project is chosen in
+    the JSON body — so this router-level check can't apply the usual "member
+    assigned to this project" gate the way task/document writes do. It lets
+    the request through instead; create_meeting() then calls require_project()
+    itself for whichever project(s) were actually chosen, which 404s if the
+    member doesn't belong to them. The helper endpoints don't touch project
+    data at all (AI service, shared Google/Zoom account, or a read-only
+    overlap query scoped by organizer_google_email), so there's nothing
+    further to gate.
     """
     return request.method == "POST" and request.url.path.rstrip("/") in MEETING_CREATE_HELPER_PATHS
 

@@ -614,6 +614,17 @@ export const removeMeetingMember = (id: number, memberId: number) => api.delete(
 export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
 export const generateMeetingLink = (data: { platform: string; title: string; date?: string; time?: string; duration?: string | number; project_id?: number }) =>
   api.post('/meetings/generate-link', data).then(r => r.data);
+// Organizer rule (chốt 2026-09-13): the ONLY way to reassign organizer_google_email
+// on an EXISTING meeting — atomically generates a new Google Meet link and persists
+// meeting_url/google_event_id/organizer_google_email server-side in one request.
+// Plain PUT /meetings/{id} no longer accepts organizer_google_email at all.
+export const retryMeetingLink = (id: number) => api.post(`/meetings/${id}/retry-link`).then(r => r.data);
+// Overlap rule (chốt 2026-09-13): organizer is the source of truth, not
+// participants — this calls the EXACT SAME check create/update/retry-link
+// enforce server-side, so the frontend never shows "rảnh"/"trùng" out of
+// sync with what submitting will actually do.
+export const checkMeetingConflict = (data: { project_id?: number; meeting_date?: string; date?: string; start_time?: string; time?: string; end_time?: string; duration?: string | number; exclude_meeting_id?: number }) =>
+  api.post('/meetings/check-conflict', data).then(r => r.data);
 export const getGoogleStatus = (workspace?: string) => api.get('/meetings/google/status', { params: workspace ? { workspace } : undefined }).then(r => r.data);
 export const getGoogleAuthUrl = (workspace?: string) => api.get('/meetings/google/auth', { params: workspace ? { workspace } : undefined }).then(r => r.data);
 export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);

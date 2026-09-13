@@ -34,6 +34,15 @@ const PROJECT_COLOR_PALETTE = [
 ];
 const DEFAULT_PROJECT_COLOR = { barBorder: 'border-l-indigo-500', bg: 'bg-indigo-50', badgeBg: 'bg-indigo-100', badgeText: 'text-indigo-700', dot: 'bg-indigo-500' };
 
+// Delete rule (chốt 2026-09-13): chỉ cho xóa UPCOMING/CANCELLED — ONGOING/DONE
+// có thể đã gắn transcript/AI summary/score, xóa sẽ mất vĩnh viễn. Backend
+// (`DELETE /api/meetings/{id}`) enforce lại đúng rule này; đây chỉ là gating
+// hiển thị để UI không hứa hẹn một hành động sẽ bị 400 ngay sau đó.
+const isMeetingDeletable = (status?: string | null): boolean => {
+  const s = String(status || '').toUpperCase();
+  return !s.includes('DIỄN RA') && s !== 'ĐÃ KẾT THÚC' && s !== 'DONE';
+};
+
 const hashStringToIndex = (str: string, mod: number): number => {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
@@ -924,7 +933,7 @@ function MeetingsPageContent() {
                               </td>
                               <td className="p-3 text-right">
                                 <div className="flex items-center justify-end gap-1.5">
-                                  {m.can_manage && (
+                                  {m.can_manage && isMeetingDeletable(statusUpper) && (
                                     <button
                                       onClick={() => setDeleteConfirmId(String(m.id))}
                                       title="Xóa cuộc họp"
@@ -1195,7 +1204,7 @@ function MeetingsPageContent() {
         onEdit={detailMeeting?.can_manage ? handleOpenEditFromDetail : undefined}
         onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
         onSync={detailMeeting?.can_manage ? handleSync : undefined}
-        onDelete={detailMeeting?.can_manage ? (m => { handleCloseDetail(); setDeleteConfirmId(String(m.id)); }) : undefined}
+        onDelete={detailMeeting?.can_manage && isMeetingDeletable(detailMeeting?.status) ? (m => { handleCloseDetail(); setDeleteConfirmId(String(m.id)); }) : undefined}
       />
 
       {/* Delete Confirm Modal */}
