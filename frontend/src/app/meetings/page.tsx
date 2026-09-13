@@ -34,13 +34,15 @@ const PROJECT_COLOR_PALETTE = [
 ];
 const DEFAULT_PROJECT_COLOR = { barBorder: 'border-l-indigo-500', bg: 'bg-indigo-50', badgeBg: 'bg-indigo-100', badgeText: 'text-indigo-700', dot: 'bg-indigo-500' };
 
-// Delete rule (chốt 2026-09-13): chỉ cho xóa UPCOMING/CANCELLED — ONGOING/DONE
-// có thể đã gắn transcript/AI summary/score, xóa sẽ mất vĩnh viễn. Backend
-// (`DELETE /api/meetings/{id}`) enforce lại đúng rule này; đây chỉ là gating
-// hiển thị để UI không hứa hẹn một hành động sẽ bị 400 ngay sau đó.
+// Delete rule (chốt 2026-09-13, soft-delete design): ONGOING is the ONLY
+// status that blocks Delete — UPCOMING/DONE/CANCELLED are all soft-deletable
+// (meeting_id/transcript/ai_summary/n8n state are preserved server-side, just
+// hidden from the UI). Backend (`DELETE /api/meetings/{id}`) enforces this
+// same rule via compute_display_status(); this is only the display-side
+// gating so the UI doesn't offer an action that would 400 right after.
 const isMeetingDeletable = (status?: string | null): boolean => {
   const s = String(status || '').toUpperCase();
-  return !s.includes('DIỄN RA') && s !== 'ĐÃ KẾT THÚC' && s !== 'DONE';
+  return !s.includes('DIỄN RA');
 };
 
 const hashStringToIndex = (str: string, mod: number): number => {

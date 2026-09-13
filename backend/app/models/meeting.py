@@ -70,6 +70,19 @@ class Meeting(Base):
     score_status             = Column(String(20), nullable=True, default="provisional")
     last_score_calculated_at = Column(DateTime, nullable=True)
 
+    # Soft delete (chốt 2026-09-13: Delete Meeting an toàn cho Bot/n8n) — never
+    # hard-delete a Meeting row. deleted_at/deleted_by are set by DELETE
+    # /{id} and every user-facing read filters them out; status is left
+    # untouched so it still reflects the real lifecycle (a DONE meeting stays
+    # DONE after being "deleted", it's just hidden). The Bot's /ended report
+    # and the n8n ingestion webhook deliberately do NOT filter on this column
+    # — they must still be able to reach a soft-deleted row (see
+    # meeting_bot.py/report_meeting_ended and meetings.py's n8n webhook
+    # matcher) so an in-flight Bot session or a late-arriving recording never
+    # orphans.
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(Integer, nullable=True)  # users.id
+
     # Relationships
     project      = relationship("Project", foreign_keys=[project_id], lazy="select")
     creator      = relationship("Member", foreign_keys=[created_by], lazy="select")

@@ -8399,7 +8399,7 @@ function ProjectDetailContent() {
                                     </td>
                                     <td className="p-3 text-right">
                                       <div className="flex items-center justify-end gap-1.5">
-                                        {m.can_manage && !statusUpper.includes('DIỄN RA') && statusUpper !== 'ĐÃ KẾT THÚC' && statusUpper !== 'DONE' && (
+                                        {m.can_manage && !statusUpper.includes('DIỄN RA') && (
                                           <button
                                             onClick={() => setDeleteConfirmId(String(m.id))}
                                             title="Xóa cuộc họp"
