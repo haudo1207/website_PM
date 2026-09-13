@@ -9452,7 +9452,10 @@ function ProjectDetailContent() {
       {/* Task Detail Drawer */}
       {selectedTask && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <div onClick={() => setSelectedTask(null)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300" />
+          {/* Click-outside-to-close catcher — intentionally no dimming/blur
+              (bg-slate-900/40 backdrop-blur-sm removed) so the Tasks table
+              stays fully visible/legible behind the drawer, per spec. */}
+          <div onClick={() => setSelectedTask(null)} className="absolute inset-0" />
           <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
             <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-[#f8faff] to-white">
               <div className="flex items-center gap-3">
@@ -9496,6 +9499,31 @@ function ProjectDetailContent() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* KPI Snapshot — read-only, moved to the top of the drawer so
+                  it's the first thing visible on open, matching the KPI
+                  Snapshot placement decision. */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI Snapshot</label>
+                <div className="grid grid-cols-4 gap-3 mt-2">
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Base</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_base ?? '—'}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Perform</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_perform ?? '—'}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">OT</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_ot ?? '—'}</div>
+                  </div>
+                  <div className="bg-[#e8f0fe] rounded-lg px-3 py-2.5 text-center border border-[#c2d6f0]">
+                    <div className="text-[9px] text-[#0058be] font-semibold uppercase">Final</div>
+                    <div className="text-[13px] font-bold text-[#0058be] mt-0.5">{selectedTask.kpi_final ?? '—'}</div>
+                  </div>
+                </div>
+              </div>
+
               {/* Detail Task */}
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Detail Task</label>
@@ -9761,28 +9789,6 @@ function ProjectDetailContent() {
                 />
               </div>
 
-              {/* KPI Section (Read-only) */}
-              <div className="border-t border-slate-100 pt-4">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI</label>
-                <div className="grid grid-cols-4 gap-3 mt-3">
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Base</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_base ?? '—'}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Perform</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_perform ?? '—'}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">OT</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_ot ?? '—'}</div>
-                  </div>
-                  <div className="bg-[#e8f0fe] rounded-lg px-3 py-2.5 text-center border border-[#c2d6f0]">
-                    <div className="text-[9px] text-[#0058be] font-semibold uppercase">Final</div>
-                    <div className="text-[13px] font-bold text-[#0058be] mt-0.5">{selectedTask.kpi_final ?? '—'}</div>
-                  </div>
-                </div>
-              </div>
             </div>
             {/* Save button footer */}
             <div className="px-6 py-4 border-t border-slate-200 bg-white">
