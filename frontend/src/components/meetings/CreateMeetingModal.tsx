@@ -468,6 +468,16 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       isSubmittingRef.current = false;
       return;
     }
+    // Chốt 2026-09-13: "Phải có ít nhất 1 participant mới tạo Meeting" — scoped
+    // to CREATE only. Many meetings created before this rule have zero real
+    // MeetingMember rows (the old synthetic "Host" display entry was never a
+    // real participant), so enforcing this on EDIT too would block a simple
+    // title/time fix on any of them until someone first backfills participants.
+    if (!initialData && formData.member_ids.length === 0) {
+      setError('Vui lòng chọn ít nhất một thành viên tham gia cuộc họp');
+      isSubmittingRef.current = false;
+      return;
+    }
     if (!formData.objective || !formData.objective.replace(/^\d+\.\s*/gm, '').trim()) {
       setError('Vui lòng nhập Mục tiêu / Kết quả mong đợi của cuộc họp');
       isSubmittingRef.current = false;
@@ -625,7 +635,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Thành viên tham gia</label>
+                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Thành viên tham gia *</label>
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
@@ -684,7 +694,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     })}
                   </div>
                 )}
-                <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bấm <b>“+ Cả team”</b> để nạp toàn bộ thành viên của (các) dự án đã chọn, rồi bỏ bớt người không cần.</p>
+                <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bắt buộc chọn ít nhất 1 thành viên tham gia cuộc họp. Bấm <b>“+ Cả team”</b> để thêm nhanh toàn bộ thành viên của dự án đã chọn.</p>
               </div>
 
               <div>

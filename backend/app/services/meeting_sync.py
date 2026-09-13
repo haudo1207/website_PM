@@ -602,6 +602,29 @@ def rename_google_meet_event_tag(db, google_event_id: str, meeting_id: int, titl
         logger.warning(f"rename_google_meet_event_tag failed (non-fatal): {e}")
 
 
+def cancel_google_meet_event(db, google_event_id: str, workspace_id: int = None) -> None:
+    """Cancel a Calendar event when its Meeting is soft-deleted while still
+    UPCOMING (chốt 2026-09-13's Delete Meeting design) — best-effort, same
+    pattern as rename_google_meet_event_tag: any failure is logged and
+    swallowed, never raised, so a Calendar API hiccup can't block or roll
+    back the soft-delete the user already performed. events.delete (not a
+    'cancelled' status patch) since nothing reads this event back afterward."""
+    if not google_event_id:
+        return
+    try:
+        token = get_workspace_google_access_token(db, workspace_id)
+        resp = requests.delete(
+            f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}",
+            params={"sendUpdates": "none"},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if not resp.ok and resp.status_code != 410:  # 410 Gone = already deleted/cancelled, fine
+            logger.warning(f"cancel_google_meet_event failed (non-fatal): {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.warning(f"cancel_google_meet_event failed (non-fatal): {e}")
+
+
 def is_google_connected(db, user_id: int, workspace_id: int = None) -> bool:
     """Check if Google Calendar & Drive API connection is active with valid refresh token."""
     try:
@@ -1662,6 +1685,15 @@ def auto_sync_all_ended_meetings(db):
                 # A real external signal (Zoom's cloud-recording API actually
                 # reports the call ended, or a legacy direct Google sync found
                 # a transcript) — legitimate to mark DONE.
+                logger.warning(
+                    "MEETING_STATUS_DONE",
+                    extra={
+                        "meeting_id": m.id,
+                        "source": "auto_sync_all_ended_meetings",
+                        "organizer": m.organizer_google_email,
+                        "platform": m.platform,
+                    },
+                )
                 m.status = "DONE"
                 apply_sync_result_to_meeting(m, result)
                 db.commit()

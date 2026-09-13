@@ -10,6 +10,7 @@ router, which requires get_current_user for every route) so the extension
 never needs a portal user session.
 """
 import datetime
+import logging
 from typing import Optional
 
 import requests
@@ -25,6 +26,7 @@ from ..models.workspace_google_account import WorkspaceGoogleAccount
 from ..services.meeting_sync import _resolve_meeting_workspace_id, get_workspace_google_access_token
 from ..utils.timezone import VN_TZ as _VN_TZ
 
+logger = logging.getLogger("meeting_bot")
 router = APIRouter()
 
 # How far ahead the bot should be told about a meeting, so its browser
@@ -92,6 +94,7 @@ def get_bot_queue(
         db.query(Meeting)
         .filter(
             Meeting.status.in_(["UPCOMING", "ONGOING"]),
+            Meeting.deleted_at.is_(None),
             Meeting.meeting_url.isnot(None),
             Meeting.meeting_url.ilike("%meet.google.com%"),
             Meeting.meeting_date >= window_start.date(),
@@ -254,6 +257,9 @@ def report_meeting_ended(
     if meeting.status == "DONE":
         return {"success": True, "changed": False, "status": meeting.status, "reason": "already DONE"}
 
+    logger.warning(
+        f"MEETING_STATUS_DONE source=meeting_bot_ended meeting_id={meeting.id} google_email={google_email}"
+    )
     meeting.status = "DONE"
     db.commit()
     return {"success": True, "changed": True, "status": "DONE"}

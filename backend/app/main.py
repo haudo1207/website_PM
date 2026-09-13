@@ -258,6 +258,13 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS n8n_notify_last_error TEXT"
         ))
+        # Soft delete (chốt 2026-09-13) — see Meeting.deleted_at's docstring.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS deleted_by INTEGER"
+        ))
         # Explicit "home" Workspace flag (Chính vs Phụ) — see workspace_access.py.
         conn.execute(text(
             "ALTER TABLE user_workspace_access ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false"

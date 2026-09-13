@@ -5,7 +5,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
-import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
@@ -778,7 +777,7 @@ function ProjectDetailContent() {
   const [reviewChecklist, setReviewChecklist] = useState<any[]>([]);
   const [reviewChecklistLoading, setReviewChecklistLoading] = useState(false);
   const [newChecklistContent, setNewChecklistContent] = useState('');
-  const [taskFilterMode, setTaskFilterMode] = useState<'all' | 'review'>('all');
+  const [taskFilterMode, setTaskFilterMode] = useState<'all' | 'review' | 'my_tasks' | 'smart_priority'>('all');
   // Blocking workflow (Đánh dấu bị chặn/Gỡ chặn) - modal DÙNG CHUNG cho cả 3
   // nơi kích hoạt: nút trong Task Edit Drawer, nút trong Leader Review Detail
   // Drawer, và chọn thẳng 1 status chứa "block" từ dropdown Status (statusValue
@@ -1489,8 +1488,6 @@ function ProjectDetailContent() {
   const [meetings, setMeetings] = useState<any[]>([]);
   const [showMeetingModal, setShowMeetingModal] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<any>(null);
-  const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
-  const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -2229,18 +2226,52 @@ function ProjectDetailContent() {
     return group ? group.phase_id : null;
   };
 
+  const getTaskHealthStatus = (task: any): string => {
+    const sl = (task.status || '').toLowerCase();
+    const isDone = sl === 'done' || sl === 'completed';
+    const isReview = sl.includes('review');
+    const isBlocked = sl.includes('block') || task.is_blocked;
+    if (isReview) return 'review';
+    if (isBlocked) return 'blocked';
+    if (!isDone && task.end_date_est) {
+      const deadline = new Date(task.end_date_est);
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      deadline.setHours(0, 0, 0, 0);
+      const daysLate = Math.floor((now.getTime() - deadline.getTime()) / 86400000);
+      if (daysLate >= 3) return 'risk_high';
+      if (daysLate === 2) return 'risk_medium';
+      if (daysLate === 1) return 'risk_low';
+      return 'on_track';
+    }
+    if (isDone) return 'done';
+    return 'unknown';
+  };
+
   const filteredItems = useMemo(() => {
     const searchLower = taskSearch.toLowerCase();
     const reviewFilter = taskFilterMode === 'review';
+    const myTasksFilter = taskFilterMode === 'my_tasks';
+    const smartPriorityFilter = taskFilterMode === 'smart_priority';
     const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
       || assignedFilter !== 'All' || supportFilter !== 'All'
       || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
-      || !!searchLower || !!memberFilterParam || reviewFilter;
+      || !!searchLower || !!memberFilterParam || reviewFilter || myTasksFilter || smartPriorityFilter;
     if (!hasActiveFilter) {
       return items;
     }
 
-    const baseItems = reviewFilter ? items.filter(item => (item.status || '').toLowerCase().includes('review')) : items;
+    let baseItems = items;
+    if (reviewFilter) {
+      baseItems = items.filter(item => (item.status || '').toLowerCase().includes('review'));
+    } else if (myTasksFilter) {
+      baseItems = items.filter(item => item.assigned_id != null && myMemberId != null && Number(item.assigned_id) === Number(myMemberId));
+    } else if (smartPriorityFilter) {
+      baseItems = items.filter(item => {
+        const health = getTaskHealthStatus(item);
+        return health === 'risk_low' || health === 'risk_medium' || health === 'risk_high';
+      });
+    }
 
     if (!searchLower && priorityFilter === 'All' && statusFilter === 'All'
       && assignedFilter === 'All' && supportFilter === 'All'
@@ -2304,7 +2335,7 @@ function ProjectDetailContent() {
 
     // 4. Return in original order
     return baseItems.filter(item => allTasksToShow.has(item));
-  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode]);
+  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode, myMemberId]);
 
   const getFilteredTasks = () => {
     if (activePhase === 'ALL') {
@@ -7807,6 +7838,18 @@ function ProjectDetailContent() {
                         >
                           Task cần Review
                         </button>
+                        <button
+                          onClick={() => setTaskFilterMode('my_tasks')}
+                          className={`px-3 py-1.5 text-[12px] font-semibold transition-colors border-l border-slate-200 ${taskFilterMode === 'my_tasks' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                        >
+                          Việc của tôi
+                        </button>
+                        <button
+                          onClick={() => setTaskFilterMode('smart_priority')}
+                          className={`px-3 py-1.5 text-[12px] font-semibold transition-colors border-l border-slate-200 ${taskFilterMode === 'smart_priority' ? 'bg-rose-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                        >
+                          Ưu tiên thông minh
+                        </button>
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-auto task-table-scroll">
@@ -8238,7 +8281,7 @@ function ProjectDetailContent() {
                                               Duyệt
                                             </button>
                                             <button
-                                              onClick={() => handleOpenAttentionTask(t)}
+                                              onClick={() => openReviewDrawer(t)}
                                               className="px-2 py-1 text-[10px] font-bold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded transition-colors"
                                             >
                                               Yêu cầu sửa
@@ -8509,7 +8552,7 @@ function ProjectDetailContent() {
                                     </td>
                                     <td className="p-3 text-right">
                                       <div className="flex items-center justify-end gap-1.5">
-                                        {m.can_manage && !statusUpper.includes('DIỄN RA') && statusUpper !== 'ĐÃ KẾT THÚC' && statusUpper !== 'DONE' && (
+                                        {m.can_manage && !statusUpper.includes('DIỄN RA') && (
                                           <button
                                             onClick={() => setDeleteConfirmId(String(m.id))}
                                             title="Xóa cuộc họp"
@@ -8546,23 +8589,11 @@ function ProjectDetailContent() {
                     />
                   )}
 
-                  {(isAdmin() || summarizingMeeting?.can_manage) && (
-                    <SummarizeModal
-                      isOpen={isSummarizeOpen}
-                      onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }}
-                      meeting={summarizingMeeting}
-                      onSave={(updatedMeeting) => {
-                        setMeetings(prev => prev.map(x => x.id === updatedMeeting.id ? updatedMeeting : x));
-                      }}
-                    />
-                  )}
-
                   <MeetingDetailModal
                     isOpen={isDetailOpen}
                     onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }}
                     meeting={detailMeeting}
                     onEdit={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setEditingMeeting(m); setShowMeetingModal(true); }) : undefined}
-                    onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
                   />
 
                   {/* Delete Confirm Modal */}

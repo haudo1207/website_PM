@@ -296,15 +296,15 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
     # was later also added as a real member.
     db_member_names = {mb.get("display_name") for mb in db_members}
     custom_only = [cm for cm in custom_members if cm.get("display_name") not in db_member_names]
+    # No synthetic "Người tạo (Host)" entry here anymore (chốt 2026-09-13,
+    # "Host tách khỏi participant"): Host is derived from
+    # organizer_google_email/created_by and shown via the separate
+    # host_google_email/creator_name fields below, never as a member row —
+    # the creator only counts as a participant if they were actually added
+    # as one (a real MeetingMember row). This also fixes member_count/
+    # members previously always being >= 1 even for a meeting with zero
+    # real participants.
     final_members = db_members + custom_only
-
-    host_name = m.creator.display_name if m.creator else f"Host {host_google_email.split('@')[0]}"
-    if not final_members:
-        final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}]
-    else:
-        has_host = any("Host" in str(mb.get("role", "")) or mb.get("display_name") == host_name for mb in final_members)
-        if not has_host:
-            final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}] + final_members
 
     return {
         "id": m.id,
@@ -412,6 +412,7 @@ def _find_organizer_time_conflict(
     candidates = db.query(Meeting).filter(
         Meeting.organizer_google_email == organizer_google_email,
         Meeting.status.in_(["UPCOMING", "ONGOING"]),
+        Meeting.deleted_at.is_(None),
         Meeting.meeting_date.isnot(None),
         Meeting.start_time.isnot(None),
         Meeting.end_time.isnot(None),
@@ -452,6 +453,19 @@ def _check_organizer_time_conflict(
         )
 
 
+def _get_active_meeting(db: Session, id: int) -> Meeting:
+    """Fetch a meeting for a normal user-facing action — a soft-deleted
+    meeting (see delete_meeting) is gone from the app's perspective, so this
+    404s exactly like a truly-missing id would. Do NOT use this for the
+    bot/n8n integration points (meeting_bot.py's /ended, the n8n webhook
+    matcher below) — those must still reach a soft-deleted row so an
+    in-flight Bot session or a late recording never orphans."""
+    m = db.query(Meeting).filter(Meeting.id == id, Meeting.deleted_at.is_(None)).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    return m
+
+
 # ─── LIST ───────────────────────────────────────────────
 @router.get("")
 def list_meetings(
@@ -470,7 +484,7 @@ def list_meetings(
         joinedload(Meeting.creator),
         joinedload(Meeting.members).joinedload(MeetingMember.member),
         joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
-    )
+    ).filter(Meeting.deleted_at.is_(None))
     if user_scope(current_user) != ALL_SCOPE:
         allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
         # Visible when it has no project at all (general/company-wide meeting),
@@ -705,7 +719,7 @@ def get_meeting_insights(
         joinedload(Meeting.project),
         joinedload(Meeting.members).joinedload(MeetingMember.member),
         joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
-    )
+    ).filter(Meeting.deleted_at.is_(None))
     if user_scope(current_user) != ALL_SCOPE:
         allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
         meetings_via_extra = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id.in_(allowed_projects))
@@ -852,7 +866,7 @@ def get_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get
         joinedload(Meeting.creator),
         joinedload(Meeting.members).joinedload(MeetingMember.member),
         joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
-    ).filter(Meeting.id == id).first()
+    ).filter(Meeting.id == id, Meeting.deleted_at.is_(None)).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
@@ -1052,6 +1066,10 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
             if summary_result:
                 m.ai_summary = summary_result
                 if m.transcript and m.transcript.strip():
+                    logger.warning(
+                        "MEETING_STATUS_DONE",
+                        extra={"meeting_id": None, "meeting_title": m.title, "source": "create_meeting.auto_summarize"},
+                    )
                     m.status = "DONE"
     except Exception as e:
         logger.warning(f"Auto-summarize meeting {m.id} on create failed: {e}")
@@ -1117,9 +1135,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 # ─── UPDATE ──────────────────────────────────────────────
 @router.put("/{id}")
 def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
 
     old_dict = {"title": m.title, "status": m.status, "meeting_date": str(m.meeting_date) if m.meeting_date else None}
     old_status = m.status
@@ -1308,9 +1324,7 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
 # ─── UPDATE TRANSCRIPT (Rule 03) ────────────────────────
 @router.post("/{id}/transcript")
 def update_transcript(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
 
     # Update transcript. Keep old ai_summary as reference (Rule 03 updated).
     m.transcript = body.get("transcript", "")
@@ -1328,21 +1342,52 @@ def update_transcript(id: int, body: dict, db: Session = Depends(get_db), curren
 @router.delete("/{id}")
 def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
+    if not m or m.deleted_at is not None:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
-    if m.status in ("ONGOING", "DONE"):
+
+    # Delete rule (chốt 2026-09-13, "Delete Meeting an toàn cho Bot/n8n"):
+    # ONGOING is the ONLY status that blocks Delete — no admin override.
+    # Checked via compute_display_status(), NOT the raw m.status column:
+    # "ONGOING" is a live display-only derivation (see that function's
+    # docstring) and is never actually persisted — a meeting genuinely in
+    # progress right now still has m.status == "UPCOMING" in the DB, so
+    # comparing the raw column here would silently let an in-progress
+    # meeting be deleted out from under the Bot.
+    if compute_display_status(m) == "ĐANG DIỄN RA":
         raise HTTPException(
             400,
-            f"Không thể xóa cuộc họp đã {'đang diễn ra' if m.status == 'ONGOING' else 'hoàn thành (DONE)'} "
-            "— cuộc họp này có thể đã có transcript/AI summary/điểm hiệu quả gắn liền.",
+            "Không thể xóa cuộc họp đang diễn ra (ONGOING). Muốn kết thúc cuộc họp thì dùng "
+            "Leave/End meeting — Delete chỉ áp dụng cho SẮP TỚI, ĐÃ KẾT THÚC hoặc ĐÃ HỦY.",
         )
-    m_title, m_project_id = m.title, m.project_id
-    db.delete(m)
+
+    # Soft delete only — never hard-delete. Status is left untouched so it
+    # still reflects the real lifecycle (DONE stays DONE, CANCELLED stays
+    # CANCELLED, UPCOMING stays UPCOMING); meeting_id/google_event_id/
+    # meeting_url/n8n_notify_*/transcript/ai_summary are all preserved so a
+    # Bot session already in flight or a late n8n callback never orphans —
+    # see meeting_bot.py's /ended and the n8n webhook matcher below, neither
+    # of which filters on deleted_at on purpose.
+    m.deleted_at = _now_vn()
+    m.deleted_by = getattr(current_user, "id", None)
+
+    # UPCOMING is the only case where the Calendar event is still "live" —
+    # DONE/CANCELLED meetings' events are already over/cancelled from
+    # Calendar's own perspective. Best-effort: never blocks or rolls back
+    # the soft-delete the user already performed on failure.
+    if m.status == "UPCOMING" and m.google_event_id:
+        try:
+            from ..services.meeting_sync import cancel_google_meet_event
+            meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+            workspace_id = workspace_id_for_project(db, meeting_proj)
+            cancel_google_meet_event(db, m.google_event_id, workspace_id=workspace_id)
+        except Exception as e:
+            logger.warning(f"cancel_google_meet_event failed for meeting {id} (non-fatal): {e}")
+
     db.commit()
     AuditService.record(
         db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
-        entity_id=id, action="DELETE", project_id=m_project_id, resource_name=m_title,
-        description=f"Xóa cuộc họp '{m_title}'"
+        entity_id=id, action="DELETE", project_id=m.project_id, resource_name=m.title,
+        description=f"Xóa (ẩn) cuộc họp '{m.title}'"
     )
     db.commit()
     return {"message": "Đã xóa cuộc họp thành công"}
@@ -1350,9 +1395,7 @@ def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(
 # ─── ADD MEMBER ─────────────────────────────────────────
 @router.post("/{id}/members")
 def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
 
     # Rule 05: Meeting DONE -> Cannot change participants
     if m.status == "DONE":
@@ -1405,9 +1448,7 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
 # ─── REMOVE MEMBER ───────────────────────────────────────
 @router.delete("/{id}/members/{member_id}")
 def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
 
     # Rule 05: Meeting DONE -> Cannot change participants
     if m.status == "DONE":
@@ -1444,9 +1485,7 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
 @router.post("/{id}/sync")
 def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """Sync a meeting: fetch transcript and generate AI summary from Zoom/Google Meet."""
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
 
     if not m.meeting_url and not (m.transcript and m.transcript.strip()):
         raise HTTPException(400, "Cuộc họp không có link hoặc nội dung transcript. Không thể đồng bộ.")
@@ -1510,6 +1549,10 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
     from ..services.meeting_sync import apply_sync_result_to_meeting
     apply_sync_result_to_meeting(m, result)
     if result.get("status") == "DONE":
+        logger.warning(
+            "MEETING_STATUS_DONE",
+            extra={"meeting_id": m.id, "source": "manual_sync_endpoint", "organizer": m.organizer_google_email},
+        )
         m.status = "DONE"
 
     db.commit()
@@ -1594,9 +1637,7 @@ def google_auth_url(workspace: str = None, db: Session = Depends(get_db), curren
 @router.post("/{id}/push-tasks")
 def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """Push AI recommended meeting tasks into Project/AITaskInbox."""
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
 
     tasks_data = body.get("tasks", [])
     if not isinstance(tasks_data, list) or not tasks_data:
@@ -1835,9 +1876,7 @@ def submit_meeting_feedback(id: int, body: dict, db: Session = Depends(get_db), 
     from ..models.meeting_feedback import MeetingFeedback
     from ..services.meeting_score_engine import recalculate_meeting_score
 
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
 
     if "helpful" not in body:
         raise HTTPException(400, "Thiếu trường 'helpful'")
@@ -1938,9 +1977,7 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
     (chốt 2026-09-13): PUT /{id} no longer accepts it, precisely so a real
     organizer reassignment always goes through an actual new Calendar event
     here, never as a side effect of an unrelated field edit."""
-    m = db.query(Meeting).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    m = _get_active_meeting(db, id)
     # Status guard (chốt 2026-09-13): only UPCOMING may regenerate. Reassigning
     # the organizer while ONGOING risks the Meeting Host Bot being live in the
     # OLD organizer's session — its eventual actual-end report
@@ -2241,6 +2278,15 @@ def ingest_n8n_meeting_summary(
         # No existing web-created meeting matched this recording — n8n is creating
         # this meeting from scratch, so flag it as such for the UI to distinguish.
         norm_summary["is_auto_created"] = True
+        logger.warning(
+            "MEETING_STATUS_DONE",
+            extra={
+                "meeting_id": None,
+                "meeting_title": clean_title,
+                "source": "n8n_webhook.create_new_meeting",
+                "sheet_row_id": payload.sheet_row_id,
+            },
+        )
         new_m = Meeting(
             title=clean_title,
             description=f"Tự động tạo từ n8n (Row ID: {payload.sheet_row_id or 'N/A'})",

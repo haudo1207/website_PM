@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
@@ -36,8 +36,6 @@ interface MeetingDetailModalProps {
   onClose: () => void;
   meeting: any;
   onEdit?: (meeting: any) => void;
-  onSummarize?: (meeting: any) => void;
-  onSync?: (meeting: any) => Promise<any>;
   onDelete?: (meeting: any) => void;
 }
 
@@ -46,8 +44,6 @@ export default function MeetingDetailModal({
   onClose,
   meeting,
   onEdit,
-  onSummarize,
-  onSync,
   onDelete
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
@@ -62,7 +58,6 @@ export default function MeetingDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   // Assign Project Modal State
   const [isAssignProjectOpen, setIsAssignProjectOpen] = useState(false);
@@ -163,14 +158,13 @@ export default function MeetingDetailModal({
       setLocalProjectName(pName);
       setLocalProjectId(meeting.project_id || null);
 
-      const rawMembers = Array.isArray(meeting.members) ? meeting.members : [];
-      const hostObj = { display_name: creatorName, role: 'Người tạo (Host)' };
-      const hasHost = rawMembers.some((m: any) =>
-        (m.display_name && m.display_name.includes('Host')) || (m.role && m.role.includes('Host')) || m.display_name === creatorName
-      );
-      setLocalMembers(hasHost ? rawMembers : [hostObj, ...rawMembers]);
+      // Host tách khỏi participant (chốt 2026-09-13): meeting.members is now
+      // only real MeetingMember/custom_members entries (backend no longer
+      // injects a synthetic "Người tạo (Host)" row) — Host is shown
+      // separately via the "Người tạo / Host" card below, using creatorName.
+      setLocalMembers(Array.isArray(meeting.members) ? meeting.members : []);
     }
-  }, [meeting, creatorName]);
+  }, [meeting]);
 
   useEffect(() => {
     setLocalScore(null);
@@ -224,13 +218,12 @@ export default function MeetingDetailModal({
   const statusUpper = String(meeting.status || 'UPCOMING').toUpperCase();
   const isDone = statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
 
-  // Join Link carry Host authuser — meeting_url in DB is SUPPOSED to always
-  // stay clean (used for copy/email); authuser is appended only here, for
-  // the "Tham gia (Host)" button href, using the meeting's OWN workspace
-  // account. Some older meetings (created/edited before that guarantee
-  // existed) still have authuser baked directly into the stored value, so
-  // strip it defensively here rather than trust the DB — otherwise the
-  // "clean" link/copy button silently carries a stale account forever.
+  // meeting_url in DB is SUPPOSED to always stay clean (used for copy/email
+  // AND the "Tham gia cuộc họp" join button — chốt 2026-09-13: the user joins
+  // with their own Google account, never the Bot's Host account, so the link
+  // must never carry authuser=). Some older meetings (created/edited before
+  // that guarantee existed) still have authuser baked directly into the
+  // stored value, so strip it defensively here rather than trust the DB.
   const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
   const rawLinkWithProtocol = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
   const baseLink = (() => {
@@ -242,7 +235,6 @@ export default function MeetingDetailModal({
       return rawLinkWithProtocol;
     }
   })();
-  const hostJoinLink = `${baseLink}${baseLink.includes('?') ? '&' : '?'}authuser=${encodeURIComponent(hostGoogleEmail)}`;
 
   // Real AI & Summary Data
   const execSummary = meeting.executive_summary || (meeting.ai_summary?.executive_summary) || (Array.isArray(meeting.summary) && meeting.summary.length ? meeting.summary[0] : '');
@@ -392,25 +384,11 @@ export default function MeetingDetailModal({
   const handleCopyLink = () => {
     // Copy the CLEAN meeting_url — recipients pasting this may not be
     // logged into hostGoogleEmail, so a link carrying authuser= would be
-    // wrong for them. Only the "Tham gia (Host)" button below is allowed
-    // to use hostJoinLink.
+    // wrong for them. The join button below uses this exact same clean link.
     if (!baseLink) return;
     navigator.clipboard.writeText(baseLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
-  };
-
-  const handleSyncClick = async () => {
-    if (!onSync || isSyncing) return;
-    setIsSyncing(true);
-    try {
-      await onSync(meeting);
-      triggerToast('✓ Đã đồng bộ transcript & AI Summary thành công!');
-    } catch (err: any) {
-      alert(err?.response?.data?.detail || 'Lỗi khi đồng bộ cuộc họp');
-    } finally {
-      setIsSyncing(false);
-    }
   };
 
   const handlePushTasks = async () => {
@@ -485,23 +463,6 @@ export default function MeetingDetailModal({
     } finally {
       setIsPushing(false);
     }
-  };
-
-  const handleDownloadTranscript = () => {
-    if (!rawTranscript) {
-      alert("Chưa có nội dung biên bản cuộc họp để tải về.");
-      return;
-    }
-    const filename = `${meetingTitle.replace(/[^a-zA-Z0-9_\-\s]/g, '').trim().replace(/\s+/g, '_')}_Bien_ban.txt`;
-    const blob = new Blob([rawTranscript], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   const handleCopyTranscript = () => {
@@ -694,23 +655,6 @@ export default function MeetingDetailModal({
                     >
                       <span>📋 Sao chép link họp</span>
                     </button>
-                    {onSummarize && (
-                      <button
-                        onClick={() => { setShowMenu(false); onSummarize(meeting); }}
-                        className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-purple-700 flex items-center gap-2 border-t border-slate-100"
-                      >
-                        <span>✨ Dán biên bản / Chạy AI</span>
-                      </button>
-                    )}
-                    {onSync && (
-                      <button
-                        onClick={() => { setShowMenu(false); handleSyncClick(); }}
-                        disabled={isSyncing}
-                        className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be] flex items-center gap-2 disabled:opacity-50"
-                      >
-                        <span>{isSyncing ? '⏳ Đang đồng bộ...' : '🔄 Đồng bộ (Sync)'}</span>
-                      </button>
-                    )}
                     {onDelete && (
                       <button
                         onClick={() => { setShowMenu(false); onDelete(meeting); }}
@@ -724,14 +668,14 @@ export default function MeetingDetailModal({
               </div>
 
               <a
-                href={hostJoinLink}
+                href={baseLink}
                 target="_blank"
                 rel="noreferrer"
                 className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
-                title={`Vào Google Meet bằng tài khoản Host ${hostGoogleEmail}`}
+                title="Vào Google Meet"
               >
                 <Video size={16} />
-                <span>Tham gia (Host {hostGoogleEmail.split('@')[0]})</span>
+                <span>Tham gia cuộc họp</span>
                 <ExternalLink size={13} />
               </a>
             </div>
@@ -870,7 +814,7 @@ export default function MeetingDetailModal({
                 <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">
-                      Thành viên tham dự ({membersList.length > 0 ? membersList.length : 1} người)
+                      Thành viên tham dự ({membersList.length} người)
                     </h3>
                   </div>
 
@@ -894,15 +838,7 @@ export default function MeetingDetailModal({
                         );
                       })
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <div className="w-9 h-9 rounded-full bg-[#e0e7ff] text-[#4338ca] font-bold text-xs flex items-center justify-center">
-                          {creatorName[0]}
-                        </div>
-                        <div className="text-xs">
-                          <p className="font-bold text-[#0b1c30] leading-none">{creatorName}</p>
-                          <p className="text-[10px] text-[#64748b] mt-0.5">Người tạo (Host)</p>
-                        </div>
-                      </div>
+                      <p className="text-xs text-[#94a3b8] italic">Chưa có thành viên tham gia được thêm vào cuộc họp này.</p>
                     )}
 
                     {meeting?.can_manage && (
@@ -966,11 +902,6 @@ export default function MeetingDetailModal({
                       <Sparkles size={16} />
                       <h3 className="text-xs font-extrabold uppercase tracking-wider">AI TÓM TẮT</h3>
                     </div>
-                    {onSummarize && (
-                      <button onClick={() => onSummarize?.(meeting)} className="text-[11px] font-bold text-[#6366f1] hover:underline bg-[#f5f3ff] px-2.5 py-1 rounded-lg">
-                        Dán / Chạy AI
-                      </button>
-                    )}
                   </div>
 
                   {/* Section 1: TÓM TẮT ĐIỀU HÀNH */}
@@ -1099,11 +1030,6 @@ export default function MeetingDetailModal({
                   <Sparkles size={20} />
                   <h3 className="text-base font-extrabold text-[#0b1c30]">Bản Tóm Tắt AI Chi Tiết</h3>
                 </div>
-                {onSummarize && (
-                  <button onClick={() => onSummarize?.(meeting)} className="px-4 py-2 bg-[#f5f3ff] hover:bg-[#eee9fe] text-[#6366f1] text-xs font-bold rounded-xl transition-colors">
-                    Dán biên bản / Chạy lại AI
-                  </button>
-                )}
               </div>
 
               {execSummary ? (
@@ -1221,7 +1147,7 @@ export default function MeetingDetailModal({
                     <Sparkles size={24} />
                   </div>
                   <p className="text-sm font-bold text-[#0b1c30]">Chưa có AI Summary cho cuộc họp này</p>
-                  <p className="text-xs text-[#64748b]">Bấm "Dán biên bản / Chạy AI" để phân tích tóm tắt cuộc họp.</p>
+                  <p className="text-xs text-[#64748b]">AI Summary sẽ tự động xuất hiện sau khi Bot xử lý xong cuộc họp và biên bản được đồng bộ.</p>
                 </div>
               )}
             </div>
@@ -1532,15 +1458,6 @@ export default function MeetingDetailModal({
                     <Copy size={14} />
                     <span>{copiedTranscript ? 'Đã sao chép!' : 'Sao chép'}</span>
                   </button>
-
-                  <button
-                    onClick={handleDownloadTranscript}
-                    disabled={!rawTranscript}
-                    className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-[#cbd5e1] text-[#0b1c30] text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center gap-1.5"
-                  >
-                    <Download size={14} />
-                    <span>Tải file (.txt)</span>
-                  </button>
                 </div>
               </div>
 
@@ -1554,7 +1471,7 @@ export default function MeetingDetailModal({
                     <FileText size={24} />
                   </div>
                   <p className="text-sm font-bold text-[#0b1c30]">Cuộc họp chưa có file biên bản / Transcript</p>
-                  <p className="text-xs text-[#64748b]">Bạn có thể nhấn 'Dán biên bản / Chạy AI' để thêm nội dung cuộc họp.</p>
+                  <p className="text-xs text-[#64748b]">Biên bản sẽ tự động được đồng bộ sau khi cuộc họp kết thúc.</p>
                 </div>
               )}
             </div>

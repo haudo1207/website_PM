@@ -7,14 +7,13 @@ import { Search, Sparkles, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, 
 import Navbar from '@/components/Navbar';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
-import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import ScoreModelExplainer from '@/components/meetings/ScoreModelExplainer';
 import MeetingPlaybook from '@/components/meetings/MeetingPlaybook';
 import KpiCard from '@/components/dashboard/KpiCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
-import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
 import { isAdmin, getRole } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
@@ -34,13 +33,15 @@ const PROJECT_COLOR_PALETTE = [
 ];
 const DEFAULT_PROJECT_COLOR = { barBorder: 'border-l-indigo-500', bg: 'bg-indigo-50', badgeBg: 'bg-indigo-100', badgeText: 'text-indigo-700', dot: 'bg-indigo-500' };
 
-// Delete rule (chốt 2026-09-13): chỉ cho xóa UPCOMING/CANCELLED — ONGOING/DONE
-// có thể đã gắn transcript/AI summary/score, xóa sẽ mất vĩnh viễn. Backend
-// (`DELETE /api/meetings/{id}`) enforce lại đúng rule này; đây chỉ là gating
-// hiển thị để UI không hứa hẹn một hành động sẽ bị 400 ngay sau đó.
+// Delete rule (chốt 2026-09-13, soft-delete design): ONGOING is the ONLY
+// status that blocks Delete — UPCOMING/DONE/CANCELLED are all soft-deletable
+// (meeting_id/transcript/ai_summary/n8n state are preserved server-side, just
+// hidden from the UI). Backend (`DELETE /api/meetings/{id}`) enforces this
+// same rule via compute_display_status(); this is only the display-side
+// gating so the UI doesn't offer an action that would 400 right after.
 const isMeetingDeletable = (status?: string | null): boolean => {
   const s = String(status || '').toUpperCase();
-  return !s.includes('DIỄN RA') && s !== 'ĐÃ KẾT THÚC' && s !== 'DONE';
+  return !s.includes('DIỄN RA');
 };
 
 const hashStringToIndex = (str: string, mod: number): number => {
@@ -93,8 +94,6 @@ function MeetingsPageContent() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<any>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
-  const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [lastHandledId, setLastHandledId] = useState<string | null>(null);
@@ -483,13 +482,6 @@ function MeetingsPageContent() {
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
       alert(error.response?.data?.detail || "Có lỗi xảy ra khi xóa cuộc họp");
-    }
-  };
-
-  const handleSync = async (meeting: any) => {
-    const data = await syncMeeting(parseInt(meeting.id));
-    if (data.success) {
-      await Promise.all([fetchMeetings(), fetchMyMeetings()]);
     }
   };
 
@@ -1196,14 +1188,11 @@ function MeetingsPageContent() {
       {/* Modals */}
       {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
-      {(canManage || detailMeeting?.can_manage) && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={async () => { await Promise.all([fetchMeetings(), fetchMyMeetings()]); }} />}
       <MeetingDetailModal
         isOpen={isDetailOpen}
         onClose={handleCloseDetail}
         meeting={detailMeeting}
         onEdit={detailMeeting?.can_manage ? handleOpenEditFromDetail : undefined}
-        onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
-        onSync={detailMeeting?.can_manage ? handleSync : undefined}
         onDelete={detailMeeting?.can_manage && isMeetingDeletable(detailMeeting?.status) ? (m => { handleCloseDetail(); setDeleteConfirmId(String(m.id)); }) : undefined}
       />
 
