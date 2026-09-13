@@ -1104,6 +1104,19 @@ export default function OverviewTab() {
     const homeWsCodeForSummary = (currentUserRole === 'leader'
       ? (currentUser?.data_scope || '')
       : (drilledLeaderHomeWs || effectiveWsCode || '')).toLowerCase();
+    // Same drill-in as drilledLeaderHomeWs above, but the Leader's own
+    // member_id — Admin drilled into a specific Leader must see THAT
+    // Leader's real PM/Project-Leader relationships in the Phụ trách/Tham
+    // gia ngoài split below, not the Admin's own (role=super_admin, no
+    // member_id), which always fell through to the generic "not a Leader"
+    // branch and showed empty regardless of what the drilled Leader
+    // actually owns.
+    const drilledLeaderMemberId = (() => {
+      if (currentUserRole === 'leader' || !showsLeaderCards || selectedLeader === 'all') return null;
+      const ld = visibleLeaders.find((l: any) => l.name === selectedLeader);
+      return typeof ld?.member_id === 'number' ? ld.member_id : null;
+    })();
+    const effectiveRoleForTabs = drilledLeaderMemberId != null ? 'leader' : currentUserRole;
     let crossWsManday = 0;
     let crossWsMemberCount = 0;
     finalRanking.forEach(m => {
@@ -1125,7 +1138,7 @@ export default function OverviewTab() {
     // /api/projects). Always the caller's own member_id for a Leader session,
     // or null for any account that isn't linked to a Member row.
     const userMemberIdForTabs: number | null =
-      typeof currentUser?.member_id === 'number' ? currentUser.member_id : null;
+      drilledLeaderMemberId ?? (typeof currentUser?.member_id === 'number' ? currentUser.member_id : null);
 
     const allMappedProjects = projectSourceForDrill.map((p: any) => {
       const pAllTasks = taskSourceForDrill.filter(t => isSameId(t.project_id, p.id));
@@ -1232,25 +1245,32 @@ export default function OverviewTab() {
         drilledPersonHasAccess,
         // ── Active-Projects tab classification (spec 2.1 / 2.3 / 2.4) ──
         // For Leaders: Tất cả = primary-WS projects; Phụ trách = PM/Project
-        // Leader (any WS); Tham gia ngoài = non-primary-WS projects where the
-        // Leader has an actual project_members row. Backend already restricts
-        // the list to projects the Leader is in (primary-WS blanket +
-        // assignment-only for secondary WS), so no extra visibility gating is
-        // needed — we just route each project to the right tab here.
+        // Leader (any WS) OR any primary-WS project (even ones they're only
+        // a plain member of — Phụ trách ∪ Tham gia ngoài must equal Tất cả,
+        // otherwise a home-WS project where the Leader isn't PM/Leader fell
+        // into neither tab and only ever showed up under Tất cả, which read
+        // as the two sub-tabs being out of sync with it); Tham gia ngoài =
+        // non-primary-WS projects where the Leader has an actual
+        // project_members row. Backend already restricts the list to
+        // projects the Leader is in (primary-WS blanket + assignment-only
+        // for secondary WS), so no extra visibility gating is needed — we
+        // just route each project to the right tab here.
         //
-        // Non-Leader roles (Super Admin / Member / Viewer) keep the previous
-        // behaviour so this change doesn't disturb Super Admin's "Phụ trách
-        // shows everything" expectation (spec — "Super Admin behavior
-        // unchanged").
+        // effectiveRoleForTabs/userMemberIdForTabs resolve to the drilled-
+        // into Leader's own identity when an Admin has picked one from the
+        // roster (see their definitions above) — using the Admin's own
+        // (role=super_admin, no member_id) here always fell through to the
+        // generic non-Leader branch and showed empty regardless of what
+        // that Leader actually owns.
         inHomeWs: !homeWsCodeForSummary || !dataScope || dataScope === homeWsCodeForSummary,
-        isResponsible: projectIsResponsible(
+        isResponsible: (!homeWsCodeForSummary || !dataScope || dataScope === homeWsCodeForSummary) || projectIsResponsible(
           p,
-          currentUserRole,
+          effectiveRoleForTabs,
           userMemberIdForTabs,
         ),
         isExternalMember: projectIsExternalMember(
           p,
-          currentUserRole,
+          effectiveRoleForTabs,
           userMemberIdForTabs,
           homeWsCodeForSummary,
         ),
