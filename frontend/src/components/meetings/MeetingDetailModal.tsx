@@ -158,14 +158,13 @@ export default function MeetingDetailModal({
       setLocalProjectName(pName);
       setLocalProjectId(meeting.project_id || null);
 
-      const rawMembers = Array.isArray(meeting.members) ? meeting.members : [];
-      const hostObj = { display_name: creatorName, role: 'Người tạo (Host)' };
-      const hasHost = rawMembers.some((m: any) =>
-        (m.display_name && m.display_name.includes('Host')) || (m.role && m.role.includes('Host')) || m.display_name === creatorName
-      );
-      setLocalMembers(hasHost ? rawMembers : [hostObj, ...rawMembers]);
+      // Host tách khỏi participant (chốt 2026-09-13): meeting.members is now
+      // only real MeetingMember/custom_members entries (backend no longer
+      // injects a synthetic "Người tạo (Host)" row) — Host is shown
+      // separately via the "Người tạo / Host" card below, using creatorName.
+      setLocalMembers(Array.isArray(meeting.members) ? meeting.members : []);
     }
-  }, [meeting, creatorName]);
+  }, [meeting]);
 
   useEffect(() => {
     setLocalScore(null);
@@ -815,7 +814,7 @@ export default function MeetingDetailModal({
                 <div className="bg-white rounded-2xl p-5 border border-[#e2e8f0] shadow-2xs space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">
-                      Thành viên tham dự ({membersList.length > 0 ? membersList.length : 1} người)
+                      Thành viên tham dự ({membersList.length} người)
                     </h3>
                   </div>
 
@@ -839,15 +838,7 @@ export default function MeetingDetailModal({
                         );
                       })
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <div className="w-9 h-9 rounded-full bg-[#e0e7ff] text-[#4338ca] font-bold text-xs flex items-center justify-center">
-                          {creatorName[0]}
-                        </div>
-                        <div className="text-xs">
-                          <p className="font-bold text-[#0b1c30] leading-none">{creatorName}</p>
-                          <p className="text-[10px] text-[#64748b] mt-0.5">Người tạo (Host)</p>
-                        </div>
-                      </div>
+                      <p className="text-xs text-[#94a3b8] italic">Chưa có thành viên tham gia được thêm vào cuộc họp này.</p>
                     )}
 
                     {meeting?.can_manage && (

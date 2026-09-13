@@ -296,15 +296,15 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
     # was later also added as a real member.
     db_member_names = {mb.get("display_name") for mb in db_members}
     custom_only = [cm for cm in custom_members if cm.get("display_name") not in db_member_names]
+    # No synthetic "Người tạo (Host)" entry here anymore (chốt 2026-09-13,
+    # "Host tách khỏi participant"): Host is derived from
+    # organizer_google_email/created_by and shown via the separate
+    # host_google_email/creator_name fields below, never as a member row —
+    # the creator only counts as a participant if they were actually added
+    # as one (a real MeetingMember row). This also fixes member_count/
+    # members previously always being >= 1 even for a meeting with zero
+    # real participants.
     final_members = db_members + custom_only
-
-    host_name = m.creator.display_name if m.creator else f"Host {host_google_email.split('@')[0]}"
-    if not final_members:
-        final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}]
-    else:
-        has_host = any("Host" in str(mb.get("role", "")) or mb.get("display_name") == host_name for mb in final_members)
-        if not has_host:
-            final_members = [{"display_name": host_name, "role": "Người tạo (Host)"}] + final_members
 
     return {
         "id": m.id,
