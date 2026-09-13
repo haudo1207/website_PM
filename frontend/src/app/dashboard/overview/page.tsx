@@ -1457,7 +1457,7 @@ export default function OverviewTab() {
                   <span className="text-slate-500">Năm:</span>
                   <select
                     value={selectedYear}
-                    onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                    onChange={(e) => { setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value)); setActiveQuickFilter(null); }}
                     className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
                   >
                     <option value="all">Tất cả</option>
@@ -1469,7 +1469,7 @@ export default function OverviewTab() {
                   <span className="text-slate-500">Tháng:</span>
                   <select
                     value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                    onChange={(e) => { setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value)); setActiveQuickFilter(null); }}
                     className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
                   >
                     <option value="all">Tất cả</option>
@@ -1481,7 +1481,7 @@ export default function OverviewTab() {
                   <span className="text-slate-500">Tuần:</span>
                   <select
                     value={selectedWeek}
-                    onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                    onChange={(e) => { setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value)); setActiveQuickFilter(null); }}
                     className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
                   >
                     <option value="all">Tất cả</option>
@@ -2577,9 +2577,9 @@ export default function OverviewTab() {
           selectedWeek={selectedWeek}
           activeQuickFilter={activeQuickFilter}
           onApplyQuickFilter={applyQuickFilter}
-          onYearChange={setSelectedYear}
-          onMonthChange={setSelectedMonth}
-          onWeekChange={setSelectedWeek}
+          onYearChange={(v) => { setSelectedYear(v); setActiveQuickFilter(null); }}
+          onMonthChange={(v) => { setSelectedMonth(v); setActiveQuickFilter(null); }}
+          onWeekChange={(v) => { setSelectedWeek(v); setActiveQuickFilter(null); }}
         />
       )}
     </div>
