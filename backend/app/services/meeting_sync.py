@@ -1662,6 +1662,15 @@ def auto_sync_all_ended_meetings(db):
                 # A real external signal (Zoom's cloud-recording API actually
                 # reports the call ended, or a legacy direct Google sync found
                 # a transcript) — legitimate to mark DONE.
+                logger.warning(
+                    "MEETING_STATUS_DONE",
+                    extra={
+                        "meeting_id": m.id,
+                        "source": "auto_sync_all_ended_meetings",
+                        "organizer": m.organizer_google_email,
+                        "platform": m.platform,
+                    },
+                )
                 m.status = "DONE"
                 apply_sync_result_to_meeting(m, result)
                 db.commit()
