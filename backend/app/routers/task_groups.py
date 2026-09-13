@@ -2291,10 +2291,6 @@ def notify_review_to_leader(gid: int, tid: int, db: Session = Depends(get_db), c
         raise HTTPException(400, "Không tìm thấy dự án.")
     project = db.query(Project).filter(Project.id == project_id).first()
     sender_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một thành viên")
-    recipients = db.query(User).filter(
-        User.role == "super_admin",
-        User.is_active == True,
-    ).all()
     from sqlalchemy import or_
     project_leaders = db.query(User).filter(
         or_(User.role == "super_admin", User.role == "leader"),
@@ -2320,7 +2316,7 @@ def notify_review_to_leader(gid: int, tid: int, db: Session = Depends(get_db), c
             ).first()
             if leader_user:
                 leader_by_member = [leader_user]
-    all_recipients = {u.id: u for u in list(recipients) + list(project_leaders) + list(leader_by_member)}
+    all_recipients = {u.id: u for u in list(project_leaders) + list(leader_by_member)}
     task_code = task.task_code or str(task.id)
     project_name = project.name if project else ""
     for uid, recipient in all_recipients.items():

@@ -112,7 +112,7 @@ export default function MeetingDetailModal({
   const [taskEditMap, setTaskEditMap] = useState<Record<number, { detail_task?: string; priority?: string; manday_est?: string; start_date?: string; notes?: string }>>({});
   const [taskCheckedMap, setTaskCheckedMap] = useState<Record<number, boolean>>({});
 
-  // Skill Solution = Group, Skill Vendor = Skill nested under it (categories → groups → skills).
+  // Skill Area = Group, Skill = Skill nested under it (categories → groups → skills).
   const allSkillGroups: any[] = categoriesList.flatMap((c: any) => c.groups || []);
   const getSkillVendorsForGroup = (groupId?: number) => {
     if (!groupId) return [];
@@ -144,7 +144,7 @@ export default function MeetingDetailModal({
         const items = res?.data || res || [];
         if (Array.isArray(items)) setAccountsList(items);
       }).catch(console.error);
-      // Skill Solution / Skill Vendor cho bảng Task đề xuất (categories → groups → skills)
+      // Skill Area / Skill cho bảng Task đề xuất (categories → groups → skills)
       getCategories().then((res: any) => {
         const items = res?.data || res || [];
         if (Array.isArray(items)) setCategoriesList(items);
@@ -419,7 +419,7 @@ export default function MeetingDetailModal({
           // thật) — gửi kèm assigned_id để backend dùng thẳng, khỏi phải dò tên nữa.
           assigned_id: assignee?.id,
           assigned_name: assignee?.name || t.assigned_name || t.owner,
-          // Support/Skill Solution/Skill Vendor cũng được chọn trực tiếp trên bảng
+          // Support/Skill Area/Skill cũng được chọn trực tiếp trên bảng
           // (SearchableSelect) — trước đây bị bỏ sót khỏi payload nên lựa chọn của
           // reviewer luôn bị rơi mất, backend lại tự fallback về Group/Skill đầu
           // tiên trong DB (sai dữ liệu). Giờ gửi kèm để backend dùng đúng lựa chọn.
@@ -1331,9 +1331,9 @@ export default function MeetingDetailModal({
                           </div>
 
                           <div>
-                            <label className={fieldLabelCls}>Skill Solution</label>
+                            <label className={fieldLabelCls}>Skill Area</label>
                             <SearchableSelect
-                              label="skill solution"
+                              label="skill area"
                               options={allSkillGroups.map((g: any) => ({ id: g.id, name: g.name }))}
                               value={taskSkillSolutionMap[idx]?.id || ''}
                               onChange={(val: any) => {
@@ -1349,9 +1349,9 @@ export default function MeetingDetailModal({
                           </div>
 
                           <div>
-                            <label className={fieldLabelCls}>Skill Vendor</label>
+                            <label className={fieldLabelCls}>Skill</label>
                             <SearchableSelect
-                              label="skill vendor"
+                              label="skill"
                               options={getSkillVendorsForGroup(taskSkillSolutionMap[idx]?.id).map((s: any) => ({ id: s.id, name: s.name }))}
                               value={taskSkillVendorMap[idx]?.id || ''}
                               onChange={(val: any) => {
@@ -1360,7 +1360,7 @@ export default function MeetingDetailModal({
                                 setTaskSkillVendorMap(prev => ({ ...prev, [idx]: found ? { id: found.id, name: found.name } : undefined }));
                               }}
                               disabled={!taskSkillSolutionMap[idx]}
-                              placeholder={taskSkillSolutionMap[idx] ? 'Gõ tìm...' : 'Chọn Skill Solution trước'}
+                              placeholder={taskSkillSolutionMap[idx] ? 'Gõ tìm...' : 'Chọn Skill Area trước'}
                               searchThreshold={0}
                               className={`w-full ${!taskSkillSolutionMap[idx] || taskSkillVendorMap[idx] ? '' : 'ring-2 ring-red-400 rounded-lg'}`}
                             />

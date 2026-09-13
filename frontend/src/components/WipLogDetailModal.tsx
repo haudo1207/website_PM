@@ -64,7 +64,7 @@ export default function WipLogDetailModal({
   const [taskSkillVendorMap, setTaskSkillVendorMap] = useState<Record<number, PickedRef | undefined>>({});
   const [categoriesList, setCategoriesList] = useState<any[]>([]);
 
-  // Skill Solution = Group, Skill Vendor = Skill nested under it — same shape
+  // Skill Area = Group, Skill = Skill nested under it — same shape
   // as MeetingDetailModal's task table.
   const allSkillGroups: any[] = categoriesList.flatMap((c: any) => c.groups || []);
   const getSkillVendorsForGroup = (groupId?: number) => {
@@ -80,7 +80,7 @@ export default function WipLogDetailModal({
     }).catch(() => setCategoriesList([]));
   }, []);
 
-  // Pre-select Skill Solution from the AI's best-effort guess (skill_group_name,
+  // Pre-select Skill Area from the AI's best-effort guess (skill_group_name,
   // matched by name against the real Skill Master list) — quick suggestion the
   // user can still override, never re-applied once they've picked one manually.
   useEffect(() => {
@@ -554,12 +554,12 @@ export default function WipLogDetailModal({
                                 </div>
                                 <div>
                                   <label className={fieldLabelCls}>
-                                    Skill Solution{t.skill_group_name && !taskSkillSolutionMap[i] && (
+                                    Skill Area{t.skill_group_name && !taskSkillSolutionMap[i] && (
                                       <span className="text-[#6366f1] normal-case font-semibold"> · AI gợi ý: {t.skill_group_name}</span>
                                     )}
                                   </label>
                                   <SearchableSelect
-                                    label="skill solution"
+                                    label="skill area"
                                     options={allSkillGroups.map((g: any) => ({ id: g.id, name: g.name }))}
                                     value={taskSkillSolutionMap[i]?.id || ''}
                                     onChange={(val: any) => {
@@ -574,9 +574,9 @@ export default function WipLogDetailModal({
                                   />
                                 </div>
                                 <div>
-                                  <label className={fieldLabelCls}>Skill Vendor</label>
+                                  <label className={fieldLabelCls}>Skill</label>
                                   <SearchableSelect
-                                    label="skill vendor"
+                                    label="skill"
                                     options={getSkillVendorsForGroup(taskSkillSolutionMap[i]?.id).map((s: any) => ({ id: s.id, name: s.name }))}
                                     value={taskSkillVendorMap[i]?.id || ''}
                                     onChange={(val: any) => {
@@ -585,7 +585,7 @@ export default function WipLogDetailModal({
                                       setTaskSkillVendorMap((prev) => ({ ...prev, [i]: found ? { id: found.id, name: found.name } : undefined }));
                                     }}
                                     disabled={!taskSkillSolutionMap[i]}
-                                    placeholder={taskSkillSolutionMap[i] ? 'Gõ tìm...' : 'Chọn Skill Solution trước'}
+                                    placeholder={taskSkillSolutionMap[i] ? 'Gõ tìm...' : 'Chọn Skill Area trước'}
                                     searchThreshold={0}
                                     className="w-full"
                                   />
