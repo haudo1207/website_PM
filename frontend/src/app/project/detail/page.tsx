@@ -5,7 +5,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
-import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import AIReviewDrawer from '@/components/AIReviewDrawer';
 import AuditLogsTab from '@/components/AuditLogsTab';
@@ -1489,8 +1488,6 @@ function ProjectDetailContent() {
   const [meetings, setMeetings] = useState<any[]>([]);
   const [showMeetingModal, setShowMeetingModal] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<any>(null);
-  const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
-  const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -8436,23 +8433,11 @@ function ProjectDetailContent() {
                     />
                   )}
 
-                  {(isAdmin() || summarizingMeeting?.can_manage) && (
-                    <SummarizeModal
-                      isOpen={isSummarizeOpen}
-                      onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }}
-                      meeting={summarizingMeeting}
-                      onSave={(updatedMeeting) => {
-                        setMeetings(prev => prev.map(x => x.id === updatedMeeting.id ? updatedMeeting : x));
-                      }}
-                    />
-                  )}
-
                   <MeetingDetailModal
                     isOpen={isDetailOpen}
                     onClose={() => { setIsDetailOpen(false); setDetailMeeting(null); }}
                     meeting={detailMeeting}
                     onEdit={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setEditingMeeting(m); setShowMeetingModal(true); }) : undefined}
-                    onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
                   />
 
                   {/* Delete Confirm Modal */}

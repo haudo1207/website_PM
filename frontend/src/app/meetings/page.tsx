@@ -7,7 +7,6 @@ import { Search, Sparkles, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, 
 import Navbar from '@/components/Navbar';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
-import SummarizeModal from '@/components/meetings/SummarizeModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import ScoreModelExplainer from '@/components/meetings/ScoreModelExplainer';
 import MeetingPlaybook from '@/components/meetings/MeetingPlaybook';
@@ -95,8 +94,6 @@ function MeetingsPageContent() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<any>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
-  const [summarizingMeeting, setSummarizingMeeting] = useState<any>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [lastHandledId, setLastHandledId] = useState<string | null>(null);
@@ -1198,13 +1195,11 @@ function MeetingsPageContent() {
       {/* Modals */}
       {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
-      {(canManage || detailMeeting?.can_manage) && <SummarizeModal isOpen={isSummarizeOpen} onClose={() => { setIsSummarizeOpen(false); setSummarizingMeeting(null); }} meeting={summarizingMeeting} onSave={async () => { await Promise.all([fetchMeetings(), fetchMyMeetings()]); }} />}
       <MeetingDetailModal
         isOpen={isDetailOpen}
         onClose={handleCloseDetail}
         meeting={detailMeeting}
         onEdit={detailMeeting?.can_manage ? handleOpenEditFromDetail : undefined}
-        onSummarize={detailMeeting?.can_manage ? (m => { setIsDetailOpen(false); setSummarizingMeeting(m); setIsSummarizeOpen(true); }) : undefined}
         onSync={detailMeeting?.can_manage ? handleSync : undefined}
         onDelete={detailMeeting?.can_manage && isMeetingDeletable(detailMeeting?.status) ? (m => { handleCloseDetail(); setDeleteConfirmId(String(m.id)); }) : undefined}
       />
