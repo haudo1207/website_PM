@@ -129,7 +129,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
-      <div onClick={onClose} className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" />
+      <div onClick={onClose} className="fixed inset-0" />
       <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
         {/* HEADER */}
         <div className="sticky top-0 z-20 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">

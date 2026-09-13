@@ -2300,10 +2300,30 @@ def notify_review_to_leader(gid: int, tid: int, db: Session = Depends(get_db), c
     leader_by_member = []
     if getattr(current_user, "member_id", None):
         sender_member = db.query(Member).filter(Member.id == current_user.member_id).first()
-        if sender_member and sender_member.leader_member_id:
-            leader_user = db.query(User).filter(User.member_id == sender_member.leader_member_id).first()
-            if leader_user:
-                leader_by_member = [leader_user]
+        if sender_member:
+            leader_member = None
+            if sender_member.leader_member_id:
+                leader_member = db.query(Member).filter(Member.id == sender_member.leader_member_id).first()
+            # Fallback for members whose canonical `leader_member_id` link was
+            # never backfilled (legacy rows only carry `leader_name`/
+            # `leader_email` strings) — same resolution the Overview
+            # dashboard's team roster already falls back to, otherwise the
+            # Member's actual reporting Leader silently gets no review
+            # notification while the project's PM/Technical Leader still do.
+            if not leader_member:
+                leader_email = (sender_member.leader_email or "").strip().lower()
+                leader_name = (sender_member.leader_name or "").strip().lower()
+                if leader_email:
+                    leader_member = db.query(Member).filter(sql_func.lower(Member.email) == leader_email).first()
+                if not leader_member and leader_name:
+                    leader_member = (
+                        db.query(Member).filter(sql_func.lower(Member.display_name) == leader_name).first()
+                        or db.query(Member).filter(sql_func.lower(Member.full_name) == leader_name).first()
+                    )
+            if leader_member:
+                leader_user = db.query(User).filter(User.member_id == leader_member.id).first()
+                if leader_user:
+                    leader_by_member = [leader_user]
     all_recipients = {u.id: u for u in list(project_leaders) + list(leader_by_member)}
     if not all_recipients:
         raise HTTPException(400, "Dự án chưa có Project Manager hoặc Technical Leader được chỉ định.")
