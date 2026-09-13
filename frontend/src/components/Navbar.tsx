@@ -199,7 +199,7 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
     if (!n.is_read) markRead(n.id);
     setOpen(false);
     if (n.project_id) {
-      window.location.href = `/project/detail/tasks?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}`;
+      window.location.href = `/project/detail/tasks?id=${n.project_id}${n.task_group_id ? `&groupId=${n.task_group_id}` : ''}${n.task_id ? `&highlightTask=${n.task_id}` : ''}`;
     }
   };
 

@@ -245,6 +245,19 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS organizer_google_email VARCHAR(255)"
         ))
+        # n8n notify tracking (chốt 2026-09-13): notify_n8n_meeting_created was
+        # fire-and-forget — a failure only logged a warning, so a meeting could
+        # silently never reach n8n with no visible sign anywhere. See
+        # Meeting.n8n_notify_status.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS n8n_notify_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS n8n_notify_attempts INTEGER NOT NULL DEFAULT 0"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS n8n_notify_last_error TEXT"
+        ))
         # Explicit "home" Workspace flag (Chính vs Phụ) — see workspace_access.py.
         conn.execute(text(
             "ALTER TABLE user_workspace_access ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false"
@@ -823,6 +836,21 @@ def apply_schema_updates():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_tasks_v2_support_scheduled ON tasks_v2 (support_id, scheduled_at)"
         ))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS review_checklist_items (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks_v2(id) ON DELETE CASCADE,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                content TEXT NOT NULL,
+                is_completed BOOLEAN NOT NULL DEFAULT FALSE,
+                completed_at TIMESTAMP WITH TIME ZONE,
+                completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_review_checklist_items_task_id ON review_checklist_items (task_id)"))
 
 def init_db_defaults():
     from .database import SessionLocal
@@ -1683,12 +1711,21 @@ async def start_auto_sync_loop():
     async def _loop():
         await asyncio.sleep(5)  # Allow FastAPI to complete startup first
         from .database import BackgroundSessionLocal
-        from .services.meeting_sync import auto_sync_all_ended_meetings
+        from .services.meeting_sync import auto_sync_all_ended_meetings, retry_pending_n8n_notifies
         while True:
             db = BackgroundSessionLocal()
             try:
                 await asyncio.to_thread(auto_sync_all_ended_meetings, db)
             except Exception as e:
+                pass
+            finally:
+                db.close()
+            # n8n notify retry (chốt 2026-09-13): separate session/try so a
+            # failure here can never affect the ended-meetings sync above.
+            db = BackgroundSessionLocal()
+            try:
+                await asyncio.to_thread(retry_pending_n8n_notifies, db)
+            except Exception:
                 pass
             finally:
                 db.close()

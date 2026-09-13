@@ -24,6 +24,14 @@ class Meeting(Base):
     # later. NULL for meetings created before this column existed, or for
     # non-Google-Meet platforms.
     organizer_google_email = Column(String(255), nullable=True)
+    # n8n notify tracking (chốt 2026-09-13): notify_n8n_meeting_created() is a
+    # fire-and-forget POST — before this, a failure only logged a warning,
+    # with no way for anyone to tell a meeting never actually reached n8n
+    # (see backend/app/services/meeting_sync.py). PENDING -> SENT on success,
+    # -> FAILED after exhausting retries (n8n_notify_attempts).
+    n8n_notify_status = Column(String(20), nullable=False, default="PENDING")
+    n8n_notify_attempts = Column(Integer, nullable=False, default=0)
+    n8n_notify_last_error = Column(Text, nullable=True)
     meeting_date = Column(Date, nullable=False)
     start_time   = Column(Time, nullable=False)
     end_time     = Column(Time, nullable=True)
