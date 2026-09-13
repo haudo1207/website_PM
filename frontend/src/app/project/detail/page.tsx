@@ -4815,14 +4815,20 @@ function ProjectDetailContent() {
               const activeGroups = categories
                 .filter(c => c.is_active)
                 .flatMap(c => c.groups || []);
+              const catalogAreas = activeGroups.map((g: any) => ({
+                id: g.id, name: g.name,
+                skills: (g.skills || []).filter((s: any) => s.is_active),
+              }));
 
               return (
                 <CategorySearchCell
                   key={col}
                   col={col}
-                  items={activeGroups}
+                  kind="area"
+                  items={activeGroups.map((g: any) => ({ id: g.id, name: g.name, meta: `${(g.skills || []).filter((s: any) => s.is_active).length} skills` }))}
                   editValue={editValue}
-                  placeholder="Tìm Group..."
+                  placeholder="Tìm Skill Area..."
+                  catalogAreas={catalogAreas}
                   onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
                   onCancel={() => setEditingCell(null)}
                   onQuickCreate={async (name) => {
@@ -4855,50 +4861,56 @@ function ProjectDetailContent() {
 
             if (colUpper === 'SKILL') {
               const currentGroupId = task.skill_solution_id;
+              const allActiveGroups = categories
+                .filter(c => c.is_active)
+                .flatMap(c => c.groups || []);
+              const currentGroupObj = currentGroupId ? allActiveGroups.find((g: any) => g.id === currentGroupId) : null;
               let availableSkills: any[] = [];
-              if (currentGroupId) {
-                const groupObj = categories
-                  .filter(c => c.is_active)
-                  .flatMap(c => c.groups || [])
-                  .find((g: any) => g.id === currentGroupId);
-                if (groupObj) {
-                  availableSkills = (groupObj.skills || []).filter((s: any) => s.is_active);
-                }
+              if (currentGroupObj) {
+                availableSkills = (currentGroupObj.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name }));
               } else {
-                availableSkills = categories
-                  .filter(c => c.is_active)
-                  .flatMap(c => c.groups || [])
-                  .flatMap((g: any) => g.skills || [])
-                  .filter((s: any) => s.is_active);
+                availableSkills = allActiveGroups
+                  .flatMap((g: any) => (g.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name, meta: g.name })));
               }
+              const catalogAreas = allActiveGroups.map((g: any) => ({
+                id: g.id, name: g.name,
+                skills: (g.skills || []).filter((s: any) => s.is_active),
+              }));
 
               return (
                 <CategorySearchCell
                   key={col}
                   col={col}
+                  kind="skill"
                   items={availableSkills}
                   editValue={editValue}
                   placeholder="Tìm Skill..."
+                  contextAreaName={currentGroupObj?.name || ''}
+                  catalogAreas={catalogAreas}
                   onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
                   onCancel={() => setEditingCell(null)}
-                  // Skill needs a parent Skill Area — omitted (no quick-add
-                  // offered) when the task doesn't have one chosen yet,
-                  // same "SKILL AREA trước" gate the drawer's + button uses.
-                  onQuickCreate={currentGroupId ? (async (name) => {
+                  // areaIdOverride lets the "⚙ Quản lý danh mục" panel add a
+                  // Skill under ANY area (not just the task's current one) —
+                  // the normal quick-add (no override) still requires the
+                  // task to already have a Skill Area chosen, same
+                  // "SKILL AREA trước" gate the drawer's + button uses.
+                  onQuickCreate={async (name, areaIdOverride) => {
+                    const groupId = areaIdOverride ?? currentGroupId;
+                    if (!groupId) return null;
                     try {
-                      await createSkill({ name, group_id: currentGroupId });
+                      await createSkill({ name, group_id: groupId });
                       const fresh = await refetchCategories();
                       const created = fresh
                         .flatMap((c: any) => c.groups || [])
                         .flatMap((g: any) => g.skills || [])
-                        .find((s: any) => s.name === name && Number(s.group_id) === currentGroupId);
+                        .find((s: any) => s.name === name && Number(s.group_id) === groupId);
                       if (created) flash(`Đã tạo Skill "${name}"!`);
                       return created ? { id: created.id } : null;
                     } catch (err: any) {
                       flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
                       return null;
                     }
-                  }) : undefined}
+                  }}
                 />
               );
             }
@@ -10930,6 +10942,10 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
 
 interface CategorySearchCellProps {
   col: string;
+  // 'area' = picking a Skill Area (Group); 'skill' = picking a Skill. Drives
+  // the header title/badge and the context line, matching the prototype's
+  // "Chọn Skill Area"/"Chọn Skill" popup design.
+  kind: 'area' | 'skill';
   items: any[];
   editValue: string;
   placeholder: string;
@@ -10941,15 +10957,25 @@ interface CategorySearchCellProps {
   // create path at all before this (only "add a brand-new task" row and the
   // Task Detail drawer did). Omitted entirely disables quick-add (e.g. the
   // SKILL cell with no Skill Area chosen yet has nothing to attach a new
-  // Skill to).
-  onQuickCreate?: (name: string) => Promise<{ id: number | string } | null>;
-  quickCreateLabel?: string;
+  // Skill to). areaIdOverride is only used for kind='skill', by the "⚙ Quản
+  // lý danh mục" panel's per-Area "+ Skill" (adds to THAT area, not
+  // necessarily the task's current one).
+  onQuickCreate?: (name: string, areaIdOverride?: number) => Promise<{ id: number | string } | null>;
+  // kind='skill' only — name of the Skill Area currently filtering `items`
+  // (task already has one chosen), empty string when searching the whole
+  // catalog because none is chosen yet.
+  contextAreaName?: string;
+  // Full Area→Skills tree, only for the "⚙ Quản lý danh mục" browse panel.
+  // Omitted entirely hides that button (e.g. if the tree isn't loaded yet).
+  catalogAreas?: { id: number; name: string; skills: { id: number; name: string }[] }[];
 }
 
-function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, quickCreateLabel }: CategorySearchCellProps) {
+function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, contextAreaName, catalogAreas }: CategorySearchCellProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isOpen, setIsOpen] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [catalogMode, setCatalogMode] = useState(false);
+  const [catalogAddingFor, setCatalogAddingFor] = useState<number | null>(null);
+  const [catalogSkillName, setCatalogSkillName] = useState('');
   const containerRef = useRef<HTMLTableDataCellElement>(null);
 
   useEffect(() => {
@@ -10983,7 +11009,7 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
 
   const trimmedSearch = searchTerm.trim();
   const hasExactMatch = trimmedSearch !== '' && items.some(m => (m.name || '').toLowerCase() === trimmedSearch.toLowerCase());
-  const canQuickCreate = Boolean(onQuickCreate) && trimmedSearch !== '' && !hasExactMatch;
+  const canQuickCreate = Boolean(onQuickCreate) && trimmedSearch.length >= 2 && !hasExactMatch;
 
   const handleQuickCreate = async () => {
     if (!onQuickCreate || !trimmedSearch || creating) return;
@@ -10991,6 +11017,18 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
     try {
       const created = await onQuickCreate(trimmedSearch);
       if (created) handleSelect(Number(created.id));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleCatalogAddSkill = async (areaId: number) => {
+    const name = catalogSkillName.trim();
+    if (!onQuickCreate || name.length < 2 || creating) return;
+    setCreating(true);
+    try {
+      const created = await onQuickCreate(name, areaId);
+      if (created) { setCatalogAddingFor(null); setCatalogSkillName(''); }
     } finally {
       setCreating(false);
     }
@@ -11019,6 +11057,10 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
     }
   };
 
+  const title = kind === 'area' ? 'Chọn Skill Area' : 'Chọn Skill';
+  const badge = kind === 'area' ? 'SKILL AREA' : 'SKILL';
+  const totalCatalogSkills = (catalogAreas || []).reduce((sum, a) => sum + a.skills.length, 0);
+
   return (
     <td key={col} className="px-2 py-1 min-w-[150px] relative" ref={containerRef}>
       <div className="relative">
@@ -11031,37 +11073,160 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
           onKeyDown={handleKeyDown}
           className="w-full bg-white border border-[#0058be] rounded px-2 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
         />
-        {isOpen && (
-          <div className="absolute left-0 right-0 mt-1 max-h-[160px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
-            <div
-              onClick={() => onSaveWithAction('')}
-              className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
-            >
-              -- Không gán --
-            </div>
-            {filteredItems.length === 0 && !canQuickCreate ? (
-              <div className="px-2.5 py-1.5 text-xs text-slate-400 italic">Không tìm thấy</div>
-            ) : (
-              filteredItems.map((m: any) => (
-                <div
-                  key={m.id}
-                  onClick={() => handleSelect(m.id)}
-                  className="px-2.5 py-1.5 text-xs text-slate-700 hover:bg-[#eff4ff] hover:text-[#0058be] cursor-pointer font-semibold transition-colors flex items-center justify-between"
-                >
-                  <span>{m.name}</span>
-                </div>
-              ))
-            )}
-            {canQuickCreate && (
-              <div
-                onClick={handleQuickCreate}
-                className={`px-2.5 py-1.5 text-xs font-bold cursor-pointer transition-colors border-t border-slate-100 ${creating ? 'text-slate-300 pointer-events-none' : 'text-emerald-600 hover:bg-emerald-50'}`}
-              >
-                {creating ? 'Đang tạo...' : `+ Thêm nhanh "${trimmedSearch}"`}
+        <div className="absolute left-0 mt-1 w-80 max-h-[26rem] bg-white border border-slate-200 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+          {!catalogMode ? (
+            <>
+              {/* Header — title + kind badge, matching the prototype popup */}
+              <div className="px-3 pt-2.5 pb-2 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <span className="text-[11px] font-black text-[#0b1c30]">{title}</span>
+                <span className="text-[9px] font-bold text-[#0058be] bg-[#eff4ff] border border-[#0058be]/20 px-1.5 py-0.5 rounded">{badge}</span>
               </div>
-            )}
-          </div>
-        )}
+              {/* Context line */}
+              <div className="px-3 py-1.5 text-[10.5px] text-slate-400 border-b border-slate-100 shrink-0">
+                {kind === 'area'
+                  ? 'Chọn nhóm chuyên môn cấp cao để lọc Skill bên cạnh.'
+                  : contextAreaName
+                    ? <>Đang lọc theo <span className="font-bold text-[#0058be]">{contextAreaName}</span></>
+                    : 'Chưa chọn Skill Area · đang tìm trên toàn bộ danh mục.'}
+              </div>
+              {/* Options list */}
+              <div className="overflow-y-auto max-h-[180px] py-1 shrink-0">
+                <div
+                  onClick={() => onSaveWithAction('')}
+                  className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
+                >
+                  — Không gán — <span className="text-[9.5px] text-red-300 font-normal">· Xóa lựa chọn</span>
+                </div>
+                {filteredItems.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-slate-400 italic text-center">Không tìm thấy</div>
+                ) : (
+                  filteredItems.map((m: any) => (
+                    <div
+                      key={m.id}
+                      onClick={() => handleSelect(m.id)}
+                      className="px-3 py-1.5 text-xs text-slate-700 hover:bg-[#eff4ff] hover:text-[#0058be] cursor-pointer font-semibold transition-colors flex items-center justify-between gap-2"
+                    >
+                      <span className="truncate">{m.name}</span>
+                      {m.meta && <span className="text-[9.5px] text-slate-400 font-normal shrink-0">{m.meta}</span>}
+                    </div>
+                  ))
+                )}
+              </div>
+              {/* Quick-add form — appears once 2+ chars typed with no exact match */}
+              {canQuickCreate && (
+                <div className="px-3 py-2.5 border-t border-slate-100 bg-emerald-50/50 shrink-0">
+                  <div className="text-[11px] font-bold text-emerald-700">
+                    Thêm {kind === 'area' ? 'Skill Area' : 'Skill'} "{trimmedSearch}"
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 mb-2 leading-snug">
+                    {kind === 'area'
+                      ? 'Area mới được tạo và chọn ngay cho task hiện tại. Hệ thống kiểm tra trùng tên trước khi thêm.'
+                      : contextAreaName
+                        ? <>Skill sẽ được thêm vào Skill Area <b>{contextAreaName}</b> và chọn ngay.</>
+                        : 'Chọn Skill Area cha để danh mục luôn có cấu trúc rõ ràng, tránh tạo skill rời rạc.'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleQuickCreate}
+                    disabled={creating}
+                    className="w-full h-7 rounded-md text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  >
+                    {creating ? 'Đang tạo...' : `+ Thêm "${trimmedSearch}"`}
+                  </button>
+                </div>
+              )}
+              {/* Footer hint + catalog toggle */}
+              <div className="px-3 py-1.5 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0 bg-slate-50/60">
+                <span className="text-[9.5px] text-slate-400 truncate">Gõ để tìm · không có thì thêm nhanh ngay tại đây.</span>
+                {catalogAreas && catalogAreas.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCatalogMode(true)}
+                    className="text-[10px] font-bold text-[#0058be] hover:underline shrink-0 whitespace-nowrap"
+                  >
+                    ⚙ Quản lý danh mục
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Catalog browser — read-only structure + per-Area quick-add
+                  Skill. Renaming/deleting stays in Settings (already exists
+                  there); duplicating full CRUD here would be redundant. */}
+              <div className="px-3 pt-2.5 pb-2 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div>
+                  <div className="text-[11px] font-black text-[#0b1c30]">Danh mục Skill</div>
+                  <div className="text-[9.5px] text-slate-400 mt-0.5">{(catalogAreas || []).length} Skill Area · {totalCatalogSkills} Skills</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setCatalogMode(false); setCatalogAddingFor(null); }}
+                  className="text-[10px] font-bold text-slate-500 hover:text-[#0058be] shrink-0"
+                >
+                  ← Quay lại chọn
+                </button>
+              </div>
+              <div className="overflow-y-auto max-h-[22rem] p-2 space-y-2">
+                {(catalogAreas || []).map(a => (
+                  <div key={a.id} className="border border-slate-100 rounded-lg p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <b className="text-[11px] truncate">{a.name}</b>
+                      <span className="text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full shrink-0">{a.skills.length} skills</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {a.skills.length ? (
+                        a.skills.map(s => (
+                          <span key={s.id} className="text-[9.5px] bg-slate-50 border border-slate-200 rounded-full px-1.5 py-0.5 text-slate-600">{s.name}</span>
+                        ))
+                      ) : (
+                        <span className="text-[9.5px] text-slate-300 italic">Chưa có skill</span>
+                      )}
+                    </div>
+                    {catalogAddingFor === a.id ? (
+                      <div className="flex items-center gap-1 mt-1.5">
+                        <input
+                          autoFocus
+                          value={catalogSkillName}
+                          onChange={e => setCatalogSkillName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') { e.preventDefault(); handleCatalogAddSkill(a.id); }
+                            if (e.key === 'Escape') { setCatalogAddingFor(null); setCatalogSkillName(''); }
+                          }}
+                          placeholder="Tên skill..."
+                          className="flex-1 h-6 px-1.5 text-[10.5px] border border-slate-200 rounded outline-none focus:border-[#0058be]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleCatalogAddSkill(a.id)}
+                          disabled={creating || catalogSkillName.trim().length < 2}
+                          className="h-6 px-2 text-[10px] font-bold text-white bg-emerald-600 rounded disabled:opacity-50"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setCatalogAddingFor(null); setCatalogSkillName(''); }}
+                          className="h-6 px-1.5 text-[10px] text-slate-400 hover:text-slate-600"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setCatalogAddingFor(a.id); setCatalogSkillName(''); }}
+                        className="text-[10px] font-bold text-[#0058be] hover:underline mt-1.5"
+                      >
+                        ＋ Skill
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </td>
   );
