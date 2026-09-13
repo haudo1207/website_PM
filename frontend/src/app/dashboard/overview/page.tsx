@@ -374,10 +374,10 @@ const PriorityDetailModal = ({
 function projectIsResponsible(
   p: any,
   userRole: string,
-  userMemberId: number | null,
+  userMemberIds: number[],
 ): boolean {
   const isLeader = String(userRole || '').toLowerCase() === 'leader';
-  if (!isLeader || userMemberId == null) {
+  if (!isLeader || userMemberIds.length === 0) {
     // Non-Leader fallback — mirror the existing `isOwned` semantic so
     // existing Super Admin / Member / Viewer behaviour is unchanged.
     return Boolean(
@@ -387,15 +387,22 @@ function projectIsResponsible(
           (p.dataScope === '' || p.dataScope === 'all'))),
     );
   }
+  // Whole team, not just the Leader personally — a project where any
+  // report of this Leader is PM/Project Leader still counts as the team's
+  // responsibility, same as it already does for task/manday/KPI rollups
+  // (teamMemberIds). Single-member arrays (drilled into one specific
+  // person, or a Leader/Member with no reports) still work the same as
+  // the old single-id check.
+  const idSet = new Set(userMemberIds.map(String));
   // Leader: PM (canonical Project.pm_id OR junction role='PM')
-  if (p.pm_id === userMemberId) return true;
-  if (Array.isArray(p.pm_ids) && p.pm_ids.includes(userMemberId)) return true;
+  if (p.pm_id != null && idSet.has(String(p.pm_id))) return true;
+  if (Array.isArray(p.pm_ids) && p.pm_ids.some((id: any) => idSet.has(String(id)))) return true;
   // Leader: Project Leader (canonical Project.technical_leader_id OR
   // junction role='Leader')
-  if (p.technical_leader_id === userMemberId) return true;
+  if (p.technical_leader_id != null && idSet.has(String(p.technical_leader_id))) return true;
   if (
     Array.isArray(p.leader_users) &&
-    p.leader_users.some((u: any) => u && u.id === userMemberId)
+    p.leader_users.some((u: any) => u && idSet.has(String(u.id)))
   ) {
     return true;
   }
@@ -405,7 +412,7 @@ function projectIsResponsible(
 function projectIsExternalMember(
   p: any,
   userRole: string,
-  userMemberId: number | null,
+  userMemberIds: number[],
   homeWsCode: string | null,
 ): boolean {
   const isLeader = String(userRole || '').toLowerCase() === 'leader';
@@ -420,25 +427,28 @@ function projectIsExternalMember(
     p.dataScope === homeWsCode;
   if (inHomeWs) return false;
 
-  if (!isLeader || userMemberId == null) {
+  if (!isLeader || userMemberIds.length === 0) {
     // Non-Leader fallback — same as before: non-primary-WS projects in
     // the visible list (Member/Viewer cross-WS assigned projects).
     return true;
   }
-  // Leader: project lives outside the primary Workspace AND the Leader
-  // appears in the project's member/participant list (any junction role,
-  // including the canonical PM/PL columns — PM/PL of a non-primary-WS
-  // project still counts as a participant here, matching the spec example
-  // for INFRA Project A "Leader is a project member → Tham gia ngoài").
+  // Leader: project lives outside the primary Workspace AND ANYONE on
+  // this Leader's team (themself or a report) appears in the project's
+  // member/participant list (any junction role, including the canonical
+  // PM/PL columns) — a report contributing to an outside project counts
+  // as the team's external participation, matching the spec example for
+  // INFRA Project A "Leader is a project member → Tham gia ngoài" and its
+  // team-rollup equivalent.
+  const idSet = new Set(userMemberIds.map(String));
   return (
-    p.pm_id === userMemberId ||
-    (Array.isArray(p.pm_ids) && p.pm_ids.includes(userMemberId)) ||
-    p.technical_leader_id === userMemberId ||
+    (p.pm_id != null && idSet.has(String(p.pm_id))) ||
+    (Array.isArray(p.pm_ids) && p.pm_ids.some((id: any) => idSet.has(String(id)))) ||
+    (p.technical_leader_id != null && idSet.has(String(p.technical_leader_id))) ||
     (Array.isArray(p.leader_users) &&
-      p.leader_users.some((u: any) => u && u.id === userMemberId)) ||
-    p.sales_id === userMemberId ||
-    (Array.isArray(p.sales_ids) && p.sales_ids.includes(userMemberId)) ||
-    (Array.isArray(p.member_ids) && p.member_ids.includes(userMemberId))
+      p.leader_users.some((u: any) => u && idSet.has(String(u.id)))) ||
+    (p.sales_id != null && idSet.has(String(p.sales_id))) ||
+    (Array.isArray(p.sales_ids) && p.sales_ids.some((id: any) => idSet.has(String(id)))) ||
+    (Array.isArray(p.member_ids) && p.member_ids.some((id: any) => idSet.has(String(id))))
   );
 }
 
@@ -1149,14 +1159,6 @@ export default function OverviewTab() {
     // the roster, not a drilled-into person's own cross-Workspace picture.
     const projectSourceForDrill = (currentUserRole === 'leader' || isDrilledIntoPerson) ? rawProjectsAll : rawProjects;
 
-    // Resolve the current user's linked Member.id once — used by the
-    // Active-Projects tab classification helpers below (PM / Project Leader /
-    // project-member checks against the per-project role arrays returned by
-    // /api/projects). Always the caller's own member_id for a Leader session,
-    // or null for any account that isn't linked to a Member row.
-    const userMemberIdForTabs: number | null =
-      drilledLeaderMemberId ?? (typeof currentUser?.member_id === 'number' ? currentUser.member_id : null);
-
     const allMappedProjects = projectSourceForDrill.map((p: any) => {
       const pAllTasks = taskSourceForDrill.filter(t => isSameId(t.project_id, p.id));
       const pLeaderTasks = pAllTasks.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
@@ -1273,22 +1275,26 @@ export default function OverviewTab() {
         // for secondary WS), so no extra visibility gating is needed — we
         // just route each project to the right tab here.
         //
-        // effectiveRoleForTabs/userMemberIdForTabs resolve to the drilled-
-        // into Leader's own identity when an Admin has picked one from the
-        // roster (see their definitions above) — using the Admin's own
-        // (role=super_admin, no member_id) here always fell through to the
-        // generic non-Leader branch and showed empty regardless of what
-        // that Leader actually owns.
+        // effectiveRoleForTabs resolves to the drilled-into Leader's own
+        // identity when an Admin has picked one from the roster (see its
+        // definition above) — using the Admin's own (role=super_admin, no
+        // member_id) here always fell through to the generic non-Leader
+        // branch and showed empty regardless of what that Leader actually
+        // owns. teamMemberIds is the WHOLE team being viewed — Leader +
+        // every report when drilled into a Leader (or a Leader's own
+        // undrilled "Toàn bộ team"), or just the one person when drilled
+        // down to a specific Member — so a project a REPORT is PM/Leader/
+        // member on counts for the team, not just the Leader personally.
         inHomeWs: !homeWsCodeForSummary || !dataScope || dataScope === homeWsCodeForSummary,
         isResponsible: (!homeWsCodeForSummary || !dataScope || dataScope === homeWsCodeForSummary) || projectIsResponsible(
           p,
           effectiveRoleForTabs,
-          userMemberIdForTabs,
+          teamMemberIds,
         ),
         isExternalMember: projectIsExternalMember(
           p,
           effectiveRoleForTabs,
-          userMemberIdForTabs,
+          teamMemberIds,
           homeWsCodeForSummary,
         ),
         // Legacy flag preserved — drives the Full/Limited access badge and
