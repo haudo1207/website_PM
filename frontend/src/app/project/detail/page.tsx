@@ -6160,7 +6160,16 @@ function ProjectDetailContent() {
           // that ever places it here and it silently falls through to the
           // group-end fallback instead, appearing at the bottom of the list
           // no matter which task "phía trên" was clicked on.
-          if (addingTaskGroupId === group.id && addingTaskBeforeCode === task.task_code) {
+          // Guard every comparison below with `task.task_code` being non-
+          // empty: a handful of seed/legacy tasks can have a blank task_code
+          // (data bug, not a normal creation path — the server always
+          // computes a real code), and addingTaskBeforeCode/AfterCode/
+          // ParentCode get set directly from a clicked task's OWN task_code
+          // (see the ⋮ row menu and hover "+" handlers). Without this guard,
+          // a blank code on one task matched EVERY other task sharing that
+          // same blank code, rendering one inline add-row per match instead
+          // of exactly one.
+          if (addingTaskGroupId === group.id && Boolean(addingTaskBeforeCode) && addingTaskBeforeCode === task.task_code) {
             result.push(renderInlineAddRow(group.id, addingTaskParentCode, level));
             beforeRowRendered = true;
           }
@@ -6168,12 +6177,12 @@ function ProjectDetailContent() {
           result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent, tIdx, sortedTasks));
 
           // 1. Render inline add row at hover position if adding after this task
-          if (addingTaskGroupId === group.id && addingTaskAfterCode === task.task_code) {
+          if (addingTaskGroupId === group.id && Boolean(addingTaskAfterCode) && addingTaskAfterCode === task.task_code) {
             result.push(renderInlineAddRow(group.id, addingTaskParentCode, level));
           }
 
           // 2. Render sub-task inline add row if triggered from actions menu
-          if (addingTaskGroupId === group.id && addingTaskParentCode === task.task_code && addingTaskAfterCode !== task.task_code) {
+          if (addingTaskGroupId === group.id && Boolean(addingTaskParentCode) && addingTaskParentCode === task.task_code && addingTaskAfterCode !== task.task_code) {
             result.push(renderInlineAddRow(group.id, task.task_code, level + 1));
           }
 
