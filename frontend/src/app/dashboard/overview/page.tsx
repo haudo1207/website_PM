@@ -2132,7 +2132,13 @@ export default function OverviewTab() {
             >
               <div>
                 <div className="flex justify-between items-start mb-2 gap-2">
-                  <h4 className="text-sm font-black text-[#0b1c30] truncate hover:text-[#0058be]" title={p.name}>{p.name}</h4>
+                  <h4
+                    className="text-sm font-black text-[#0b1c30] truncate hover:text-[#0058be]"
+                    title={p.customerName ? `${p.name} - ${p.customerName}` : p.name}
+                  >
+                    {p.name}
+                    {p.customerName && <span className="text-slate-400 font-semibold"> - {p.customerName}</span>}
+                  </h4>
                   <div className="flex flex-wrap gap-1 justify-end shrink-0">
                     {p.dataScope && (
                       <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 whitespace-nowrap">
@@ -2144,12 +2150,6 @@ export default function OverviewTab() {
                     </span>
                   </div>
                 </div>
-                {p.customerName && (
-                  <div className="flex items-center gap-1 mb-1.5 text-[10px] text-slate-400 font-semibold truncate" title={`Khách hàng: ${p.customerName}`}>
-                    <span className="material-symbols-outlined text-[12px] shrink-0">business</span>
-                    <span className="truncate">{p.customerName}</span>
-                  </div>
-                )}
                 <div className="flex items-center gap-1.5 mb-3">
                   <span className="text-[10px] text-slate-400 font-semibold">{p.current_phase || '1. Tư vấn'}</span>
                   <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
