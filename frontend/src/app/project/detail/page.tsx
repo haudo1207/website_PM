@@ -1249,7 +1249,7 @@ function ProjectDetailContent() {
 
   // Các cột bắt buộc khi tạo task mới (xem handleSaveTask) - không cho ẩn vì
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
-  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
+  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR', 'DEADLINE', 'HEALTH'];
 
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
@@ -1813,7 +1813,11 @@ function ProjectDetailContent() {
         if (parsed.density === 'compact' || parsed.density === 'normal' || parsed.density === 'spacious') {
           setRowDensity(parsed.density);
         }
-        setColumnOrder(Array.isArray(parsed.columnOrder) && parsed.columnOrder.length ? parsed.columnOrder : TASK_COLUMNS);
+        // Ensure DEADLINE and HEALTH are always visible for users with saved preferences
+        let savedOrder = Array.isArray(parsed.columnOrder) && parsed.columnOrder.length ? parsed.columnOrder : TASK_COLUMNS;
+        if (!savedOrder.includes('DEADLINE')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('MD ACTUAL') >= 0 ? savedOrder.indexOf('MD ACTUAL') : savedOrder.length), 'DEADLINE', ...savedOrder.slice(savedOrder.indexOf('MD ACTUAL') >= 0 ? savedOrder.indexOf('MD ACTUAL') : savedOrder.length)];
+        if (!savedOrder.includes('HEALTH')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('KPI BASE') >= 0 ? savedOrder.indexOf('KPI BASE') : savedOrder.length), 'HEALTH', ...savedOrder.slice(savedOrder.indexOf('KPI BASE') >= 0 ? savedOrder.indexOf('KPI BASE') : savedOrder.length)];
+        setColumnOrder(savedOrder);
         setColumnWidths(parsed.columnWidths && typeof parsed.columnWidths === 'object' ? parsed.columnWidths : {});
         setPinnedColumns(Array.isArray(parsed.pinnedColumns) ? parsed.pinnedColumns : []);
       } else {
@@ -2788,6 +2792,25 @@ function ProjectDetailContent() {
     return { label: status || 'Todo', dot: 'bg-slate-500', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
   };
 
+  const getAvailableStatuses = () => {
+    const baseStatuses = dbStatuses.length === 0
+      ? [
+          { id: 1, name: 'Todo' },
+          { id: 2, name: 'Waiting' },
+          { id: 3, name: 'Process' },
+          { id: 4, name: 'Done' },
+          { id: 5, name: 'Cancel' },
+        ]
+      : dbStatuses;
+    if (isMember()) {
+      return baseStatuses.filter((st: any) => {
+        const name = (st.name || '').toLowerCase();
+        return name !== 'done' && name !== 'completed' && !name.includes('hoàn') && !name.includes('finish');
+      });
+    }
+    return baseStatuses;
+  };
+
   const getPriorityStyle = (priority: string) => {
     const p = (priority || '').trim().toLowerCase();
     if (p === 'interrupt') return 'bg-purple-50 text-purple-700 border-purple-200';
@@ -3436,19 +3459,19 @@ function ProjectDetailContent() {
           className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
             }`}
         >
-          {dbStatuses.length === 0 ? (
-            <>
-              <option value="Todo">Todo</option>
-              <option value="Waiting">Waiting</option>
-              <option value="Process">Process</option>
-              <option value="Done">Done</option>
-              <option value="Cancel">Cancel</option>
-            </>
-          ) : (
-            dbStatuses.map((st: any) => (
-              <option key={st.id} value={st.name}>{st.name}</option>
-            ))
-          )}
+                    {getAvailableStatuses().length === 0 ? (
+                      <>
+                        <option value="Todo">Todo</option>
+                        <option value="Waiting">Waiting</option>
+                        <option value="Process">Process</option>
+                        {!isMember() && <option value="Done">Done</option>}
+                        <option value="Cancel">Cancel</option>
+                      </>
+                    ) : (
+                      getAvailableStatuses().map((st: any) => (
+                        <option key={st.id} value={st.name}>{st.name}</option>
+                      ))
+                    )}
         </select>
       );
     } else if (colUpper === 'PRIORITY') {
@@ -5839,15 +5862,15 @@ function ProjectDetailContent() {
                         }}
                         className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-bold"
                       >
-                        {dbStatuses.length === 0 ? (
+                        {getAvailableStatuses().length === 0 ? (
                           <>
                             <option value="Waiting">Waiting</option>
                             <option value="Process">Process</option>
-                            <option value="Done">Done</option>
+                            {!isMember() && <option value="Done">Done</option>}
                             <option value="Cancel">Cancel</option>
                           </>
                         ) : (
-                          dbStatuses.map((st: any) => (
+                          getAvailableStatuses().map((st: any) => (
                             <option key={st.id} value={st.name}>{st.name}</option>
                           ))
                         )}
@@ -9436,16 +9459,16 @@ function ProjectDetailContent() {
                     onChange={e => setDrawerForm({ ...drawerForm, status: e.target.value })}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
                   >
-                    {dbStatuses.length === 0 ? (
+                    {getAvailableStatuses().length === 0 ? (
                       <>
                         <option value="Todo">Todo</option>
                         <option value="Waiting">Waiting</option>
                         <option value="Process">Process</option>
-                        <option value="Done">Done</option>
+                        {!isMember() && <option value="Done">Done</option>}
                         <option value="Cancel">Cancel</option>
                       </>
                     ) : (
-                      dbStatuses.map((st: any) => (
+                      getAvailableStatuses().map((st: any) => (
                         <option key={st.id} value={st.name}>{st.name}</option>
                       ))
                     )}
