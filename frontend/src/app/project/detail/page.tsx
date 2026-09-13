@@ -30,6 +30,7 @@ import {
   getWorkspaces, Workspace,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   approveTask, requestTaskChanges, requestTaskReview, blockTask, unblockTask,
+  getReviewChecklist, createReviewChecklistItem, toggleReviewChecklistItem, deleteReviewChecklistItem, notifyReviewToLeader,
   getMeetings, createMeeting, updateMeeting, deleteMeeting,
   remindLeader, remindTaskGroup,
   getMe,
@@ -315,6 +316,7 @@ function ProjectDetailContent() {
   // to just them (assigned_id/support_id), since memberFilterParam only
   // carries their display name for string-based table filtering.
   const memberIdParam = searchParams.get('member_id') || '';
+  const highlightTaskParam = searchParams.get('highlightTask') || '';
   // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
   // next.config.js rewrites that path server-side to /project/detail?tab=tasks
   // purely to pick which page component to render; it does NOT change what the
@@ -772,6 +774,11 @@ function ProjectDetailContent() {
   const [confirmingApproveTask, setConfirmingApproveTask] = useState(false);
   const [requestChangesOpen, setRequestChangesOpen] = useState(false);
   const [changeRequestReason, setChangeRequestReason] = useState('');
+  const [reviewDrawerTask, setReviewDrawerTask] = useState<any>(null);
+  const [reviewChecklist, setReviewChecklist] = useState<any[]>([]);
+  const [reviewChecklistLoading, setReviewChecklistLoading] = useState(false);
+  const [newChecklistContent, setNewChecklistContent] = useState('');
+  const [taskFilterMode, setTaskFilterMode] = useState<'all' | 'review'>('all');
   // Blocking workflow (Đánh dấu bị chặn/Gỡ chặn) - modal DÙNG CHUNG cho cả 3
   // nơi kích hoạt: nút trong Task Edit Drawer, nút trong Leader Review Detail
   // Drawer, và chọn thẳng 1 status chứa "block" từ dropdown Status (statusValue
@@ -944,6 +951,76 @@ function ProjectDetailContent() {
     }
   };
 
+  const openReviewDrawer = async (task: any) => {
+    setReviewDrawerTask(task);
+    setReviewChecklistLoading(true);
+    try {
+      const items = await getReviewChecklist(task.task_group_id, task.id);
+      setReviewChecklist(items);
+    } catch { setReviewChecklist([]); }
+    finally { setReviewChecklistLoading(false); }
+  };
+
+  const handleToggleChecklistItem = async (item: any) => {
+    if (!reviewDrawerTask) return;
+    try {
+      const updated = await toggleReviewChecklistItem(reviewDrawerTask.task_group_id, reviewDrawerTask.id, item.id, !item.is_completed);
+      setReviewChecklist(prev => prev.map(i => i.id === item.id ? updated : i));
+    } catch (err: any) { flash(getApiErrorMessage(err, 'Lỗi khi cập nhật checklist.'), true); }
+  };
+
+  const handleAddChecklistItem = async () => {
+    if (!reviewDrawerTask || !newChecklistContent.trim()) return;
+    try {
+      const item = await createReviewChecklistItem(reviewDrawerTask.task_group_id, reviewDrawerTask.id, newChecklistContent.trim());
+      setReviewChecklist(prev => [...prev, item]);
+      setNewChecklistContent('');
+    } catch (err: any) { flash(getApiErrorMessage(err, 'Lỗi khi thêm checklist.'), true); }
+  };
+
+  const handleDeleteChecklistItem = async (itemId: number) => {
+    if (!reviewDrawerTask) return;
+    try {
+      await deleteReviewChecklistItem(reviewDrawerTask.task_group_id, reviewDrawerTask.id, itemId);
+      setReviewChecklist(prev => prev.filter(i => i.id !== itemId));
+    } catch (err: any) { flash(getApiErrorMessage(err, 'Lỗi khi xóa checklist.'), true); }
+  };
+
+  const handleNotifyReviewToLeader = async () => {
+    if (!reviewDrawerTask) return;
+    try {
+      await notifyReviewToLeader(reviewDrawerTask.task_group_id, reviewDrawerTask.id);
+      flash('Đã thông báo review cho Leader!');
+    } catch (err: any) { flash(getApiErrorMessage(err, 'Lỗi khi thông báo.'), true); }
+  };
+
+  const handleReviewDrawerApprove = async () => {
+    if (!reviewDrawerTask || reviewActionBusy) return;
+    setReviewActionBusy(true);
+    try {
+      const updated = await approveTask(reviewDrawerTask.task_group_id, reviewDrawerTask.id);
+      flash('Đã duyệt task thành công!');
+      setReviewDrawerTask(null);
+      refetchTasks();
+    } catch (err: any) { flash(getApiErrorMessage(err, 'Lỗi khi duyệt task.'), true); }
+    finally { setReviewActionBusy(false); }
+  };
+
+  const handleReviewDrawerRequestChanges = async () => {
+    if (!reviewDrawerTask || reviewActionBusy) return;
+    const reason = changeRequestReason.trim();
+    if (reason.length < 5) { flash('Vui lòng nhập lý do yêu cầu sửa (tối thiểu 5 ký tự).', true); return; }
+    setReviewActionBusy(true);
+    try {
+      const updated = await requestTaskChanges(reviewDrawerTask.task_group_id, reviewDrawerTask.id, reason);
+      setChangeRequestReason('');
+      setRequestChangesOpen(false);
+      flash('Đã gửi yêu cầu sửa task!');
+      refetchTasks();
+    } catch (err: any) { flash(getApiErrorMessage(err, 'Lỗi khi gửi yêu cầu sửa.'), true); }
+    finally { setReviewActionBusy(false); }
+  };
+
   // Blocking workflow - dùng chung cho cả Task Edit Drawer (selectedTask) và
   // Leader Review Detail Drawer (leaderReviewDetailTask); cập nhật state nào
   // đang mở khớp đúng task đó từ response, không reload toàn page.
@@ -1106,13 +1183,13 @@ function ProjectDetailContent() {
     return code.substring(0, idx);
   };
 
-  const ACTION_COL_WIDTH = 56;
+  const ACTION_COL_WIDTH = 82;
 
   const TASK_COLUMNS = [
     "TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY EST", "STATUS", "START DATE",
     "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "LINK",
-    "REMARK", "SEND", "END DATE EST", "MD ACTUAL", "END ACTUAL", "DAYS LATE",
-    "KPI BASE", "KPI PERFORM", "KPI OVERTIME", "KPI FINAL", "SUB ID", "ROOT TASKS",
+    "REMARK", "SEND", "END DATE EST", "DEADLINE", "MD ACTUAL", "END ACTUAL", "DAYS LATE",
+    "HEALTH", "KPI BASE", "KPI PERFORM", "KPI OVERTIME", "KPI FINAL", "SUB ID", "ROOT TASKS",
     "NOTES", "SOLUTION"
   ];
 
@@ -1155,6 +1232,8 @@ function ProjectDetailContent() {
       case 'END ACTUAL':
       case 'END DATE ACTUAL': return formatDateToShow(task.end_date_actual || '');
       case 'DAYS LATE': return task.days_late !== null && task.days_late !== undefined ? String(task.days_late) : '';
+      case 'DEADLINE': return formatDateToShow(task.end_date_est || '');
+      case 'HEALTH': return '';
       case 'KPI BASE': return task.kpi_base !== null && task.kpi_base !== undefined ? String(task.kpi_base) : '';
       case 'KPI PERFORM': return task.kpi_perform !== null && task.kpi_perform !== undefined ? String(task.kpi_perform) : '';
       case 'KPI OVERTIME': return task.kpi_ot !== null && task.kpi_ot !== undefined ? String(task.kpi_ot) : '';
@@ -1170,7 +1249,7 @@ function ProjectDetailContent() {
 
   // Các cột bắt buộc khi tạo task mới (xem handleSaveTask) - không cho ẩn vì
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
-  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR'];
+  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR', 'DEADLINE', 'HEALTH'];
 
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
@@ -1197,9 +1276,11 @@ function ProjectDetailContent() {
     'REMARK':         { defaultWidth: 165, minWidth: 110, align: 'left' },
     'SEND':           { defaultWidth: 90,  minWidth: 70,  align: 'center' },
     'END DATE EST':   { defaultWidth: 108, minWidth: 90,  align: 'center' },
+    'DEADLINE':       { defaultWidth: 108, minWidth: 90,  align: 'center' },
     'MD ACTUAL':      { defaultWidth: 72,  minWidth: 60,  align: 'center' },
     'END ACTUAL':     { defaultWidth: 108, minWidth: 90,  align: 'center' },
     'DAYS LATE':      { defaultWidth: 78,  minWidth: 60,  align: 'center' },
+    'HEALTH':         { defaultWidth: 120, minWidth: 90,  align: 'center' },
     'KPI BASE':       { defaultWidth: 80,  minWidth: 64,  align: 'center' },
     'KPI PERFORM':    { defaultWidth: 80,  minWidth: 64,  align: 'center' },
     'KPI OVERTIME':   { defaultWidth: 80,  minWidth: 64,  align: 'center' },
@@ -1732,7 +1813,11 @@ function ProjectDetailContent() {
         if (parsed.density === 'compact' || parsed.density === 'normal' || parsed.density === 'spacious') {
           setRowDensity(parsed.density);
         }
-        setColumnOrder(Array.isArray(parsed.columnOrder) && parsed.columnOrder.length ? parsed.columnOrder : TASK_COLUMNS);
+        // Ensure DEADLINE and HEALTH are always visible for users with saved preferences
+        let savedOrder = Array.isArray(parsed.columnOrder) && parsed.columnOrder.length ? parsed.columnOrder : TASK_COLUMNS;
+        if (!savedOrder.includes('DEADLINE')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('MD ACTUAL') >= 0 ? savedOrder.indexOf('MD ACTUAL') : savedOrder.length), 'DEADLINE', ...savedOrder.slice(savedOrder.indexOf('MD ACTUAL') >= 0 ? savedOrder.indexOf('MD ACTUAL') : savedOrder.length)];
+        if (!savedOrder.includes('HEALTH')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('KPI BASE') >= 0 ? savedOrder.indexOf('KPI BASE') : savedOrder.length), 'HEALTH', ...savedOrder.slice(savedOrder.indexOf('KPI BASE') >= 0 ? savedOrder.indexOf('KPI BASE') : savedOrder.length)];
+        setColumnOrder(savedOrder);
         setColumnWidths(parsed.columnWidths && typeof parsed.columnWidths === 'object' ? parsed.columnWidths : {});
         setPinnedColumns(Array.isArray(parsed.pinnedColumns) ? parsed.pinnedColumns : []);
       } else {
@@ -2146,16 +2231,26 @@ function ProjectDetailContent() {
 
   const filteredItems = useMemo(() => {
     const searchLower = taskSearch.toLowerCase();
+    const reviewFilter = taskFilterMode === 'review';
     const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
       || assignedFilter !== 'All' || supportFilter !== 'All'
       || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
-      || !!searchLower || !!memberFilterParam;
+      || !!searchLower || !!memberFilterParam || reviewFilter;
     if (!hasActiveFilter) {
       return items;
     }
 
+    const baseItems = reviewFilter ? items.filter(item => (item.status || '').toLowerCase().includes('review')) : items;
+
+    if (!searchLower && priorityFilter === 'All' && statusFilter === 'All'
+      && assignedFilter === 'All' && supportFilter === 'All'
+      && skillSolutionFilter === 'All' && skillVendorFilter === 'All'
+      && !memberFilterParam) {
+      return baseItems;
+    }
+
     // 1. Find tasks that match ALL active filters directly
-    const matchingTasks = items.filter(item => {
+    const matchingTasks = baseItems.filter(item => {
       const matchSearch = !searchLower || (item.detail || '').toLowerCase().includes(searchLower) || (item.task_code || '').toLowerCase().includes(searchLower);
       const matchPriority = priorityFilter === 'All' || item.priority === priorityFilter;
       const matchStatus = statusFilter === 'All' || item.status === statusFilter;
@@ -2176,7 +2271,7 @@ function ProjectDetailContent() {
     }
 
     // Build lookup maps using task_code (hierarchy defined by task_code, NOT parent_id)
-    const itemsByCode = new Map(items.map(item => [item.task_code, item]));
+    const itemsByCode = new Map(baseItems.map(item => [item.task_code, item]));
     const matchingCodes = new Set(matchingTasks.map(t => t.task_code));
 
     const allTasksToShow = new Set(matchingTasks);
@@ -2196,7 +2291,7 @@ function ProjectDetailContent() {
     });
 
     // 3. Also include all descendant tasks of matching tasks (subtree expansion)
-    items.forEach(item => {
+    baseItems.forEach(item => {
       const code = item.task_code || '';
       if (!code) return;
       for (const matchCode of Array.from(matchingCodes)) {
@@ -2208,8 +2303,8 @@ function ProjectDetailContent() {
     });
 
     // 4. Return in original order
-    return items.filter(item => allTasksToShow.has(item));
-  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter]);
+    return baseItems.filter(item => allTasksToShow.has(item));
+  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode]);
 
   const getFilteredTasks = () => {
     if (activePhase === 'ALL') {
@@ -2695,6 +2790,25 @@ function ProjectDetailContent() {
     if (s.includes('block')) return { label: status || 'Blocked', dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50 text-rose-700' };
     if (s === 'pending') return { label: 'Pending', dot: 'bg-slate-400', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
     return { label: status || 'Todo', dot: 'bg-slate-500', text: 'text-slate-600', bg: 'bg-slate-100 text-slate-700' };
+  };
+
+  const getAvailableStatuses = () => {
+    const baseStatuses = dbStatuses.length === 0
+      ? [
+          { id: 1, name: 'Todo' },
+          { id: 2, name: 'Waiting' },
+          { id: 3, name: 'Process' },
+          { id: 4, name: 'Done' },
+          { id: 5, name: 'Cancel' },
+        ]
+      : dbStatuses;
+    if (isMember()) {
+      return baseStatuses.filter((st: any) => {
+        const name = (st.name || '').toLowerCase();
+        return name !== 'done' && name !== 'completed' && !name.includes('hoàn') && !name.includes('finish');
+      });
+    }
+    return baseStatuses;
   };
 
   const getPriorityStyle = (priority: string) => {
@@ -3345,19 +3459,19 @@ function ProjectDetailContent() {
           className={`w-full bg-white border rounded px-1 py-1 text-[11px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold ${isRequired ? 'border-[#0058be] ring-1 ring-[#0058be]/20' : 'border-[#c2c6d6]'
             }`}
         >
-          {dbStatuses.length === 0 ? (
-            <>
-              <option value="Todo">Todo</option>
-              <option value="Waiting">Waiting</option>
-              <option value="Process">Process</option>
-              <option value="Done">Done</option>
-              <option value="Cancel">Cancel</option>
-            </>
-          ) : (
-            dbStatuses.map((st: any) => (
-              <option key={st.id} value={st.name}>{st.name}</option>
-            ))
-          )}
+                    {getAvailableStatuses().length === 0 ? (
+                      <>
+                        <option value="Todo">Todo</option>
+                        <option value="Waiting">Waiting</option>
+                        <option value="Process">Process</option>
+                        {!isMember() && <option value="Done">Done</option>}
+                        <option value="Cancel">Cancel</option>
+                      </>
+                    ) : (
+                      getAvailableStatuses().map((st: any) => (
+                        <option key={st.id} value={st.name}>{st.name}</option>
+                      ))
+                    )}
         </select>
       );
     } else if (colUpper === 'PRIORITY') {
@@ -3711,6 +3825,22 @@ function ProjectDetailContent() {
       });
     }
   }, [selectedTask]);
+
+  useEffect(() => {
+    if (highlightTaskParam && items.length > 0) {
+      const taskId = parseInt(highlightTaskParam);
+      if (!taskId) return;
+      const task = items.find((t: any) => t.id === taskId);
+      if (task) {
+        setHighlightTaskId(taskId);
+        setTimeout(() => {
+          const el = document.getElementById(`task-row-${taskId}`);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
+        setTimeout(() => setHighlightTaskId(prev => prev === taskId ? null : prev), 4000);
+      }
+    }
+  }, [highlightTaskParam, items]);
 
   // Keep selectedTask in sync with items after reload
   useEffect(() => {
@@ -4488,6 +4618,15 @@ function ProjectDetailContent() {
               </FloatingDropdown>
             </div>
 
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openReviewDrawer(task); }}
+              className="flex items-center justify-center w-6 h-6 rounded text-blue-500 opacity-0 group-hover:opacity-100 hover:bg-blue-100 hover:text-blue-700 transition-opacity shrink-0"
+              title="Mở Review"
+            >
+              <ArrowUpRight size={15} />
+            </button>
+
           </div>
         </td>
 
@@ -4967,6 +5106,55 @@ function ProjectDetailContent() {
                 </span>
               </div>
             );
+          } else if (colUpper === 'DEADLINE') {
+            const ede = task.end_date_est;
+            if (ede) {
+              const deadline = new Date(ede);
+              const now = new Date();
+              now.setHours(0,0,0,0);
+              deadline.setHours(0,0,0,0);
+              const sl = (task.status || '').toLowerCase();
+              const isDone = sl === 'done' || sl === 'completed';
+              const isReview = sl.includes('review');
+              let cls = 'text-slate-500';
+              if (!isDone) {
+                const diff = Math.floor((now.getTime() - deadline.getTime()) / 86400000);
+                if (diff > 0) cls = 'text-rose-600 font-semibold';
+                else if (diff === 0) cls = 'text-amber-600 font-medium';
+              }
+              cellContent = <span className={`text-[12px] ${cls}`}>{formatDateToShow(ede)}</span>;
+            } else {
+              cellContent = <span className="text-slate-300 text-[11px]">—</span>;
+            }
+          } else if (colUpper === 'HEALTH') {
+            const sl = (task.status || '').toLowerCase();
+            const isDone = sl === 'done' || sl === 'completed';
+            const isReview = sl.includes('review');
+            const isBlocked = sl.includes('block') || task.is_blocked;
+            if (isReview) {
+              cellContent = <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">Cần Review</span>;
+            } else if (isBlocked) {
+              cellContent = <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">! Lưu ý</span>;
+            } else if (!isDone && task.end_date_est) {
+              const deadline = new Date(task.end_date_est);
+              const now = new Date();
+              now.setHours(0,0,0,0);
+              deadline.setHours(0,0,0,0);
+              const daysLate = Math.floor((now.getTime() - deadline.getTime()) / 86400000);
+              if (daysLate >= 3) {
+                cellContent = <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">! Rủi ro cao</span>;
+              } else if (daysLate === 2) {
+                cellContent = <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">! Rủi ro T.Bình</span>;
+              } else if (daysLate === 1) {
+                cellContent = <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-50 text-yellow-700 border border-yellow-200">! Rủi ro Thấp</span>;
+              } else {
+                cellContent = <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">On track</span>;
+              }
+            } else if (isDone) {
+              cellContent = <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">✓ Done</span>;
+            } else {
+              cellContent = <span className="text-slate-300 text-[11px]">—</span>;
+            }
           } else if (colUpper === 'KPI FINAL') {
             const s = (task.status || '').toLowerCase();
             const isDone = s === 'done' || s === 'completed' || s.includes('hoàn');
@@ -5674,15 +5862,15 @@ function ProjectDetailContent() {
                         }}
                         className="w-full bg-white border border-indigo-500 rounded px-1 py-0.5 text-xs text-[#0b1c30] focus:outline-none font-bold"
                       >
-                        {dbStatuses.length === 0 ? (
+                        {getAvailableStatuses().length === 0 ? (
                           <>
                             <option value="Waiting">Waiting</option>
                             <option value="Process">Process</option>
-                            <option value="Done">Done</option>
+                            {!isMember() && <option value="Done">Done</option>}
                             <option value="Cancel">Cancel</option>
                           </>
                         ) : (
-                          dbStatuses.map((st: any) => (
+                          getAvailableStatuses().map((st: any) => (
                             <option key={st.id} value={st.name}>{st.name}</option>
                           ))
                         )}
@@ -7459,9 +7647,9 @@ function ProjectDetailContent() {
                       </div>
                     </div>
 
-                    {/* Cần chú ý - attention queue (overdue/blocked/unassigned/need
-                        review), mở panel Leader Review bên phải. Compact: icon +
-                        nhãn ngắn + badge số, không dùng câu dài. */}
+                    {/* Leader Review - attention queue (overdue/blocked/unassigned/need
+                        review), mở panel Leader Review bên phải. Chỉ Super Admin / Leader mới thấy. */}
+                    {!isMember() && (
                     <button
                       onClick={() => {
                         if (leaderReviewOpen) closeLeaderReviewPanel();
@@ -7477,13 +7665,14 @@ function ProjectDetailContent() {
                       title="Leader Review - việc cần chú ý"
                     >
                       <AlertTriangle size={15} />
-                      Cần chú ý
+                      Leader Review
                       {attentionTasks.length > 0 && (
                         <span className="bg-amber-600 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
                           {attentionTasks.length}
                         </span>
                       )}
                     </button>
+                    )}
                   </div>
 
                   {/* Task Table | Leader Review panel - table luôn ở flex-1 nên co
@@ -7494,6 +7683,22 @@ function ProjectDetailContent() {
                   <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
                   <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0 max-h-[calc(100vh-300px)]">
+                    <div className="flex items-center px-3 pt-2 pb-1 border-b border-slate-100 shrink-0">
+                      <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+                        <button
+                          onClick={() => setTaskFilterMode('all')}
+                          className={`px-3 py-1.5 text-[12px] font-semibold transition-colors ${taskFilterMode === 'all' ? 'bg-[#0058be] text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                        >
+                          Tất cả task
+                        </button>
+                        <button
+                          onClick={() => setTaskFilterMode('review')}
+                          className={`px-3 py-1.5 text-[12px] font-semibold transition-colors border-l border-slate-200 ${taskFilterMode === 'review' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                        >
+                          Task cần Review
+                        </button>
+                      </div>
+                    </div>
                     <div className="flex-1 min-h-0 overflow-auto task-table-scroll">
                       {/* table-layout: fixed - bắt buộc để mỗi cột giữ đúng width đã set (kể cả
                           width mặc định thu gọn cho MD/Priority/Status/KPI Ratio/ngày và width
@@ -7908,6 +8113,28 @@ function ProjectDetailContent() {
                                             <span className="text-[10.5px] text-slate-500 font-medium truncate">{t.assigned_name}</span>
                                           )}
                                         </div>
+                                        {a.needReview && (
+                                          <div className="flex items-center gap-1.5 mt-2" onClick={e => e.stopPropagation()}>
+                                            <button
+                                              onClick={async () => {
+                                                try {
+                                                  await approveTask(t.task_group_id, t.id);
+                                                  flash('Đã duyệt task!');
+                                                  refetchTasks();
+                                                } catch (err: any) { flash(getApiErrorMessage(err, 'Lỗi khi duyệt.'), true); }
+                                              }}
+                                              className="px-2 py-1 text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded transition-colors"
+                                            >
+                                              Duyệt
+                                            </button>
+                                            <button
+                                              onClick={() => handleOpenAttentionTask(t)}
+                                              className="px-2 py-1 text-[10px] font-bold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded transition-colors"
+                                            >
+                                              Yêu cầu sửa
+                                            </button>
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
                                   </button>
@@ -9232,16 +9459,16 @@ function ProjectDetailContent() {
                     onChange={e => setDrawerForm({ ...drawerForm, status: e.target.value })}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
                   >
-                    {dbStatuses.length === 0 ? (
+                    {getAvailableStatuses().length === 0 ? (
                       <>
                         <option value="Todo">Todo</option>
                         <option value="Waiting">Waiting</option>
                         <option value="Process">Process</option>
-                        <option value="Done">Done</option>
+                        {!isMember() && <option value="Done">Done</option>}
                         <option value="Cancel">Cancel</option>
                       </>
                     ) : (
-                      dbStatuses.map((st: any) => (
+                      getAvailableStatuses().map((st: any) => (
                         <option key={st.id} value={st.name}>{st.name}</option>
                       ))
                     )}
@@ -9481,6 +9708,203 @@ function ProjectDetailContent() {
           </div>
         </div>
       )}
+
+      {reviewDrawerTask && (() => {
+        const t = reviewDrawerTask;
+        const statusL = (t.status || '').toLowerCase();
+        const isReview = statusL.includes('review');
+        const canApprove = !isMember() || isSuperAdmin();
+        const completedCount = reviewChecklist.filter(i => i.is_completed).length;
+        const totalCount = reviewChecklist.length;
+        return (
+          <div className="fixed inset-0 z-[55] flex justify-end" onClick={() => setReviewDrawerTask(null)}>
+            <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" />
+            <div
+              className="relative w-full max-w-lg bg-white shadow-2xl flex flex-col animate-slide-in h-full"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-white flex items-center justify-between shrink-0">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <ArrowUpRight size={18} className="text-blue-600" />
+                    <span className="text-sm font-bold text-[#0b1c30]">Review</span>
+                    <span className="font-mono text-[11px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">{t.task_code}</span>
+                  </div>
+                  <p className="text-[12px] text-slate-500 mt-1 line-clamp-1">{t.detail}</p>
+                </div>
+                <button onClick={() => setReviewDrawerTask(null)} className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-auto p-5 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Status</div>
+                    {(() => { const info = getStatusInfo(t.status); return (
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold border ${info.bg} border-current/10`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${info.dot}`} />{info.label}
+                      </span>
+                    ); })()}
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Assignee</div>
+                    <div className="text-[13px] font-semibold text-[#0b1c30]">{t.assigned_name || '—'}</div>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Deadline</div>
+                    <div className="text-[13px] font-semibold text-[#0b1c30] font-mono">{formatDateToShow(t.end_date_est || '') || '—'}</div>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manday EST</div>
+                    <div className="text-[13px] font-semibold text-[#0b1c30] font-mono">{t.manday_est ?? '—'} MD</div>
+                  </div>
+                </div>
+
+                {t.review_status === 'approved' && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                    <span className="text-[12px] font-semibold text-emerald-700">Đã được duyệt{t.approved_by_name ? ` bởi ${t.approved_by_name}` : ''}</span>
+                  </div>
+                )}
+                {t.review_status === 'changes_requested' && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertTriangle size={14} className="text-orange-600 shrink-0" />
+                      <span className="text-[12px] font-semibold text-orange-700">Yêu cầu sửa{t.change_requested_by_name ? ` bởi ${t.change_requested_by_name}` : ''}</span>
+                    </div>
+                    {t.change_request_reason && <p className="text-[12px] text-orange-600 mt-1">{t.change_request_reason}</p>}
+                  </div>
+                )}
+
+                <div className="border-t border-slate-100 pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-[12px] font-bold text-slate-700 uppercase tracking-wider">
+                      Checklist ({completedCount}/{totalCount})
+                    </h4>
+                    {totalCount > 0 && (
+                      <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${totalCount > 0 ? (completedCount / totalCount) * 100 : 0}%` }} />
+                      </div>
+                    )}
+                  </div>
+
+                  {!canApprove && (
+                    <div className="space-y-2">
+                      {reviewChecklistLoading && <div className="text-[12px] text-slate-400 py-2">Đang tải...</div>}
+                      {!reviewChecklistLoading && reviewChecklist.length === 0 && (
+                        <div className="text-[12px] text-slate-400 py-2 italic">Chưa có mục checklist nào.</div>
+                      )}
+                      {reviewChecklist.map(item => (
+                        <label key={item.id} className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={item.is_completed}
+                            onChange={() => handleToggleChecklistItem(item)}
+                            className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className={`text-[13px] ${item.is_completed ? 'line-through text-slate-400' : 'text-[#0b1c30]'}`}>{item.content}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  {canApprove && (
+                    <div className="space-y-2">
+                      {reviewChecklistLoading && <div className="text-[12px] text-slate-400 py-2">Đang tải...</div>}
+                      {!reviewChecklistLoading && reviewChecklist.length === 0 && (
+                        <div className="text-[12px] text-slate-400 py-2 italic">Chưa có mục checklist nào.</div>
+                      )}
+                      {reviewChecklist.map(item => (
+                        <div key={item.id} className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-slate-50 group/item">
+                          <input
+                            type="checkbox"
+                            checked={item.is_completed}
+                            onChange={() => handleToggleChecklistItem(item)}
+                            className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className={`text-[13px] flex-1 ${item.is_completed ? 'line-through text-slate-400' : 'text-[#0b1c30]'}`}>{item.content}</span>
+                          <button
+                            onClick={() => handleDeleteChecklistItem(item.id)}
+                            className="opacity-0 group-hover/item:opacity-100 text-slate-400 hover:text-red-500 transition-opacity shrink-0"
+                            title="Xóa"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="flex gap-2 mt-2">
+                        <input
+                          value={newChecklistContent}
+                          onChange={e => setNewChecklistContent(e.target.value)}
+                          placeholder="Thêm mục checklist..."
+                          className="flex-1 h-8 px-2.5 text-[12px] border border-slate-200 rounded-lg outline-none focus:border-blue-500"
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddChecklistItem(); } }}
+                        />
+                        <button
+                          onClick={handleAddChecklistItem}
+                          disabled={!newChecklistContent.trim()}
+                          className="h-8 px-3 text-[12px] font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                        >
+                          Thêm
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="px-5 py-4 border-t border-slate-200 bg-white shrink-0 space-y-2">
+                {isMember() && isReview && (
+                  <button
+                    onClick={handleNotifyReviewToLeader}
+                    className="w-full px-4 py-2.5 rounded-lg text-[12px] font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm flex items-center justify-center gap-2"
+                  >
+                    <Bell size={14} />
+                    Thông báo review cho Leader
+                  </button>
+                )}
+                {canApprove && isReview && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleReviewDrawerApprove}
+                      disabled={reviewActionBusy}
+                      className="flex-1 px-4 py-2.5 rounded-lg text-[12px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-50"
+                    >
+                      Duyệt
+                    </button>
+                    <button
+                      onClick={() => setRequestChangesOpen(!requestChangesOpen)}
+                      disabled={reviewActionBusy}
+                      className="flex-1 px-4 py-2.5 rounded-lg text-[12px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 transition-colors"
+                    >
+                      Yêu cầu sửa
+                    </button>
+                  </div>
+                )}
+                {requestChangesOpen && canApprove && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={changeRequestReason}
+                      onChange={e => setChangeRequestReason(e.target.value)}
+                      placeholder="Lý do yêu cầu sửa (tối thiểu 5 ký tự)..."
+                      rows={2}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:border-orange-400 resize-none"
+                    />
+                    <button
+                      onClick={handleReviewDrawerRequestChanges}
+                      disabled={reviewActionBusy || changeRequestReason.trim().length < 5}
+                      className="w-full px-4 py-2 rounded-lg text-[12px] font-semibold text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50 transition-colors"
+                    >
+                      Gửi yêu cầu sửa
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Task Detail → SKILL SOLUTION `+` modal: creates a new Group
           (Solution) under an existing Category. Reuses POST

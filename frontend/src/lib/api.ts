@@ -367,6 +367,16 @@ export const requestTaskChanges = (groupId: number, taskId: number, reason: stri
   api.post(`/task-groups/${groupId}/tasks/${taskId}/request-changes`, { reason }).then(r => r.data);
 export const requestTaskReview = (groupId: number, taskId: number) =>
   api.post(`/task-groups/${groupId}/tasks/${taskId}/request-review`).then(r => r.data);
+export const getReviewChecklist = (groupId: number, taskId: number) =>
+  api.get(`/task-groups/${groupId}/tasks/${taskId}/review-checklist`).then(r => r.data);
+export const createReviewChecklistItem = (groupId: number, taskId: number, content: string) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/review-checklist`, { content }).then(r => r.data);
+export const toggleReviewChecklistItem = (groupId: number, taskId: number, itemId: number, isCompleted: boolean) =>
+  api.patch(`/task-groups/${groupId}/tasks/${taskId}/review-checklist/${itemId}`, { is_completed: isCompleted }).then(r => r.data);
+export const deleteReviewChecklistItem = (groupId: number, taskId: number, itemId: number) =>
+  api.delete(`/task-groups/${groupId}/tasks/${taskId}/review-checklist/${itemId}`).then(r => r.data);
+export const notifyReviewToLeader = (groupId: number, taskId: number) =>
+  api.post(`/task-groups/${groupId}/tasks/${taskId}/notify-review`).then(r => r.data);
 // Task Blocking workflow (Leader Review) - is_blocked layer, separate from
 // task.status. Same permission as generic task edit (project membership).
 export const blockTask = (groupId: number, taskId: number, reason: string, blockedByTaskId?: number | null) =>
