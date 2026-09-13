@@ -3539,17 +3539,29 @@ function ProjectDetailContent() {
           />
         );
       } else if (colUpper === 'SKILL AREA') {
+        // Same rich picker (title/badge/context line/quick-add form/catalog
+        // browser) as editing an existing task's cell, not the plain
+        // SearchableSelect — this row is a brand-new task, but "which
+        // Skill Area" is the exact same question with the exact same
+        // answer set, so it should look and behave identically.
         const activeGroups = categories
           .filter(c => c.is_active)
           .flatMap(c => c.groups || []);
+        const catalogAreas = activeGroups.map((g: any) => ({
+          id: g.id, name: g.name,
+          skills: (g.skills || []).filter((s: any) => s.is_active),
+        }));
 
-        inputField = (
-          <SearchableSelect
-            label="Group"
-            icon=""
-            options={activeGroups.map((g: any) => ({ id: g.id, name: g.name }))}
-            value={newForm[col] || ''}
-            onChange={(val: any) => {
+        return (
+          <CategorySearchCell
+            key={col}
+            col={col}
+            kind="area"
+            items={activeGroups.map((g: any) => ({ id: g.id, name: g.name, meta: `${(g.skills || []).filter((s: any) => s.is_active).length} skills` }))}
+            editValue={newForm[col] || ''}
+            placeholder="Tìm Skill Area..."
+            catalogAreas={catalogAreas}
+            onSaveWithAction={(val) => {
               const selectedGrpId = val === 'all' ? '' : val;
               const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL') || 'SKILL';
               setNewForm({
@@ -3558,13 +3570,8 @@ function ProjectDetailContent() {
                 [vendorCol]: ''
               });
             }}
-            placeholder="Tìm group..."
-            className="w-full text-[11px]"
-            usePortal
+            onCancel={() => {}}
             onQuickCreate={async (name) => {
-              // No Category picker in this compact inline row — same
-              // default-to-first-active-Category tradeoff as the existing-
-              // task edit cell's quick-add (see onQuickCreate above it).
               const defaultCategory = categories.find((c: any) => c.is_active);
               if (!defaultCategory) {
                 flash('Chưa có Category nào để gán Skill Area mới vào.', true);
@@ -3588,35 +3595,37 @@ function ProjectDetailContent() {
       } else if (colUpper === 'SKILL') {
         const solCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL AREA') || 'SKILL AREA';
         const selectedGroupId = newForm[solCol] || '';
+        const allActiveGroups = categories
+          .filter(c => c.is_active)
+          .flatMap(c => c.groups || []);
+        const currentGroupObj = selectedGroupId ? allActiveGroups.find((g: any) => String(g.id) === String(selectedGroupId)) : null;
         let availableSkills: any[] = [];
-        if (selectedGroupId) {
-          const groupObj = categories
-            .filter(c => c.is_active)
-            .flatMap(c => c.groups || [])
-            .find((g: any) => String(g.id) === String(selectedGroupId));
-          if (groupObj) {
-            availableSkills = (groupObj.skills || []).filter((s: any) => s.is_active);
-          }
+        if (currentGroupObj) {
+          availableSkills = (currentGroupObj.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name }));
         } else {
-          availableSkills = categories
-            .filter(c => c.is_active)
-            .flatMap(c => c.groups || [])
-            .flatMap((g: any) => g.skills || [])
-            .filter((s: any) => s.is_active);
+          availableSkills = allActiveGroups
+            .flatMap((g: any) => (g.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name, meta: g.name })));
         }
+        const catalogAreas = allActiveGroups.map((g: any) => ({
+          id: g.id, name: g.name,
+          skills: (g.skills || []).filter((s: any) => s.is_active),
+        }));
 
-        inputField = (
-          <SearchableSelect
-            label="Skill"
-            icon=""
-            options={availableSkills.map((s: any) => ({ id: s.id, name: s.name }))}
-            value={newForm[col] || ''}
-            onChange={(val: any) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
-            placeholder="Tìm skill..."
-            className="w-full text-[11px]"
-            usePortal
-            onQuickCreate={selectedGroupId ? (async (name) => {
-              const groupId = parseInt(String(selectedGroupId), 10);
+        return (
+          <CategorySearchCell
+            key={col}
+            col={col}
+            kind="skill"
+            items={availableSkills}
+            editValue={newForm[col] || ''}
+            placeholder="Tìm Skill..."
+            contextAreaName={currentGroupObj?.name || ''}
+            catalogAreas={catalogAreas}
+            onSaveWithAction={(val) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
+            onCancel={() => {}}
+            onQuickCreate={async (name, areaIdOverride) => {
+              const groupId = areaIdOverride ?? (selectedGroupId ? parseInt(String(selectedGroupId), 10) : null);
+              if (!groupId) return null;
               try {
                 await createSkill({ name, group_id: groupId });
                 const fresh = await refetchCategories();
@@ -3630,7 +3639,7 @@ function ProjectDetailContent() {
                 flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
                 return null;
               }
-            }) : undefined}
+            }}
           />
         );
       } else if (colUpper === 'REMARK') {
