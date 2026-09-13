@@ -1812,6 +1812,17 @@ function ProjectDetailContent() {
         }
         // Ensure DEADLINE and HEALTH are always visible for users with saved preferences
         let savedOrder = Array.isArray(parsed.columnOrder) && parsed.columnOrder.length ? parsed.columnOrder : TASK_COLUMNS;
+        // SKILL SOLUTION/SKILL VENDOR were renamed to SKILL AREA/SKILL. Any
+        // column order saved before that rename shipped still has the old
+        // names, which no longer match anything in TASK_COLUMNS — silently
+        // dropping these two LOCKED_COLUMNS from view for every returning
+        // user (this hit production: worked for a fresh browser with no
+        // saved prefs, broke for real accounts with an existing saved
+        // order). Remap in place first so position/pin/width are kept,
+        // then fall back to inserting if somehow still missing.
+        savedOrder = savedOrder.map((c: string) => (c === 'SKILL SOLUTION' ? 'SKILL AREA' : c === 'SKILL VENDOR' ? 'SKILL' : c));
+        if (!savedOrder.includes('SKILL AREA')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('SUPPORT') >= 0 ? savedOrder.indexOf('SUPPORT') + 1 : savedOrder.length), 'SKILL AREA', ...savedOrder.slice(savedOrder.indexOf('SUPPORT') >= 0 ? savedOrder.indexOf('SUPPORT') + 1 : savedOrder.length)];
+        if (!savedOrder.includes('SKILL')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('SKILL AREA') >= 0 ? savedOrder.indexOf('SKILL AREA') + 1 : savedOrder.length), 'SKILL', ...savedOrder.slice(savedOrder.indexOf('SKILL AREA') >= 0 ? savedOrder.indexOf('SKILL AREA') + 1 : savedOrder.length)];
         if (!savedOrder.includes('DEADLINE')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('MD ACTUAL') >= 0 ? savedOrder.indexOf('MD ACTUAL') : savedOrder.length), 'DEADLINE', ...savedOrder.slice(savedOrder.indexOf('MD ACTUAL') >= 0 ? savedOrder.indexOf('MD ACTUAL') : savedOrder.length)];
         if (!savedOrder.includes('HEALTH')) savedOrder = [...savedOrder.slice(0, savedOrder.indexOf('KPI BASE') >= 0 ? savedOrder.indexOf('KPI BASE') : savedOrder.length), 'HEALTH', ...savedOrder.slice(savedOrder.indexOf('KPI BASE') >= 0 ? savedOrder.indexOf('KPI BASE') : savedOrder.length)];
         setColumnOrder(savedOrder);
