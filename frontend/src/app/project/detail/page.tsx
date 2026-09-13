@@ -3447,6 +3447,28 @@ function ProjectDetailContent() {
             placeholder="Tìm group..."
             className="w-full text-[11px]"
             usePortal
+            onQuickCreate={async (name) => {
+              // No Category picker in this compact inline row — same
+              // default-to-first-active-Category tradeoff as the existing-
+              // task edit cell's quick-add (see onQuickCreate above it).
+              const defaultCategory = categories.find((c: any) => c.is_active);
+              if (!defaultCategory) {
+                flash('Chưa có Category nào để gán Skill Area mới vào.', true);
+                return null;
+              }
+              try {
+                await createGroup({ name, category_id: defaultCategory.id });
+                const fresh = await refetchCategories();
+                const created = fresh
+                  .flatMap((c: any) => c.groups || [])
+                  .find((g: any) => g.name === name && Number(g.category_id) === defaultCategory.id);
+                if (created) flash(`Đã tạo Skill Area "${name}"!`);
+                return created ? { id: created.id } : null;
+              } catch (err: any) {
+                flash('Lỗi tạo Skill Area: ' + getApiErrorMessage(err), true);
+                return null;
+              }
+            }}
           />
         );
       } else if (colUpper === 'SKILL') {
@@ -3479,6 +3501,22 @@ function ProjectDetailContent() {
             placeholder="Tìm skill..."
             className="w-full text-[11px]"
             usePortal
+            onQuickCreate={selectedGroupId ? (async (name) => {
+              const groupId = parseInt(String(selectedGroupId), 10);
+              try {
+                await createSkill({ name, group_id: groupId });
+                const fresh = await refetchCategories();
+                const created = fresh
+                  .flatMap((c: any) => c.groups || [])
+                  .flatMap((g: any) => g.skills || [])
+                  .find((s: any) => s.name === name && Number(s.group_id) === groupId);
+                if (created) flash(`Đã tạo Skill "${name}"!`);
+                return created ? { id: created.id } : null;
+              } catch (err: any) {
+                flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
+                return null;
+              }
+            }) : undefined}
           />
         );
       } else if (colUpper === 'REMARK') {
@@ -4648,6 +4686,30 @@ function ProjectDetailContent() {
                   placeholder="Tìm Group..."
                   onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
                   onCancel={() => setEditingCell(null)}
+                  onQuickCreate={async (name) => {
+                    // No Category picker in this compact cell (unlike the
+                    // Task Detail drawer's dedicated + modal) — Category is
+                    // an internal grouping never surfaced elsewhere in the
+                    // Tasks UI, so default to the first active one to keep
+                    // this a true one-field "type a name, done" quick-add.
+                    const defaultCategory = categories.find((c: any) => c.is_active);
+                    if (!defaultCategory) {
+                      flash('Chưa có Category nào để gán Skill Area mới vào.', true);
+                      return null;
+                    }
+                    try {
+                      await createGroup({ name, category_id: defaultCategory.id });
+                      const fresh = await refetchCategories();
+                      const created = fresh
+                        .flatMap((c: any) => c.groups || [])
+                        .find((g: any) => g.name === name && Number(g.category_id) === defaultCategory.id);
+                      if (created) flash(`Đã tạo Skill Area "${name}"!`);
+                      return created ? { id: created.id } : null;
+                    } catch (err: any) {
+                      flash('Lỗi tạo Skill Area: ' + getApiErrorMessage(err), true);
+                      return null;
+                    }
+                  }}
                 />
               );
             }
@@ -4680,6 +4742,24 @@ function ProjectDetailContent() {
                   placeholder="Tìm Skill..."
                   onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
                   onCancel={() => setEditingCell(null)}
+                  // Skill needs a parent Skill Area — omitted (no quick-add
+                  // offered) when the task doesn't have one chosen yet,
+                  // same "SKILL AREA trước" gate the drawer's + button uses.
+                  onQuickCreate={currentGroupId ? (async (name) => {
+                    try {
+                      await createSkill({ name, group_id: currentGroupId });
+                      const fresh = await refetchCategories();
+                      const created = fresh
+                        .flatMap((c: any) => c.groups || [])
+                        .flatMap((g: any) => g.skills || [])
+                        .find((s: any) => s.name === name && Number(s.group_id) === currentGroupId);
+                      if (created) flash(`Đã tạo Skill "${name}"!`);
+                      return created ? { id: created.id } : null;
+                    } catch (err: any) {
+                      flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
+                      return null;
+                    }
+                  }) : undefined}
                 />
               );
             }
@@ -10416,11 +10496,21 @@ interface CategorySearchCellProps {
   placeholder: string;
   onSaveWithAction: (val: string, action?: 'Enter' | 'Tab' | 'ShiftTab') => void;
   onCancel: () => void;
+  // Quick-add straight from this cell — same "no match, create it" flow the
+  // Task Detail drawer's dedicated + modals already have, just inlined here
+  // since editing an EXISTING task's Skill Area/Skill in the table had no
+  // create path at all before this (only "add a brand-new task" row and the
+  // Task Detail drawer did). Omitted entirely disables quick-add (e.g. the
+  // SKILL cell with no Skill Area chosen yet has nothing to attach a new
+  // Skill to).
+  onQuickCreate?: (name: string) => Promise<{ id: number | string } | null>;
+  quickCreateLabel?: string;
 }
 
-function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithAction, onCancel }: CategorySearchCellProps) {
+function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, quickCreateLabel }: CategorySearchCellProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(true);
+  const [creating, setCreating] = useState(false);
   const containerRef = useRef<HTMLTableDataCellElement>(null);
 
   useEffect(() => {
@@ -10452,11 +10542,28 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
     onSaveWithAction(String(itemId), action);
   };
 
+  const trimmedSearch = searchTerm.trim();
+  const hasExactMatch = trimmedSearch !== '' && items.some(m => (m.name || '').toLowerCase() === trimmedSearch.toLowerCase());
+  const canQuickCreate = Boolean(onQuickCreate) && trimmedSearch !== '' && !hasExactMatch;
+
+  const handleQuickCreate = async () => {
+    if (!onQuickCreate || !trimmedSearch || creating) return;
+    setCreating(true);
+    try {
+      const created = await onQuickCreate(trimmedSearch);
+      if (created) handleSelect(Number(created.id));
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       if (filteredItems.length > 0) {
         handleSelect(filteredItems[0].id);
+      } else if (canQuickCreate) {
+        handleQuickCreate();
       } else {
         onSaveWithAction('');
       }
@@ -10493,7 +10600,7 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
             >
               -- Không gán --
             </div>
-            {filteredItems.length === 0 ? (
+            {filteredItems.length === 0 && !canQuickCreate ? (
               <div className="px-2.5 py-1.5 text-xs text-slate-400 italic">Không tìm thấy</div>
             ) : (
               filteredItems.map((m: any) => (
@@ -10505,6 +10612,14 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
                   <span>{m.name}</span>
                 </div>
               ))
+            )}
+            {canQuickCreate && (
+              <div
+                onClick={handleQuickCreate}
+                className={`px-2.5 py-1.5 text-xs font-bold cursor-pointer transition-colors border-t border-slate-100 ${creating ? 'text-slate-300 pointer-events-none' : 'text-emerald-600 hover:bg-emerald-50'}`}
+              >
+                {creating ? 'Đang tạo...' : `+ Thêm nhanh "${trimmedSearch}"`}
+              </div>
             )}
           </div>
         )}
