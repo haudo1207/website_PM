@@ -824,6 +824,21 @@ def apply_schema_updates():
             "CREATE INDEX IF NOT EXISTS ix_tasks_v2_support_scheduled ON tasks_v2 (support_id, scheduled_at)"
         ))
 
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS review_checklist_items (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks_v2(id) ON DELETE CASCADE,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                content TEXT NOT NULL,
+                is_completed BOOLEAN NOT NULL DEFAULT FALSE,
+                completed_at TIMESTAMP WITH TIME ZONE,
+                completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_review_checklist_items_task_id ON review_checklist_items (task_id)"))
+
 def init_db_defaults():
     from .database import SessionLocal
     from .models.user import User
