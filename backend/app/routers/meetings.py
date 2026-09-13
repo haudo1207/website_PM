@@ -138,16 +138,20 @@ def parse_n8n_markdown_summary(text: str) -> dict:
 
 def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
     # Whether the CALLER (not just any admin) can edit/delete/sync this
-    # meeting — super_admin/leader globally, or a member/viewer whose
-    # project_members role for m.project_id is PM/Leader. Purely a UI hint:
-    # require_route_project_access re-checks this server-side on every
-    # write regardless of what this flag says, so a stale/omitted value
-    # here (db/current_user not passed) just means the UI is conservative,
-    # never a permission bypass.
+    # meeting — super_admin/leader globally, whoever created this specific
+    # meeting, or a member/viewer whose project_members role for m.project_id
+    # is PM/Leader. Purely a UI hint: require_route_project_access re-checks
+    # this server-side on every write regardless of what this flag says
+    # (same 3 conditions, see its ROLE_MEMBER branch), so a stale/omitted
+    # value here (db/current_user not passed) just means the UI is
+    # conservative, never a permission bypass.
     can_manage = False
     if current_user is not None:
         role = getattr(current_user, "role", None)
+        member_id = getattr(current_user, "member_id", None)
         if role in WRITE_ROLES:
+            can_manage = True
+        elif member_id is not None and m.created_by is not None and member_id == m.created_by:
             can_manage = True
         elif db is not None and m.project_id:
             can_manage = has_full_project_access(db, current_user, m.project_id)
