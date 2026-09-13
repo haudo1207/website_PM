@@ -3588,6 +3588,10 @@ function ProjectDetailContent() {
             key={col}
             col={col}
             kind="area"
+            // This row's SKILL AREA and SKILL cells mount together (they're
+            // both part of the same "add new task" form) — autofocusing
+            // either would pop its panel open with nothing clicked.
+            autoFocus={false}
             items={activeGroups.map((g: any) => ({ id: g.id, name: g.name, meta: `${(g.skills || []).filter((s: any) => s.is_active).length} skills` }))}
             editValue={newForm[col] || ''}
             placeholder="Tìm Skill Area..."
@@ -3647,6 +3651,7 @@ function ProjectDetailContent() {
             key={col}
             col={col}
             kind="skill"
+            autoFocus={false}
             items={availableSkills}
             editValue={newForm[col] || ''}
             placeholder="Tìm Skill..."
@@ -11008,11 +11013,19 @@ interface CategorySearchCellProps {
   // Full Area→Skills tree, only for the "⚙ Quản lý danh mục" browse panel.
   // Omitted entirely hides that button (e.g. if the tree isn't loaded yet).
   catalogAreas?: { id: number; name: string; skills: { id: number; name: string }[] }[];
+  // Steal focus (and so pop the panel open) the moment this cell mounts.
+  // Correct when exactly one cell mounts at a time (clicking an EXISTING
+  // task's cell to edit it), wrong for the "add new task" row: every column
+  // — including both Skill Area and Skill — mounts together as one form, so
+  // autofocus-on-mount would pop both panels open with nothing clicked.
+  // Those call sites pass false.
+  autoFocus?: boolean;
 }
 
-function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, contextAreaName, catalogAreas }: CategorySearchCellProps) {
+function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, contextAreaName, catalogAreas, autoFocus = true }: CategorySearchCellProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [creating, setCreating] = useState(false);
+  const [isOpen, setIsOpen] = useState(autoFocus);
   const [catalogMode, setCatalogMode] = useState(false);
   const [catalogAddingFor, setCatalogAddingFor] = useState<number | null>(null);
   const [catalogSkillName, setCatalogSkillName] = useState('');
@@ -11034,6 +11047,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
         onCancel();
       }
     };
@@ -11045,6 +11059,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
 
   const handleSelect = (itemId: number, action?: 'Enter' | 'Tab' | 'ShiftTab') => {
     onSaveWithAction(String(itemId), action);
+    setIsOpen(false);
   };
 
   const trimmedSearch = searchTerm.trim();
@@ -11093,6 +11108,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
         onSaveWithAction('', action);
       }
     } else if (e.key === 'Escape') {
+      setIsOpen(false);
       onCancel();
     }
   };
@@ -11108,11 +11124,13 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
           type="text"
           value={searchTerm}
           placeholder={placeholder}
-          autoFocus
-          onChange={e => setSearchTerm(e.target.value)}
+          autoFocus={autoFocus}
+          onFocus={() => setIsOpen(true)}
+          onChange={e => { setSearchTerm(e.target.value); setIsOpen(true); }}
           onKeyDown={handleKeyDown}
           className="w-full bg-white border border-[#0058be] rounded px-2 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
         />
+        {isOpen && (
         <div className="absolute left-0 mt-1 w-80 max-h-[26rem] bg-white border border-slate-200 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
           {!catalogMode ? (
             <>
@@ -11132,7 +11150,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
               {/* Options list */}
               <div className="overflow-y-auto max-h-[180px] py-1 shrink-0">
                 <div
-                  onClick={() => onSaveWithAction('')}
+                  onClick={() => { onSaveWithAction(''); setIsOpen(false); }}
                   className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
                 >
                   — Không gán — <span className="text-[9.5px] text-red-300 font-normal">· Xóa lựa chọn</span>
@@ -11267,6 +11285,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
             </>
           )}
         </div>
+        )}
       </div>
     </td>
   );
