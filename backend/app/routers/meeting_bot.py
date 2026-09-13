@@ -94,6 +94,7 @@ def get_bot_queue(
         db.query(Meeting)
         .filter(
             Meeting.status.in_(["UPCOMING", "ONGOING"]),
+            Meeting.deleted_at.is_(None),
             Meeting.meeting_url.isnot(None),
             Meeting.meeting_url.ilike("%meet.google.com%"),
             Meeting.meeting_date >= window_start.date(),

@@ -115,7 +115,11 @@ def _claim_due_meetings(db):
     now = datetime.datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
     candidates = (
         db.query(Meeting)
-        .filter(Meeting.status == "UPCOMING", Meeting.reminder_sent_at.is_(None))
+        .filter(
+            Meeting.status == "UPCOMING",
+            Meeting.reminder_sent_at.is_(None),
+            Meeting.deleted_at.is_(None),
+        )
         .all()
     )
     claimed = []
