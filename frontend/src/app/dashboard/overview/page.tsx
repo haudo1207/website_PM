@@ -1109,7 +1109,19 @@ export default function OverviewTab() {
       if (mid == null) return null;
       const entries = workspaceRolesByMember[Number(mid)] || [];
       const primary = entries.find((e: any) => e.is_primary);
-      return (primary?.code || '').toLowerCase() || null;
+      if (primary?.code) return primary.code.toLowerCase();
+      // Fallback for a Leader with no `user_workspace_access` primary row yet
+      // (the junction backfill is best-effort, not DB-enforced — see
+      // access.py's primary_workspace_code_for_user comment). Without this,
+      // homeWsCodeForSummary silently falls through to '' (no switcher
+      // Workspace selected either), which forces every project to read as
+      // "in home Workspace" and makes Tham gia ngoài permanently empty for
+      // this Leader regardless of real cross-Workspace data. `workspace_code`
+      // (from /api/members, derived from the User.data_scope column) is the
+      // same resilient source the Leader's own self-view branch below
+      // already trusts instead of this junction table.
+      const memberRow = rawMembers.find((m: any) => isSameId(m.id, mid));
+      return (memberRow?.workspace_code || '').toLowerCase() || null;
     })();
     // Drilled all the way down to one specific Member (either an Admin
     // going Leader → Member, or a Leader picking one of their own team) —
@@ -1123,7 +1135,10 @@ export default function OverviewTab() {
       if (!Number.isFinite(mid)) return null;
       const entries = workspaceRolesByMember[mid] || [];
       const primary = entries.find((e: any) => e.is_primary);
-      return (primary?.code || '').toLowerCase() || null;
+      if (primary?.code) return primary.code.toLowerCase();
+      // Same junction-backfill fallback as drilledLeaderHomeWs above.
+      const memberRow = rawMembers.find((m: any) => isSameId(m.id, mid));
+      return (memberRow?.workspace_code || '').toLowerCase() || null;
     })();
     const homeWsCodeForSummary = (
       drilledMemberHomeWs
