@@ -13,7 +13,7 @@ import MeetingPlaybook from '@/components/meetings/MeetingPlaybook';
 import KpiCard from '@/components/dashboard/KpiCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
-import { getMeetings, createMeeting, updateMeeting, deleteMeeting, syncMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
 import { isAdmin, getRole } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
@@ -482,13 +482,6 @@ function MeetingsPageContent() {
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
       alert(error.response?.data?.detail || "Có lỗi xảy ra khi xóa cuộc họp");
-    }
-  };
-
-  const handleSync = async (meeting: any) => {
-    const data = await syncMeeting(parseInt(meeting.id));
-    if (data.success) {
-      await Promise.all([fetchMeetings(), fetchMyMeetings()]);
     }
   };
 
@@ -1200,7 +1193,6 @@ function MeetingsPageContent() {
         onClose={handleCloseDetail}
         meeting={detailMeeting}
         onEdit={detailMeeting?.can_manage ? handleOpenEditFromDetail : undefined}
-        onSync={detailMeeting?.can_manage ? handleSync : undefined}
         onDelete={detailMeeting?.can_manage && isMeetingDeletable(detailMeeting?.status) ? (m => { handleCloseDetail(); setDeleteConfirmId(String(m.id)); }) : undefined}
       />
 

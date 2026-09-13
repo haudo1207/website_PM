@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Download, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
+import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
@@ -36,7 +36,6 @@ interface MeetingDetailModalProps {
   onClose: () => void;
   meeting: any;
   onEdit?: (meeting: any) => void;
-  onSync?: (meeting: any) => Promise<any>;
   onDelete?: (meeting: any) => void;
 }
 
@@ -45,7 +44,6 @@ export default function MeetingDetailModal({
   onClose,
   meeting,
   onEdit,
-  onSync,
   onDelete
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
@@ -60,7 +58,6 @@ export default function MeetingDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   // Assign Project Modal State
   const [isAssignProjectOpen, setIsAssignProjectOpen] = useState(false);
@@ -395,19 +392,6 @@ export default function MeetingDetailModal({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleSyncClick = async () => {
-    if (!onSync || isSyncing) return;
-    setIsSyncing(true);
-    try {
-      await onSync(meeting);
-      triggerToast('✓ Đã đồng bộ transcript & AI Summary thành công!');
-    } catch (err: any) {
-      alert(err?.response?.data?.detail || 'Lỗi khi đồng bộ cuộc họp');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   const handlePushTasks = async () => {
     if (!tasksList.length) {
       alert("Cuộc họp này chưa có Task AI đề xuất để push!");
@@ -480,23 +464,6 @@ export default function MeetingDetailModal({
     } finally {
       setIsPushing(false);
     }
-  };
-
-  const handleDownloadTranscript = () => {
-    if (!rawTranscript) {
-      alert("Chưa có nội dung biên bản cuộc họp để tải về.");
-      return;
-    }
-    const filename = `${meetingTitle.replace(/[^a-zA-Z0-9_\-\s]/g, '').trim().replace(/\s+/g, '_')}_Bien_ban.txt`;
-    const blob = new Blob([rawTranscript], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   const handleCopyTranscript = () => {
@@ -689,15 +656,6 @@ export default function MeetingDetailModal({
                     >
                       <span>📋 Sao chép link họp</span>
                     </button>
-                    {onSync && (
-                      <button
-                        onClick={() => { setShowMenu(false); handleSyncClick(); }}
-                        disabled={isSyncing}
-                        className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be] flex items-center gap-2 disabled:opacity-50"
-                      >
-                        <span>{isSyncing ? '⏳ Đang đồng bộ...' : '🔄 Đồng bộ (Sync)'}</span>
-                      </button>
-                    )}
                     {onDelete && (
                       <button
                         onClick={() => { setShowMenu(false); onDelete(meeting); }}
@@ -1508,15 +1466,6 @@ export default function MeetingDetailModal({
                   >
                     <Copy size={14} />
                     <span>{copiedTranscript ? 'Đã sao chép!' : 'Sao chép'}</span>
-                  </button>
-
-                  <button
-                    onClick={handleDownloadTranscript}
-                    disabled={!rawTranscript}
-                    className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-[#cbd5e1] text-[#0b1c30] text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center gap-1.5"
-                  >
-                    <Download size={14} />
-                    <span>Tải file (.txt)</span>
                   </button>
                 </div>
               </div>
