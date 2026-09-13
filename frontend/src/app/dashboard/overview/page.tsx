@@ -414,6 +414,7 @@ function projectIsExternalMember(
   userRole: string,
   userMemberIds: number[],
   homeWsCode: string | null,
+  hasTeamTask: boolean = false,
 ): boolean {
   const isLeader = String(userRole || '').toLowerCase() === 'leader';
   // Anything not in the caller's home Workspace — empty data_scope
@@ -435,12 +436,17 @@ function projectIsExternalMember(
   // Leader: project lives outside the primary Workspace AND ANYONE on
   // this Leader's team (themself or a report) appears in the project's
   // member/participant list (any junction role, including the canonical
-  // PM/PL columns) — a report contributing to an outside project counts
-  // as the team's external participation, matching the spec example for
-  // INFRA Project A "Leader is a project member → Tham gia ngoài" and its
-  // team-rollup equivalent.
+  // PM/PL columns), OR simply has a task (assigned/support) in the
+  // project — being handed a task there is real "Tham gia ngoài"
+  // participation on its own, it doesn't require also being formally
+  // added to the project's PM/Leader/Sales/Member roster (that junction
+  // is often never filled in for a one-off cross-Workspace task, which
+  // was leaving a report's real external contribution invisible here
+  // even though it already counted in the roster-level Tham gia ngoài
+  // badge, which is task-based via computeWsBreakdown above).
   const idSet = new Set(userMemberIds.map(String));
   return (
+    hasTeamTask ||
     (p.pm_id != null && idSet.has(String(p.pm_id))) ||
     (Array.isArray(p.pm_ids) && p.pm_ids.some((id: any) => idSet.has(String(id)))) ||
     (p.technical_leader_id != null && idSet.has(String(p.technical_leader_id))) ||
@@ -1311,6 +1317,7 @@ export default function OverviewTab() {
           effectiveRoleForTabs,
           teamMemberIds,
           homeWsCodeForSummary,
+          pLeaderTasks.length > 0,
         ),
         // Legacy flag preserved — drives the Full/Limited access badge and
         // the Limited-access contribution modal. Same semantic as before:
