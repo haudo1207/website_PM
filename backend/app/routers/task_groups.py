@@ -2016,7 +2016,12 @@ def approve_task(gid: int, tid: int, db: Session = Depends(get_db), current_user
     phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
     project_id = phase.project_id if phase else None
 
-    if not is_project_leader(db, current_user, project_id):
+    is_leader = is_project_leader(db, current_user, project_id)
+    if not is_leader and task.assigned_id and getattr(current_user, "member_id", None):
+        assignee = db.query(Member).filter(Member.id == task.assigned_id).first()
+        if assignee and assignee.leader_member_id == current_user.member_id:
+            is_leader = True
+    if not is_leader:
         raise HTTPException(403, "Bạn không có quyền duyệt task này.")
     if task.review_status != "pending":
         raise HTTPException(400, "Task hiện không ở trạng thái chờ review nên không thể duyệt.")
@@ -2095,7 +2100,12 @@ def request_task_changes(gid: int, tid: int, body: dict, db: Session = Depends(g
     phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
     project_id = phase.project_id if phase else None
 
-    if not is_project_leader(db, current_user, project_id):
+    is_leader = is_project_leader(db, current_user, project_id)
+    if not is_leader and task.assigned_id and getattr(current_user, "member_id", None):
+        assignee = db.query(Member).filter(Member.id == task.assigned_id).first()
+        if assignee and assignee.leader_member_id == current_user.member_id:
+            is_leader = True
+    if not is_leader:
         raise HTTPException(403, "Bạn không có quyền yêu cầu sửa task này.")
     if task.review_status != "pending":
         raise HTTPException(400, "Task hiện không ở trạng thái chờ review nên không thể yêu cầu sửa.")
