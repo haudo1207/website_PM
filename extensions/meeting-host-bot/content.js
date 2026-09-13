@@ -451,6 +451,24 @@ function getParticipantCount() {
   const contribMatch = (document.body.innerText || "").match(CONTRIBUTORS_COUNT_RE);
   if (contribMatch) return parseInt(contribMatch[1], 10);
 
+  // Confirmed live 2026-09-13 (solo host, real end-to-end test): the People
+  // panel header is NOT visible body text on this account/UI variant — it
+  // only exists as the toggle button's aria-label, e.g. exactly
+  // "Contributors1keyboard_arrow_down" (aria-expanded="true" once open,
+  // icon alt text tacked on the same way ADMIT_ALL_RE's label is). The
+  // CONTRIBUTORS_COUNT_RE check above (against document.body.innerText)
+  // never matches this — aria-label attributes aren't part of innerText —
+  // and the loop below used to miss it too since "contributors" wasn't in
+  // its keyword list, silently leaving checkSoloTimeout() unable to ever
+  // detect "alone" on this account. Checked first, before the generic
+  // people/participants scan, since it's the more specific/reliable signal
+  // when the panel is open (matches ensurePeoplePanelOpen()'s own check).
+  for (const el of allButtons()) {
+    const label = el.getAttribute("aria-label") || "";
+    const m = label.match(/contributors\s*(\d+)/i);
+    if (m) return parseInt(m[1], 10);
+  }
+
   // Meet's "People" bottom-bar toggle usually carries the head-count in
   // its aria-label (e.g. "People, 2 participants" / "Mọi người, 2 người").
   for (const el of allButtons()) {

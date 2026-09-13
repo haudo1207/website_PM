@@ -130,6 +130,58 @@ async function getDriveUploadInfo(meetingId) {
   }
 }
 
+// Reports the Meeting Host Bot's actual-end signal to the backend — the
+// ONLY thing that marks a web-created meeting DONE (chốt 2026-09-13; see
+// backend/app/routers/meeting_bot.py's POST /ended and
+// backend/app/services/meeting_sync.py's removal of the old end_time-based
+// auto-DONE). Called from every "the call is over" convergence point below
+// (CALL_ENDED message, tab navigated away, tab closed unexpectedly) — never
+// from anything time-based.
+//
+// Retries a few times (the endpoint is idempotent — a duplicate call once
+// already DONE just returns changed:false, never double-applies anything —
+// so retrying after a lost response, e.g. a network blip, is always safe).
+// Deliberately does NOT block cleanup forever on this: per the ordering
+// this exists to protect (notify BEFORE releasing the local tab lock),
+// finishing all retries here before the caller proceeds is exactly the
+// point, but giving up after a bounded number of attempts and still letting
+// cleanup proceed is what stops one unreachable backend from permanently
+// wedging this profile out of ever handling its next queued meeting. A
+// failure here is logged loudly — it means this specific meeting is stuck
+// showing ONGOING in the app until someone/something else reconciles it.
+async function reportMeetingEnded(meetingId) {
+  if (!meetingId) return;
+  const config = await getConfig();
+  if (!config.apiBaseUrl || !config.botToken || !config.googleEmail) {
+    log(`reportMeetingEnded(${meetingId}): apiBaseUrl/botToken/googleEmail chưa cấu hình đủ — bỏ qua.`);
+    return;
+  }
+  const url = `${config.apiBaseUrl}/api/meeting-bot/ended`;
+  const attempts = 3;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-meeting-bot-token": config.botToken },
+        body: JSON.stringify({ meeting_id: meetingId, google_email: config.googleEmail }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok) {
+        log(`reportMeetingEnded(${meetingId}): backend acked (attempt ${attempt}/${attempts})`, JSON.stringify(data));
+        return;
+      }
+      log(`reportMeetingEnded(${meetingId}): backend rejected (attempt ${attempt}/${attempts}) HTTP ${resp.status}`, JSON.stringify(data));
+      // 403/404 are not transient (wrong organizer / meeting doesn't exist) —
+      // retrying the exact same request won't change that outcome.
+      if (resp.status === 403 || resp.status === 404) return;
+    } catch (error) {
+      log(`reportMeetingEnded(${meetingId}): request failed (attempt ${attempt}/${attempts}):`, error?.message || error);
+    }
+    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+  }
+  log(`reportMeetingEnded(${meetingId}): giving up after ${attempts} attempts — meeting may be stuck as ONGOING until reconciled manually.`);
+}
+
 async function stopRecording(meetingId) {
   if (!RECORDING_ENABLED) return;
   const upload = await getDriveUploadInfo(meetingId);
@@ -165,8 +217,15 @@ function closeTab(tabId) {
 // what actually stops ffmpeg instead of leaving it recording a dead tab.
 // The tab is already gone here, so there's nothing to close.
 chrome.tabs.onRemoved.addListener((tabId) => {
-  popMeetingForTab(tabId).then((meetingId) => {
-    if (meetingId) stopRecording(meetingId);
+  popMeetingForTab(tabId).then(async (meetingId) => {
+    if (meetingId) {
+      // Notify-before-cleanup ordering doesn't apply here in the strict
+      // sense (the tab is already gone, there's no lock left to protect) —
+      // still call it so this backup path reports actual-end too, same as
+      // the other two paths below.
+      await reportMeetingEnded(meetingId);
+      await stopRecording(meetingId);
+    }
   });
 });
 
@@ -198,7 +257,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     // the recording phase, which matters for back-to-back meetings on the
     // same Gmail account.
     (async () => {
-      if (entry.meetingId) await stopRecording(entry.meetingId);
+      // Notify-before-cleanup (chốt 2026-09-13): report actual-end to the
+      // backend BEFORE releasing this profile's local "busy" lock
+      // (popMeetingForTab) — see reportMeetingEnded's own docstring for why
+      // this doesn't block cleanup forever if the backend is unreachable.
+      if (entry.meetingId) {
+        await reportMeetingEnded(entry.meetingId);
+        await stopRecording(entry.meetingId);
+      }
       await popMeetingForTab(tabId);
       closeTab(tabId);
     })();
@@ -594,7 +660,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // on the same Gmail account: without this, a slow Drive upload leaves a
     // window where the guard reads "free" while this tab is still open.
     getMeetingForTab(tabId).then(async (meetingId) => {
-      if (meetingId) await stopRecording(meetingId);
+      // Notify-before-cleanup ordering (chốt 2026-09-13): this is the PRIMARY
+      // actual-end path (content.js's checkCallEnded — the "Leave call"
+      // button disappearing after having been in the call — never based on
+      // end_time). Report to the backend first; only then release this
+      // profile's local lock and close the tab.
+      if (meetingId) {
+        await reportMeetingEnded(meetingId);
+        await stopRecording(meetingId);
+      }
       await popMeetingForTab(tabId);
       closeTab(tabId);
       sendResponse({ success: true });

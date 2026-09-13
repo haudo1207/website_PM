@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Clipboard } from 'lucide-react';
-import { generateMeetingLink, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getMeetings, getApiErrorMessage } from '@/lib/api';
+import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect, { SearchableSelectHandle } from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
@@ -50,32 +50,6 @@ function continueNumberedList(el: HTMLTextAreaElement): { value: string; caret: 
   return { value: before + insert + after, caret: pos + insert.length };
 }
 
-// Shared by the live conflict check and the "gợi ý giờ khác" slot scan below —
-// both need the same "does this member already have an overlapping meeting"
-// logic, just evaluated at different candidate times.
-function findConflicts(time: string, durationMin: number, items: any[], memberIds: number[], excludeId?: any) {
-  const [sh, sm] = time.split(':').map(Number);
-  const startMin = sh * 60 + (sm || 0);
-  const endMin = startMin + durationMin;
-  const found: { member_id: number; name: string; meetingTitle: string }[] = [];
-  (Array.isArray(items) ? items : []).forEach((mt: any) => {
-    if (!mt || mt.id === excludeId || !mt.time) return;
-    const [oh, om] = String(mt.time).split(':').map(Number);
-    const oStart = oh * 60 + (om || 0);
-    let oEnd = oStart + 60;
-    if (mt.end_time) {
-      const [eh, em] = String(mt.end_time).split(':').map(Number);
-      oEnd = eh * 60 + (em || 0);
-    }
-    if (startMin >= oEnd || oStart >= endMin) return;
-    (mt.members || []).forEach((mm: any) => {
-      if (mm.member_id && memberIds.includes(mm.member_id)) {
-        found.push({ member_id: mm.member_id, name: mm.display_name || `#${mm.member_id}`, meetingTitle: mt.title });
-      }
-    });
-  });
-  return found;
-}
 
 const SUMMARY_WEEKDAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 function formatSummaryDate(dateStr: string): string {
@@ -184,7 +158,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const [error, setError] = useState('');
   const [manualTitleEdit, setManualTitleEdit] = useState(false);
   const [checkingConflicts, setCheckingConflicts] = useState(false);
-  const [scheduleConflicts, setScheduleConflicts] = useState<{ member_id: number; name: string; meetingTitle: string }[]>([]);
+  // Overlap rule (chốt 2026-09-13): organizer is the source of truth, not
+  // participants — at most ONE conflicting meeting is possible per the
+  // backend's own check (same Gmail host can't be in two calls at once),
+  // so this is a single nullable result, not a per-member list.
+  const [organizerConflict, setOrganizerConflict] = useState<{ message: string; organizer_google_email: string } | null>(null);
   const [suggestedSlots, setSuggestedSlots] = useState<string[]>([]);
   // Tracks project_ids across renders so the member-cascade effect below can
   // tell which project was just REMOVED (vs. this being the modal's initial
@@ -331,13 +309,14 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     if (suggestion) setFormData(prev => ({ ...prev, title: suggestion }));
   };
 
-  // Real trùng-lịch check: pull meetings already scheduled on the same date
-  // and see whether any selected participant is already booked in an
-  // overlapping time window. No fabricated/demo data — if the API has
-  // nothing for that day, nothing is reported.
+  // Overlap check (chốt 2026-09-13): organizer is the source of truth, not
+  // participants — calls the backend's /meetings/check-conflict, the EXACT
+  // same rule create/update/retry-link enforce, instead of a separately
+  // hand-rolled member-based heuristic that could disagree with what
+  // submitting the form will actually do.
   useEffect(() => {
-    if (!isOpen || !formData.date || !formData.time || formData.member_ids.length === 0) {
-      setScheduleConflicts([]);
+    if (!isOpen || !formData.date || !formData.time || formData.project_ids.length === 0) {
+      setOrganizerConflict(null);
       setSuggestedSlots([]);
       return;
     }
@@ -345,35 +324,40 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     const timer = setTimeout(async () => {
       setCheckingConflicts(true);
       try {
-        const res: any = await getMeetings({ from_date: formData.date, to_date: formData.date });
-        const items: any[] = res?.data || res || [];
-        const dur = parseInt(formData.duration || '60', 10) || 60;
-        const found = findConflicts(formData.time, dur, items, formData.member_ids, initialData?.id);
+        const check = (time: string) => checkMeetingConflict({
+          project_id: formData.project_ids[0],
+          date: formData.date,
+          time,
+          duration: formData.duration,
+          exclude_meeting_id: initialData?.id,
+        });
+        const res = await check(formData.time);
         if (cancelled) return;
-        setScheduleConflicts(found);
-        if (found.length === 0) {
+        if (!res?.conflict) {
+          setOrganizerConflict(null);
           setSuggestedSlots([]);
-        } else {
-          // Scan half-hour slots across business hours, offer the first few
-          // that are free for every currently selected member.
-          const candidates: string[] = [];
-          for (let h = 8; h <= 18; h++) {
-            candidates.push(`${String(h).padStart(2, '0')}:00`, `${String(h).padStart(2, '0')}:30`);
-          }
-          const free = candidates
-            .filter(t => t !== formData.time)
-            .filter(t => findConflicts(t, dur, items, formData.member_ids, initialData?.id).length === 0)
-            .slice(0, 4);
-          setSuggestedSlots(free);
+          return;
         }
+        setOrganizerConflict({ message: res.message, organizer_google_email: res.organizer_google_email });
+        // Scan half-hour slots across business hours, offer the first few
+        // that are free for the same organizer.
+        const candidates: string[] = [];
+        for (let h = 8; h <= 18; h++) {
+          candidates.push(`${String(h).padStart(2, '0')}:00`, `${String(h).padStart(2, '0')}:30`);
+        }
+        const results = await Promise.all(
+          candidates.filter(t => t !== formData.time).map(t => check(t).then(r => ({ t, conflict: !!r?.conflict })).catch(() => ({ t, conflict: true })))
+        );
+        if (cancelled) return;
+        setSuggestedSlots(results.filter(r => !r.conflict).map(r => r.t).slice(0, 4));
       } catch {
-        if (!cancelled) { setScheduleConflicts([]); setSuggestedSlots([]); }
+        if (!cancelled) { setOrganizerConflict(null); setSuggestedSlots([]); }
       } finally {
         if (!cancelled) setCheckingConflicts(false);
       }
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [isOpen, formData.date, formData.time, formData.duration, formData.member_ids.join(','), initialData?.id]);
+  }, [isOpen, formData.date, formData.time, formData.duration, formData.project_ids.join(','), initialData?.id]);
 
   if (!isOpen) return null;
 
@@ -409,6 +393,19 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     setIsGeneratingLink(true);
     setError('');
     try {
+      // Organizer rule (chốt 2026-09-13): for an EXISTING meeting, "🔄 Tạo lại"
+      // must go through /{id}/retry-link — the only backend path allowed to
+      // reassign organizer_google_email — instead of generate-link + a plain
+      // PUT, since PUT no longer accepts organizer_google_email at all.
+      if (initialData?.id) {
+        const data = await retryMeetingLink(initialData.id);
+        if (data.success && data.data?.link) {
+          setFormData(prev => ({ ...prev, link: data.data.link }));
+        } else {
+          setError('Không thể tạo lại link meeting tự động');
+        }
+        return;
+      }
       const data = await generateMeetingLink({
         platform: formData.platform,
         title: formData.title,
@@ -730,17 +727,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 )}
 
                 {checkingConflicts && (
-                  <p className="text-[11px] text-[#94a3b8] mt-2">Đang kiểm tra trùng lịch...</p>
+                  <p className="text-[11px] text-[#94a3b8] mt-2">Đang kiểm tra trùng lịch (theo tài khoản host)...</p>
                 )}
-                {!checkingConflicts && formData.member_ids.length > 0 && (
-                  scheduleConflicts.length > 0 ? (
+                {!checkingConflicts && formData.project_ids.length > 0 && (
+                  organizerConflict ? (
                     <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800">
-                      <p className="font-bold mb-1">⚠ {scheduleConflicts.length} người có thể trùng lịch:</p>
-                      <ul className="list-disc pl-4 space-y-0.5">
-                        {scheduleConflicts.map((c, i) => (
-                          <li key={i}><b>{c.name}</b> đang có meeting khác: {c.meetingTitle}</li>
-                        ))}
-                      </ul>
+                      <p className="font-bold mb-1">⚠ Trùng lịch host: {organizerConflict.message}</p>
                       {suggestedSlots.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-amber-200">
                           <span className="font-bold">✨ Gợi ý giờ khác:</span>
@@ -759,7 +751,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     </div>
                   ) : (
                     <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] text-emerald-700 font-semibold">
-                      ✓ Người tham gia hiện tại đang rảnh trong khung giờ này
+                      ✓ Tài khoản host đang rảnh trong khung giờ này
                     </div>
                   )
                 )}

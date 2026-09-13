@@ -340,6 +340,8 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
         "created_by": m.created_by,
         "creator_name": m.creator.display_name if m.creator else None,
         "host_google_email": host_google_email,
+        "n8n_notify_status": m.n8n_notify_status,
+        "n8n_notify_attempts": m.n8n_notify_attempts,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
         "members": final_members,
@@ -376,26 +378,30 @@ def _sync_meeting_projects(db: Session, meeting_id: int, project_ids) -> None:
             db.add(MeetingProject(meeting_id=meeting_id, project_id=pid))
 
 
-def _check_organizer_time_conflict(
+def _find_organizer_time_conflict(
     db: Session,
     organizer_google_email: Optional[str],
     meeting_date,
     start_time,
     end_time,
     exclude_meeting_id: Optional[int] = None,
-) -> None:
-    """Raise 400 if [meeting_date/start_time, end_time) overlaps another
-    UPCOMING/ONGOING meeting for the same organizer_google_email.
+) -> Optional["Meeting"]:
+    """Return the first UPCOMING/ONGOING meeting for the same
+    organizer_google_email whose [meeting_date/start_time, end_time) overlaps
+    the given window, or None. Single source of truth for the overlap rule —
+    used both to ENFORCE (raise 400 via _check_organizer_time_conflict below)
+    and to PREVIEW (GET .../check-conflict, read-only) — so the frontend can
+    never show "trùng"/"rảnh" out of sync with what create/update will
+    actually accept, unlike two independently-written checks.
 
     A single Gmail account can only ever host one Google Meet call at a time
     (Meeting Host Bot enforces "1 profile = 1 active Meet tab" — see the
     extension's README) — two overlapping meetings for the same organizer
-    can never both actually be attended by the bot, so this is blocked
-    outright rather than just warned about. Skipped entirely when any of
-    the four inputs is missing (nothing to compare against).
+    can never both actually be attended by the bot. Skipped entirely (returns
+    None) when any of the four inputs is missing (nothing to compare against).
     """
     if not organizer_google_email or not meeting_date or not start_time or not end_time:
-        return
+        return None
 
     new_end_date = meeting_date + datetime.timedelta(days=1) if end_time < start_time else meeting_date
     new_start_dt = datetime.datetime.combine(meeting_date, start_time)
@@ -420,13 +426,28 @@ def _check_organizer_time_conflict(
         other_start_dt = datetime.datetime.combine(other.meeting_date, other.start_time)
         other_end_dt = datetime.datetime.combine(other_end_date, other.end_time)
         if new_start_dt < other_end_dt and other_start_dt < new_end_dt:
-            raise HTTPException(
-                400,
-                f"Trùng giờ với cuộc họp #{other.id} \"{other.title}\" "
-                f"({other.meeting_date} {other.start_time}–{other.end_time}) — "
-                f"cùng tài khoản Google host ({organizer_google_email}) chỉ có thể "
-                f"tự động vào 1 cuộc họp tại một thời điểm.",
-            )
+            return other
+    return None
+
+
+def _check_organizer_time_conflict(
+    db: Session,
+    organizer_google_email: Optional[str],
+    meeting_date,
+    start_time,
+    end_time,
+    exclude_meeting_id: Optional[int] = None,
+) -> None:
+    """Raise 400 if a conflict exists — see _find_organizer_time_conflict."""
+    other = _find_organizer_time_conflict(db, organizer_google_email, meeting_date, start_time, end_time, exclude_meeting_id)
+    if other:
+        raise HTTPException(
+            400,
+            f"Trùng giờ với cuộc họp #{other.id} \"{other.title}\" "
+            f"({other.meeting_date} {other.start_time}–{other.end_time}) — "
+            f"cùng tài khoản Google host ({organizer_google_email}) chỉ có thể "
+            f"tự động vào 1 cuộc họp tại một thời điểm.",
+        )
 
 
 # ─── LIST ───────────────────────────────────────────────
@@ -602,6 +623,65 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
             raise HTTPException(status_code=400, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail=f"Nền tảng '{platform}' chưa hỗ trợ tự động tạo link.")
+
+
+@router.post("/check-conflict")
+def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Read-only preview of the organizer-conflict rule create/update/retry-link
+    enforce (chốt 2026-09-13: overlap source of truth = organizer, not
+    participants — see _find_organizer_time_conflict). The frontend calls this
+    instead of computing its own member-based heuristic, so a "trùng"/"rảnh"
+    hint on screen can never disagree with what submitting will actually do.
+
+    organizer_google_email isn't user-chosen — it's resolved from project_id's
+    workspace the exact same way create_google_meet_link will, without
+    actually calling the Calendar API (no side effects, safe to call on every
+    keystroke's debounce)."""
+    project_id = body.get("project_id")
+    proj = db.query(Project).filter(Project.id == project_id).first() if project_id else None
+    workspace_id = workspace_id_for_project(db, proj)
+
+    from ..services.meeting_sync import is_workspace_google_connected
+    organizer_google_email = None
+    if workspace_id:
+        organizer_google_email = (is_workspace_google_connected(db, workspace_id) or {}).get("google_email")
+    organizer_google_email = organizer_google_email or "mkt.szone@gmail.com"
+
+    date_val = body.get("meeting_date") or body.get("date")
+    meeting_date = parse_date(date_val) if date_val else None
+    start_time = parse_time(body.get("start_time") or body.get("time")) if (body.get("start_time") or body.get("time")) else None
+    end_time = parse_time(body.get("end_time")) if body.get("end_time") else None
+    if not end_time and start_time and body.get("duration"):
+        try:
+            dur_mins = int(body["duration"])
+            start_dt = datetime.datetime.combine(datetime.date.today(), start_time)
+            end_time = (start_dt + datetime.timedelta(minutes=dur_mins)).time()
+        except Exception:
+            end_time = None
+
+    exclude_id = body.get("exclude_meeting_id")
+    try:
+        exclude_id = int(exclude_id) if exclude_id is not None else None
+    except (TypeError, ValueError):
+        exclude_id = None
+
+    other = _find_organizer_time_conflict(db, organizer_google_email, meeting_date, start_time, end_time, exclude_meeting_id=exclude_id)
+    if other:
+        return {
+            "conflict": True,
+            "organizer_google_email": organizer_google_email,
+            "meeting_id": other.id,
+            "title": other.title,
+            "meeting_date": str(other.meeting_date),
+            "start_time": other.start_time.strftime("%H:%M"),
+            "end_time": other.end_time.strftime("%H:%M"),
+            "message": (
+                f"Tài khoản host {organizer_google_email} đã có cuộc họp \"{other.title}\" "
+                f"từ {other.start_time.strftime('%H:%M')} đến {other.end_time.strftime('%H:%M')} "
+                f"ngày {other.meeting_date} — không thể tự động vào 2 cuộc họp cùng lúc."
+            ),
+        }
+    return {"conflict": False, "organizer_google_email": organizer_google_email}
 
 
 # ─── MEETING INTELLIGENCE INSIGHTS (must stay above GET /{id} — no path param) ───
@@ -987,7 +1067,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     meeting_url_lower = (m.meeting_url or "").lower()
     if "meet.google.com" in meeting_url_lower or (m.platform or "").lower() in ("google meet", "google"):
         from ..services.meeting_sync import notify_n8n_meeting_created, rename_google_meet_event_tag
-        notify_n8n_meeting_created(db, m.id, m.title, m.meeting_date, m.start_time, workspace_id)
+        notify_n8n_meeting_created(db, m, workspace_id)
         rename_google_meet_event_tag(db, m.google_event_id, m.id, m.title, workspace_id)
     if extra_project_ids:
         _sync_meeting_projects(db, m.id, extra_project_ids)
@@ -1070,14 +1150,16 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     m.description = body.get("description", m.description)
     m.platform = body.get("platform", m.platform)
     m.meeting_url = body.get("meeting_url") or body.get("link") or m.meeting_url
-    # Only overwrite when the FE actually regenerated a link this edit (see
-    # CreateMeetingModal's "🔄 Tạo lại" flow, which calls /generate-link again
-    # and resends these two alongside the new meeting_url) — a plain
-    # date/time edit sends neither, so the original organizer/event stays put.
-    if body.get("google_event_id"):
-        m.google_event_id = body.get("google_event_id")
-    if body.get("organizer_google_email"):
-        m.organizer_google_email = body.get("organizer_google_email")
+    # Organizer rule (chốt 2026-09-13): organizer_google_email is immutable via
+    # this generic edit endpoint — the Meeting Host Bot's "1 Gmail host = 1
+    # concurrent meeting" invariant and the overlap check both key off this
+    # field, so it must never change as a side effect of an unrelated PUT body
+    # (e.g. a date/time edit that happens to still carry the old value, or a
+    # client that hand-crafts the field). The only way to reassign the
+    # organizer is POST /{id}/retry-link, which atomically generates a brand
+    # new Google Meet link AND persists organizer_google_email server-side —
+    # never via this endpoint. `google_event_id` follows the same rule since
+    # it's tied 1:1 to the same Calendar event as the organizer.
     m.meeting_date = new_date
 
     # Support time mappings
@@ -1242,6 +1324,12 @@ def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
+    if m.status in ("ONGOING", "DONE"):
+        raise HTTPException(
+            400,
+            f"Không thể xóa cuộc họp đã {'đang diễn ra' if m.status == 'ONGOING' else 'hoàn thành (DONE)'} "
+            "— cuộc họp này có thể đã có transcript/AI summary/điểm hiệu quả gắn liền.",
+        )
     m_title, m_project_id = m.title, m.project_id
     db.delete(m)
     db.commit()
@@ -1839,21 +1927,51 @@ def google_health_check(db: Session = Depends(get_db)):
 # ─── RETRY LINK CREATION ENDPOINT (SPEC CHAPTER 06) ───────────
 @router.post("/{id}/retry-link")
 def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Retry creating Google Meet link for a meeting that failed link creation."""
+    """Regenerate the Google Meet link for a meeting — this is the ONLY
+    server-side path allowed to change organizer_google_email after creation
+    (chốt 2026-09-13): PUT /{id} no longer accepts it, precisely so a real
+    organizer reassignment always goes through an actual new Calendar event
+    here, never as a side effect of an unrelated field edit."""
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
+    if not m.meeting_date or not m.start_time:
+        raise HTTPException(400, "Cuộc họp cần có ngày và giờ bắt đầu trước khi tạo lại link")
+
+    dur_mins = 60
+    if m.start_time and m.end_time:
+        start_mins = m.start_time.hour * 60 + m.start_time.minute
+        end_mins = m.end_time.hour * 60 + m.end_time.minute
+        if end_mins < start_mins:
+            end_mins += 24 * 60
+        dur_mins = max(end_mins - start_mins, 1)
+    start_datetime = f"{m.meeting_date.isoformat()}T{m.start_time.strftime('%H:%M')}:00Z"
 
     from ..services.meeting_sync import create_google_meet_link
     meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
     workspace_id = workspace_id_for_project(db, meeting_proj)
-    link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", m.meeting_date.isoformat() if m.meeting_date else "", workspace_id=workspace_id)
-    if link_data and link_data.get("join_url"):
-        m.meeting_link = link_data["join_url"]
-        db.commit()
-        return {"success": True, "meeting_link": m.meeting_link}
+    link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", start_datetime, dur_mins, workspace_id=workspace_id)
+    if not link_data or not link_data.get("join_url"):
+        raise HTTPException(500, "Không thể tạo lại link Google Meet")
 
-    raise HTTPException(500, "Không thể tạo lại link Google Meet")
+    new_organizer = link_data.get("organizer_google_email")
+    # Check the NEW organizer's schedule before committing — reassigning to an
+    # account that's already busy at this exact slot is exactly the conflict
+    # this whole rule exists to prevent.
+    _check_organizer_time_conflict(db, new_organizer, m.meeting_date, m.start_time, m.end_time, exclude_meeting_id=m.id)
+
+    m.meeting_url = link_data["join_url"]
+    m.google_event_id = link_data.get("id") or m.google_event_id
+    m.organizer_google_email = new_organizer or m.organizer_google_email
+    db.commit()
+    db.refresh(m)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=id, action="UPDATE", project_id=m.project_id, resource_name=m.title,
+        description=f"Tạo lại link Google Meet, đổi organizer sang {new_organizer or '(không đổi)'}"
+    )
+    db.commit()
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 
 # ─── N8N INTEGRATION WEBHOOK SCHEMAS & ENDPOINT ───────────────
@@ -2039,7 +2157,16 @@ def ingest_n8n_meeting_summary(
             existing_auto_created = bool(matched_meeting.ai_summary.get("is_auto_created"))
         norm_summary["is_auto_created"] = existing_auto_created
         matched_meeting.ai_summary = norm_summary
-        matched_meeting.status = "DONE"
+        # NOTE (chốt 2026-09-13): no longer sets matched_meeting.status here.
+        # Meeting lifecycle (UPCOMING/ONGOING/DONE) and the n8n processing
+        # pipeline are independent — n8n finishing its AI summary does not by
+        # itself prove the Meeting is DONE (see Meeting Host Bot's actual-end
+        # report, POST /api/meeting-bot/ended, which is now the only thing
+        # that sets DONE for a web-created meeting). A meeting can very
+        # reasonably still be ONGOING while n8n has already produced a
+        # summary for an earlier portion, or n8n can complete well after the
+        # Bot already marked it DONE — either order is fine, this webhook
+        # only ever touches transcript/ai_summary/date/time/link.
 
         # Preserve existing assignments: only update if currently NULL and new mapping exists
         if matched_meeting.project_id is None and mapped_project_id is not None:

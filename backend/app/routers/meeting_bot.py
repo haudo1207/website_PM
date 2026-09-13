@@ -214,6 +214,51 @@ def _get_or_create_recordings_folder(access_token: str) -> Optional[str]:
         return None
 
 
+@router.post("/ended")
+def report_meeting_ended(
+    body: dict,
+    db: Session = Depends(get_db),
+    _=Depends(_check_bot_token),
+):
+    """Bot-reported actual-end signal — the ONLY thing that marks a
+    web-created meeting DONE (chốt 2026-09-13). end_time is a planned end
+    only; a meeting genuinely still in the Meet call past its planned
+    end_time must stay ONGOING. Only the bot itself, watching the real Meet
+    tab, knows when the call has actually ended (its own UI showing "Meeting
+    ended" / "You left the meeting" / back at meet.google.com/home) — this
+    must NOT be called just because end_time passed, a Join/Host/Admit
+    attempt failed, the bot crashed, or the VPS restarted. Any of those stay
+    silently in whatever status the meeting was already in; they are
+    recovery/error conditions, not "the meeting ended."
+
+    Body: {"meeting_id": int, "google_email": str}
+    """
+    meeting_id = body.get("meeting_id")
+    google_email = (body.get("google_email") or "").strip().lower()
+    if not meeting_id or not google_email:
+        raise HTTPException(status_code=400, detail="meeting_id và google_email là bắt buộc")
+
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    organizer = (meeting.organizer_google_email or "").strip().lower()
+    if not organizer or organizer != google_email:
+        raise HTTPException(
+            status_code=403,
+            detail=f"google_email không khớp organizer của meeting #{meeting_id}",
+        )
+
+    if meeting.status == "CANCELLED":
+        return {"success": True, "changed": False, "status": meeting.status, "reason": "meeting is CANCELLED"}
+    if meeting.status == "DONE":
+        return {"success": True, "changed": False, "status": meeting.status, "reason": "already DONE"}
+
+    meeting.status = "DONE"
+    db.commit()
+    return {"success": True, "changed": True, "status": "DONE"}
+
+
 @router.get("/drive-token")
 def get_drive_upload_token(
     meeting_id: int,

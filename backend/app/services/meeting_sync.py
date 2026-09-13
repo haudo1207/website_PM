@@ -671,14 +671,33 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
         raise ValueError(f"Không thể khởi tạo cuộc họp Google Meet: {e}")
 
 
-def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time, workspace_id: int = None) -> None:
+N8N_NOTIFY_MAX_ATTEMPTS = 3
+
+
+def notify_n8n_meeting_created(db, m, workspace_id: int = None) -> None:
     """
     Fire-and-forget webhook to n8n right after a meeting's Google Meet link is
     created, so n8n can search Drive directly for the recording tagged
-    "[MK-{mk_tag}]" (see create_google_meet_shared) instead of blindly polling
-    every "Google Meet" folder for the most recent videos. Best-effort only:
-    n8n discovery must not be able to break meeting creation, so any failure
-    here is logged and swallowed.
+    "[MK-{m.id}]" (see create_google_meet_shared) instead of blindly polling
+    every "Google Meet" folder for the most recent videos. Best-effort in the
+    sense that a failure here must never be able to break meeting creation —
+    the Meeting row always persists regardless of what happens in this call.
+
+    n8n_notify_status tracking (chốt 2026-09-13): this used to be truly
+    fire-and-forget — a failure only logged a warning, with no visible sign
+    anywhere that a meeting never actually reached n8n (this exact class of
+    bug — wrong webhook URL, workspace misconfig, n8n down — was hit live
+    multiple times in production debugging). Now: PENDING -> SENT on success;
+    on failure, stays PENDING (picked up again by retry_pending_n8n_notifies,
+    the 30s auto-sync loop's sibling) until N8N_NOTIFY_MAX_ATTEMPTS is
+    exhausted, then FAILED — a queryable, visible terminal state instead of a
+    silently swallowed log line.
+
+    meeting_url is passed through as-is (2026-09-13, P1): n8n used to re-derive
+    the real Meet link itself by matching a Calendar event's "created" timestamp
+    against the Drive video's subfolder — a fragile workaround. The backend
+    already knows the real URL at creation time, so n8n's Calendar-lookup step
+    is no longer needed.
     """
     # Route by the Workspace's own n8n_webhook_url (set via the Workspace admin
     # UI/API, e.g. Settings > Workspaces) — each workspace can point at its own
@@ -692,21 +711,70 @@ def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time,
             url = ws.n8n_webhook_url
 
     if not url:
+        m.n8n_notify_status = "FAILED"
+        m.n8n_notify_last_error = "no n8n_webhook_url configured (workspace or default)"
+        if db is not None:
+            db.commit()
         return
 
+    m.n8n_notify_attempts = (m.n8n_notify_attempts or 0) + 1
     try:
         requests.post(
             url,
             json={
-                "mk_tag": mk_tag,
-                "title": title,
-                "meeting_date": meeting_date.isoformat() if hasattr(meeting_date, "isoformat") else meeting_date,
-                "start_time": start_time.isoformat() if hasattr(start_time, "isoformat") else start_time,
+                "mk_tag": m.id,
+                "title": m.title,
+                "meeting_date": m.meeting_date.isoformat() if hasattr(m.meeting_date, "isoformat") else m.meeting_date,
+                "start_time": m.start_time.isoformat() if hasattr(m.start_time, "isoformat") else m.start_time,
+                "meeting_url": m.meeting_url,
             },
             timeout=5,
         )
+        m.n8n_notify_status = "SENT"
+        m.n8n_notify_last_error = None
     except Exception as e:
-        logger.warning(f"notify_n8n_meeting_created failed (non-fatal): {e}")
+        logger.warning(f"notify_n8n_meeting_created failed (attempt {m.n8n_notify_attempts}/{N8N_NOTIFY_MAX_ATTEMPTS}) for meeting {m.id}: {e}")
+        m.n8n_notify_last_error = str(e)[:1000]
+        m.n8n_notify_status = "FAILED" if m.n8n_notify_attempts >= N8N_NOTIFY_MAX_ATTEMPTS else "PENDING"
+    if db is not None:
+        db.commit()
+    if m.n8n_notify_status == "FAILED":
+        try:
+            from .telegram import send_group_message
+            send_group_message(
+                f"⚠️ <b>Meeting #{m.id}</b> \"{m.title}\" không thể gửi webhook cho n8n "
+                f"sau {m.n8n_notify_attempts} lần thử — bản ghi cuộc họp sẽ KHÔNG được "
+                f"n8n tự động xử lý (tóm tắt AI/ghi log). Kiểm tra n8n_webhook_url của "
+                f"workspace hoặc trạng thái n8n."
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send n8n-notify-failed Telegram alert for meeting {m.id}: {e}")
+
+
+def retry_pending_n8n_notifies(db) -> int:
+    """Companion to the 30s auto-sync loop (see main.py's start_auto_sync_loop):
+    re-attempts notify_n8n_meeting_created for every meeting still stuck at
+    n8n_notify_status='PENDING' after its first attempt failed. Returns the
+    count retried this pass. Meetings created with no Google Meet link never
+    get a first attempt at all (n8n_notify_status stays at its 'PENDING'
+    column default forever) — harmless, since PENDING here just means "never
+    applicable", not "known to have failed"; only meetings that actually went
+    through create_meeting's notify call and failed have n8n_notify_attempts > 0.
+    """
+    from ..models.meeting import Meeting
+    from ..utils.access import workspace_id_for_project
+    from ..models.project import Project
+
+    pending = (
+        db.query(Meeting)
+        .filter(Meeting.n8n_notify_status == "PENDING", Meeting.n8n_notify_attempts > 0)
+        .all()
+    )
+    for m in pending:
+        proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+        workspace_id = workspace_id_for_project(db, proj)
+        notify_n8n_meeting_created(db, m, workspace_id)
+    return len(pending)
 
 
 def sync_google_meet(db, user_id: int, meeting_url: str, meeting_info: dict, workspace_id: int = None) -> dict:
@@ -1591,13 +1659,25 @@ def auto_sync_all_ended_meetings(db):
                 logger.info(f"Auto-sync for meeting ID {m.id} ('{m.title}'): {e}")
 
             if result:
+                # A real external signal (Zoom's cloud-recording API actually
+                # reports the call ended, or a legacy direct Google sync found
+                # a transcript) — legitimate to mark DONE.
                 m.status = "DONE"
                 apply_sync_result_to_meeting(m, result)
                 db.commit()
                 count_synced += 1
-            elif needs_end_update:
-                m.status = "DONE"
-                db.commit()
+            # NOTE (chốt 2026-09-13): no `elif needs_end_update: m.status =
+            # "DONE"` fallback anymore. end_time is a PLANNED end only — it is
+            # no longer treated as the actual end signal. A Google Meet
+            # meeting whose end_time has passed but has no real "the call
+            # actually ended" signal yet (Meeting Host Bot's actual-end report,
+            # see POST /api/meeting-bot/ended in meeting_bot.py) stays
+            # UPCOMING/ONGOING here — this was exactly the naive clock-only
+            # assumption that broke a meeting still genuinely in progress past
+            # its planned end_time. n8n's AI-summary webhook also no longer
+            # sets Meeting.status (see meetings.py's webhook handler) — the
+            # Meeting lifecycle and the n8n processing pipeline are
+            # intentionally independent now.
 
     if count_synced > 0:
         logger.info(f"[AutoSync] Successfully auto-synced AI Summary for {count_synced} meeting(s).")

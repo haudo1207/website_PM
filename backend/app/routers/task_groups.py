@@ -1721,6 +1721,23 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
 
     # Status
     if "status" in body:
+        new_status_l = (body["status"] or "").strip().lower()
+        old_status_l = (old_dict["status"] or "").strip().lower()
+        # Members cannot set status to Done directly - must go through Review workflow
+        # Only Leaders/Super Admin can approve tasks (Review → Done)
+        if (
+            new_status_l in ("done", "completed")
+            and old_status_l not in ("done", "completed")
+            and not is_project_leader(db, current_user, project_id)
+        ):
+            raise HTTPException(403, "Chỉ Leader mới có quyền chuyển task sang Done. Member cần chuyển task sang Review và chờ Leader duyệt.")
+        if (
+            "review" in old_status_l
+            and new_status_l == "done"
+            and (task.review_status == "pending")
+            and not is_project_leader(db, current_user, project_id)
+        ):
+            raise HTTPException(403, "Task đang chờ review. Chỉ Leader mới có quyền duyệt sang Done.")
         task.status = body["status"]
         # Review workflow sync - CHỈ khi status thực sự chuyển VÀO/RA khỏi 1
         # status chứa "review" (edge, không phải mọi save trong lúc status vẫn
@@ -2143,6 +2160,192 @@ def request_task_review(gid: int, tid: int, db: Session = Depends(get_db), curre
     )
 
     return serialize_task(task, db)
+
+
+# ═══════════════════════════════════════════════════════════
+# REVIEW CHECKLIST (Leader creates items, Member ticks them)
+# ═══════════════════════════════════════════════════════════
+
+from ..models.review_checklist import ReviewChecklistItem
+
+
+def _serialize_checklist_item(item):
+    return {
+        "id": item.id,
+        "task_id": item.task_id,
+        "created_by": item.created_by,
+        "created_by_name": (item.creator.full_name if item.creator else None),
+        "content": item.content,
+        "is_completed": item.is_completed,
+        "completed_at": str(item.completed_at) if item.completed_at else None,
+        "completed_by": item.completed_by,
+        "completed_by_name": (item.completer.full_name if item.completer else None),
+        "sort_order": item.sort_order,
+        "created_at": str(item.created_at) if item.created_at else None,
+    }
+
+
+@router.get("/task-groups/{gid}/tasks/{tid}/review-checklist")
+def list_review_checklist(gid: int, tid: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    items = db.query(ReviewChecklistItem).filter(
+        ReviewChecklistItem.task_id == tid
+    ).order_by(ReviewChecklistItem.sort_order, ReviewChecklistItem.id).all()
+    return [_serialize_checklist_item(i) for i in items]
+
+
+@router.post("/task-groups/{gid}/tasks/{tid}/review-checklist")
+def create_review_checklist_item(gid: int, tid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+    if not is_project_leader(db, current_user, project_id):
+        raise HTTPException(403, "Chỉ Leader mới có thể tạo mục checklist.")
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "Nội dung checklist là bắt buộc.")
+    if len(content) > 1000:
+        raise HTTPException(400, "Nội dung checklist tối đa 1000 ký tự.")
+    max_order = db.query(sql_func.max(ReviewChecklistItem.sort_order)).filter(
+        ReviewChecklistItem.task_id == tid
+    ).scalar() or 0
+    item = ReviewChecklistItem(
+        task_id=tid,
+        created_by=getattr(current_user, "id", None),
+        content=content,
+        sort_order=max_order + 1,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return _serialize_checklist_item(item)
+
+
+@router.patch("/task-groups/{gid}/tasks/{tid}/review-checklist/{item_id}")
+def toggle_review_checklist_item(gid: int, tid: int, item_id: int, body: dict = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    item = db.query(ReviewChecklistItem).filter(
+        ReviewChecklistItem.id == item_id,
+        ReviewChecklistItem.task_id == tid,
+    ).first()
+    if not item:
+        raise HTTPException(404, "Checklist item not found.")
+    if body and "is_completed" in body:
+        item.is_completed = bool(body["is_completed"])
+        if item.is_completed:
+            item.completed_at = datetime.utcnow()
+            item.completed_by = getattr(current_user, "id", None)
+        else:
+            item.completed_at = None
+            item.completed_by = None
+    if body and "content" in body:
+        content = (body["content"] or "").strip()
+        if not content:
+            raise HTTPException(400, "Nội dung checklist là bắt buộc.")
+        item.content = content
+    db.commit()
+    db.refresh(item)
+    return _serialize_checklist_item(item)
+
+
+@router.delete("/task-groups/{gid}/tasks/{tid}/review-checklist/{item_id}")
+def delete_review_checklist_item(gid: int, tid: int, item_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+    if not is_project_leader(db, current_user, project_id):
+        raise HTTPException(403, "Chỉ Leader mới có thể xóa mục checklist.")
+    item = db.query(ReviewChecklistItem).filter(
+        ReviewChecklistItem.id == item_id,
+        ReviewChecklistItem.task_id == tid,
+    ).first()
+    if not item:
+        raise HTTPException(404, "Checklist item not found.")
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/task-groups/{gid}/tasks/{tid}/notify-review")
+def notify_review_to_leader(gid: int, tid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == tid, Task.task_group_id == gid).first()
+    if not task:
+        raise HTTPException(404, "Task not found.")
+    status_l = (task.status or "").strip().lower()
+    if "review" not in status_l:
+        raise HTTPException(400, "Task chưa ở trạng thái Review.")
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
+    project_id = phase.project_id if phase else None
+    if not project_id:
+        raise HTTPException(400, "Không tìm thấy dự án.")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    sender_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một thành viên")
+    recipients = db.query(User).filter(
+        User.role == "super_admin",
+        User.is_active == True,
+    ).all()
+    from sqlalchemy import or_
+    project_leaders = db.query(User).filter(
+        or_(User.role == "super_admin", User.role == "leader"),
+        User.is_active == True,
+        User.id.in_(
+            db.query(project_members.c.member_id).join(
+                Member, Member.id == project_members.c.member_id
+            ).join(
+                User, User.member_id == Member.id
+            ).where(
+                project_members.c.project_id == project_id,
+                project_members.c.role.in_(["PM", "Leader"]),
+            ).with_entities(User.id)
+        ),
+    ).all()
+    leader_by_member = []
+    if getattr(current_user, "member_id", None):
+        sender_member = db.query(Member).filter(Member.id == current_user.member_id).first()
+        if sender_member and sender_member.leader_member_id:
+            leader_user = db.query(User).filter(
+                User.member_id == sender_member.leader_member_id,
+                User.is_active == True,
+            ).first()
+            if leader_user:
+                leader_by_member = [leader_user]
+    all_recipients = {u.id: u for u in list(recipients) + list(project_leaders) + list(leader_by_member)}
+    task_code = task.task_code or str(task.id)
+    project_name = project.name if project else ""
+    for uid, recipient in all_recipients.items():
+        if uid == getattr(current_user, "id", None):
+            continue
+        existing = db.query(Notification).filter(
+            Notification.recipient_id == uid,
+            Notification.task_id == task.id,
+            Notification.notification_type == "review_notification",
+            Notification.is_read == False,
+        ).first()
+        if existing:
+            continue
+        db.add(Notification(
+            recipient_id=uid,
+            sender_id=getattr(current_user, "id", None),
+            task_id=task.id,
+            task_group_id=gid,
+            project_id=project_id,
+            message=f"🔔 {sender_name} thông báo review task [{task_code}]: '{task.detail}' trong dự án '{project_name}'.",
+            notification_type="review_notification",
+            is_read=False,
+        ))
+    db.commit()
+    return {"ok": True, "sent": len(all_recipients)}
 
 
 # ═══════════════════════════════════════════════════════════
