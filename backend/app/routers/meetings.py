@@ -46,28 +46,30 @@ def _now_vn() -> datetime.datetime:
 
 
 def compute_display_status(m: Meeting) -> str:
-    """Meeting status architecture (chốt kiến trúc):
-      SẮP TỚI      -> now < start_time
-      ĐANG DIỄN RA -> start_time <= now < end_time
-      ĐÃ KẾT THÚC  -> now >= end_time
-    Computed live from meeting_date/start_time/end_time so the badge is
-    always accurate regardless of the background auto-sync loop's cadence.
-    CANCELLED is a manual state and always wins over the time computation;
-    falls back to the stored status when date/time isn't fully set (can't compute).
+    """Meeting status architecture (chốt 2026-09-13 — end_time is PLANNED end
+    only, never lifecycle state):
+      DONE/CANCELLED -> always read straight from the real, stored m.status
+                         (only the Bot's actual-end report, a real external
+                         sync, or a manual cancel may set these — never the
+                         clock, see auto_sync_all_ended_meetings/notify_n8n's
+                         removal of the old end_time-based auto-DONE).
+      otherwise       -> live start_time vs now decides SẮP TỚI/ĐANG DIỄN RA
+                         for display only (there's no automatic DB write for
+                         this transition, and none is needed: nothing in the
+                         business rules depends on ONGOING-vs-UPCOMING being
+                         exactly accurate in real time, unlike DONE).
+    Previously this also flipped to "ĐÃ KẾT THÚC" once now >= end_time even
+    when the stored status was still ONGOING — showing "ended" for a meeting
+    the Bot was still genuinely in, and confusingly allowing edits the DONE
+    guards would otherwise have blocked. Fixed: end_time is no longer read
+    here at all.
     """
-    if m.status == "CANCELLED":
-        return "ĐÃ HỦY"
-    if m.meeting_date and m.start_time and m.end_time:
+    if m.status in ("DONE", "CANCELLED"):
+        return STATUS_DB_TO_FE.get(m.status, m.status)
+    if m.meeting_date and m.start_time:
         start_dt = datetime.datetime.combine(m.meeting_date, m.start_time)
-        end_dt = datetime.datetime.combine(m.meeting_date, m.end_time)
-        if m.end_time < m.start_time:
-            end_dt += datetime.timedelta(days=1)
         now = _now_vn()
-        if now >= end_dt:
-            return "ĐÃ KẾT THÚC"
-        if now >= start_dt:
-            return "ĐANG DIỄN RA"
-        return "SẮP TỚI"
+        return "ĐANG DIỄN RA" if now >= start_dt else "SẮP TỚI"
     return STATUS_DB_TO_FE.get(m.status, m.status)
 
 def parse_time(time_str: str):
@@ -886,18 +888,17 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         except Exception:
             pass
 
+    # Lifecycle rule (chốt 2026-09-13): ONGOING/DONE are server-controlled —
+    # only the Meeting Host Bot's actual-end report (POST /api/meeting-bot/ended),
+    # a real external sync (Zoom cloud API, POST /{id}/sync), or n8n creating a
+    # brand-new row from an already-discovered recording may set them. A client
+    # cannot manufacture either state just by passing it in the create body.
+    # CANCELLED is the one genuinely manual state (no bot/clock can know a
+    # meeting was called off) and stays client-settable.
     status_input = str(body.get("status", "UPCOMING")).upper()
     status = STATUS_FE_TO_DB.get(status_input, status_input)
-    if status not in ["UPCOMING", "ONGOING", "DONE", "CANCELLED"]:
+    if status not in ("UPCOMING", "CANCELLED"):
         status = "UPCOMING"
-
-    # Rule 02: If DONE, meeting_date must be <= today
-    # Same UTC-vs-VN gap as generate_meeting_link above: a bare date.today()
-    # here would wrongly reject "mark today's meeting DONE" during VN's
-    # 00:00-06:59 window, since the container's naive today() is still on
-    # VN's yesterday at that point.
-    if status == "DONE" and meeting_date > _now_vn().date():
-        raise HTTPException(400, "Cuộc họp ở trạng thái DONE không được có ngày họp lớn hơn ngày hiện tại")
 
     # Multiple projects: front-end sends project_ids: [int]. First one becomes
     # the "primary" project_id (kept for scoring/back-compat); the rest go
@@ -1125,23 +1126,28 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     old_meeting_date = m.meeting_date
     old_start_time = m.start_time
     old_end_time = m.end_time
+    # Lifecycle rule (chốt 2026-09-13): ONGOING/DONE are server-controlled —
+    # a client PUT can no longer force either one directly (see create_meeting's
+    # matching comment for the full rationale). Only CANCELLED, and reverting
+    # a CANCELLED meeting back to UPCOMING, are genuine manual actions a client
+    # may request here; anything else in the body is silently ignored and the
+    # meeting keeps whatever status it already had.
     status_input = str(body.get("status", m.status)).upper()
-    new_status = STATUS_FE_TO_DB.get(status_input, status_input)
-    if new_status not in ["UPCOMING", "ONGOING", "DONE", "CANCELLED"]:
+    requested_status = STATUS_FE_TO_DB.get(status_input, status_input)
+    if requested_status in ("CANCELLED", "UPCOMING"):
+        new_status = requested_status
+    else:
         new_status = m.status
 
     # Support 'date' or 'meeting_date'
     new_date_str = body.get("meeting_date") or body.get("date")
     new_date = parse_date(new_date_str) if new_date_str else m.meeting_date
 
-    # Rule 05: Meeting DONE -> Cannot change meeting_date
+    # Rule 05: Meeting DONE -> Cannot change meeting_date. old_status reflects
+    # whatever the bot/a real sync already set — still enforced regardless of
+    # what the client is trying to do in this same request.
     if old_status == "DONE" and new_date != m.meeting_date:
         raise HTTPException(400, "Không thể thay đổi ngày họp của cuộc họp đã hoàn thành (DONE)")
-
-    # Rule 02: If DONE, meeting_date must be <= today (see _now_vn() docstring
-    # for why a bare date.today() is wrong here — same fix as create_meeting).
-    if new_status == "DONE" and new_date > _now_vn().date():
-        raise HTTPException(400, "Cuộc họp ở trạng thái DONE không được có ngày họp lớn hơn ngày hiện tại")
 
     m.title = str(body.get("title", m.title)).strip()
     if not m.title:
@@ -1935,6 +1941,19 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
     m = db.query(Meeting).filter(Meeting.id == id).first()
     if not m:
         raise HTTPException(404, "Không tìm thấy cuộc họp")
+    # Status guard (chốt 2026-09-13): only UPCOMING may regenerate. Reassigning
+    # the organizer while ONGOING risks the Meeting Host Bot being live in the
+    # OLD organizer's session — its eventual actual-end report
+    # (POST /api/meeting-bot/ended) would then carry the stale google_email,
+    # get rejected (403, organizer mismatch), and the extension does not retry
+    # on 403 — permanently stranding the meeting at ONGOING. DONE/CANCELLED
+    # meetings have no legitimate reason to regenerate a link at all.
+    if m.status != "UPCOMING":
+        raise HTTPException(
+            400,
+            f"Chỉ có thể tạo lại link Google Meet khi cuộc họp đang ở trạng thái UPCOMING "
+            f"(hiện tại: {m.status}).",
+        )
     if not m.meeting_date or not m.start_time:
         raise HTTPException(400, "Cuộc họp cần có ngày và giờ bắt đầu trước khi tạo lại link")
 
@@ -1950,7 +1969,14 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
     from ..services.meeting_sync import create_google_meet_link
     meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
     workspace_id = workspace_id_for_project(db, meeting_proj)
-    link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", start_datetime, dur_mins, workspace_id=workspace_id)
+    try:
+        link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", start_datetime, dur_mins, workspace_id=workspace_id)
+    except ValueError as e:
+        # Same shape as /generate-link's own handling — a clean 400 instead of
+        # an unhandled 500. No fields on `m` have been touched yet at this
+        # point, so the meeting row is guaranteed untouched (chốt 2026-09-13:
+        # "Google API fail → DB không đổi").
+        raise HTTPException(400, str(e))
     if not link_data or not link_data.get("join_url"):
         raise HTTPException(500, "Không thể tạo lại link Google Meet")
 
