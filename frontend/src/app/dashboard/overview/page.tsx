@@ -1223,6 +1223,10 @@ export default function OverviewTab() {
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
         hasPM: Boolean(pmName), hasTasks: pTasksToUse.length > 0,
         business: p.business || null,
+        // Already returned by GET /api/projects (serialize_project_summary
+        // joins Project.customer) — just wasn't being copied into the card
+        // object yet.
+        customerName: p.customer_name || null,
         dataScope,
         contributingNames,
         drilledPersonHasAccess,
@@ -2128,7 +2132,13 @@ export default function OverviewTab() {
             >
               <div>
                 <div className="flex justify-between items-start mb-2 gap-2">
-                  <h4 className="text-sm font-black text-[#0b1c30] truncate hover:text-[#0058be]" title={p.name}>{p.name}</h4>
+                  <h4
+                    className="text-sm font-black text-[#0b1c30] truncate hover:text-[#0058be]"
+                    title={p.customerName ? `${p.name} - ${p.customerName}` : p.name}
+                  >
+                    {p.name}
+                    {p.customerName && <span className="text-slate-400 font-semibold"> - {p.customerName}</span>}
+                  </h4>
                   <div className="flex flex-wrap gap-1 justify-end shrink-0">
                     {p.dataScope && (
                       <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 whitespace-nowrap">

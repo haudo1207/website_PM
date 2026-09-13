@@ -32,6 +32,12 @@ export interface SearchableSelectProps {
   // clipped by overflow-hidden/auto ancestors (e.g. the task table scroll
   // container). Uses getBoundingClientRect() for positioning.
   usePortal?: boolean;
+  // Single-select only. When provided, a "+ Thêm nhanh ..." row appears
+  // whenever the search text has no exact-name match — clicking it (or
+  // pressing Enter with no match) awaits this, then selects the returned
+  // id. Return null to signal a failed/cancelled create (selection is left
+  // unchanged).
+  onQuickCreate?: (name: string) => Promise<{ id: string | number } | null>;
 }
 
 // Lets a parent trigger the dropdown open programmatically — e.g. a
@@ -118,11 +124,13 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
   align = 'left',
   className = '',
   showAvatar = false,
-  usePortal = false
+  usePortal = false,
+  onQuickCreate
 }, ref) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [creatingQuick, setCreatingQuick] = useState(false);
   // When the trigger sits near the bottom of the viewport (e.g. the last
   // field in a scrollable modal), the popup — which always rendered below
   // via `top-full` — got pushed past the visible area, so opening it looked
@@ -295,6 +303,26 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
   // Always show search bar for 100% consistent Enterprise UX
   const showSearchBar = true;
 
+  const trimmedSearch = debouncedSearch.trim();
+  const hasExactMatch = trimmedSearch !== '' && parsedOptions.some(o => o.name.toLowerCase() === trimmedSearch.toLowerCase());
+  const canQuickCreate = Boolean(onQuickCreate) && !isMulti && trimmedSearch !== '' && !hasExactMatch;
+
+  const handleQuickCreate = useCallback(async () => {
+    if (!onQuickCreate || !trimmedSearch || creatingQuick) return;
+    setCreatingQuick(true);
+    try {
+      const created = await onQuickCreate(trimmedSearch);
+      if (created) {
+        onChange(created.id);
+        setOpen(false);
+        setSearch('');
+        setFocusedIndex(-1);
+      }
+    } finally {
+      setCreatingQuick(false);
+    }
+  }, [onQuickCreate, trimmedSearch, creatingQuick, onChange]);
+
   // Reset focus index when options change or dropdown opens
   useEffect(() => {
     if (open) {
@@ -358,6 +386,8 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
               handleSelect(orderedOptions[actualIdx].id);
             }
           }
+        } else if (canQuickCreate) {
+          handleQuickCreate();
         }
         break;
 
@@ -557,6 +587,14 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
                 );
               })
             )}
+            {canQuickCreate && (
+              <div
+                onClick={handleQuickCreate}
+                className={`px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition-colors border-t border-slate-100 mt-1 pt-2 ${creatingQuick ? 'text-slate-300 pointer-events-none' : 'text-emerald-600 hover:bg-emerald-50'}`}
+              >
+                {creatingQuick ? 'Đang tạo...' : `+ Thêm nhanh "${trimmedSearch}"`}
+              </div>
+            )}
           </div>
 
           {/* Footer controls for Multi-select */}
@@ -682,6 +720,14 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
                   </React.Fragment>
                 );
               })
+            )}
+            {canQuickCreate && (
+              <div
+                onClick={handleQuickCreate}
+                className={`px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition-colors border-t border-slate-100 mt-1 pt-2 ${creatingQuick ? 'text-slate-300 pointer-events-none' : 'text-emerald-600 hover:bg-emerald-50'}`}
+              >
+                {creatingQuick ? 'Đang tạo...' : `+ Thêm nhanh "${trimmedSearch}"`}
+              </div>
             )}
           </div>
 

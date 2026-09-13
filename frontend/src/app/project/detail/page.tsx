@@ -798,7 +798,7 @@ function ProjectDetailContent() {
 
   // Task Detail inline Skill creation (REUSES existing Settings Skill
   // architecture: POST /api/skills/groups and POST /api/skills/skills).
-  // Two independent `+` buttons (SKILL SOLUTION, SKILL VENDOR) open a
+  // Two independent `+` buttons (SKILL AREA, SKILL) open a
   // lightweight modal. After successful creation, categories are re-
   // fetched and the new item is auto-selected. State is intentionally
   // kept here (not on the existing Settings page) so the existing
@@ -1186,7 +1186,7 @@ function ProjectDetailContent() {
 
   const TASK_COLUMNS = [
     "TASK ID", "DETAIL TASK", "PRIORITY", "MANDAY EST", "STATUS", "START DATE",
-    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL SOLUTION", "SKILL VENDOR", "LINK",
+    "ASSIGNED", "SUPPORT", "KPI RATIO", "SKILL AREA", "SKILL", "LINK",
     "REMARK", "SEND", "END DATE EST", "DEADLINE", "MD ACTUAL", "END ACTUAL", "DAYS LATE",
     "HEALTH", "KPI BASE", "KPI PERFORM", "KPI OVERTIME", "KPI FINAL", "SUB ID", "ROOT TASKS",
     "NOTES", "SOLUTION"
@@ -1218,8 +1218,8 @@ function ProjectDetailContent() {
       case 'SUPPORT': return task.support_name || '';
       case 'KPI RATIO': return task.support_id ? `${task.kpi_ratio_assign}/${task.kpi_ratio_support}` : '100/0';
       case 'LINK': return task.link || task.ticket_id || '';
-      case 'SKILL SOLUTION': return task.skill_solution_name || '';
-      case 'SKILL VENDOR': return task.skill_vendor_name || '';
+      case 'SKILL AREA': return task.skill_solution_name || '';
+      case 'SKILL': return task.skill_vendor_name || '';
 
       case 'REMARK': return task.remark || '';
       case 'SEND': return task.send || '';
@@ -1248,7 +1248,7 @@ function ProjectDetailContent() {
 
   // Các cột bắt buộc khi tạo task mới (xem handleSaveTask) - không cho ẩn vì
   // ô nhập tương ứng trong dòng "thêm task" cũng dựa theo getDynamicColumns().
-  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL SOLUTION', 'SKILL VENDOR', 'DEADLINE', 'HEALTH'];
+  const LOCKED_COLUMNS = ['TASK ID', 'DETAIL TASK', 'MANDAY EST', 'START DATE', 'ASSIGNED', 'SUPPORT', 'SKILL AREA', 'SKILL', 'DEADLINE', 'HEALTH'];
 
   const MIN_COLUMN_WIDTH = 70;
   const DEFAULT_COLUMN_WIDTH: Record<string, number> = {};
@@ -1269,8 +1269,8 @@ function ProjectDetailContent() {
     'ASSIGNED':       { defaultWidth: 128, minWidth: 90,  align: 'left' },
     'SUPPORT':        { defaultWidth: 128, minWidth: 90,  align: 'left' },
     'KPI RATIO':      { defaultWidth: 85,  minWidth: 70,  align: 'center' },
-    'SKILL SOLUTION': { defaultWidth: 160, minWidth: 110, align: 'left' },
-    'SKILL VENDOR':   { defaultWidth: 120, minWidth: 90,  align: 'left' },
+    'SKILL AREA': { defaultWidth: 160, minWidth: 110, align: 'left' },
+    'SKILL':   { defaultWidth: 120, minWidth: 90,  align: 'left' },
     'LINK':           { defaultWidth: 90,  minWidth: 70,  align: 'left' },
     'REMARK':         { defaultWidth: 165, minWidth: 110, align: 'left' },
     'SEND':           { defaultWidth: 90,  minWidth: 70,  align: 'center' },
@@ -2476,9 +2476,9 @@ function ProjectDetailContent() {
             setEditValue(targetRow.task.assigned_id ? String(targetRow.task.assigned_id) : '');
           } else if (colUpper === 'SUPPORT') {
             setEditValue(targetRow.task.support_id ? String(targetRow.task.support_id) : '');
-          } else if (colUpper === 'SKILL SOLUTION') {
+          } else if (colUpper === 'SKILL AREA') {
             setEditValue(targetRow.task.skill_solution_id ? String(targetRow.task.skill_solution_id) : '');
-          } else if (colUpper === 'SKILL VENDOR') {
+          } else if (colUpper === 'SKILL') {
             setEditValue(targetRow.task.skill_vendor_id ? String(targetRow.task.skill_vendor_id) : '');
           } else {
             setEditValue(val);
@@ -2587,11 +2587,11 @@ function ProjectDetailContent() {
           payload.kpi_ratio_support = 10;
         }
         break;
-      case 'SKILL SOLUTION':
+      case 'SKILL AREA':
         payload.skill_solution_id = value ? parseInt(value, 10) : null;
         payload.skill_vendor_id = null;
         break;
-      case 'SKILL VENDOR':
+      case 'SKILL':
         payload.skill_vendor_id = value ? parseInt(value, 10) : null;
         break;
       case 'TICKET ID':
@@ -3305,7 +3305,7 @@ function ProjectDetailContent() {
   })();
 
   // Task theo loại - dùng skill_solution_name (field thật, đã dùng cho filter
-  // cột Skill Solution ở Tasks tab), không invent category mới.
+  // cột Skill Area ở Tasks tab), không invent category mới.
   const overviewSkillDistribution = (() => {
     const counts: Record<string, number> = {};
     kpiTasks.forEach((t: any) => {
@@ -3462,7 +3462,7 @@ function ProjectDetailContent() {
     // Editable columns
     const REQUIRED_COLS = [
       'DETAIL TASK', 'PRIORITY', 'MANDAY EST', 'STATUS',
-      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR'
+      'START DATE', 'ASSIGNED', 'SUPPORT', 'KPI RATIO', 'SKILL AREA', 'SKILL'
     ];
     const isRequired = REQUIRED_COLS.includes(colUpper);
 
@@ -3569,61 +3569,113 @@ function ProjectDetailContent() {
               }`}
           />
         );
-      } else if (colUpper === 'SKILL SOLUTION') {
+      } else if (colUpper === 'SKILL AREA') {
+        // Same rich picker (title/badge/context line/quick-add form/catalog
+        // browser) as editing an existing task's cell, not the plain
+        // SearchableSelect — this row is a brand-new task, but "which
+        // Skill Area" is the exact same question with the exact same
+        // answer set, so it should look and behave identically.
         const activeGroups = categories
           .filter(c => c.is_active)
           .flatMap(c => c.groups || []);
+        const catalogAreas = activeGroups.map((g: any) => ({
+          id: g.id, name: g.name,
+          skills: (g.skills || []).filter((s: any) => s.is_active),
+        }));
 
-        inputField = (
-          <SearchableSelect
-            label="Group"
-            icon=""
-            options={activeGroups.map((g: any) => ({ id: g.id, name: g.name }))}
-            value={newForm[col] || ''}
-            onChange={(val: any) => {
+        return (
+          <CategorySearchCell
+            key={col}
+            col={col}
+            kind="area"
+            // This row's SKILL AREA and SKILL cells mount together (they're
+            // both part of the same "add new task" form) — autofocusing
+            // either would pop its panel open with nothing clicked.
+            autoFocus={false}
+            items={activeGroups.map((g: any) => ({ id: g.id, name: g.name, meta: `${(g.skills || []).filter((s: any) => s.is_active).length} skills` }))}
+            editValue={newForm[col] || ''}
+            placeholder="Tìm Skill Area..."
+            catalogAreas={catalogAreas}
+            onSaveWithAction={(val) => {
               const selectedGrpId = val === 'all' ? '' : val;
-              const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL VENDOR') || 'SKILL VENDOR';
+              const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL') || 'SKILL';
               setNewForm({
                 ...newForm,
                 [col]: selectedGrpId,
                 [vendorCol]: ''
               });
             }}
-            placeholder="Tìm group..."
-            className="w-full text-[11px]"
-            usePortal
+            onCancel={() => {}}
+            onQuickCreate={async (name) => {
+              const defaultCategory = categories.find((c: any) => c.is_active);
+              if (!defaultCategory) {
+                flash('Chưa có Category nào để gán Skill Area mới vào.', true);
+                return null;
+              }
+              try {
+                await createGroup({ name, category_id: defaultCategory.id });
+                const fresh = await refetchCategories();
+                const created = fresh
+                  .flatMap((c: any) => c.groups || [])
+                  .find((g: any) => g.name === name && Number(g.category_id) === defaultCategory.id);
+                if (created) flash(`Đã tạo Skill Area "${name}"!`);
+                return created ? { id: created.id } : null;
+              } catch (err: any) {
+                flash('Lỗi tạo Skill Area: ' + getApiErrorMessage(err), true);
+                return null;
+              }
+            }}
           />
         );
-      } else if (colUpper === 'SKILL VENDOR') {
-        const solCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL SOLUTION') || 'SKILL SOLUTION';
+      } else if (colUpper === 'SKILL') {
+        const solCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL AREA') || 'SKILL AREA';
         const selectedGroupId = newForm[solCol] || '';
+        const allActiveGroups = categories
+          .filter(c => c.is_active)
+          .flatMap(c => c.groups || []);
+        const currentGroupObj = selectedGroupId ? allActiveGroups.find((g: any) => String(g.id) === String(selectedGroupId)) : null;
         let availableSkills: any[] = [];
-        if (selectedGroupId) {
-          const groupObj = categories
-            .filter(c => c.is_active)
-            .flatMap(c => c.groups || [])
-            .find((g: any) => String(g.id) === String(selectedGroupId));
-          if (groupObj) {
-            availableSkills = (groupObj.skills || []).filter((s: any) => s.is_active);
-          }
+        if (currentGroupObj) {
+          availableSkills = (currentGroupObj.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name }));
         } else {
-          availableSkills = categories
-            .filter(c => c.is_active)
-            .flatMap(c => c.groups || [])
-            .flatMap((g: any) => g.skills || [])
-            .filter((s: any) => s.is_active);
+          availableSkills = allActiveGroups
+            .flatMap((g: any) => (g.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name, meta: g.name })));
         }
+        const catalogAreas = allActiveGroups.map((g: any) => ({
+          id: g.id, name: g.name,
+          skills: (g.skills || []).filter((s: any) => s.is_active),
+        }));
 
-        inputField = (
-          <SearchableSelect
-            label="Skill"
-            icon=""
-            options={availableSkills.map((s: any) => ({ id: s.id, name: s.name }))}
-            value={newForm[col] || ''}
-            onChange={(val: any) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
-            placeholder="Tìm skill..."
-            className="w-full text-[11px]"
-            usePortal
+        return (
+          <CategorySearchCell
+            key={col}
+            col={col}
+            kind="skill"
+            autoFocus={false}
+            items={availableSkills}
+            editValue={newForm[col] || ''}
+            placeholder="Tìm Skill..."
+            contextAreaName={currentGroupObj?.name || ''}
+            catalogAreas={catalogAreas}
+            onSaveWithAction={(val) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
+            onCancel={() => {}}
+            onQuickCreate={async (name, areaIdOverride) => {
+              const groupId = areaIdOverride ?? (selectedGroupId ? parseInt(String(selectedGroupId), 10) : null);
+              if (!groupId) return null;
+              try {
+                await createSkill({ name, group_id: groupId });
+                const fresh = await refetchCategories();
+                const created = fresh
+                  .flatMap((c: any) => c.groups || [])
+                  .flatMap((g: any) => g.skills || [])
+                  .find((s: any) => s.name === name && Number(s.group_id) === groupId);
+                if (created) flash(`Đã tạo Skill "${name}"!`);
+                return created ? { id: created.id } : null;
+              } catch (err: any) {
+                flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
+                return null;
+              }
+            }}
           />
         );
       } else if (colUpper === 'REMARK') {
@@ -3728,8 +3780,8 @@ function ProjectDetailContent() {
     const startDateVal = newForm['START DATE'] || null;
     const assignedVal = newForm['ASSIGNED'] || null;
     const supportVal = newForm['SUPPORT'] || null;
-    const skillSolutionVal = newForm['SKILL SOLUTION'] || null;
-    const skillVendorVal = newForm['SKILL VENDOR'] || null;
+    const skillSolutionVal = newForm['SKILL AREA'] || null;
+    const skillVendorVal = newForm['SKILL'] || null;
 
     if (!detailVal) {
       flash('Tên nhiệm vụ (DETAIL TASK) không được để trống!', true);
@@ -3752,11 +3804,11 @@ function ProjectDetailContent() {
       return;
     }
     if (!skillSolutionVal) {
-      flash('Cột SKILL SOLUTION là bắt buộc.', true);
+      flash('Cột SKILL AREA là bắt buộc.', true);
       return;
     }
     if (!skillVendorVal) {
-      flash('Cột SKILL VENDOR là bắt buộc.', true);
+      flash('Cột SKILL là bắt buộc.', true);
       return;
     }
 
@@ -3780,8 +3832,8 @@ function ProjectDetailContent() {
         notes: newForm['NOTES'] || '',
         assigned_id: newForm['ASSIGNED'] ? parseInt(newForm['ASSIGNED'], 10) : null,
         support_id: newForm['SUPPORT'] ? parseInt(newForm['SUPPORT'], 10) : null,
-        skill_solution_id: newForm['SKILL SOLUTION'] ? parseInt(newForm['SKILL SOLUTION'], 10) : null,
-        skill_vendor_id: newForm['SKILL VENDOR'] ? parseInt(newForm['SKILL VENDOR'], 10) : null,
+        skill_solution_id: newForm['SKILL AREA'] ? parseInt(newForm['SKILL AREA'], 10) : null,
+        skill_vendor_id: newForm['SKILL'] ? parseInt(newForm['SKILL'], 10) : null,
       };
 
       const s = (statusVal || '').trim().toLowerCase();
@@ -3946,9 +3998,9 @@ function ProjectDetailContent() {
 
   // Refetch the categories/groups/skills tree from the same endpoint
   // Settings uses (GET /api/skills/categories) and update the local
-  // `categories` state so the Skill Solution / Vendor dropdowns in this
+  // `categories` state so the Skill Area / Vendor dropdowns in this
   // Task Detail drawer reflect the newly created item without a full
-  // page reload. Reused by the SKILL SOLUTION `+` and SKILL VENDOR `+`
+  // page reload. Reused by the SKILL AREA `+` and SKILL `+`
   // handlers below.
   const refetchCategories = async (): Promise<any[]> => {
     try {
@@ -3962,11 +4014,11 @@ function ProjectDetailContent() {
     }
   };
 
-  // SKILL SOLUTION `+` handler: creates a new Group under the user-
+  // SKILL AREA `+` handler: creates a new Group under the user-
   // chosen Category using the existing POST /api/skills/groups endpoint.
   // Reuses the existing validation + audit pipeline. After success,
   // refreshes the categories tree and auto-selects the new Group as
-  // the SKILL SOLUTION (cascading-clear of the SKILL VENDOR follows
+  // the SKILL AREA (cascading-clear of the SKILL follows
   // the existing onChange contract).
   const handleCreateSkillGroupFromDrawer = async () => {
     const name = newSkillGroupName.trim();
@@ -4004,13 +4056,13 @@ function ProjectDetailContent() {
     }
   };
 
-  // SKILL VENDOR `+` handler: creates a new Skill under the currently
-  // selected SKILL SOLUTION (Group) using the existing POST
+  // SKILL `+` handler: creates a new Skill under the currently
+  // selected SKILL AREA (Group) using the existing POST
   // /api/skills/skills endpoint. If no Solution is selected, the UI
   // is responsible for not opening this modal — but the backend would
   // also reject the request (400 "Group ID is required"). After
   // success, refreshes the categories tree and auto-selects the new
-  // Skill as the SKILL VENDOR.
+  // Skill as the SKILL.
   const handleCreateSkillVendorFromDrawer = async () => {
     const name = newSkillVendorName.trim();
     const solutionId = drawerForm.skill_solution_id ? parseInt(String(drawerForm.skill_solution_id), 10) : null;
@@ -4019,7 +4071,7 @@ function ProjectDetailContent() {
       return;
     }
     if (!solutionId) {
-      flash('Vui lòng chọn SKILL SOLUTION trước!', true);
+      flash('Vui lòng chọn SKILL AREA trước!', true);
       return;
     }
     setCreatingSkillVendor(true);
@@ -4441,9 +4493,9 @@ function ProjectDetailContent() {
         setEditValue(task.assigned_id ? String(task.assigned_id) : '');
       } else if (colUpper === 'SUPPORT') {
         setEditValue(task.support_id ? String(task.support_id) : '');
-      } else if (colUpper === 'SKILL SOLUTION') {
+      } else if (colUpper === 'SKILL AREA') {
         setEditValue(task.skill_solution_id ? String(task.skill_solution_id) : '');
-      } else if (colUpper === 'SKILL VENDOR') {
+      } else if (colUpper === 'SKILL') {
         setEditValue(task.skill_vendor_id ? String(task.skill_vendor_id) : '');
       } else if (colUpper === 'LINK') {
         setEditValue('');
@@ -4804,52 +4856,106 @@ function ProjectDetailContent() {
               );
             }
 
-            if (colUpper === 'SKILL SOLUTION') {
+            if (colUpper === 'SKILL AREA') {
               const activeGroups = categories
                 .filter(c => c.is_active)
                 .flatMap(c => c.groups || []);
+              const catalogAreas = activeGroups.map((g: any) => ({
+                id: g.id, name: g.name,
+                skills: (g.skills || []).filter((s: any) => s.is_active),
+              }));
 
               return (
                 <CategorySearchCell
                   key={col}
                   col={col}
-                  items={activeGroups}
+                  kind="area"
+                  items={activeGroups.map((g: any) => ({ id: g.id, name: g.name, meta: `${(g.skills || []).filter((s: any) => s.is_active).length} skills` }))}
                   editValue={editValue}
-                  placeholder="Tìm Group..."
+                  placeholder="Tìm Skill Area..."
+                  catalogAreas={catalogAreas}
                   onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
                   onCancel={() => setEditingCell(null)}
+                  onQuickCreate={async (name) => {
+                    // No Category picker in this compact cell (unlike the
+                    // Task Detail drawer's dedicated + modal) — Category is
+                    // an internal grouping never surfaced elsewhere in the
+                    // Tasks UI, so default to the first active one to keep
+                    // this a true one-field "type a name, done" quick-add.
+                    const defaultCategory = categories.find((c: any) => c.is_active);
+                    if (!defaultCategory) {
+                      flash('Chưa có Category nào để gán Skill Area mới vào.', true);
+                      return null;
+                    }
+                    try {
+                      await createGroup({ name, category_id: defaultCategory.id });
+                      const fresh = await refetchCategories();
+                      const created = fresh
+                        .flatMap((c: any) => c.groups || [])
+                        .find((g: any) => g.name === name && Number(g.category_id) === defaultCategory.id);
+                      if (created) flash(`Đã tạo Skill Area "${name}"!`);
+                      return created ? { id: created.id } : null;
+                    } catch (err: any) {
+                      flash('Lỗi tạo Skill Area: ' + getApiErrorMessage(err), true);
+                      return null;
+                    }
+                  }}
                 />
               );
             }
 
-            if (colUpper === 'SKILL VENDOR') {
+            if (colUpper === 'SKILL') {
               const currentGroupId = task.skill_solution_id;
+              const allActiveGroups = categories
+                .filter(c => c.is_active)
+                .flatMap(c => c.groups || []);
+              const currentGroupObj = currentGroupId ? allActiveGroups.find((g: any) => g.id === currentGroupId) : null;
               let availableSkills: any[] = [];
-              if (currentGroupId) {
-                const groupObj = categories
-                  .filter(c => c.is_active)
-                  .flatMap(c => c.groups || [])
-                  .find((g: any) => g.id === currentGroupId);
-                if (groupObj) {
-                  availableSkills = (groupObj.skills || []).filter((s: any) => s.is_active);
-                }
+              if (currentGroupObj) {
+                availableSkills = (currentGroupObj.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name }));
               } else {
-                availableSkills = categories
-                  .filter(c => c.is_active)
-                  .flatMap(c => c.groups || [])
-                  .flatMap((g: any) => g.skills || [])
-                  .filter((s: any) => s.is_active);
+                availableSkills = allActiveGroups
+                  .flatMap((g: any) => (g.skills || []).filter((s: any) => s.is_active).map((s: any) => ({ id: s.id, name: s.name, meta: g.name })));
               }
+              const catalogAreas = allActiveGroups.map((g: any) => ({
+                id: g.id, name: g.name,
+                skills: (g.skills || []).filter((s: any) => s.is_active),
+              }));
 
               return (
                 <CategorySearchCell
                   key={col}
                   col={col}
+                  kind="skill"
                   items={availableSkills}
                   editValue={editValue}
                   placeholder="Tìm Skill..."
+                  contextAreaName={currentGroupObj?.name || ''}
+                  catalogAreas={catalogAreas}
                   onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
                   onCancel={() => setEditingCell(null)}
+                  // areaIdOverride lets the "⚙ Quản lý danh mục" panel add a
+                  // Skill under ANY area (not just the task's current one) —
+                  // the normal quick-add (no override) still requires the
+                  // task to already have a Skill Area chosen, same
+                  // "SKILL AREA trước" gate the drawer's + button uses.
+                  onQuickCreate={async (name, areaIdOverride) => {
+                    const groupId = areaIdOverride ?? currentGroupId;
+                    if (!groupId) return null;
+                    try {
+                      await createSkill({ name, group_id: groupId });
+                      const fresh = await refetchCategories();
+                      const created = fresh
+                        .flatMap((c: any) => c.groups || [])
+                        .flatMap((g: any) => g.skills || [])
+                        .find((s: any) => s.name === name && Number(s.group_id) === groupId);
+                      if (created) flash(`Đã tạo Skill "${name}"!`);
+                      return created ? { id: created.id } : null;
+                    } catch (err: any) {
+                      flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
+                      return null;
+                    }
+                  }}
                 />
               );
             }
@@ -5322,7 +5428,7 @@ function ProjectDetailContent() {
 
     // Columns NOT applicable to Task Group (show as disabled/empty)
     const GROUP_DISABLED_COLS = [
-      'PRIORITY', 'KPI RATIO', 'SKILL SOLUTION', 'SKILL VENDOR',
+      'PRIORITY', 'KPI RATIO', 'SKILL AREA', 'SKILL',
       'TICKET ID', 'SEND', 'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL',
       'DAYS LATE', 'SUB ID', 'ROOT TASKS', 'SOLUTION', 'NOTES'
     ];
@@ -6111,7 +6217,16 @@ function ProjectDetailContent() {
           // that ever places it here and it silently falls through to the
           // group-end fallback instead, appearing at the bottom of the list
           // no matter which task "phía trên" was clicked on.
-          if (addingTaskGroupId === group.id && addingTaskBeforeCode === task.task_code) {
+          // Guard every comparison below with `task.task_code` being non-
+          // empty: a handful of seed/legacy tasks can have a blank task_code
+          // (data bug, not a normal creation path — the server always
+          // computes a real code), and addingTaskBeforeCode/AfterCode/
+          // ParentCode get set directly from a clicked task's OWN task_code
+          // (see the ⋮ row menu and hover "+" handlers). Without this guard,
+          // a blank code on one task matched EVERY other task sharing that
+          // same blank code, rendering one inline add-row per match instead
+          // of exactly one.
+          if (addingTaskGroupId === group.id && Boolean(addingTaskBeforeCode) && addingTaskBeforeCode === task.task_code) {
             result.push(renderInlineAddRow(group.id, addingTaskParentCode, level));
             beforeRowRendered = true;
           }
@@ -6119,12 +6234,12 @@ function ProjectDetailContent() {
           result.push(renderSingleTaskRow(task, level, hasChildren, isCollapsedParent, tIdx, sortedTasks));
 
           // 1. Render inline add row at hover position if adding after this task
-          if (addingTaskGroupId === group.id && addingTaskAfterCode === task.task_code) {
+          if (addingTaskGroupId === group.id && Boolean(addingTaskAfterCode) && addingTaskAfterCode === task.task_code) {
             result.push(renderInlineAddRow(group.id, addingTaskParentCode, level));
           }
 
           // 2. Render sub-task inline add row if triggered from actions menu
-          if (addingTaskGroupId === group.id && addingTaskParentCode === task.task_code && addingTaskAfterCode !== task.task_code) {
+          if (addingTaskGroupId === group.id && Boolean(addingTaskParentCode) && addingTaskParentCode === task.task_code && addingTaskAfterCode !== task.task_code) {
             result.push(renderInlineAddRow(group.id, task.task_code, level + 1));
           }
 
@@ -6442,8 +6557,8 @@ function ProjectDetailContent() {
                   { label: 'Status', value: statusFilter, set: setStatusFilter, options: ['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'] },
                   { label: 'Assigned', value: assignedFilter, set: setAssignedFilter, options: ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()] },
                   { label: 'Support', value: supportFilter, set: setSupportFilter, options: ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()] },
-                  { label: 'Skill Solution', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
-                  { label: 'Skill Vendor', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
+                  { label: 'Skill Area', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
+                  { label: 'Skill', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
                 ].map(f => (
                   <div key={f.label} className="px-3.5 py-1.5 flex items-center justify-between gap-2">
                     <span className="text-[12.5px] font-medium text-[#0b1c30]">{f.label}</span>
@@ -6957,7 +7072,7 @@ function ProjectDetailContent() {
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
                       <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Task theo loại</h3>
                       {overviewSkillDistribution.length === 0 ? (
-                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có dữ liệu Skill Solution.</p>
+                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có dữ liệu Skill Area.</p>
                       ) : (
                         <div className="space-y-2.5">
                           {overviewSkillDistribution.map(s => {
@@ -7761,8 +7876,8 @@ function ProjectDetailContent() {
                                 (colUpper === 'STATUS' && statusFilter !== 'All') ||
                                 (colUpper === 'ASSIGNED' && assignedFilter !== 'All') ||
                                 (colUpper === 'SUPPORT' && supportFilter !== 'All') ||
-                                (colUpper === 'SKILL SOLUTION' && skillSolutionFilter !== 'All') ||
-                                (colUpper === 'SKILL VENDOR' && skillVendorFilter !== 'All');
+                                (colUpper === 'SKILL AREA' && skillSolutionFilter !== 'All') ||
+                                (colUpper === 'SKILL' && skillVendorFilter !== 'All');
                               return (
                                 <th
                                   key={col}
@@ -7936,7 +8051,7 @@ function ProjectDetailContent() {
                                         </div>
                                       );
                                     })()}
-                                    {colUpper === 'SKILL SOLUTION' && (() => {
+                                    {colUpper === 'SKILL AREA' && (() => {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={skillSolutionFilterRef}>
@@ -7960,7 +8075,7 @@ function ProjectDetailContent() {
                                         </div>
                                       );
                                     })()}
-                                    {colUpper === 'SKILL VENDOR' && (() => {
+                                    {colUpper === 'SKILL' && (() => {
                                       const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()];
                                       return (
                                         <div className="relative" ref={skillVendorFilterRef}>
@@ -9394,7 +9509,10 @@ function ProjectDetailContent() {
       {/* Task Detail Drawer */}
       {selectedTask && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <div onClick={() => setSelectedTask(null)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300" />
+          {/* Click-outside-to-close catcher — intentionally no dimming/blur
+              (bg-slate-900/40 backdrop-blur-sm removed) so the Tasks table
+              stays fully visible/legible behind the drawer, per spec. */}
+          <div onClick={() => setSelectedTask(null)} className="absolute inset-0" />
           <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
             <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-[#f8faff] to-white">
               <div className="flex items-center gap-3">
@@ -9438,6 +9556,31 @@ function ProjectDetailContent() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* KPI Snapshot — read-only, moved to the top of the drawer so
+                  it's the first thing visible on open, matching the KPI
+                  Snapshot placement decision. */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI Snapshot</label>
+                <div className="grid grid-cols-4 gap-3 mt-2">
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Base</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_base ?? '—'}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Perform</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_perform ?? '—'}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">OT</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_ot ?? '—'}</div>
+                  </div>
+                  <div className="bg-[#e8f0fe] rounded-lg px-3 py-2.5 text-center border border-[#c2d6f0]">
+                    <div className="text-[9px] text-[#0058be] font-semibold uppercase">Final</div>
+                    <div className="text-[13px] font-bold text-[#0058be] mt-0.5">{selectedTask.kpi_final ?? '—'}</div>
+                  </div>
+                </div>
+              </div>
+
               {/* Detail Task */}
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Detail Task</label>
@@ -9588,10 +9731,10 @@ function ProjectDetailContent() {
                 />
               </div>
 
-              {/* Skill Solution */}
+              {/* Skill Area */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Solution</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Area</label>
                   {isMemberOrAbove() && (
                     <button
                       type="button"
@@ -9640,24 +9783,24 @@ function ProjectDetailContent() {
                 />
               </div>
 
-              {/* Skill Vendor */}
+              {/* Skill */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Vendor</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill</label>
                   {isMemberOrAbove() && (
                     <button
                       type="button"
                       onClick={() => {
                         if (!drawerForm.skill_solution_id) {
-                          flash('Vui lòng chọn SKILL SOLUTION trước khi tạo Vendor.', true);
+                          flash('Vui lòng chọn SKILL AREA trước khi tạo Vendor.', true);
                           return;
                         }
                         setNewSkillVendorName('');
                         setShowCreateSkillVendorModal(true);
                       }}
                       className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-slate-500 hover:border-[#0058be] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={drawerForm.skill_solution_id ? 'Tạo Skill Vendor mới' : 'Chọn SKILL SOLUTION trước'}
-                      aria-label="Tạo Skill Vendor mới"
+                      title={drawerForm.skill_solution_id ? 'Tạo Skill mới' : 'Chọn SKILL AREA trước'}
+                      aria-label="Tạo Skill mới"
                     >
                       <Plus size={14} strokeWidth={2.5} />
                     </button>
@@ -9680,12 +9823,12 @@ function ProjectDetailContent() {
                   }
                   return (
                     <SearchableSelect
-                      label="Skill Vendor"
+                      label="Skill"
                       icon=""
                       options={availSkills.map((s: any) => ({ id: s.id, name: s.name }))}
                       value={drawerForm.skill_vendor_id || ''}
                       onChange={(val: any) => setDrawerForm({ ...drawerForm, skill_vendor_id: val === 'all' ? '' : val })}
-                      placeholder="Tìm Skill Vendor..."
+                      placeholder="Tìm Skill..."
                       className="w-full"
                     />
                   );
@@ -9703,28 +9846,6 @@ function ProjectDetailContent() {
                 />
               </div>
 
-              {/* KPI Section (Read-only) */}
-              <div className="border-t border-slate-100 pt-4">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI</label>
-                <div className="grid grid-cols-4 gap-3 mt-3">
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Base</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_base ?? '—'}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Perform</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_perform ?? '—'}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">OT</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_ot ?? '—'}</div>
-                  </div>
-                  <div className="bg-[#e8f0fe] rounded-lg px-3 py-2.5 text-center border border-[#c2d6f0]">
-                    <div className="text-[9px] text-[#0058be] font-semibold uppercase">Final</div>
-                    <div className="text-[13px] font-bold text-[#0058be] mt-0.5">{selectedTask.kpi_final ?? '—'}</div>
-                  </div>
-                </div>
-              </div>
             </div>
             {/* Save button footer */}
             <div className="px-6 py-4 border-t border-slate-200 bg-white">
@@ -9937,7 +10058,7 @@ function ProjectDetailContent() {
         );
       })()}
 
-      {/* Task Detail → SKILL SOLUTION `+` modal: creates a new Group
+      {/* Task Detail → SKILL AREA `+` modal: creates a new Group
           (Solution) under an existing Category. Reuses POST
           /api/skills/groups and the existing `categories` tree. Auto-
           selects the new Group on success. */}
@@ -10016,14 +10137,14 @@ function ProjectDetailContent() {
         </div>
       )}
 
-      {/* Task Detail → SKILL VENDOR `+` modal: creates a new Skill under
-          the currently selected SKILL SOLUTION (Group). Reuses POST
+      {/* Task Detail → SKILL `+` modal: creates a new Skill under
+          the currently selected SKILL AREA (Group). Reuses POST
           /api/skills/skills. Auto-selects the new Skill on success. */}
       {showCreateSkillVendorModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
-              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill Vendor mới</h3>
+              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill mới</h3>
               <button
                 type="button"
                 onClick={() => {
@@ -10039,7 +10160,7 @@ function ProjectDetailContent() {
             </div>
             <div className="p-5 space-y-3">
               <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">SKILL SOLUTION</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">SKILL AREA</label>
                 <div className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-slate-700">
                   {(() => {
                     const grpObj = categories
@@ -10866,16 +10987,48 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
 
 interface CategorySearchCellProps {
   col: string;
+  // 'area' = picking a Skill Area (Group); 'skill' = picking a Skill. Drives
+  // the header title/badge and the context line, matching the prototype's
+  // "Chọn Skill Area"/"Chọn Skill" popup design.
+  kind: 'area' | 'skill';
   items: any[];
   editValue: string;
   placeholder: string;
   onSaveWithAction: (val: string, action?: 'Enter' | 'Tab' | 'ShiftTab') => void;
   onCancel: () => void;
+  // Quick-add straight from this cell — same "no match, create it" flow the
+  // Task Detail drawer's dedicated + modals already have, just inlined here
+  // since editing an EXISTING task's Skill Area/Skill in the table had no
+  // create path at all before this (only "add a brand-new task" row and the
+  // Task Detail drawer did). Omitted entirely disables quick-add (e.g. the
+  // SKILL cell with no Skill Area chosen yet has nothing to attach a new
+  // Skill to). areaIdOverride is only used for kind='skill', by the "⚙ Quản
+  // lý danh mục" panel's per-Area "+ Skill" (adds to THAT area, not
+  // necessarily the task's current one).
+  onQuickCreate?: (name: string, areaIdOverride?: number) => Promise<{ id: number | string } | null>;
+  // kind='skill' only — name of the Skill Area currently filtering `items`
+  // (task already has one chosen), empty string when searching the whole
+  // catalog because none is chosen yet.
+  contextAreaName?: string;
+  // Full Area→Skills tree, only for the "⚙ Quản lý danh mục" browse panel.
+  // Omitted entirely hides that button (e.g. if the tree isn't loaded yet).
+  catalogAreas?: { id: number; name: string; skills: { id: number; name: string }[] }[];
+  // Steal focus (and so pop the panel open) the moment this cell mounts.
+  // Correct when exactly one cell mounts at a time (clicking an EXISTING
+  // task's cell to edit it), wrong for the "add new task" row: every column
+  // — including both Skill Area and Skill — mounts together as one form, so
+  // autofocus-on-mount would pop both panels open with nothing clicked.
+  // Those call sites pass false.
+  autoFocus?: boolean;
 }
 
-function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithAction, onCancel }: CategorySearchCellProps) {
+function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, contextAreaName, catalogAreas, autoFocus = true }: CategorySearchCellProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isOpen, setIsOpen] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [isOpen, setIsOpen] = useState(autoFocus);
+  const [catalogMode, setCatalogMode] = useState(false);
+  const [catalogAddingFor, setCatalogAddingFor] = useState<number | null>(null);
+  const [catalogSkillName, setCatalogSkillName] = useState('');
   const containerRef = useRef<HTMLTableDataCellElement>(null);
 
   useEffect(() => {
@@ -10894,6 +11047,7 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
         onCancel();
       }
     };
@@ -10905,6 +11059,34 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
 
   const handleSelect = (itemId: number, action?: 'Enter' | 'Tab' | 'ShiftTab') => {
     onSaveWithAction(String(itemId), action);
+    setIsOpen(false);
+  };
+
+  const trimmedSearch = searchTerm.trim();
+  const hasExactMatch = trimmedSearch !== '' && items.some(m => (m.name || '').toLowerCase() === trimmedSearch.toLowerCase());
+  const canQuickCreate = Boolean(onQuickCreate) && trimmedSearch.length >= 2 && !hasExactMatch;
+
+  const handleQuickCreate = async () => {
+    if (!onQuickCreate || !trimmedSearch || creating) return;
+    setCreating(true);
+    try {
+      const created = await onQuickCreate(trimmedSearch);
+      if (created) handleSelect(Number(created.id));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleCatalogAddSkill = async (areaId: number) => {
+    const name = catalogSkillName.trim();
+    if (!onQuickCreate || name.length < 2 || creating) return;
+    setCreating(true);
+    try {
+      const created = await onQuickCreate(name, areaId);
+      if (created) { setCatalogAddingFor(null); setCatalogSkillName(''); }
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -10912,6 +11094,8 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
       e.preventDefault();
       if (filteredItems.length > 0) {
         handleSelect(filteredItems[0].id);
+      } else if (canQuickCreate) {
+        handleQuickCreate();
       } else {
         onSaveWithAction('');
       }
@@ -10924,9 +11108,14 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
         onSaveWithAction('', action);
       }
     } else if (e.key === 'Escape') {
+      setIsOpen(false);
       onCancel();
     }
   };
+
+  const title = kind === 'area' ? 'Chọn Skill Area' : 'Chọn Skill';
+  const badge = kind === 'area' ? 'SKILL AREA' : 'SKILL';
+  const totalCatalogSkills = (catalogAreas || []).reduce((sum, a) => sum + a.skills.length, 0);
 
   return (
     <td key={col} className="px-2 py-1 min-w-[150px] relative" ref={containerRef}>
@@ -10935,33 +11124,167 @@ function CategorySearchCell({ col, items, editValue, placeholder, onSaveWithActi
           type="text"
           value={searchTerm}
           placeholder={placeholder}
-          autoFocus
-          onChange={e => setSearchTerm(e.target.value)}
+          autoFocus={autoFocus}
+          onFocus={() => setIsOpen(true)}
+          onChange={e => { setSearchTerm(e.target.value); setIsOpen(true); }}
           onKeyDown={handleKeyDown}
           className="w-full bg-white border border-[#0058be] rounded px-2 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
         />
         {isOpen && (
-          <div className="absolute left-0 right-0 mt-1 max-h-[160px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
-            <div
-              onClick={() => onSaveWithAction('')}
-              className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
-            >
-              -- Không gán --
-            </div>
-            {filteredItems.length === 0 ? (
-              <div className="px-2.5 py-1.5 text-xs text-slate-400 italic">Không tìm thấy</div>
-            ) : (
-              filteredItems.map((m: any) => (
+        <div className="absolute left-0 mt-1 w-80 max-h-[26rem] bg-white border border-slate-200 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+          {!catalogMode ? (
+            <>
+              {/* Header — title + kind badge, matching the prototype popup */}
+              <div className="px-3 pt-2.5 pb-2 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <span className="text-[11px] font-black text-[#0b1c30]">{title}</span>
+                <span className="text-[9px] font-bold text-[#0058be] bg-[#eff4ff] border border-[#0058be]/20 px-1.5 py-0.5 rounded">{badge}</span>
+              </div>
+              {/* Context line */}
+              <div className="px-3 py-1.5 text-[10.5px] text-slate-400 border-b border-slate-100 shrink-0">
+                {kind === 'area'
+                  ? 'Chọn nhóm chuyên môn cấp cao để lọc Skill bên cạnh.'
+                  : contextAreaName
+                    ? <>Đang lọc theo <span className="font-bold text-[#0058be]">{contextAreaName}</span></>
+                    : 'Chưa chọn Skill Area · đang tìm trên toàn bộ danh mục.'}
+              </div>
+              {/* Options list */}
+              <div className="overflow-y-auto max-h-[180px] py-1 shrink-0">
                 <div
-                  key={m.id}
-                  onClick={() => handleSelect(m.id)}
-                  className="px-2.5 py-1.5 text-xs text-slate-700 hover:bg-[#eff4ff] hover:text-[#0058be] cursor-pointer font-semibold transition-colors flex items-center justify-between"
+                  onClick={() => { onSaveWithAction(''); setIsOpen(false); }}
+                  className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
                 >
-                  <span>{m.name}</span>
+                  — Không gán — <span className="text-[9.5px] text-red-300 font-normal">· Xóa lựa chọn</span>
                 </div>
-              ))
-            )}
-          </div>
+                {filteredItems.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-slate-400 italic text-center">Không tìm thấy</div>
+                ) : (
+                  filteredItems.map((m: any) => (
+                    <div
+                      key={m.id}
+                      onClick={() => handleSelect(m.id)}
+                      className="px-3 py-1.5 text-xs text-slate-700 hover:bg-[#eff4ff] hover:text-[#0058be] cursor-pointer font-semibold transition-colors flex items-center justify-between gap-2"
+                    >
+                      <span className="truncate">{m.name}</span>
+                      {m.meta && <span className="text-[9.5px] text-slate-400 font-normal shrink-0">{m.meta}</span>}
+                    </div>
+                  ))
+                )}
+              </div>
+              {/* Quick-add form — appears once 2+ chars typed with no exact match */}
+              {canQuickCreate && (
+                <div className="px-3 py-2.5 border-t border-slate-100 bg-emerald-50/50 shrink-0">
+                  <div className="text-[11px] font-bold text-emerald-700">
+                    Thêm {kind === 'area' ? 'Skill Area' : 'Skill'} "{trimmedSearch}"
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 mb-2 leading-snug">
+                    {kind === 'area'
+                      ? 'Area mới được tạo và chọn ngay cho task hiện tại. Hệ thống kiểm tra trùng tên trước khi thêm.'
+                      : contextAreaName
+                        ? <>Skill sẽ được thêm vào Skill Area <b>{contextAreaName}</b> và chọn ngay.</>
+                        : 'Chọn Skill Area cha để danh mục luôn có cấu trúc rõ ràng, tránh tạo skill rời rạc.'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleQuickCreate}
+                    disabled={creating}
+                    className="w-full h-7 rounded-md text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  >
+                    {creating ? 'Đang tạo...' : `+ Thêm "${trimmedSearch}"`}
+                  </button>
+                </div>
+              )}
+              {/* Footer hint + catalog toggle */}
+              <div className="px-3 py-1.5 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0 bg-slate-50/60">
+                <span className="text-[9.5px] text-slate-400 truncate">Gõ để tìm · không có thì thêm nhanh ngay tại đây.</span>
+                {catalogAreas && catalogAreas.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCatalogMode(true)}
+                    className="text-[10px] font-bold text-[#0058be] hover:underline shrink-0 whitespace-nowrap"
+                  >
+                    ⚙ Quản lý danh mục
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Catalog browser — read-only structure + per-Area quick-add
+                  Skill. Renaming/deleting stays in Settings (already exists
+                  there); duplicating full CRUD here would be redundant. */}
+              <div className="px-3 pt-2.5 pb-2 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div>
+                  <div className="text-[11px] font-black text-[#0b1c30]">Danh mục Skill</div>
+                  <div className="text-[9.5px] text-slate-400 mt-0.5">{(catalogAreas || []).length} Skill Area · {totalCatalogSkills} Skills</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setCatalogMode(false); setCatalogAddingFor(null); }}
+                  className="text-[10px] font-bold text-slate-500 hover:text-[#0058be] shrink-0"
+                >
+                  ← Quay lại chọn
+                </button>
+              </div>
+              <div className="overflow-y-auto max-h-[22rem] p-2 space-y-2">
+                {(catalogAreas || []).map(a => (
+                  <div key={a.id} className="border border-slate-100 rounded-lg p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <b className="text-[11px] truncate">{a.name}</b>
+                      <span className="text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full shrink-0">{a.skills.length} skills</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {a.skills.length ? (
+                        a.skills.map(s => (
+                          <span key={s.id} className="text-[9.5px] bg-slate-50 border border-slate-200 rounded-full px-1.5 py-0.5 text-slate-600">{s.name}</span>
+                        ))
+                      ) : (
+                        <span className="text-[9.5px] text-slate-300 italic">Chưa có skill</span>
+                      )}
+                    </div>
+                    {catalogAddingFor === a.id ? (
+                      <div className="flex items-center gap-1 mt-1.5">
+                        <input
+                          autoFocus
+                          value={catalogSkillName}
+                          onChange={e => setCatalogSkillName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') { e.preventDefault(); handleCatalogAddSkill(a.id); }
+                            if (e.key === 'Escape') { setCatalogAddingFor(null); setCatalogSkillName(''); }
+                          }}
+                          placeholder="Tên skill..."
+                          className="flex-1 h-6 px-1.5 text-[10.5px] border border-slate-200 rounded outline-none focus:border-[#0058be]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleCatalogAddSkill(a.id)}
+                          disabled={creating || catalogSkillName.trim().length < 2}
+                          className="h-6 px-2 text-[10px] font-bold text-white bg-emerald-600 rounded disabled:opacity-50"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setCatalogAddingFor(null); setCatalogSkillName(''); }}
+                          className="h-6 px-1.5 text-[10px] text-slate-400 hover:text-slate-600"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setCatalogAddingFor(a.id); setCatalogSkillName(''); }}
+                        className="text-[10px] font-bold text-[#0058be] hover:underline mt-1.5"
+                      >
+                        ＋ Skill
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         )}
       </div>
     </td>
