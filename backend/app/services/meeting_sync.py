@@ -671,7 +671,7 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
         raise ValueError(f"Không thể khởi tạo cuộc họp Google Meet: {e}")
 
 
-def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time, workspace_id: int = None) -> None:
+def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time, workspace_id: int = None, meeting_url: str = None) -> None:
     """
     Fire-and-forget webhook to n8n right after a meeting's Google Meet link is
     created, so n8n can search Drive directly for the recording tagged
@@ -679,6 +679,12 @@ def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time,
     every "Google Meet" folder for the most recent videos. Best-effort only:
     n8n discovery must not be able to break meeting creation, so any failure
     here is logged and swallowed.
+
+    meeting_url is passed through as-is (2026-09-13, P1): n8n used to re-derive
+    the real Meet link itself by matching a Calendar event's "created" timestamp
+    against the Drive video's subfolder — a fragile workaround. The backend
+    already knows the real URL at creation time, so n8n's Calendar-lookup step
+    is no longer needed.
     """
     # Route by the Workspace's own n8n_webhook_url (set via the Workspace admin
     # UI/API, e.g. Settings > Workspaces) — each workspace can point at its own
@@ -702,6 +708,7 @@ def notify_n8n_meeting_created(db, mk_tag, title: str, meeting_date, start_time,
                 "title": title,
                 "meeting_date": meeting_date.isoformat() if hasattr(meeting_date, "isoformat") else meeting_date,
                 "start_time": start_time.isoformat() if hasattr(start_time, "isoformat") else start_time,
+                "meeting_url": meeting_url,
             },
             timeout=5,
         )
