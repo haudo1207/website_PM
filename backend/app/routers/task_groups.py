@@ -1723,6 +1723,14 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     if "status" in body:
         new_status_l = (body["status"] or "").strip().lower()
         old_status_l = (old_dict["status"] or "").strip().lower()
+        # Members cannot set status to Done directly - must go through Review workflow
+        # Only Leaders/Super Admin can approve tasks (Review → Done)
+        if (
+            new_status_l in ("done", "completed")
+            and old_status_l not in ("done", "completed")
+            and not is_project_leader(db, current_user, project_id)
+        ):
+            raise HTTPException(403, "Chỉ Leader mới có quyền chuyển task sang Done. Member cần chuyển task sang Review và chờ Leader duyệt.")
         if (
             "review" in old_status_l
             and new_status_l == "done"
