@@ -1052,6 +1052,10 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
             if summary_result:
                 m.ai_summary = summary_result
                 if m.transcript and m.transcript.strip():
+                    logger.warning(
+                        "MEETING_STATUS_DONE",
+                        extra={"meeting_id": None, "meeting_title": m.title, "source": "create_meeting.auto_summarize"},
+                    )
                     m.status = "DONE"
     except Exception as e:
         logger.warning(f"Auto-summarize meeting {m.id} on create failed: {e}")
@@ -1510,6 +1514,10 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
     from ..services.meeting_sync import apply_sync_result_to_meeting
     apply_sync_result_to_meeting(m, result)
     if result.get("status") == "DONE":
+        logger.warning(
+            "MEETING_STATUS_DONE",
+            extra={"meeting_id": m.id, "source": "manual_sync_endpoint", "organizer": m.organizer_google_email},
+        )
         m.status = "DONE"
 
     db.commit()
@@ -2241,6 +2249,15 @@ def ingest_n8n_meeting_summary(
         # No existing web-created meeting matched this recording — n8n is creating
         # this meeting from scratch, so flag it as such for the UI to distinguish.
         norm_summary["is_auto_created"] = True
+        logger.warning(
+            "MEETING_STATUS_DONE",
+            extra={
+                "meeting_id": None,
+                "meeting_title": clean_title,
+                "source": "n8n_webhook.create_new_meeting",
+                "sheet_row_id": payload.sheet_row_id,
+            },
+        )
         new_m = Meeting(
             title=clean_title,
             description=f"Tự động tạo từ n8n (Row ID: {payload.sheet_row_id or 'N/A'})",
