@@ -3668,7 +3668,7 @@ function ProjectDetailContent() {
             placeholder="Tìm Skill..."
             contextAreaName={currentGroupObj?.name || ''}
             catalogAreas={catalogAreas}
-            onSaveWithAction={(val) => setNewForm({ ...newForm, [col]: val === 'all' ? '' : val })}
+            onSaveWithAction={(val) => setNewForm((prev: any) => ({ ...prev, [col]: val === 'all' ? '' : val }))}
             onCancel={() => {}}
             onQuickCreate={async (name, areaIdOverride) => {
               const groupId = areaIdOverride ?? (selectedGroupId ? parseInt(String(selectedGroupId), 10) : null);
@@ -3680,7 +3680,15 @@ function ProjectDetailContent() {
                   .flatMap((c: any) => c.groups || [])
                   .flatMap((g: any) => g.skills || [])
                   .find((s: any) => s.name === name && Number(s.group_id) === groupId);
-                if (created) flash(`Đã tạo Skill "${name}"!`);
+                if (created) {
+                  flash(`Đã tạo Skill "${name}"!`);
+                  // Skill luôn thuộc một Skill Area cụ thể (vd. tạo qua "⚙
+                  // Quản lý danh mục" ở một Area khác) — đồng bộ luôn ô
+                  // SKILL AREA theo Area cha để tránh lệch cặp Area/Skill.
+                  if (String(selectedGroupId || '') !== String(groupId)) {
+                    setNewForm((prev: any) => ({ ...prev, [solCol]: String(groupId) }));
+                  }
+                }
                 return created ? { id: created.id } : null;
               } catch (err: any) {
                 flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
@@ -4960,7 +4968,17 @@ function ProjectDetailContent() {
                         .flatMap((c: any) => c.groups || [])
                         .flatMap((g: any) => g.skills || [])
                         .find((s: any) => s.name === name && Number(s.group_id) === groupId);
-                      if (created) flash(`Đã tạo Skill "${name}"!`);
+                      if (created) {
+                        flash(`Đã tạo Skill "${name}"!`);
+                        // Skill luôn thuộc một Skill Area cụ thể (vd. tạo qua
+                        // "⚙ Quản lý danh mục" ở một Area khác) — đồng bộ
+                        // luôn ô SKILL AREA của task theo Area cha để tránh
+                        // lệch cặp Area/Skill.
+                        if (Number(currentGroupId) !== Number(groupId)) {
+                          const areaCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL AREA') || 'SKILL AREA';
+                          handleCellSave(task.id, areaCol, String(groupId));
+                        }
+                      }
                       return created ? { id: created.id } : null;
                     } catch (err: any) {
                       flash('Lỗi tạo Skill: ' + getApiErrorMessage(err), true);
@@ -10898,6 +10916,12 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(true);
   const containerRef = useRef<HTMLTableDataCellElement>(null);
+  // Anchors the portal menu below (via getBoundingClientRect) — see
+  // portalPos effect below for why this renders at document.body instead
+  // of inline.
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const lastSyncedEditValue = useRef<string>('');
 
   // Only resync searchTerm when editValue itself changes to a different member —
@@ -10922,9 +10946,40 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
     );
   });
 
+  // Renders the option list via a portal to document.body (positioned from
+  // anchorRef's rect) so it's never clipped by the Tasks table's horizontal
+  // scroll container — an inline absolutely-positioned dropdown here gets
+  // cut off ("bị che") whenever the cell sits near the container's edge.
+  useEffect(() => {
+    if (!isOpen || !anchorRef.current) {
+      setPortalPos(null);
+      return;
+    }
+    const reposition = () => {
+      if (!anchorRef.current) return;
+      const rect = anchorRef.current.getBoundingClientRect();
+      const estimatedHeight = 170;
+      const dropUp = window.innerHeight - rect.bottom < estimatedHeight && rect.top > window.innerHeight - rect.bottom;
+      setPortalPos({
+        top: Math.max(4, dropUp ? rect.top - estimatedHeight : rect.bottom + 4),
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const insideContainer = containerRef.current && containerRef.current.contains(event.target as Node);
+      const insideMenu = menuRef.current && menuRef.current.contains(event.target as Node);
+      if (!insideContainer && !insideMenu) {
         onCancel();
       }
     };
@@ -10961,7 +11016,7 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
 
   return (
     <td key={col} className="px-2 py-1 min-w-[180px] relative" ref={containerRef}>
-      <div className="relative">
+      <div className="relative" ref={anchorRef}>
         <input
           type="text"
           value={searchTerm}
@@ -10971,8 +11026,12 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
           onKeyDown={handleKeyDown}
           className="w-full bg-white border border-[#0058be] rounded px-2 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
         />
-        {isOpen && (
-          <div className="absolute left-0 right-0 mt-1 max-h-[160px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
+        {isOpen && portalPos && createPortal(
+          <div
+            ref={menuRef}
+            style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 200), zIndex: 9999 }}
+            className="max-h-[170px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-2xl py-1"
+          >
             <div
               onClick={() => onSaveWithAction('')}
               className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 cursor-pointer font-bold transition-colors"
@@ -10993,7 +11052,8 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
                 </div>
               ))
             )}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
     </td>
@@ -11045,6 +11105,12 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
   const [catalogAddingFor, setCatalogAddingFor] = useState<number | null>(null);
   const [catalogSkillName, setCatalogSkillName] = useState('');
   const containerRef = useRef<HTMLTableDataCellElement>(null);
+  // Anchors the portal panel below (via getBoundingClientRect) — see
+  // portalPos effect below for why this renders at document.body instead
+  // of inline.
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
     const currentItem = items.find(m => String(m.id) === String(editValue));
@@ -11059,9 +11125,40 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
     return (m.name || '').toLowerCase().includes(term);
   });
 
+  // Renders the popup panel via a portal to document.body (positioned from
+  // anchorRef's rect) so it's never clipped by the Tasks table's horizontal
+  // scroll container — an inline absolutely-positioned panel here gets cut
+  // off ("bị che") whenever the cell sits near the container's edge.
+  useEffect(() => {
+    if (!isOpen || !anchorRef.current) {
+      setPortalPos(null);
+      return;
+    }
+    const reposition = () => {
+      if (!anchorRef.current) return;
+      const rect = anchorRef.current.getBoundingClientRect();
+      const estimatedHeight = 380;
+      const dropUp = window.innerHeight - rect.bottom < estimatedHeight && rect.top > window.innerHeight - rect.bottom;
+      setPortalPos({
+        top: Math.max(4, dropUp ? rect.top - estimatedHeight : rect.bottom + 4),
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const insideContainer = containerRef.current && containerRef.current.contains(event.target as Node);
+      const insideMenu = menuRef.current && menuRef.current.contains(event.target as Node);
+      if (!insideContainer && !insideMenu) {
         setIsOpen(false);
         onCancel();
       }
@@ -11134,7 +11231,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
 
   return (
     <td key={col} className="px-2 py-1 min-w-[150px] relative" ref={containerRef}>
-      <div className="relative">
+      <div className="relative" ref={anchorRef}>
         <input
           type="text"
           value={searchTerm}
@@ -11145,8 +11242,12 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
           onKeyDown={handleKeyDown}
           className="w-full bg-white border border-[#0058be] rounded px-2 py-1 text-xs text-[#0b1c30] focus:outline-none font-semibold"
         />
-        {isOpen && (
-        <div className="absolute left-0 mt-1 w-80 max-h-[26rem] bg-white border border-slate-200 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+        {isOpen && portalPos && createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 320), zIndex: 9999 }}
+          className="max-h-[26rem] bg-white border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden"
+        >
           {!catalogMode ? (
             <>
               {/* Header — title + kind badge, matching the prototype popup */}
@@ -11299,7 +11400,8 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
               </div>
             </>
           )}
-        </div>
+        </div>,
+        document.body
         )}
       </div>
     </td>
