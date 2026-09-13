@@ -243,9 +243,21 @@ def project_query_for_user(db: Session, user):
         if primary_code and primary_code != ALL_SCOPE:
             filters.extend(project_belongs_to_workspace(db, {primary_code}))
         if member_id:
+            # A Phụ-Workspace project must surface for the whole team, not
+            # only when the Leader THEMSELF is the one in `project_members` —
+            # a report can be the one actually assigned there (the common
+            # case), and the Leader still needs to see it ("Tham gia ngoài")
+            # for team awareness. Restricting this to just `member_id` left
+            # every such project invisible to the Leader's own session
+            # (silently, before the Overview dashboard's Phụ trách/Tham gia
+            # ngoài split ever got a chance to classify it).
+            team_member_ids = [
+                m.id for m in db.query(Member.id).filter(Member.leader_member_id == member_id).all()
+            ]
+            team_member_ids.append(member_id)
             assigned_project_ids = (
                 db.query(project_members.c.project_id)
-                .filter(project_members.c.member_id == member_id)
+                .filter(project_members.c.member_id.in_(team_member_ids))
                 .subquery()
             )
             filters.append(Project.id.in_(assigned_project_ids))
@@ -292,9 +304,16 @@ def project_query_for_user_broad(db: Session, user):
     member_id = getattr(user, "member_id", None)
     filters = list(project_belongs_to_workspace(db, scopes))
     if member_id:
+        # Same whole-team fix as project_query_for_user() above — a report's
+        # assignment on a project outside every Workspace this Leader holds
+        # must still surface for the Leader's own awareness.
+        team_member_ids = [
+            m.id for m in db.query(Member.id).filter(Member.leader_member_id == member_id).all()
+        ]
+        team_member_ids.append(member_id)
         assigned_project_ids = (
             db.query(project_members.c.project_id)
-            .filter(project_members.c.member_id == member_id)
+            .filter(project_members.c.member_id.in_(team_member_ids))
             .subquery()
         )
         filters.append(Project.id.in_(assigned_project_ids))
