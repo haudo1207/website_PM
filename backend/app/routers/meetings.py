@@ -11,6 +11,8 @@ from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
 from ..models.project import Project
 from ..models.member import Member
+from ..models.system_category import Workspace
+from ..models.workspace_google_account import WorkspaceGoogleAccount
 from ..utils.auth import get_current_user
 from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, resolve_workspace, user_scope, workspace_id_for_project
 from ..utils.audit_service import AuditService
@@ -34,6 +36,13 @@ STATUS_FE_TO_DB = {
     "ĐÃ DIỄN RA": "DONE",  # legacy label, kept as an alias for older callers
     "ĐÃ HỦY": "CANCELLED"
 }
+
+# Temporary (chốt 2026-09-14, "HOST *" field): devv.szone@gmail.com's Google
+# session is broken/unusable, so it's excluded from the Host picker until
+# fixed — GET /hosts filters it out and create_meeting rejects it if sent
+# anyway. Remove this set (and the two checks that reference it) once the
+# account is restored; no other code change needed.
+DISABLED_HOST_EMAILS = {"devv.szone@gmail.com"}
 
 
 def _now_vn() -> datetime.datetime:
@@ -71,6 +80,23 @@ def compute_display_status(m: Meeting) -> str:
         now = _now_vn()
         return "ĐANG DIỄN RA" if now >= start_dt else "SẮP TỚI"
     return STATUS_DB_TO_FE.get(m.status, m.status)
+
+_SORT_EPOCH = datetime.datetime(1970, 1, 1)
+
+def _meeting_list_sort_key(m: Meeting):
+    """Chốt 2026-09-14: single flat list (no section headers), but two
+    logical groups within it. Not-yet-ended meetings (ĐANG DIỄN RA/SẮP TỚI)
+    sort start_time ASC — the soonest one is always on top, so the list
+    doesn't reshuffle every time "now" ticks past another meeting's start.
+    Ended meetings (ĐÃ KẾT THÚC/ĐÃ HỦY) sort start_time DESC — most recent
+    history on top of that group. Not-ended always comes before ended.
+    Uses plain timedelta-from-epoch arithmetic (not .timestamp()) so a
+    hypothetical missing meeting_date/start_time — required at creation, so
+    this is defensive only — can't raise on very old/naive datetimes."""
+    ended = compute_display_status(m) in ("ĐÃ KẾT THÚC", "ĐÃ HỦY")
+    dt = datetime.datetime.combine(m.meeting_date, m.start_time) if m.meeting_date and m.start_time else _SORT_EPOCH
+    seconds = (dt - _SORT_EPOCH).total_seconds()
+    return (1, -seconds) if ended else (0, seconds)
 
 def parse_time(time_str: str):
     if not time_str:
@@ -466,6 +492,78 @@ def _get_active_meeting(db: Session, id: int) -> Meeting:
     return m
 
 
+def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
+    """Push the meeting's current participant list to Google Calendar as
+    attendees (chốt 2026-09-14: Participant == Calendar Guest; organizer/Host
+    is NEVER included here — resolved separately via organizer_google_email
+    and stays the Calendar 'organizer', not an attendee). Call this after any
+    change to a meeting's MeetingMember rows (add/remove/replace) so Calendar
+    guests stay in sync with member_ids. Best-effort: never raises, matching
+    sync_google_meet_attendees' own swallow-and-log contract, so a Calendar
+    API hiccup can't block adding/removing a meeting member."""
+    if not m.google_event_id:
+        return
+    try:
+        from ..services.meeting_sync import sync_google_meet_attendees
+        emails = [
+            row[0] for row in db.query(Member.email)
+            .join(MeetingMember, MeetingMember.member_id == Member.id)
+            .filter(MeetingMember.meeting_id == m.id, Member.email.isnot(None), Member.email != "")
+            .distinct().all()
+        ]
+        workspace_id = _host_workspace_id_for_meeting(db, m)
+        sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
+    except Exception as e:
+        logger.warning(f"_sync_meeting_calendar_attendees failed for meeting {m.id} (non-fatal): {e}")
+
+
+def _host_workspace_id_for_meeting(db: Session, m: Meeting) -> Optional[int]:
+    """Which Workspace's Google account actually owns this meeting's Calendar
+    event — resolved from organizer_google_email, NOT from the meeting's
+    project. Chốt 2026-09-14 'HOST *' field: a meeting's Host can now be
+    picked independent of its project's own Workspace (e.g. a project in one
+    Workspace hosted under another Workspace's account as a manual backup),
+    so workspace_id_for_project(m.project) can no longer be assumed to match
+    the account that organizes the Calendar event. Every Calendar mutation on
+    an EXISTING meeting (reschedule, cancel, attendees sync) must resolve
+    workspace_id through here — project-based resolution stays correct only
+    for CREATE-time (no organizer_google_email exists yet) and retry-link's
+    intentional fresh-account assignment."""
+    from ..services.meeting_sync import resolve_workspace_id_by_google_email
+    ws_id = resolve_workspace_id_by_google_email(db, m.organizer_google_email)
+    if ws_id:
+        return ws_id
+    meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+    return workspace_id_for_project(db, meeting_proj)
+
+
+def _resolve_host_workspace_id(db: Session, body: dict, fallback_workspace_id: Optional[int]) -> Optional[int]:
+    """Resolve which Workspace's Google account to use for a NOT-YET-EXISTING
+    Calendar event, honoring an explicit body['host_workspace_id'] (chốt
+    2026-09-14 'HOST *' field) over the project-derived fallback. Shared by
+    /generate-link, /check-conflict, and create_meeting's own fallback-
+    generation path, so all three agree on exactly the Host a client picked
+    — a mismatch here would show "rảnh" in the conflict preview for one
+    account while actually generating the Meet link under another. Raises
+    400/404 if the client sent a host_workspace_id that doesn't resolve to a
+    real, currently-enabled Host (DISABLED_HOST_EMAILS)."""
+    host_workspace_id_input = body.get("host_workspace_id")
+    if not host_workspace_id_input:
+        return fallback_workspace_id
+    try:
+        host_workspace_id_input = int(host_workspace_id_input)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "host_workspace_id không hợp lệ")
+    host_ws = db.query(Workspace).filter(Workspace.id == host_workspace_id_input).first()
+    if not host_ws:
+        raise HTTPException(404, "Không tìm thấy Workspace của Host đã chọn")
+    host_wga = db.query(WorkspaceGoogleAccount).filter(WorkspaceGoogleAccount.workspace_id == host_workspace_id_input).first()
+    host_email = (host_wga.google_email if host_wga and host_wga.google_email else None) or host_ws.expected_google_email
+    if not host_email or host_email.strip().lower() in DISABLED_HOST_EMAILS:
+        raise HTTPException(400, "Host đã chọn hiện không khả dụng, vui lòng chọn Host khác")
+    return host_workspace_id_input
+
+
 # ─── LIST ───────────────────────────────────────────────
 @router.get("")
 def list_meetings(
@@ -542,11 +640,16 @@ def list_meetings(
         td = parse_date(to_date)
         q = q.filter(Meeting.meeting_date <= td)
 
-    # Newest-created always first — meeting_date/start_time sort was confusing
-    # (a just-created meeting could land in the middle or bottom depending on
-    # its scheduled date relative to others). id is monotonic on insert, so
-    # this is also immune to clock skew.
-    meetings = q.order_by(Meeting.id.desc()).all()
+    # Sort rule (chốt 2026-09-14): see _meeting_list_sort_key's own docstring —
+    # not-ended meetings (soonest start_time first) always precede ended ones
+    # (most recent start_time first), one flat list, no section headers.
+    # Sorted in Python, not SQL: compute_display_status() is a live
+    # now()-vs-start_time computation, not a DB column, so there's nothing to
+    # ORDER BY server-side without duplicating that logic in a SQL CASE
+    # expression — sorting the already-fetched ORM rows is simpler and this
+    # endpoint's result set is never large enough for it to matter.
+    meetings = q.all()
+    meetings.sort(key=_meeting_list_sort_key)
     result = [meeting_to_dict(m, db=db, current_user=current_user) for m in meetings]
 
     if mine:
@@ -613,7 +716,7 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
         try:
             from ..services.meeting_sync import create_google_meet_link
             proj = db.query(Project).filter(Project.id == body.get("project_id")).first() if body.get("project_id") else None
-            workspace_id = workspace_id_for_project(db, proj)
+            workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, proj))
             result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
             # NOT notifying n8n here on purpose (confirmed live 2026-09-13):
             # this endpoint only pre-fetches a join link — no Meeting row
@@ -655,7 +758,7 @@ def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_us
     keystroke's debounce)."""
     project_id = body.get("project_id")
     proj = db.query(Project).filter(Project.id == project_id).first() if project_id else None
-    workspace_id = workspace_id_for_project(db, proj)
+    workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, proj))
 
     from ..services.meeting_sync import is_workspace_google_connected
     organizer_google_email = None
@@ -857,6 +960,52 @@ def get_meeting_insights(
     }
 
 
+# ─── AVAILABLE HOSTS (chốt 2026-09-14, "HOST *" field) ────
+@router.get("/hosts")
+def list_available_hosts(
+    project_ids: str = "",
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """List every Workspace's Google account usable as a meeting Host
+    (DISABLED_HOST_EMAILS filtered out), plus — when project_ids is passed —
+    which one should be auto-selected: the single Workspace all of those
+    projects share, if they share exactly one AND it isn't disabled.
+    Multi-Workspace project selections and the disabled Workspace both
+    resolve to auto_selected_workspace_id=None, requiring a manual pick from
+    `hosts` (chốt rule: "khác WS → manual, không tự đoán")."""
+    hosts = []
+    for ws in db.query(Workspace).order_by(Workspace.name).all():
+        wga = db.query(WorkspaceGoogleAccount).filter(WorkspaceGoogleAccount.workspace_id == ws.id).first()
+        email = (wga.google_email if wga and wga.google_email else None) or ws.expected_google_email
+        if not email or email.strip().lower() in DISABLED_HOST_EMAILS:
+            continue
+        hosts.append({"workspace_id": ws.id, "workspace_name": ws.name, "google_email": email})
+
+    auto_selected_workspace_id = None
+    ids = []
+    for raw in project_ids.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ids.append(int(raw))
+        except ValueError:
+            continue
+    if ids:
+        resolved_ws_ids = set()
+        for pid in ids:
+            proj = db.query(Project).filter(Project.id == pid).first()
+            if proj:
+                resolved_ws_ids.add(workspace_id_for_project(db, proj))
+        if len(resolved_ws_ids) == 1:
+            candidate = next(iter(resolved_ws_ids))
+            if candidate is not None and any(h["workspace_id"] == candidate for h in hosts):
+                auto_selected_workspace_id = candidate
+
+    return {"hosts": hosts, "auto_selected_workspace_id": auto_selected_workspace_id}
+
+
 # ─── GET ONE ─────────────────────────────────────────────
 @router.get("/{id}")
 def get_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
@@ -969,7 +1118,15 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # instead of silently leaving both NULL for every meeting created this way.
     google_event_id = body.get("google_event_id")
     organizer_google_email = body.get("organizer_google_email")
-    workspace_id = workspace_id_for_project(db, proj if 'proj' in locals() else None)
+    # HOST * field (chốt 2026-09-14): body.host_workspace_id, when sent,
+    # overrides the project-derived workspace for EVERY Google side-effect
+    # below (Meet-link generation, n8n notify routing, Drive tag rename) — a
+    # meeting's Host account is now a deliberate, independent choice, not
+    # just whatever account the project's own Workspace happens to use.
+    # Other create_meeting callers that don't send this field (n8n's
+    # create-branch, the Calendar quick-create drawer) keep the old
+    # project-based auto-resolution untouched.
+    workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, proj if 'proj' in locals() else None))
 
     if not meeting_url:
         # Build ISO start_time for API calls
@@ -1137,6 +1294,22 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
+    # Edit lifecycle lock (chốt 2026-09-14): only a genuinely-not-yet-started
+    # UPCOMING meeting may be edited at all — ONGOING (live, via
+    # compute_display_status — status itself never persists as "ONGOING",
+    # see that function's docstring), DONE, and CANCELLED are all fully
+    # read-only through this endpoint, no per-field exceptions. This is a
+    # deliberate behavior change: CANCELLED meetings used to be revivable by
+    # PUTting status=UPCOMING — that path is now gone too; organizing again
+    # means creating a new meeting. Checked before touching any field so a
+    # rejected request can never leave the row in a half-old-half-new state.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
+        raise HTTPException(
+            400,
+            f"Không thể chỉnh sửa cuộc họp ở trạng thái {compute_display_status(m)}. "
+            f"Chỉ có thể sửa khi cuộc họp chưa bắt đầu (SẮP TỚI).",
+        )
+
     old_dict = {"title": m.title, "status": m.status, "meeting_date": str(m.meeting_date) if m.meeting_date else None}
     old_status = m.status
     old_meeting_date = m.meeting_date
@@ -1144,10 +1317,10 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     old_end_time = m.end_time
     # Lifecycle rule (chốt 2026-09-13): ONGOING/DONE are server-controlled —
     # a client PUT can no longer force either one directly (see create_meeting's
-    # matching comment for the full rationale). Only CANCELLED, and reverting
-    # a CANCELLED meeting back to UPCOMING, are genuine manual actions a client
-    # may request here; anything else in the body is silently ignored and the
-    # meeting keeps whatever status it already had.
+    # matching comment for the full rationale). CANCELLED is the one genuinely
+    # manual status a client may request here (the guard above already
+    # guarantees old_status is UPCOMING at this point, so this is always a
+    # forward UPCOMING->CANCELLED transition, never a revival).
     status_input = str(body.get("status", m.status)).upper()
     requested_status = STATUS_FE_TO_DB.get(status_input, status_input)
     if requested_status in ("CANCELLED", "UPCOMING"):
@@ -1158,12 +1331,6 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     # Support 'date' or 'meeting_date'
     new_date_str = body.get("meeting_date") or body.get("date")
     new_date = parse_date(new_date_str) if new_date_str else m.meeting_date
-
-    # Rule 05: Meeting DONE -> Cannot change meeting_date. old_status reflects
-    # whatever the bot/a real sync already set — still enforced regardless of
-    # what the client is trying to do in this same request.
-    if old_status == "DONE" and new_date != m.meeting_date:
-        raise HTTPException(400, "Không thể thay đổi ngày họp của cuộc họp đã hoàn thành (DONE)")
 
     m.title = str(body.get("title", m.title)).strip()
     if not m.title:
@@ -1267,10 +1434,11 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             else:
                 m.project_id = None
 
-    # Participants — re-selected from the edit form. Mirrors the DONE-status
-    # guard on the dedicated add/remove-member endpoints below.
+    # Participants — re-selected from the edit form. The endpoint-wide
+    # lifecycle lock above already guarantees this is a not-yet-started
+    # UPCOMING meeting.
     member_ids_input = body.get("member_ids")
-    if isinstance(member_ids_input, list) and m.status != "DONE":
+    if isinstance(member_ids_input, list):
         wanted_ids = set()
         for raw in member_ids_input:
             try:
@@ -1283,10 +1451,15 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
                 db.add(MeetingMember(meeting_id=m.id, member_id=mid, role="PARTICIPANT"))
         for mid in existing.keys() - wanted_ids:
             db.delete(existing[mid])
+        members_changed = True
+    else:
+        members_changed = False
 
     from ..services.meeting_score_engine import recalculate_meeting_score
     recalculate_meeting_score(m, db)
     db.commit()
+    if members_changed:
+        _sync_meeting_calendar_attendees(db, m)
     AuditService.record_diff(
         db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
         entity_id=m.id, old_dict=old_dict,
@@ -1313,8 +1486,7 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             from ..services.meeting_sync import update_google_meet_event
             start_iso = datetime.datetime.combine(m.meeting_date, m.start_time).isoformat()
             end_iso = datetime.datetime.combine(m.meeting_date, m.end_time).isoformat()
-            meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-            workspace_id = workspace_id_for_project(db, meeting_proj)
+            workspace_id = _host_workspace_id_for_meeting(db, m)
             update_google_meet_event(db, m.google_event_id, start_iso, end_iso, workspace_id)
         except Exception as e:
             logger.warning(f"Failed to sync rescheduled time to Google Calendar for meeting {m.id}: {e}")
@@ -1377,8 +1549,7 @@ def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(
     if m.status == "UPCOMING" and m.google_event_id:
         try:
             from ..services.meeting_sync import cancel_google_meet_event
-            meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-            workspace_id = workspace_id_for_project(db, meeting_proj)
+            workspace_id = _host_workspace_id_for_meeting(db, m)
             cancel_google_meet_event(db, m.google_event_id, workspace_id=workspace_id)
         except Exception as e:
             logger.warning(f"cancel_google_meet_event failed for meeting {id} (non-fatal): {e}")
@@ -1397,9 +1568,11 @@ def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(
 def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
-    # Rule 05: Meeting DONE -> Cannot change participants
-    if m.status == "DONE":
-        raise HTTPException(400, "Không thể thay đổi người tham gia của cuộc họp đã hoàn thành (DONE)")
+    # Edit lifecycle lock (chốt 2026-09-14): participants follow the exact
+    # same rule as the generic PUT — only a not-yet-started UPCOMING meeting
+    # may have its member list touched at all.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
+        raise HTTPException(400, f"Không thể thay đổi người tham gia của cuộc họp ở trạng thái {compute_display_status(m)}.")
 
     member_id = body.get("member_id")
     if not member_id:
@@ -1435,6 +1608,7 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
         description=f"Thêm '{member.display_name}' vào cuộc họp '{m.title}' (vai trò {role})"
     )
     db.commit()
+    _sync_meeting_calendar_attendees(db, m)
 
     # Re-fetch full meeting
     m = db.query(Meeting).options(
@@ -1450,9 +1624,9 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
 def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
-    # Rule 05: Meeting DONE -> Cannot change participants
-    if m.status == "DONE":
-        raise HTTPException(400, "Không thể thay đổi người tham gia của cuộc họp đã hoàn thành (DONE)")
+    # Edit lifecycle lock (chốt 2026-09-14): same rule as add_meeting_member.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
+        raise HTTPException(400, f"Không thể thay đổi người tham gia của cuộc họp ở trạng thái {compute_display_status(m)}.")
 
     mm = db.query(MeetingMember).filter(
         MeetingMember.meeting_id == id,
@@ -1471,6 +1645,7 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
         description=f"Gỡ '{removed_member.display_name if removed_member else member_id}' khỏi cuộc họp '{m.title}'"
     )
     db.commit()
+    _sync_meeting_calendar_attendees(db, m)
 
     # Re-fetch full meeting
     m = db.query(Meeting).options(
@@ -1527,8 +1702,7 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
                 result = sync_zoom_meeting(m.meeting_url, meeting_info)
             elif ("google" in platform or "meet" in platform) and m.meeting_url:
                 from ..services.meeting_sync import sync_google_meet
-                meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-                workspace_id = workspace_id_for_project(db, meeting_proj)
+                workspace_id = _host_workspace_id_for_meeting(db, m)
                 result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info, workspace_id)
             elif m.transcript and m.transcript.strip():
                 from ..services.meeting_sync import summarize_with_ai
@@ -1975,26 +2149,47 @@ def google_health_check(db: Session = Depends(get_db)):
 
 # ─── RETRY LINK CREATION ENDPOINT (SPEC CHAPTER 06) ───────────
 @router.post("/{id}/retry-link")
-def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """Regenerate the Google Meet link for a meeting — this is the ONLY
     server-side path allowed to change organizer_google_email after creation
     (chốt 2026-09-13): PUT /{id} no longer accepts it, precisely so a real
     organizer reassignment always goes through an actual new Calendar event
-    here, never as a side effect of an unrelated field edit."""
+    here, never as a side effect of an unrelated field edit.
+
+    Optional body.host_workspace_id (chốt 2026-09-14 Edit-lifecycle rules):
+    this is also the mechanism the Edit form's "HOST *" dropdown uses under
+    the hood when the user picks a different Host for an UPCOMING meeting —
+    changing Host can only ever mean generating a brand-new Calendar event
+    under the new account (Calendar has no "reassign organizer" operation on
+    an existing event), so it must go through the exact same path as a plain
+    manual retry, never a separate one. Omitted, this behaves exactly as
+    before (auto-resolve via the project's Workspace)."""
+    body = body or {}
     m = _get_active_meeting(db, id)
-    # Status guard (chốt 2026-09-13): only UPCOMING may regenerate. Reassigning
-    # the organizer while ONGOING risks the Meeting Host Bot being live in the
-    # OLD organizer's session — its eventual actual-end report
-    # (POST /api/meeting-bot/ended) would then carry the stale google_email,
-    # get rejected (403, organizer mismatch), and the extension does not retry
-    # on 403 — permanently stranding the meeting at ONGOING. DONE/CANCELLED
-    # meetings have no legitimate reason to regenerate a link at all.
-    if m.status != "UPCOMING":
+    # Status guard (chốt 2026-09-13, tightened 2026-09-14): only a genuinely
+    # not-yet-started UPCOMING meeting may regenerate — compute_display_status
+    # catches the live-ONGOING window that a bare m.status check misses
+    # (ONGOING is never persisted). Reassigning the organizer while live risks
+    # the Meeting Host Bot being live in the OLD organizer's session — its
+    # eventual actual-end report (POST /api/meeting-bot/ended) would then
+    # carry the stale google_email, get rejected (403, organizer mismatch),
+    # and the extension does not retry on 403 — permanently stranding the
+    # meeting at ONGOING. DONE/CANCELLED meetings have no legitimate reason to
+    # regenerate a link at all.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
         raise HTTPException(
             400,
-            f"Chỉ có thể tạo lại link Google Meet khi cuộc họp đang ở trạng thái UPCOMING "
-            f"(hiện tại: {m.status}).",
+            f"Chỉ có thể tạo lại link Google Meet khi cuộc họp chưa bắt đầu (SẮP TỚI) "
+            f"(hiện tại: {compute_display_status(m)}).",
         )
+    # Platform guard (added 2026-09-14 after a real frontend bug briefly
+    # called this endpoint for a Zoom meeting): this endpoint only ever
+    # creates a Google Calendar event — calling it for a non-Google-Meet
+    # meeting would silently replace its real join link (e.g. a Zoom URL)
+    # with a bogus Google Meet one. Server-side backstop regardless of what
+    # any current or future frontend code does.
+    if (m.platform or "").strip().lower() not in ("google meet", "google"):
+        raise HTTPException(400, f"Không thể tạo lại link Google Meet cho nền tảng '{m.platform}'.")
     if not m.meeting_date or not m.start_time:
         raise HTTPException(400, "Cuộc họp cần có ngày và giờ bắt đầu trước khi tạo lại link")
 
@@ -2009,7 +2204,7 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
 
     from ..services.meeting_sync import create_google_meet_link
     meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-    workspace_id = workspace_id_for_project(db, meeting_proj)
+    workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, meeting_proj))
     try:
         link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", start_datetime, dur_mins, workspace_id=workspace_id)
     except ValueError as e:
@@ -2038,6 +2233,10 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
         description=f"Tạo lại link Google Meet, đổi organizer sang {new_organizer or '(không đổi)'}"
     )
     db.commit()
+    # New Calendar event starts with zero attendees (create_google_meet_link
+    # always creates with attendees_emails=[]) — re-apply the existing
+    # participant list as guests on this fresh event.
+    _sync_meeting_calendar_attendees(db, m)
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 

@@ -15,7 +15,6 @@ from typing import Optional
 
 import requests
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -23,7 +22,7 @@ from ..database import get_db
 from ..models.meeting import Meeting
 from ..models.system_category import Workspace
 from ..models.workspace_google_account import WorkspaceGoogleAccount
-from ..services.meeting_sync import _resolve_meeting_workspace_id, get_workspace_google_access_token
+from ..services.meeting_sync import _resolve_meeting_workspace_id, get_workspace_google_access_token, resolve_workspace_id_by_google_email
 from ..utils.timezone import VN_TZ as _VN_TZ
 
 logger = logging.getLogger("meeting_bot")
@@ -31,8 +30,15 @@ router = APIRouter()
 
 # How far ahead the bot should be told about a meeting, so its browser
 # profile has time to open the join link and get admitted through before
-# the actual start time.
-LOOKAHEAD_MINUTES = 10
+# the actual start time. Tightened from 10 to 2 (chốt 2026-09-14, "Bot Join
+# window" rule): the bot should only ever be handed a meeting close to its
+# actual start, not one still ~10 minutes out. 2 minutes still leaves ~5-6
+# poll cycles (poll interval ~20s) to open the tab, load Meet, and get the
+# CDP join click to land before start_time. GRACE_MINUTES_AFTER_START below
+# is deliberately left untouched — it's a separate post-start catch-up net
+# (VPS restart / missed poll right at start), not the "how early can the bot
+# see this" gate this constant controls.
+LOOKAHEAD_MINUTES = 2
 # How long after start_time a meeting still counts as "join me" when it has
 # no end_time — covers meetings the bot missed picking up right at start
 # (VPS restart, etc.). Meetings that DO have an end_time are cut off there
@@ -120,6 +126,7 @@ def get_bot_queue(
         if not (window_start <= start_dt <= window_end):
             continue
 
+        end_dt = None
         if m.end_time:
             end_dt = datetime.datetime.combine(m.meeting_date, m.end_time, tzinfo=_VN_TZ)
             if m.end_time < m.start_time:
@@ -139,31 +146,30 @@ def get_bot_queue(
             "title": m.title,
             "join_url": m.meeting_url,
             "start_at": start_dt.isoformat(),
+            # Planned end (chốt 2026-09-14, Bot Join window Rule 3): the
+            # extension's content.js uses this — NOT actual-end detection —
+            # to decide when to give up waiting for a FIRST participant to
+            # ever show up. Once a real participant has been observed, this
+            # value is ignored (see content.js's everHadParticipant flag) and
+            # only actual-end (Leave button gone / solo timeout) matters.
+            "end_at": end_dt.isoformat() if end_dt else None,
             "organizer_google_email": mailbox,
         })
 
     return {"due": due}
 
 
-def _resolve_workspace_id_by_email(db: Session, google_email: Optional[str]) -> Optional[int]:
-    """Reverse of _workspace_google_email: given a mailbox, which workspace's
-    Drive should own the upload — prefers the connected OAuth override,
-    falls back to the display hint. A meeting's organizer_google_email is
-    frozen at creation time and is very often the ONLY signal available
-    (project_id can be None — "company-wide" meetings, or test rows), so
-    this must be tried before the project→workspace path, matching the
-    same priority /queue already uses for the reverse direction.
-    """
-    if not google_email:
-        return None
-    email = google_email.strip().lower()
-    wga = db.query(WorkspaceGoogleAccount).filter(
-        func.lower(WorkspaceGoogleAccount.google_email) == email
-    ).first()
-    if wga:
-        return wga.workspace_id
-    ws = db.query(Workspace).filter(func.lower(Workspace.expected_google_email) == email).first()
-    return ws.id if ws else None
+# Reverse of _workspace_google_email: given a mailbox, which workspace's
+# Drive should own the upload — prefers the connected OAuth override, falls
+# back to the display hint. A meeting's organizer_google_email is frozen at
+# creation time and is very often the ONLY signal available (project_id can
+# be None — "company-wide" meetings, or test rows), so this must be tried
+# before the project→workspace path, matching the same priority /queue
+# already uses for the reverse direction. Canonical implementation now lives
+# in meeting_sync.py (chốt 2026-09-14, shared with meetings.py's Host-field
+# work) — re-exported under this name so existing call sites below don't
+# need to change.
+_resolve_workspace_id_by_email = resolve_workspace_id_by_google_email
 
 
 # Fixed name, not configurable per workspace — every workspace gets its own

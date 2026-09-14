@@ -54,6 +54,17 @@ let hostDetected = false;
 let callEndedNotified = false;
 const _loggedCandidates = new Set();
 
+// Bot Join window Rule 8 (chốt 2026-09-14): if Join keeps failing (button
+// never lands, or never even appears), don't retry forever — that would
+// hold this profile's "busy" lock and starve the next due meeting on the
+// same mailbox (see background.js's pollOnceLocked active-tab guard).
+// Bounded to a short fixed window, deliberately NOT tied to the meeting's
+// end_time (a long meeting would otherwise lock the profile for its whole
+// duration on a broken Join).
+const JOIN_GIVE_UP_TIMEOUT_MS = 3 * 60 * 1000;
+const contentStartTs = Date.now();
+let joinGivenUp = false;
+
 function visibleText(el) {
   return (el.innerText || el.textContent || "").trim();
 }
@@ -173,7 +184,7 @@ function requestCdpJoinClick() {
 }
 
 function tryClickJoin() {
-  if (joinClicked || joinAttemptInFlight) return;
+  if (joinClicked || joinAttemptInFlight || joinGivenUp) return;
   const el = findClickableByText(JOIN_TEXT_RE);
   if (el) {
     if (!joinDetectedLogged) {
@@ -189,6 +200,19 @@ function tryClickJoin() {
   // frame, so this can't be a single one-shot check before clicking Join.
   clickIfFound(MIC_OFF_RE);
   clickIfFound(CAM_OFF_RE);
+}
+
+// Rule 8 (chốt 2026-09-14): gives up if Join never lands within the bounded
+// window above. Reports to background.js so it can close the tab and
+// release the profile's lock — but background.js deliberately does NOT
+// mark the meeting DONE for this (see its JOIN_GIVE_UP handler), since the
+// bot never actually observed whether a real meeting happened.
+function checkJoinGiveUp() {
+  if (hostDetected || joinGivenUp || callEndedNotified) return;
+  if (Date.now() - contentStartTs < JOIN_GIVE_UP_TIMEOUT_MS) return;
+  joinGivenUp = true;
+  log(`Never got into the call after ${Math.round(JOIN_GIVE_UP_TIMEOUT_MS / 1000)}s of retrying Join — giving up.`);
+  chrome.runtime.sendMessage({ action: "JOIN_GIVE_UP" });
 }
 
 function checkHostState() {
@@ -410,6 +434,43 @@ const SOLO_LEAVE_TIMEOUT_MS = 3 * 60 * 1000; // tune once verified live
 let aloneSinceTs = null;
 let aloneLoggedForThisStretch = false;
 
+// Bot Join window Rules 3/4/5 (chốt 2026-09-14): SOLO_LEAVE_TIMEOUT_MS above
+// is the right signal once a real participant has actually been in the call
+// (count > 1) and then everyone leaves — that's a legitimate "actual end"
+// proxy. But before anyone has EVER joined, the bot being alone is just
+// "meeting hasn't started for real yet", not "meeting is over" — the correct
+// signal there is the meeting's own planned end_time, not a fixed 3-minute
+// timer (a late-arriving participant at minute 25 of a 30-minute meeting
+// must still be caught, see Rule 5). everHadParticipant latches permanently
+// once true, matching how SOLO_LEAVE_TIMEOUT_MS itself always applied.
+let everHadParticipant = false;
+let meetingEndAtMs = null;
+let meetingEndAtLookupInFlight = false;
+
+// end_at (chốt 2026-09-14) isn't available to content.js directly — it's
+// stashed by background.js in chrome.storage's recordingTabs map (keyed by
+// tabId, which this content script has no way to know), so lookup is by
+// matching this tab's own URL pathname instead. Fire-and-forget, retried
+// every tick until it resolves — background.js's storage write can lag
+// slightly behind this content script's document_idle injection.
+async function ensureEndAtLoaded() {
+  if (meetingEndAtMs !== null || meetingEndAtLookupInFlight) return;
+  meetingEndAtLookupInFlight = true;
+  try {
+    const { recordingTabs } = await chrome.storage.local.get(["recordingTabs"]);
+    const path = window.location.pathname;
+    const entry = Object.values(recordingTabs || {}).find((e) => e.path === path);
+    if (entry && entry.endAt) {
+      const t = Date.parse(entry.endAt);
+      if (!Number.isNaN(t)) meetingEndAtMs = t;
+    }
+  } catch (error) {
+    log("Failed to read meeting end_at from storage:", error?.message || error);
+  } finally {
+    meetingEndAtLookupInFlight = false;
+  }
+}
+
 // Confirmed live 2026-09-13: [data-participant-id] is NOT reliable — a
 // guest's tile stayed in the DOM (count still read 2) well after they'd
 // actually left, while the People panel's own "Contributors N" line (visible
@@ -485,28 +546,48 @@ function getParticipantCount() {
   return null; // couldn't determine — don't risk acting on a guess
 }
 
+function leaveCallProactively(reason) {
+  log(reason);
+  tryStopNativeRecording();
+  const leaveBtn = findClickableByText(LEAVE_CALL_RE);
+  if (leaveBtn) fireClick(leaveBtn);
+}
+
 function checkSoloTimeout() {
   if (!hostDetected || callEndedNotified) return;
   const count = getParticipantCount();
   if (count === null) return;
-  if (count <= 1) {
-    if (aloneSinceTs === null) {
-      aloneSinceTs = Date.now();
-      aloneLoggedForThisStretch = false;
-    }
-    if (!aloneLoggedForThisStretch) {
-      log(`Alone in call (participant count ${count}) — will auto-leave in ${Math.round(SOLO_LEAVE_TIMEOUT_MS / 1000)}s if still alone`);
-      aloneLoggedForThisStretch = true;
-    }
-    if (Date.now() - aloneSinceTs >= SOLO_LEAVE_TIMEOUT_MS) {
-      log("Still alone after timeout — leaving call proactively");
-      tryStopNativeRecording();
-      const leaveBtn = findClickableByText(LEAVE_CALL_RE);
-      if (leaveBtn) fireClick(leaveBtn);
-    }
-  } else {
+  if (count > 1) {
+    everHadParticipant = true;
     aloneSinceTs = null;
     aloneLoggedForThisStretch = false;
+    return;
+  }
+
+  if (!everHadParticipant) {
+    // Rule 3 (chốt 2026-09-14): no one has ever joined yet — wait for the
+    // meeting's planned end_time, not the short alone-timeout below (that
+    // one is for "someone WAS here and left", a different situation).
+    ensureEndAtLoaded();
+    if (meetingEndAtMs !== null && Date.now() >= meetingEndAtMs) {
+      leaveCallProactively("No participant ever joined and planned end_time reached — leaving call.");
+    }
+    return;
+  }
+
+  // Rule 4 (chốt 2026-09-14): a real participant WAS here before — end_time
+  // no longer matters, only actual-end (this alone-timeout, or the call's
+  // own Leave-button-gone signal) ends the meeting from here on.
+  if (aloneSinceTs === null) {
+    aloneSinceTs = Date.now();
+    aloneLoggedForThisStretch = false;
+  }
+  if (!aloneLoggedForThisStretch) {
+    log(`Alone in call (participant count ${count}) — will auto-leave in ${Math.round(SOLO_LEAVE_TIMEOUT_MS / 1000)}s if still alone`);
+    aloneLoggedForThisStretch = true;
+  }
+  if (Date.now() - aloneSinceTs >= SOLO_LEAVE_TIMEOUT_MS) {
+    leaveCallProactively("Still alone after timeout — leaving call proactively");
   }
 }
 
@@ -521,6 +602,7 @@ function confirmLeaveSubmenu() {
 
 function tick() {
   tryClickJoin();
+  checkJoinGiveUp();
   checkHostState();
   checkCallEnded();
   admitWaitingParticipants();
