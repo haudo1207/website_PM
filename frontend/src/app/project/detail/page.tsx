@@ -2463,7 +2463,11 @@ function ProjectDetailContent() {
 
     // 1. Find tasks that match ALL active filters directly
     const matchingTasks = baseItems.filter(item => {
-      const matchSearch = !searchLower || (item.detail || '').toLowerCase().includes(searchLower) || (item.task_code || '').toLowerCase().includes(searchLower);
+      const matchSearch = !searchLower
+        || (item.detail || '').toLowerCase().includes(searchLower)
+        || (item.task_code || '').toLowerCase().includes(searchLower)
+        || (item.assigned_name || '').toLowerCase().includes(searchLower)
+        || (item.support_name || '').toLowerCase().includes(searchLower);
       const matchPriority = priorityFilter === 'All' || item.priority === priorityFilter;
       const matchStatus = statusFilter === 'All' || item.status === statusFilter;
       const matchAssigned = assignedFilter === 'All' || (item.assigned_name || '') === assignedFilter;
@@ -5854,10 +5858,15 @@ function ProjectDetailContent() {
 
       groupsInPhase.forEach((group, gIdx) => {
         const isCollapsed = collapsedGroups.has(group.id);
-        const groupTasks = filteredItems.filter(t => t.task_group_id === group.id);
-        const filteredTasks = taskSearch
-          ? groupTasks.filter(t => (t.detail || '').toLowerCase().includes(taskSearch.toLowerCase()) || (t.task_code || '').toLowerCase().includes(taskSearch.toLowerCase()))
-          : groupTasks;
+        // `filteredItems` already applies taskSearch (plus every other active
+        // filter) AND deliberately keeps a matched task's ancestor/descendant
+        // rows for hierarchy context (see its own comments) — re-filtering by
+        // taskSearch again here undid exactly that: a child task matching
+        // the search kept showing, but its own parent Group/Task row (whose
+        // own detail/task_code text doesn't match) got filtered back out,
+        // leaving orphaned rows with no parent context and reads as search
+        // "returning the wrong/incomplete results".
+        const filteredTasks = filteredItems.filter(t => t.task_group_id === group.id);
         const dynamicCols = getDynamicColumns();
 
         // ═══ TASK GROUP ROW (rendered as table row) ═══
