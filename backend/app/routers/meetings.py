@@ -11,6 +11,8 @@ from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
 from ..models.project import Project
 from ..models.member import Member
+from ..models.system_category import Workspace
+from ..models.workspace_google_account import WorkspaceGoogleAccount
 from ..utils.auth import get_current_user
 from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, resolve_workspace, user_scope, workspace_id_for_project
 from ..utils.audit_service import AuditService
@@ -34,6 +36,13 @@ STATUS_FE_TO_DB = {
     "ĐÃ DIỄN RA": "DONE",  # legacy label, kept as an alias for older callers
     "ĐÃ HỦY": "CANCELLED"
 }
+
+# Temporary (chốt 2026-09-14, "HOST *" field): devv.szone@gmail.com's Google
+# session is broken/unusable, so it's excluded from the Host picker until
+# fixed — GET /hosts filters it out and create_meeting rejects it if sent
+# anyway. Remove this set (and the two checks that reference it) once the
+# account is restored; no other code change needed.
+DISABLED_HOST_EMAILS = {"devv.szone@gmail.com"}
 
 
 def _now_vn() -> datetime.datetime:
@@ -485,11 +494,57 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
             .filter(MeetingMember.meeting_id == m.id, Member.email.isnot(None), Member.email != "")
             .distinct().all()
         ]
-        meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-        workspace_id = workspace_id_for_project(db, meeting_proj)
+        workspace_id = _host_workspace_id_for_meeting(db, m)
         sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
     except Exception as e:
         logger.warning(f"_sync_meeting_calendar_attendees failed for meeting {m.id} (non-fatal): {e}")
+
+
+def _host_workspace_id_for_meeting(db: Session, m: Meeting) -> Optional[int]:
+    """Which Workspace's Google account actually owns this meeting's Calendar
+    event — resolved from organizer_google_email, NOT from the meeting's
+    project. Chốt 2026-09-14 'HOST *' field: a meeting's Host can now be
+    picked independent of its project's own Workspace (e.g. a project in one
+    Workspace hosted under another Workspace's account as a manual backup),
+    so workspace_id_for_project(m.project) can no longer be assumed to match
+    the account that organizes the Calendar event. Every Calendar mutation on
+    an EXISTING meeting (reschedule, cancel, attendees sync) must resolve
+    workspace_id through here — project-based resolution stays correct only
+    for CREATE-time (no organizer_google_email exists yet) and retry-link's
+    intentional fresh-account assignment."""
+    from ..services.meeting_sync import resolve_workspace_id_by_google_email
+    ws_id = resolve_workspace_id_by_google_email(db, m.organizer_google_email)
+    if ws_id:
+        return ws_id
+    meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+    return workspace_id_for_project(db, meeting_proj)
+
+
+def _resolve_host_workspace_id(db: Session, body: dict, fallback_workspace_id: Optional[int]) -> Optional[int]:
+    """Resolve which Workspace's Google account to use for a NOT-YET-EXISTING
+    Calendar event, honoring an explicit body['host_workspace_id'] (chốt
+    2026-09-14 'HOST *' field) over the project-derived fallback. Shared by
+    /generate-link, /check-conflict, and create_meeting's own fallback-
+    generation path, so all three agree on exactly the Host a client picked
+    — a mismatch here would show "rảnh" in the conflict preview for one
+    account while actually generating the Meet link under another. Raises
+    400/404 if the client sent a host_workspace_id that doesn't resolve to a
+    real, currently-enabled Host (DISABLED_HOST_EMAILS)."""
+    host_workspace_id_input = body.get("host_workspace_id")
+    if not host_workspace_id_input:
+        return fallback_workspace_id
+    try:
+        host_workspace_id_input = int(host_workspace_id_input)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "host_workspace_id không hợp lệ")
+    host_ws = db.query(Workspace).filter(Workspace.id == host_workspace_id_input).first()
+    if not host_ws:
+        raise HTTPException(404, "Không tìm thấy Workspace của Host đã chọn")
+    host_wga = db.query(WorkspaceGoogleAccount).filter(WorkspaceGoogleAccount.workspace_id == host_workspace_id_input).first()
+    host_email = (host_wga.google_email if host_wga and host_wga.google_email else None) or host_ws.expected_google_email
+    if not host_email or host_email.strip().lower() in DISABLED_HOST_EMAILS:
+        raise HTTPException(400, "Host đã chọn hiện không khả dụng, vui lòng chọn Host khác")
+    return host_workspace_id_input
 
 
 # ─── LIST ───────────────────────────────────────────────
@@ -639,7 +694,7 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
         try:
             from ..services.meeting_sync import create_google_meet_link
             proj = db.query(Project).filter(Project.id == body.get("project_id")).first() if body.get("project_id") else None
-            workspace_id = workspace_id_for_project(db, proj)
+            workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, proj))
             result = create_google_meet_link(db, current_user.id, title, start_datetime, dur_mins, workspace_id)
             # NOT notifying n8n here on purpose (confirmed live 2026-09-13):
             # this endpoint only pre-fetches a join link — no Meeting row
@@ -681,7 +736,7 @@ def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_us
     keystroke's debounce)."""
     project_id = body.get("project_id")
     proj = db.query(Project).filter(Project.id == project_id).first() if project_id else None
-    workspace_id = workspace_id_for_project(db, proj)
+    workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, proj))
 
     from ..services.meeting_sync import is_workspace_google_connected
     organizer_google_email = None
@@ -883,6 +938,52 @@ def get_meeting_insights(
     }
 
 
+# ─── AVAILABLE HOSTS (chốt 2026-09-14, "HOST *" field) ────
+@router.get("/hosts")
+def list_available_hosts(
+    project_ids: str = "",
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """List every Workspace's Google account usable as a meeting Host
+    (DISABLED_HOST_EMAILS filtered out), plus — when project_ids is passed —
+    which one should be auto-selected: the single Workspace all of those
+    projects share, if they share exactly one AND it isn't disabled.
+    Multi-Workspace project selections and the disabled Workspace both
+    resolve to auto_selected_workspace_id=None, requiring a manual pick from
+    `hosts` (chốt rule: "khác WS → manual, không tự đoán")."""
+    hosts = []
+    for ws in db.query(Workspace).order_by(Workspace.name).all():
+        wga = db.query(WorkspaceGoogleAccount).filter(WorkspaceGoogleAccount.workspace_id == ws.id).first()
+        email = (wga.google_email if wga and wga.google_email else None) or ws.expected_google_email
+        if not email or email.strip().lower() in DISABLED_HOST_EMAILS:
+            continue
+        hosts.append({"workspace_id": ws.id, "workspace_name": ws.name, "google_email": email})
+
+    auto_selected_workspace_id = None
+    ids = []
+    for raw in project_ids.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ids.append(int(raw))
+        except ValueError:
+            continue
+    if ids:
+        resolved_ws_ids = set()
+        for pid in ids:
+            proj = db.query(Project).filter(Project.id == pid).first()
+            if proj:
+                resolved_ws_ids.add(workspace_id_for_project(db, proj))
+        if len(resolved_ws_ids) == 1:
+            candidate = next(iter(resolved_ws_ids))
+            if candidate is not None and any(h["workspace_id"] == candidate for h in hosts):
+                auto_selected_workspace_id = candidate
+
+    return {"hosts": hosts, "auto_selected_workspace_id": auto_selected_workspace_id}
+
+
 # ─── GET ONE ─────────────────────────────────────────────
 @router.get("/{id}")
 def get_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
@@ -995,7 +1096,15 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # instead of silently leaving both NULL for every meeting created this way.
     google_event_id = body.get("google_event_id")
     organizer_google_email = body.get("organizer_google_email")
-    workspace_id = workspace_id_for_project(db, proj if 'proj' in locals() else None)
+    # HOST * field (chốt 2026-09-14): body.host_workspace_id, when sent,
+    # overrides the project-derived workspace for EVERY Google side-effect
+    # below (Meet-link generation, n8n notify routing, Drive tag rename) — a
+    # meeting's Host account is now a deliberate, independent choice, not
+    # just whatever account the project's own Workspace happens to use.
+    # Other create_meeting callers that don't send this field (n8n's
+    # create-branch, the Calendar quick-create drawer) keep the old
+    # project-based auto-resolution untouched.
+    workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, proj if 'proj' in locals() else None))
 
     if not meeting_url:
         # Build ISO start_time for API calls
@@ -1344,8 +1453,7 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             from ..services.meeting_sync import update_google_meet_event
             start_iso = datetime.datetime.combine(m.meeting_date, m.start_time).isoformat()
             end_iso = datetime.datetime.combine(m.meeting_date, m.end_time).isoformat()
-            meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-            workspace_id = workspace_id_for_project(db, meeting_proj)
+            workspace_id = _host_workspace_id_for_meeting(db, m)
             update_google_meet_event(db, m.google_event_id, start_iso, end_iso, workspace_id)
         except Exception as e:
             logger.warning(f"Failed to sync rescheduled time to Google Calendar for meeting {m.id}: {e}")
@@ -1408,8 +1516,7 @@ def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(
     if m.status == "UPCOMING" and m.google_event_id:
         try:
             from ..services.meeting_sync import cancel_google_meet_event
-            meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-            workspace_id = workspace_id_for_project(db, meeting_proj)
+            workspace_id = _host_workspace_id_for_meeting(db, m)
             cancel_google_meet_event(db, m.google_event_id, workspace_id=workspace_id)
         except Exception as e:
             logger.warning(f"cancel_google_meet_event failed for meeting {id} (non-fatal): {e}")
@@ -1560,8 +1667,7 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
                 result = sync_zoom_meeting(m.meeting_url, meeting_info)
             elif ("google" in platform or "meet" in platform) and m.meeting_url:
                 from ..services.meeting_sync import sync_google_meet
-                meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-                workspace_id = workspace_id_for_project(db, meeting_proj)
+                workspace_id = _host_workspace_id_for_meeting(db, m)
                 result = sync_google_meet(db, current_user.id, m.meeting_url, meeting_info, workspace_id)
             elif m.transcript and m.transcript.strip():
                 from ..services.meeting_sync import summarize_with_ai
