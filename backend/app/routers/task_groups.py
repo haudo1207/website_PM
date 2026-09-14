@@ -1727,10 +1727,12 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         old_status_l = (old_dict["status"] or "").strip().lower()
         # Members cannot set status to Done directly - must go through Review workflow
         # Only Leaders/Super Admin can approve tasks (Review → Done)
+        is_leader_role = getattr(current_user, "role", None) == "leader"
         if (
             new_status_l in ("done", "completed")
             and old_status_l not in ("done", "completed")
             and not is_project_leader(db, current_user, project_id)
+            and not is_leader_role
         ):
             raise HTTPException(403, "Chỉ Leader mới có quyền chuyển task sang Done. Member cần chuyển task sang Review và chờ Leader duyệt.")
         if (
@@ -1738,6 +1740,7 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
             and new_status_l == "done"
             and (task.review_status == "pending")
             and not is_project_leader(db, current_user, project_id)
+            and not is_leader_role
         ):
             raise HTTPException(403, "Task đang chờ review. Chỉ Leader mới có quyền duyệt sang Done.")
         task.status = body["status"]
@@ -2020,7 +2023,14 @@ def approve_task(gid: int, tid: int, db: Session = Depends(get_db), current_user
     phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
     project_id = phase.project_id if phase else None
 
-    if not is_project_leader(db, current_user, project_id):
+    is_leader = is_project_leader(db, current_user, project_id)
+    if not is_leader and getattr(current_user, "role", None) == "leader":
+        is_leader = True
+    if not is_leader and task.assigned_id and getattr(current_user, "member_id", None):
+        assignee = db.query(Member).filter(Member.id == task.assigned_id).first()
+        if assignee and assignee.leader_member_id == current_user.member_id:
+            is_leader = True
+    if not is_leader:
         raise HTTPException(403, "Bạn không có quyền duyệt task này.")
     if task.review_status != "pending":
         raise HTTPException(400, "Task hiện không ở trạng thái chờ review nên không thể duyệt.")
@@ -2099,7 +2109,14 @@ def request_task_changes(gid: int, tid: int, body: dict, db: Session = Depends(g
     phase = db.query(Phase).filter(Phase.id == tg.phase_id).first() if tg else None
     project_id = phase.project_id if phase else None
 
-    if not is_project_leader(db, current_user, project_id):
+    is_leader = is_project_leader(db, current_user, project_id)
+    if not is_leader and getattr(current_user, "role", None) == "leader":
+        is_leader = True
+    if not is_leader and task.assigned_id and getattr(current_user, "member_id", None):
+        assignee = db.query(Member).filter(Member.id == task.assigned_id).first()
+        if assignee and assignee.leader_member_id == current_user.member_id:
+            is_leader = True
+    if not is_leader:
         raise HTTPException(403, "Bạn không có quyền yêu cầu sửa task này.")
     if task.review_status != "pending":
         raise HTTPException(400, "Task hiện không ở trạng thái chờ review nên không thể yêu cầu sửa.")
@@ -2295,32 +2312,42 @@ def notify_review_to_leader(gid: int, tid: int, db: Session = Depends(get_db), c
         raise HTTPException(400, "Không tìm thấy dự án.")
     project = db.query(Project).filter(Project.id == project_id).first()
     sender_name = getattr(current_user, "full_name", None) or getattr(current_user, "email", "Một thành viên")
-    from sqlalchemy import or_
-    project_leaders = db.query(User).filter(
-        or_(User.role == "super_admin", User.role == "leader"),
-        User.is_active == True,
-        User.id.in_(
-            db.query(project_members.c.member_id).join(
-                Member, Member.id == project_members.c.member_id
-            ).join(
-                User, User.member_id == Member.id
-            ).where(
-                project_members.c.project_id == project_id,
-                project_members.c.role.in_(["PM", "Leader"]),
-            ).with_entities(User.id)
-        ),
-    ).all()
+    _pm_ids = []
+    if project.pm_id:
+        _pm_ids.append(project.pm_id)
+    if project.technical_leader_id:
+        _pm_ids.append(project.technical_leader_id)
+    project_leaders = db.query(User).filter(User.member_id.in_(list(set(_pm_ids)))).all() if _pm_ids else []
     leader_by_member = []
     if getattr(current_user, "member_id", None):
         sender_member = db.query(Member).filter(Member.id == current_user.member_id).first()
-        if sender_member and sender_member.leader_member_id:
-            leader_user = db.query(User).filter(
-                User.member_id == sender_member.leader_member_id,
-                User.is_active == True,
-            ).first()
-            if leader_user:
-                leader_by_member = [leader_user]
+        if sender_member:
+            leader_member = None
+            if sender_member.leader_member_id:
+                leader_member = db.query(Member).filter(Member.id == sender_member.leader_member_id).first()
+            # Fallback for members whose canonical `leader_member_id` link was
+            # never backfilled (legacy rows only carry `leader_name`/
+            # `leader_email` strings) — same resolution the Overview
+            # dashboard's team roster already falls back to, otherwise the
+            # Member's actual reporting Leader silently gets no review
+            # notification while the project's PM/Technical Leader still do.
+            if not leader_member:
+                leader_email = (sender_member.leader_email or "").strip().lower()
+                leader_name = (sender_member.leader_name or "").strip().lower()
+                if leader_email:
+                    leader_member = db.query(Member).filter(sql_func.lower(Member.email) == leader_email).first()
+                if not leader_member and leader_name:
+                    leader_member = (
+                        db.query(Member).filter(sql_func.lower(Member.display_name) == leader_name).first()
+                        or db.query(Member).filter(sql_func.lower(Member.full_name) == leader_name).first()
+                    )
+            if leader_member:
+                leader_user = db.query(User).filter(User.member_id == leader_member.id).first()
+                if leader_user:
+                    leader_by_member = [leader_user]
     all_recipients = {u.id: u for u in list(project_leaders) + list(leader_by_member)}
+    if not all_recipients:
+        raise HTTPException(400, "Dự án chưa có Project Manager hoặc Technical Leader được chỉ định.")
     task_code = task.task_code or str(task.id)
     project_name = project.name if project else ""
     for uid, recipient in all_recipients.items():
