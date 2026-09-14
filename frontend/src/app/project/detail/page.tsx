@@ -332,6 +332,39 @@ function ProjectDetailContent() {
 
   const isSavingRef = useRef(false);
 
+  // Task Table card height — measured directly instead of relying on the
+  // flex-1/min-h-0 chain up to h-screen (which reads as correct on paper
+  // but empirically still left the card sized to its own content: short on
+  // a project with few Groups/Tasks, with a big block of plain grey page
+  // showing below it instead of the card's own white background filling
+  // the rest of the viewport). Sets an explicit pixel height = distance
+  // from the card's own top to the bottom of the viewport, recomputed on
+  // resize, so it fills exactly to the screen edge on any screen size.
+  const taskTableCardRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (activeMainTab !== 'tasks') return;
+    const recompute = () => {
+      const el = taskTableCardRef.current;
+      // Bails out silently if the card hasn't mounted yet (e.g. still on a
+      // loading screen) — the ResizeObserver below re-fires as soon as
+      // project/task data finishes loading and the page's layout actually
+      // changes size, so this recovers on its own without needing to know
+      // exactly when that happens.
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      const height = Math.max(240, window.innerHeight - top - 16);
+      el.style.height = `${height}px`;
+    };
+    recompute();
+    window.addEventListener('resize', recompute);
+    const observer = new ResizeObserver(recompute);
+    observer.observe(document.body);
+    return () => {
+      window.removeEventListener('resize', recompute);
+      observer.disconnect();
+    };
+  }, [activeMainTab]);
+
   const [project, setProject] = useState<any>(null);
   const [loadingProject, setLoadingProject] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
@@ -2430,7 +2463,11 @@ function ProjectDetailContent() {
 
     // 1. Find tasks that match ALL active filters directly
     const matchingTasks = baseItems.filter(item => {
-      const matchSearch = !searchLower || (item.detail || '').toLowerCase().includes(searchLower) || (item.task_code || '').toLowerCase().includes(searchLower);
+      const matchSearch = !searchLower
+        || (item.detail || '').toLowerCase().includes(searchLower)
+        || (item.task_code || '').toLowerCase().includes(searchLower)
+        || (item.assigned_name || '').toLowerCase().includes(searchLower)
+        || (item.support_name || '').toLowerCase().includes(searchLower);
       const matchPriority = priorityFilter === 'All' || item.priority === priorityFilter;
       const matchStatus = statusFilter === 'All' || item.status === statusFilter;
       const matchAssigned = assignedFilter === 'All' || (item.assigned_name || '') === assignedFilter;
@@ -2440,7 +2477,16 @@ function ProjectDetailContent() {
       // của 2 Group khác nhau vào chung 1 kết quả filter.
       const matchSkillSolution = skillSolutionFilter === 'All' || String(item.skill_solution_id || '') === skillSolutionFilter;
       const matchSkillVendor = skillVendorFilter === 'All' || String(item.skill_vendor_id || '') === skillVendorFilter;
-      const matchMember = !memberFilterParam || (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam;
+      // Prefer matching by the numeric member_id (unambiguous) over the
+      // display name string — two different Members can share the exact
+      // same display name (across teams/workspaces, or just coincidentally),
+      // which made this drill-in from /kpi occasionally pull in another
+      // person's tasks too. Only falls back to name matching when no
+      // memberIdParam was passed (older links / name-only callers).
+      const matchMember = !memberFilterParam
+        || (memberIdParam
+          ? Number(item.assigned_id) === Number(memberIdParam) || Number(item.support_id) === Number(memberIdParam)
+          : (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam);
       return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
     });
 
@@ -3026,12 +3072,9 @@ function ProjectDetailContent() {
           { id: 5, name: 'Cancel' },
         ]
       : dbStatuses;
-    if (isMember()) {
-      return baseStatuses.filter((st: any) => {
-        const name = (st.name || '').toLowerCase();
-        return name !== 'done' && name !== 'completed' && !name.includes('hoàn') && !name.includes('finish');
-      });
-    }
+    // Review is optional, not mandatory — a Member can set Done directly
+    // themself, same as a Leader (see backend update_task), so Done/Hoàn
+    // thành/etc. is no longer filtered out of their Status options.
     return baseStatuses;
   };
 
@@ -3688,7 +3731,7 @@ function ProjectDetailContent() {
                         <option value="Todo">Todo</option>
                         <option value="Waiting">Waiting</option>
                         <option value="Process">Process</option>
-                        {!isMember() && <option value="Done">Done</option>}
+                        <option value="Done">Done</option>
                         <option value="Cancel">Cancel</option>
                       </>
                     ) : (
@@ -5824,10 +5867,15 @@ function ProjectDetailContent() {
 
       groupsInPhase.forEach((group, gIdx) => {
         const isCollapsed = collapsedGroups.has(group.id);
-        const groupTasks = filteredItems.filter(t => t.task_group_id === group.id);
-        const filteredTasks = taskSearch
-          ? groupTasks.filter(t => (t.detail || '').toLowerCase().includes(taskSearch.toLowerCase()) || (t.task_code || '').toLowerCase().includes(taskSearch.toLowerCase()))
-          : groupTasks;
+        // `filteredItems` already applies taskSearch (plus every other active
+        // filter) AND deliberately keeps a matched task's ancestor/descendant
+        // rows for hierarchy context (see its own comments) — re-filtering by
+        // taskSearch again here undid exactly that: a child task matching
+        // the search kept showing, but its own parent Group/Task row (whose
+        // own detail/task_code text doesn't match) got filtered back out,
+        // leaving orphaned rows with no parent context and reads as search
+        // "returning the wrong/incomplete results".
+        const filteredTasks = filteredItems.filter(t => t.task_group_id === group.id);
         const dynamicCols = getDynamicColumns();
 
         // ═══ TASK GROUP ROW (rendered as table row) ═══
@@ -6017,13 +6065,25 @@ function ProjectDetailContent() {
                 );
               }
 
-              // Roster of Assigned/Support member ids on the group itself —
-              // additive-synced from child Tasks, and manually editable via
-              // a multi-select (dedup'd, never auto-removed).
-              if (colUpper === 'ASSIGNED' || colUpper === 'SUPPORT') {
-                const field: 'assigned_ids' | 'support_ids' = colUpper === 'ASSIGNED' ? 'assigned_ids' : 'support_ids';
-                const names: string[] = colUpper === 'ASSIGNED' ? (group.assigned_names || []) : (group.support_names || []);
-                const ids: number[] = colUpper === 'ASSIGNED' ? (group.assigned_ids || []) : (group.support_ids || []);
+              // ASSIGNED (người thực hiện) on a Group row is fixed to
+              // whoever created it — read-only here, backend silently
+              // ignores any attempt to change it via PATCH. SUPPORT (SP)
+              // stays a freely-editable multi-select roster, additive-
+              // synced from child Tasks, same as before.
+              if (colUpper === 'ASSIGNED') {
+                const names: string[] = group.assigned_names || [];
+                return (
+                  <td key={col} className="px-2 py-2 text-xs" title="Người thực hiện Group = người tạo, không thể chỉnh sửa">
+                    <span className="truncate min-w-0 font-semibold text-[#1e293b]">
+                      {names.length > 0 ? names.join(', ') : <span className="text-slate-300 font-normal">—</span>}
+                    </span>
+                  </td>
+                );
+              }
+              if (colUpper === 'SUPPORT') {
+                const field: 'assigned_ids' | 'support_ids' = 'support_ids';
+                const names: string[] = group.support_names || [];
+                const ids: number[] = group.support_ids || [];
                 const isEditingPeople = editingGroupPeople?.groupId === group.id && editingGroupPeople?.field === field;
 
                 if (isEditingPeople) {
@@ -6193,7 +6253,7 @@ function ProjectDetailContent() {
                           <>
                             <option value="Waiting">Waiting</option>
                             <option value="Process">Process</option>
-                            {!isMember() && <option value="Done">Done</option>}
+                            <option value="Done">Done</option>
                             <option value="Cancel">Cancel</option>
                           </>
                         ) : (
@@ -7716,7 +7776,7 @@ function ProjectDetailContent() {
 
               {/* TAB: TASKS */}
               {activeMainTab === 'tasks' && (
-                <div className="flex-1 min-h-0 flex flex-col gap-2 -mt-2">
+                <div className="flex-1 min-h-0 flex flex-col gap-2 mt-3">
                   {/* Phase Tabs + Search */}
                   <div className="flex items-center justify-between flex-nowrap gap-2 shrink-0">
                     <div ref={phaseNavContainerRef} className="flex items-center gap-4 h-9 flex-nowrap overflow-hidden flex-1 min-w-0">
@@ -8138,7 +8198,7 @@ function ProjectDetailContent() {
                       của table vẫn hoạt động bình thường. */}
                   <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
-                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0">
+                  <div ref={taskTableCardRef} className="flex-1 min-w-0 min-h-[65vh] bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
                     <div className="flex items-center px-3 pt-2 pb-1 border-b border-slate-100 shrink-0">
                       <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
                         <button
@@ -9948,7 +10008,7 @@ function ProjectDetailContent() {
                         <option value="Todo">Todo</option>
                         <option value="Waiting">Waiting</option>
                         <option value="Process">Process</option>
-                        {!isMember() && <option value="Done">Done</option>}
+                        <option value="Done">Done</option>
                         <option value="Cancel">Cancel</option>
                       </>
                     ) : (
@@ -11353,7 +11413,7 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
   // of inline.
   const anchorRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
   const lastSyncedEditValue = useRef<string>('');
 
   // Only resync searchTerm when editValue itself changes to a different member —
@@ -11390,13 +11450,23 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
     const reposition = () => {
       if (!anchorRef.current) return;
       const rect = anchorRef.current.getBoundingClientRect();
-      const estimatedHeight = 170;
-      const dropUp = window.innerHeight - rect.bottom < estimatedHeight && rect.top > window.innerHeight - rect.bottom;
-      setPortalPos({
-        top: Math.max(4, dropUp ? rect.top - estimatedHeight : rect.bottom + 4),
-        left: rect.left,
-        width: rect.width,
-      });
+      // Sizes the menu to whichever space is actually available instead of
+      // guessing its height and flipping to a position based on that guess
+      // — on a short/small screen (e.g. a 15" laptop vs. a 24" monitor) a
+      // wrong guess could push the menu's top far above the anchor just to
+      // fit, landing it up near the page header instead of next to the
+      // field that opened it. Prefer opening below (reads more naturally);
+      // only open above when below is cramped AND above genuinely has more
+      // room — and even then, cap the menu's own height to that available
+      // space (it already scrolls internally) rather than relocate it.
+      const GAP = 4;
+      const PAD = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - GAP - PAD;
+      const spaceAbove = rect.top - GAP - PAD;
+      const openBelow = spaceBelow >= 120 || spaceBelow >= spaceAbove;
+      setPortalPos(openBelow
+        ? { top: rect.bottom + GAP, left: rect.left, width: rect.width, maxHeight: Math.max(120, spaceBelow) }
+        : { top: PAD, left: rect.left, width: rect.width, maxHeight: Math.max(120, spaceAbove) });
     };
     reposition();
     window.addEventListener('scroll', reposition, true);
@@ -11461,8 +11531,8 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
         {isOpen && portalPos && createPortal(
           <div
             ref={menuRef}
-            style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 200), zIndex: 9999 }}
-            className="max-h-[170px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-2xl py-1"
+            style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 200), maxHeight: portalPos.maxHeight, zIndex: 9999 }}
+            className="overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-2xl py-1"
           >
             <div
               onClick={() => onSaveWithAction('')}
@@ -11547,7 +11617,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
   // of inline.
   const anchorRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   useEffect(() => {
     const currentItem = items.find(m => String(m.id) === String(editValue));
@@ -11574,13 +11644,24 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
     const reposition = () => {
       if (!anchorRef.current) return;
       const rect = anchorRef.current.getBoundingClientRect();
-      const estimatedHeight = 380;
-      const dropUp = window.innerHeight - rect.bottom < estimatedHeight && rect.top > window.innerHeight - rect.bottom;
-      setPortalPos({
-        top: Math.max(4, dropUp ? rect.top - estimatedHeight : rect.bottom + 4),
-        left: rect.left,
-        width: rect.width,
-      });
+      // Sizes the panel to whichever space is actually available instead of
+      // guessing its height and flipping to a position based on that guess
+      // — on a short/small screen (e.g. a 15" laptop vs. a 24" monitor) a
+      // wrong guess could push the panel's top far above the anchor just to
+      // fit, landing it up near the page header instead of next to the
+      // field that opened it. Prefer opening below (reads more naturally);
+      // only open above when below is cramped AND above genuinely has more
+      // room — and even then, cap the panel's own height to that available
+      // space (its option list already scrolls internally) rather than
+      // relocate it far from the anchor.
+      const GAP = 4;
+      const PAD = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - GAP - PAD;
+      const spaceAbove = rect.top - GAP - PAD;
+      const openBelow = spaceBelow >= 200 || spaceBelow >= spaceAbove;
+      setPortalPos(openBelow
+        ? { top: rect.bottom + GAP, left: rect.left, width: rect.width, maxHeight: Math.max(160, spaceBelow) }
+        : { top: PAD, left: rect.left, width: rect.width, maxHeight: Math.max(160, spaceAbove) });
     };
     reposition();
     window.addEventListener('scroll', reposition, true);
@@ -11690,8 +11771,8 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
         {isOpen && portalPos && createPortal(
         <div
           ref={menuRef}
-          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 320), zIndex: 9999 }}
-          className="max-h-[26rem] bg-white border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden"
+          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 320), maxHeight: Math.min(portalPos.maxHeight, 416), zIndex: 9999 }}
+          className="bg-white border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden"
         >
           {!catalogMode ? (
             <>

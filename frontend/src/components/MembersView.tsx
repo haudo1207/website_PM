@@ -91,13 +91,16 @@ export default function MembersView({ onFlash }: Props) {
       // Get pre-filled account data
       const prefill = await getMemberAccountPrefill(member.id);
       
-      // Prepare account creation data
+      // Prepare account creation data - workspace_ids must be codes (strings), not IDs
+      const workspaceCodes = prefill.workspaces.map((w: any) => w.code);
       const accountData = {
         email: prefill.email,
         full_name: prefill.full_name,
         role: prefill.role,
         member_id: prefill.member_id,
-        workspace_ids: prefill.workspaces.map((w: any) => w.id),
+        workspace_ids: workspaceCodes,
+        data_scope: workspaceCodes[0] || '',
+        primary_workspace_code: workspaceCodes[0] || '',
       };
       
       // Confirm with user
