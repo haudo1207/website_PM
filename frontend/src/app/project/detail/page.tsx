@@ -3026,12 +3026,9 @@ function ProjectDetailContent() {
           { id: 5, name: 'Cancel' },
         ]
       : dbStatuses;
-    if (isMember()) {
-      return baseStatuses.filter((st: any) => {
-        const name = (st.name || '').toLowerCase();
-        return name !== 'done' && name !== 'completed' && !name.includes('hoàn') && !name.includes('finish');
-      });
-    }
+    // Review is optional, not mandatory — a Member can set Done directly
+    // themself, same as a Leader (see backend update_task), so Done/Hoàn
+    // thành/etc. is no longer filtered out of their Status options.
     return baseStatuses;
   };
 
@@ -3688,7 +3685,7 @@ function ProjectDetailContent() {
                         <option value="Todo">Todo</option>
                         <option value="Waiting">Waiting</option>
                         <option value="Process">Process</option>
-                        {!isMember() && <option value="Done">Done</option>}
+                        <option value="Done">Done</option>
                         <option value="Cancel">Cancel</option>
                       </>
                     ) : (
@@ -6205,7 +6202,7 @@ function ProjectDetailContent() {
                           <>
                             <option value="Waiting">Waiting</option>
                             <option value="Process">Process</option>
-                            {!isMember() && <option value="Done">Done</option>}
+                            <option value="Done">Done</option>
                             <option value="Cancel">Cancel</option>
                           </>
                         ) : (
@@ -7728,7 +7725,7 @@ function ProjectDetailContent() {
 
               {/* TAB: TASKS */}
               {activeMainTab === 'tasks' && (
-                <div className="flex-1 min-h-0 flex flex-col gap-2 -mt-2">
+                <div className="flex-1 min-h-0 flex flex-col gap-2 mt-3">
                   {/* Phase Tabs + Search */}
                   <div className="flex items-center justify-between flex-nowrap gap-2 shrink-0">
                     <div ref={phaseNavContainerRef} className="flex items-center gap-4 h-9 flex-nowrap overflow-hidden flex-1 min-w-0">
@@ -9960,7 +9957,7 @@ function ProjectDetailContent() {
                         <option value="Todo">Todo</option>
                         <option value="Waiting">Waiting</option>
                         <option value="Process">Process</option>
-                        {!isMember() && <option value="Done">Done</option>}
+                        <option value="Done">Done</option>
                         <option value="Cancel">Cancel</option>
                       </>
                     ) : (
