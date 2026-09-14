@@ -59,10 +59,14 @@ async function getRecordingTabs() {
 // `path` is the meeting URL's pathname at the time the tab was opened (e.g.
 // "/zhh-nuue-adp") — kept alongside meetingId so chrome.tabs.onUpdated below
 // can tell "still on this meeting" apart from "navigated away" without
-// depending on content.js still being alive to report it.
-async function setMeetingForTab(tabId, meetingId, path) {
+// depending on content.js still being alive to report it. `endAt` (ISO
+// string from /queue, chốt 2026-09-14 Bot Join window Rule 3) is looked up
+// by content.js via `path` — it has no direct access to its own tabId, so
+// this map (keyed by tabId but searchable by path) doubles as the handoff
+// channel instead of a background->content message.
+async function setMeetingForTab(tabId, meetingId, path, endAt) {
   const map = await getRecordingTabs();
-  map[tabId] = { meetingId, path };
+  map[tabId] = { meetingId, path, endAt: endAt || null };
   await chrome.storage.local.set({ recordingTabs: map });
 }
 
@@ -424,7 +428,7 @@ async function pollOnceLocked() {
       // (path stays ""), falling back to onRemoved/CALL_ENDED for stop.
     }
     const tab = await chrome.tabs.create({ url: meeting.join_url, active: true });
-    if (tab?.id !== undefined) await setMeetingForTab(tab.id, meeting.meeting_id, path);
+    if (tab?.id !== undefined) await setMeetingForTab(tab.id, meeting.meeting_id, path, meeting.end_at);
     break; // enforce max one active Meet tab per profile per cycle
   }
 }
@@ -669,6 +673,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await reportMeetingEnded(meetingId);
         await stopRecording(meetingId);
       }
+      await popMeetingForTab(tabId);
+      closeTab(tabId);
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+  if (message?.action === "JOIN_GIVE_UP") {
+    // Rule 8 (chốt 2026-09-14): content.js retried Join for its bounded
+    // window and never got in — release this profile's lock so the next due
+    // meeting isn't starved, but deliberately do NOT call
+    // reportMeetingEnded()/touch the meeting's status. The bot never actually
+    // observed the call, so it has no basis to declare it over — and since
+    // participants are now Calendar Guests (chốt 2026-09-14 attendees sync),
+    // a real meeting may still be happening with no Host present at all.
+    // Logged loudly for manual reconciliation, same philosophy as
+    // reportMeetingEnded's own give-up path.
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) return false;
+    getMeetingForTab(tabId).then(async (meetingId) => {
+      log(`Meeting #${meetingId}: gave up after join-retry timeout, never got into the call — closing tab, releasing lock. NOT reporting DONE/changing status.`);
       await popMeetingForTab(tabId);
       closeTab(tabId);
       sendResponse({ success: true });

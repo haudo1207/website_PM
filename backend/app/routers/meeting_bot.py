@@ -127,6 +127,7 @@ def get_bot_queue(
         if not (window_start <= start_dt <= window_end):
             continue
 
+        end_dt = None
         if m.end_time:
             end_dt = datetime.datetime.combine(m.meeting_date, m.end_time, tzinfo=_VN_TZ)
             if m.end_time < m.start_time:
@@ -146,6 +147,13 @@ def get_bot_queue(
             "title": m.title,
             "join_url": m.meeting_url,
             "start_at": start_dt.isoformat(),
+            # Planned end (chốt 2026-09-14, Bot Join window Rule 3): the
+            # extension's content.js uses this — NOT actual-end detection —
+            # to decide when to give up waiting for a FIRST participant to
+            # ever show up. Once a real participant has been observed, this
+            # value is ignored (see content.js's everHadParticipant flag) and
+            # only actual-end (Leave button gone / solo timeout) matters.
+            "end_at": end_dt.isoformat() if end_dt else None,
             "organizer_google_email": mailbox,
         })
 
