@@ -643,7 +643,7 @@ export const generateMeetingLink = (data: { platform: string; title: string; dat
 // on an EXISTING meeting — atomically generates a new Google Meet link and persists
 // meeting_url/google_event_id/organizer_google_email server-side in one request.
 // Plain PUT /meetings/{id} no longer accepts organizer_google_email at all.
-export const retryMeetingLink = (id: number) => api.post(`/meetings/${id}/retry-link`).then(r => r.data);
+export const retryMeetingLink = (id: number, data?: { host_workspace_id?: number | null }) => api.post(`/meetings/${id}/retry-link`, data).then(r => r.data);
 // Overlap rule (chốt 2026-09-13): organizer is the source of truth, not
 // participants — this calls the EXACT SAME check create/update/retry-link
 // enforce server-side, so the frontend never shows "rảnh"/"trùng" out of

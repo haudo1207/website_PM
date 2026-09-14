@@ -1272,6 +1272,22 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
 def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
+    # Edit lifecycle lock (chốt 2026-09-14): only a genuinely-not-yet-started
+    # UPCOMING meeting may be edited at all — ONGOING (live, via
+    # compute_display_status — status itself never persists as "ONGOING",
+    # see that function's docstring), DONE, and CANCELLED are all fully
+    # read-only through this endpoint, no per-field exceptions. This is a
+    # deliberate behavior change: CANCELLED meetings used to be revivable by
+    # PUTting status=UPCOMING — that path is now gone too; organizing again
+    # means creating a new meeting. Checked before touching any field so a
+    # rejected request can never leave the row in a half-old-half-new state.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
+        raise HTTPException(
+            400,
+            f"Không thể chỉnh sửa cuộc họp ở trạng thái {compute_display_status(m)}. "
+            f"Chỉ có thể sửa khi cuộc họp chưa bắt đầu (SẮP TỚI).",
+        )
+
     old_dict = {"title": m.title, "status": m.status, "meeting_date": str(m.meeting_date) if m.meeting_date else None}
     old_status = m.status
     old_meeting_date = m.meeting_date
@@ -1279,10 +1295,10 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     old_end_time = m.end_time
     # Lifecycle rule (chốt 2026-09-13): ONGOING/DONE are server-controlled —
     # a client PUT can no longer force either one directly (see create_meeting's
-    # matching comment for the full rationale). Only CANCELLED, and reverting
-    # a CANCELLED meeting back to UPCOMING, are genuine manual actions a client
-    # may request here; anything else in the body is silently ignored and the
-    # meeting keeps whatever status it already had.
+    # matching comment for the full rationale). CANCELLED is the one genuinely
+    # manual status a client may request here (the guard above already
+    # guarantees old_status is UPCOMING at this point, so this is always a
+    # forward UPCOMING->CANCELLED transition, never a revival).
     status_input = str(body.get("status", m.status)).upper()
     requested_status = STATUS_FE_TO_DB.get(status_input, status_input)
     if requested_status in ("CANCELLED", "UPCOMING"):
@@ -1293,12 +1309,6 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     # Support 'date' or 'meeting_date'
     new_date_str = body.get("meeting_date") or body.get("date")
     new_date = parse_date(new_date_str) if new_date_str else m.meeting_date
-
-    # Rule 05: Meeting DONE -> Cannot change meeting_date. old_status reflects
-    # whatever the bot/a real sync already set — still enforced regardless of
-    # what the client is trying to do in this same request.
-    if old_status == "DONE" and new_date != m.meeting_date:
-        raise HTTPException(400, "Không thể thay đổi ngày họp của cuộc họp đã hoàn thành (DONE)")
 
     m.title = str(body.get("title", m.title)).strip()
     if not m.title:
@@ -1402,10 +1412,11 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
             else:
                 m.project_id = None
 
-    # Participants — re-selected from the edit form. Mirrors the DONE-status
-    # guard on the dedicated add/remove-member endpoints below.
+    # Participants — re-selected from the edit form. The endpoint-wide
+    # lifecycle lock above already guarantees this is a not-yet-started
+    # UPCOMING meeting.
     member_ids_input = body.get("member_ids")
-    if isinstance(member_ids_input, list) and m.status != "DONE":
+    if isinstance(member_ids_input, list):
         wanted_ids = set()
         for raw in member_ids_input:
             try:
@@ -1535,9 +1546,11 @@ def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(
 def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
-    # Rule 05: Meeting DONE -> Cannot change participants
-    if m.status == "DONE":
-        raise HTTPException(400, "Không thể thay đổi người tham gia của cuộc họp đã hoàn thành (DONE)")
+    # Edit lifecycle lock (chốt 2026-09-14): participants follow the exact
+    # same rule as the generic PUT — only a not-yet-started UPCOMING meeting
+    # may have its member list touched at all.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
+        raise HTTPException(400, f"Không thể thay đổi người tham gia của cuộc họp ở trạng thái {compute_display_status(m)}.")
 
     member_id = body.get("member_id")
     if not member_id:
@@ -1589,9 +1602,9 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
 def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
-    # Rule 05: Meeting DONE -> Cannot change participants
-    if m.status == "DONE":
-        raise HTTPException(400, "Không thể thay đổi người tham gia của cuộc họp đã hoàn thành (DONE)")
+    # Edit lifecycle lock (chốt 2026-09-14): same rule as add_meeting_member.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
+        raise HTTPException(400, f"Không thể thay đổi người tham gia của cuộc họp ở trạng thái {compute_display_status(m)}.")
 
     mm = db.query(MeetingMember).filter(
         MeetingMember.meeting_id == id,
@@ -2114,25 +2127,38 @@ def google_health_check(db: Session = Depends(get_db)):
 
 # ─── RETRY LINK CREATION ENDPOINT (SPEC CHAPTER 06) ───────────
 @router.post("/{id}/retry-link")
-def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """Regenerate the Google Meet link for a meeting — this is the ONLY
     server-side path allowed to change organizer_google_email after creation
     (chốt 2026-09-13): PUT /{id} no longer accepts it, precisely so a real
     organizer reassignment always goes through an actual new Calendar event
-    here, never as a side effect of an unrelated field edit."""
+    here, never as a side effect of an unrelated field edit.
+
+    Optional body.host_workspace_id (chốt 2026-09-14 Edit-lifecycle rules):
+    this is also the mechanism the Edit form's "HOST *" dropdown uses under
+    the hood when the user picks a different Host for an UPCOMING meeting —
+    changing Host can only ever mean generating a brand-new Calendar event
+    under the new account (Calendar has no "reassign organizer" operation on
+    an existing event), so it must go through the exact same path as a plain
+    manual retry, never a separate one. Omitted, this behaves exactly as
+    before (auto-resolve via the project's Workspace)."""
+    body = body or {}
     m = _get_active_meeting(db, id)
-    # Status guard (chốt 2026-09-13): only UPCOMING may regenerate. Reassigning
-    # the organizer while ONGOING risks the Meeting Host Bot being live in the
-    # OLD organizer's session — its eventual actual-end report
-    # (POST /api/meeting-bot/ended) would then carry the stale google_email,
-    # get rejected (403, organizer mismatch), and the extension does not retry
-    # on 403 — permanently stranding the meeting at ONGOING. DONE/CANCELLED
-    # meetings have no legitimate reason to regenerate a link at all.
-    if m.status != "UPCOMING":
+    # Status guard (chốt 2026-09-13, tightened 2026-09-14): only a genuinely
+    # not-yet-started UPCOMING meeting may regenerate — compute_display_status
+    # catches the live-ONGOING window that a bare m.status check misses
+    # (ONGOING is never persisted). Reassigning the organizer while live risks
+    # the Meeting Host Bot being live in the OLD organizer's session — its
+    # eventual actual-end report (POST /api/meeting-bot/ended) would then
+    # carry the stale google_email, get rejected (403, organizer mismatch),
+    # and the extension does not retry on 403 — permanently stranding the
+    # meeting at ONGOING. DONE/CANCELLED meetings have no legitimate reason to
+    # regenerate a link at all.
+    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
         raise HTTPException(
             400,
-            f"Chỉ có thể tạo lại link Google Meet khi cuộc họp đang ở trạng thái UPCOMING "
-            f"(hiện tại: {m.status}).",
+            f"Chỉ có thể tạo lại link Google Meet khi cuộc họp chưa bắt đầu (SẮP TỚI) "
+            f"(hiện tại: {compute_display_status(m)}).",
         )
     if not m.meeting_date or not m.start_time:
         raise HTTPException(400, "Cuộc họp cần có ngày và giờ bắt đầu trước khi tạo lại link")
@@ -2148,7 +2174,7 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
 
     from ..services.meeting_sync import create_google_meet_link
     meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-    workspace_id = workspace_id_for_project(db, meeting_proj)
+    workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, meeting_proj))
     try:
         link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", start_datetime, dur_mins, workspace_id=workspace_id)
     except ValueError as e:
