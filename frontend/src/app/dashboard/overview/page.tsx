@@ -375,6 +375,7 @@ function projectIsResponsible(
   p: any,
   userRole: string,
   userMemberIds: number[],
+  dataScope: string | null = null,
 ): boolean {
   const isLeader = String(userRole || '').toLowerCase() === 'leader';
   if (!isLeader || userMemberIds.length === 0) {
@@ -382,9 +383,7 @@ function projectIsResponsible(
     // existing Super Admin / Member / Viewer behaviour is unchanged.
     return Boolean(
       p &&
-      (p.dataScope == null ||
-        (typeof p.dataScope === 'string' &&
-          (p.dataScope === '' || p.dataScope === 'all'))),
+      (dataScope == null || dataScope === '' || dataScope === 'all'),
     );
   }
   // Whole team, not just the Leader personally — a project where any
@@ -415,17 +414,26 @@ function projectIsExternalMember(
   userMemberIds: number[],
   homeWsCode: string | null,
   hasTeamTask: boolean = false,
+  dataScope: string | null = null,
 ): boolean {
   const isLeader = String(userRole || '').toLowerCase() === 'leader';
   // Anything not in the caller's home Workspace — empty data_scope
   // means there's no Workspace boundary to compare against.
+  //
+  // BUG FIX: this used to read `p.dataScope` (camelCase) directly off the
+  // raw project object, but the API/raw project only ever carries
+  // `data_scope` (snake_case) — `p.dataScope` was always `undefined`, so
+  // `inHomeWs` was always `true` and this function could never return
+  // `true` for ANY project, for ANYONE. The caller already computes the
+  // correct lowercased `dataScope` local — pass that in explicitly instead
+  // of relying on the raw object's shape.
   const inHomeWs =
     !homeWsCode ||
     !p ||
-    !p.dataScope ||
-    p.dataScope === '' ||
-    p.dataScope === 'all' ||
-    p.dataScope === homeWsCode;
+    !dataScope ||
+    dataScope === '' ||
+    dataScope === 'all' ||
+    dataScope === homeWsCode;
   if (inHomeWs) return false;
 
   if (!isLeader || userMemberIds.length === 0) {
@@ -1311,6 +1319,7 @@ export default function OverviewTab() {
           p,
           effectiveRoleForTabs,
           teamMemberIds,
+          dataScope,
         ),
         isExternalMember: projectIsExternalMember(
           p,
@@ -1318,6 +1327,7 @@ export default function OverviewTab() {
           teamMemberIds,
           homeWsCodeForSummary,
           pLeaderTasks.length > 0,
+          dataScope,
         ),
         // Legacy flag preserved — drives the Full/Limited access badge and
         // the Limited-access contribution modal. Same semantic as before:
@@ -2466,7 +2476,10 @@ export default function OverviewTab() {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-slate-100">
                 <div className="min-w-0">
-                  <h3 className="text-lg font-black text-[#0b1c30] truncate">{p.name}</h3>
+                  <h3 className="text-lg font-black text-[#0b1c30] truncate">
+                    {p.name}
+                    {p.customerName && <span className="text-slate-400 font-semibold"> - {p.customerName}</span>}
+                  </h3>
                   <p className="text-xs text-slate-400 font-semibold mt-1">
                     {wsLabel} Workspace · {p.isOwned ? 'Dự án thuộc workspace chính của bạn' : 'Team bạn chỉ tham gia đóng góp'}
                   </p>
@@ -2514,6 +2527,9 @@ export default function OverviewTab() {
                   <h4 className="text-xs font-black text-slate-700 mb-3">{p.isOwned ? 'Thông tin dự án' : 'Thông tin team bạn được phép xem'}</h4>
                   <dl className="space-y-2.5 text-xs">
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Workspace sở hữu</dt><dd className="font-black text-slate-700">{wsLabel}</dd></div>
+                    {p.customerName && (
+                      <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Khách hàng</dt><dd className="font-black text-slate-700 text-right">{p.customerName}</dd></div>
+                    )}
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Giai đoạn chung</dt><dd className="font-black text-slate-700 text-right">{p.current_phase}</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Tiến độ được chia sẻ</dt><dd className="font-black text-slate-700">{p.progress}%</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Trạng thái</dt><dd className="font-black text-slate-700">{p.status}</dd></div>
