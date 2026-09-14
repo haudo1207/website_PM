@@ -157,6 +157,10 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // auto-select-by-project-Workspace effect below stops overwriting it
   // (same "don't clobber a manual choice" pattern as manualTitleEdit).
   const [hostManuallySet, setHostManuallySet] = useState(false);
+  // Latest project-Workspace-derived suggestion (chốt 2026-09-14 Edit rule
+  // 6) — auto-applied on create, offered as a dismissible chip on edit
+  // (never silently overwrites a meeting's already-organized Host).
+  const [autoSuggestedWorkspaceId, setAutoSuggestedWorkspaceId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   // Ref, not state: reads/writes happen synchronously so rapid repeated
   // clicks within the same render tick still see the lock (state would be
@@ -180,6 +184,14 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // open/reset, where "removing" everything would be wrong).
   const prevProjectIdsRef = useRef<number[]>([]);
   const membersPickerRef = useRef<SearchableSelectHandle>(null);
+  // Captured once when editing opens — the Host workspace actually in effect
+  // right now, resolved from the meeting's frozen organizer email once
+  // hostsList loads. Compared against formData.host_workspace_id at submit
+  // time to decide whether the user actually changed Host (chốt 2026-09-14
+  // Edit rule 5) — a plain re-save with the same Host must never trigger a
+  // retry-link regeneration.
+  const originalHostWorkspaceIdRef = useRef<number | null>(null);
+  const hostAlreadyResolvedRef = useRef(false);
 
   useEffect(() => {
     let openedProjectIds: number[] = [];
@@ -211,6 +223,14 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       });
       // Editing an existing meeting: keep its title as-is, don't auto-overwrite.
       setManualTitleEdit(true);
+      // Host starts at whatever this meeting is already using — resolved
+      // from hostsList once it loads (see the hosts-fetch effect below).
+      // hostManuallySet starts true here so the project-based auto-select
+      // never silently overwrites the meeting's actual current Host; the
+      // "Workspace mới" suggestion chip is the only way it changes in edit.
+      originalHostWorkspaceIdRef.current = null;
+      hostAlreadyResolvedRef.current = false;
+      setHostManuallySet(true);
     } else {
       const { date: defaultDate, time: defaultTime } = computeDefaultDateTime(new Date());
       setFormData({
@@ -230,9 +250,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         notify_channels: ['App']
       });
       setManualTitleEdit(false);
+      setHostManuallySet(false);
     }
     prevProjectIdsRef.current = openedProjectIds;
-    setHostManuallySet(false);
     setError('');
   }, [initialData, isOpen]);
 
@@ -248,18 +268,32 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     }).catch(() => {});
   }, [isOpen]);
 
-  // HOST * field (chốt 2026-09-14): auto-select the Host by the chosen
-  // project(s)' Workspace, re-resolved every time project_ids changes.
-  // Create-only — editing an existing meeting shows its frozen Host
-  // read-only instead (Rule 4: "Host không tự đổi sau khi tạo").
+  // HOST * field (chốt 2026-09-14): fetch available accounts + the
+  // project-Workspace-derived suggestion, re-resolved every time
+  // project_ids changes. On CREATE the suggestion auto-applies (unless the
+  // user already picked by hand). On EDIT it never auto-applies — instead
+  // this also does a ONE-TIME resolution of the meeting's CURRENT Host (by
+  // matching its frozen organizer email against the fetched list) so the
+  // dropdown opens pre-filled with what's actually organizing the meeting
+  // right now, not a fresh guess (Rule 4: Host doesn't silently change).
   useEffect(() => {
-    if (!isOpen || initialData) return;
+    if (!isOpen) return;
     let cancelled = false;
     getMeetingHosts(formData.project_ids).then((res: any) => {
       if (cancelled) return;
       const hosts = Array.isArray(res?.hosts) ? res.hosts : [];
       setHostsList(hosts);
-      if (!hostManuallySet) {
+      setAutoSuggestedWorkspaceId(res?.auto_selected_workspace_id ?? null);
+      if (initialData) {
+        if (!hostAlreadyResolvedRef.current) {
+          hostAlreadyResolvedRef.current = true;
+          const currentEmail = String(initialData.host_google_email || initialData.organizer_google_email || '').trim().toLowerCase();
+          const match = hosts.find((h: any) => String(h.google_email || '').trim().toLowerCase() === currentEmail);
+          const resolvedId = match ? match.workspace_id : null;
+          originalHostWorkspaceIdRef.current = resolvedId;
+          setFormData(prev => ({ ...prev, host_workspace_id: resolvedId }));
+        }
+      } else if (!hostManuallySet) {
         setFormData(prev => ({ ...prev, host_workspace_id: res?.auto_selected_workspace_id ?? null }));
       }
     }).catch(() => {});
@@ -394,6 +428,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   if (!isOpen) return null;
 
   const isEditingPastMeeting = !!initialData && !!formData.date && !!formData.time && toDateTimeMs(formData.date, formData.time) < Date.now();
+  // Edit lifecycle lock (chốt 2026-09-14): mirrors the backend's own guard —
+  // only a not-yet-started meeting (status "SẮP TỚI", the live display value
+  // meeting_to_dict already computes) may be edited. ONGOING/DONE/CANCELLED
+  // all read-only, no per-field exceptions. This is a frontend UX signal
+  // only — the backend 400s regardless of what this modal lets through.
+  const isLocked = !!initialData && initialData.status !== 'SẮP TỚI';
 
   const handleFillTeam = async () => {
     if (formData.project_ids.length === 0) {
@@ -485,6 +525,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     isSubmittingRef.current = true;
     setError('');
 
+    if (isLocked) {
+      setError(`Cuộc họp đang ở trạng thái ${initialData?.status} — không thể chỉnh sửa.`);
+      isSubmittingRef.current = false;
+      return;
+    }
     if (!formData.title || !formData.date || !formData.time) {
       const missing = [
         !formData.title && 'Tên',
@@ -515,11 +560,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       isSubmittingRef.current = false;
       return;
     }
-    // HOST * field (chốt 2026-09-14): required on create, only for Google
-    // Meet — Zoom's organizer comes from ZOOM_ACCOUNT_ID, not a per-Workspace
-    // Google account, so Host has no meaning there. Not enforced on edit:
-    // Host is immutable after creation (Rule 4), this form never changes it.
-    if (!initialData && formData.platform === 'Google Meet' && !formData.host_workspace_id) {
+    // HOST * field (chốt 2026-09-14): required for Google Meet whenever the
+    // field is shown (create, or edit while still SẮP TỚI) — Zoom's
+    // organizer comes from ZOOM_ACCOUNT_ID, not a per-Workspace Google
+    // account, so Host has no meaning there.
+    if (formData.platform === 'Google Meet' && !formData.host_workspace_id) {
       setError('Vui lòng chọn Host cho cuộc họp');
       isSubmittingRef.current = false;
       return;
@@ -532,12 +577,30 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
     setIsLoading(true);
     try {
+      // Edit rule 5 (chốt 2026-09-14): changing Host has no meaning other
+      // than "regenerate under a new account" — Calendar has no operation to
+      // reassign an existing event's organizer — so it must go through the
+      // exact same retry-link path as the dedicated "🔄 Tạo lại" button,
+      // never a plain DB field write. Runs BEFORE the main save, and aborts
+      // the whole submit on failure (old Host/link/DB untouched) rather than
+      // partially applying other field changes with a stale Host.
+      let freshLink = formData.link;
+      if (initialData?.id && formData.host_workspace_id !== originalHostWorkspaceIdRef.current) {
+        const hostRes = await retryMeetingLink(initialData.id, { host_workspace_id: formData.host_workspace_id });
+        if (!hostRes?.success || !hostRes.data?.link) {
+          throw new Error('Không thể đổi Host cho cuộc họp');
+        }
+        // The PUT below still sends meeting_url/link — without overriding it
+        // here, it would carry the OLD link and silently clobber the brand
+        // new Calendar event retryMeetingLink just created.
+        freshLink = hostRes.data.link;
+      }
       // Must await — otherwise isLoading resets before the create request
       // finishes, the button re-enables while still in flight, and repeated
       // clicks fire off duplicate meetings.
-      await onSave({ ...formData, meeting_url: formData.link });
+      await onSave({ ...formData, link: freshLink, meeting_url: freshLink });
     } catch (err: any) {
-      setError(err.message || 'Có lỗi xảy ra');
+      setError(getApiErrorMessage(err, 'Có lỗi xảy ra'));
     } finally {
       setIsLoading(false);
       isSubmittingRef.current = false;
@@ -597,6 +660,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
             {error && <div className="mb-1 p-3 bg-red-50 text-red-600 text-xs rounded-lg font-semibold border border-red-200">{error}</div>}
+            {isLocked && (
+              <div className="mb-1 p-3 bg-amber-50 text-amber-800 text-xs rounded-lg font-semibold border border-amber-200">
+                ⚠ Cuộc họp này đang ở trạng thái <b>{initialData?.status}</b> — chỉ có thể xem, không thể chỉnh sửa. Cuộc họp chưa bắt đầu (SẮP TỚI) mới được sửa.
+              </div>
+            )}
 
             {/* 1. Phạm vi cuộc họp */}
             <SectionLabel n={1} label="Phạm vi cuộc họp" />
@@ -743,16 +811,18 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bắt buộc chọn ít nhất 1 thành viên tham gia cuộc họp. Bấm <b>“+ Cả team”</b> để thêm nhanh toàn bộ thành viên của dự án đã chọn.</p>
               </div>
 
-              {/* HOST * (chốt 2026-09-14): auto-selected by project's Workspace,
-                  manual override always available — placed full-width here so
-                  it reads as its own decision, not squeezed beside time/duration. */}
-              {initialData ? (
+              {/* HOST * (chốt 2026-09-14): auto-selected by project's Workspace on
+                  create; on edit it's pre-filled with the meeting's CURRENT Host
+                  and only offers a suggestion chip when the project's Workspace
+                  changed (Rule 6) — never silently overwritten (Rule 4).
+                  Full-width so it reads as its own decision, not squeezed beside
+                  time/duration. Locked (ONGOING/DONE/CANCELLED) shows read-only. */}
+              {isLocked ? (
                 <div>
                   <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Host</label>
                   <div className="w-full px-3 py-2.5 border border-[#e2e8f0] rounded-lg text-xs text-[#565e74] bg-[#f8f9fb]">
                     {initialData.host_google_email || initialData.organizer_google_email || 'Không xác định'}
                   </div>
-                  <p className="text-[11px] text-[#94a3b8] mt-1.5">Host cố định từ lúc tạo cuộc họp — dùng "🔄 Tạo lại link" nếu cần đổi sang tài khoản khác.</p>
                 </div>
               ) : formData.platform === 'Google Meet' && (
                 <div>
@@ -770,6 +840,21 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                       <option key={h.workspace_id} value={h.workspace_id}>{h.google_email}</option>
                     ))}
                   </select>
+                  {initialData && autoSuggestedWorkspaceId !== null && autoSuggestedWorkspaceId !== formData.host_workspace_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHostManuallySet(true);
+                        setFormData(prev => ({ ...prev, host_workspace_id: autoSuggestedWorkspaceId }));
+                      }}
+                      className="mt-1.5 text-[11px] font-bold text-[#0058be] hover:underline"
+                    >
+                      Dự án thuộc Workspace khác — bấm để cập nhật Host theo Workspace mới ({hostsList.find(h => h.workspace_id === autoSuggestedWorkspaceId)?.google_email})
+                    </button>
+                  )}
+                  {initialData && formData.host_workspace_id !== originalHostWorkspaceIdRef.current && (
+                    <p className="text-[11px] text-amber-700 font-semibold mt-1.5">⚠ Đổi Host sẽ tạo lại link Google Meet mới (organizer cũ không còn hiệu lực).</p>
+                  )}
                 </div>
               )}
 
@@ -881,7 +966,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                         <button
                           type="button"
                           onClick={handleGenerateLink}
-                          disabled={isGeneratingLink}
+                          disabled={isGeneratingLink || isLocked}
                           className="flex items-center gap-1 text-[#94a3b8] hover:text-[#0058be] hover:underline disabled:opacity-50"
                           title="Tạo link Google Meet mới, thay thế link hiện tại"
                         >
@@ -1036,8 +1121,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             </button>
             <button
               type="submit"
-              disabled={isLoading}
-              className="px-4 py-2 flex items-center gap-2 text-xs font-bold text-white bg-[#0058be] rounded-lg hover:bg-[#0058be]/90 transition-colors disabled:opacity-70 shadow-sm"
+              disabled={isLoading || isLocked}
+              className="px-4 py-2 flex items-center gap-2 text-xs font-bold text-white bg-[#0058be] rounded-lg hover:bg-[#0058be]/90 transition-colors disabled:opacity-50 shadow-sm"
             >
               {isLoading ? 'Đang xử lý...' : (initialData ? 'Lưu thay đổi' : 'Tạo meeting')}
             </button>
