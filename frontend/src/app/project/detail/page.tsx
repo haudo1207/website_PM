@@ -604,7 +604,10 @@ function ProjectDetailContent() {
       .then((res: any) => {
         if (cancelled) return;
         const list = res?.data || res || [];
-        setMoveTargetPhases(Array.isArray(list) ? [...list].sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)) : []);
+        const realList = Array.isArray(list)
+          ? list.filter((p: any) => !p.is_master && (p.name || '').toLowerCase() !== 'master')
+          : [];
+        setMoveTargetPhases(realList.sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)));
       })
       .catch(() => { if (!cancelled) setMoveTargetPhases([]); })
       .finally(() => { if (!cancelled) setMoveTargetPhasesLoading(false); });
@@ -753,10 +756,12 @@ function ProjectDetailContent() {
   // Phase navigation: overflow-to-dropdown (never wrap, never horizontal scroll)
   // Trần số Phase hiển thị - thuật toán bên dưới (visiblePhaseCount) đo width
   // thật của container + từng tab và TỰ ĐỘNG chỉ hiện bấy nhiêu Phase vừa 1
-  // hàng. "+"/"⋯"/"+ Task" sống NGOÀI container này (shrink-0, sibling của
+  // hàng. "⋯"/"+ Task" sống NGOÀI container này (shrink-0, sibling của
   // container flex-1) nên trình duyệt tự trừ width của chúng qua flexbox -
-  // không cần ước lượng/reserve thủ công cho 3 cái đó nữa, chỉ Master và
-  // "Phase khác (N)" là vẫn ở trong container nên vẫn cần hằng số ước lượng.
+  // không cần ước lượng/reserve thủ công cho 2 cái đó. "+" (Thêm Phase) thì
+  // sống NGAY TRONG container (để luôn dính sát Phase cuối, không bị flex-1
+  // đẩy ra mép phải hàng) nên cùng với Master và "Phase khác (N)" đều cần
+  // hằng số ước lượng (PHASE_CHROME_WIDTHS) thay vì được flexbox tự trừ.
   // Tăng trần lên 8 để tận dụng khoảng trống bên phải khi có nhiều Phase
   // ngắn tên; khi phase dài/nhiều hơn 8, thuật toán tự co lại và đẩy phần dư
   // vào "Phase khác".
@@ -780,7 +785,11 @@ function ProjectDetailContent() {
   // Width của Master / "Phase khác (N)" là text cố định (không phụ thuộc dữ
   // liệu user) nên dùng hằng số ước lượng rộng rãi thay vì đo DOM - chỉ label
   // Phase (tên do user đặt, có thể rất dài) mới cần đo thật.
-  const PHASE_CHROME_WIDTHS = { master: 76, overflow: 140 } as const;
+  // "plus" = nút "+ Thêm Phase", giờ sống NGAY TRONG container (cùng hàng
+  // flex-nowrap với Master/tab) nên phải được cộng vào budget dưới đây - nếu
+  // không, overflow-hidden của container có thể cắt mất nút "+" khi Phase
+  // dài tên/nhiều Phase lấp gần hết chỗ.
+  const PHASE_CHROME_WIDTHS = { master: 76, overflow: 140, plus: 32 } as const;
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
@@ -1570,7 +1579,7 @@ function ProjectDetailContent() {
     const GAP = 16;
     for (let n = cap; n >= minN; n--) {
       const hasOverflow = n < total;
-      let width = PHASE_CHROME_WIDTHS.master + GAP;
+      let width = PHASE_CHROME_WIDTHS.master + GAP + PHASE_CHROME_WIDTHS.plus + GAP;
       for (let i = 0; i < n; i++) {
         width += (phaseTabWidths[phaseSelectionPriorityOrder[i].key] || 90) + GAP;
       }
@@ -7905,6 +7914,41 @@ function ProjectDetailContent() {
                         </div>
                       )}
 
+                      {/* "+" nằm NGAY TRONG phaseNavContainerRef (cùng hàng flex-nowrap
+                          với Master/Phase tabs) để luôn dính sát Phase cuối cùng - trước
+                          đây sống ngoài container nên bị flex-1 của container đẩy tới
+                          tận mép phải hàng khi danh sách Phase ngắn hơn viewport, tạo
+                          khoảng trắng lớn giữa Phase cuối và nút "+". Vẫn là drop-zone
+                          "kéo tới cuối" - thả Phase đang kéo vào đây để đưa nó về cuối
+                          danh sách Phase. */}
+                      {canManageProjectStructure(project) && (
+                        <button
+                          onClick={() => {
+                            setNewPhaseName('');
+                            setShowPhaseModal(true);
+                          }}
+                          onDragOver={(e) => {
+                            if (draggingPhaseId === null) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            setPhaseDropTarget(null);
+                            setPhaseDropAtEnd(true);
+                          }}
+                          onDragLeave={() => setPhaseDropAtEnd(false)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            if (draggingPhaseId !== null) commitPhaseReorder(draggingPhaseId, 'end');
+                            setDraggingPhaseId(null);
+                            setPhaseDropAtEnd(false);
+                          }}
+                          className={`w-8 h-8 rounded-[8px] text-[#0058be] hover:bg-slate-100 transition-all flex items-center justify-center active:scale-95 shrink-0 ${phaseDropAtEnd ? 'ring-2 ring-[#0058be] bg-[#eef5ff]' : ''}`}
+                          title="Tạo Phase mới · kéo Phase vào đây để đưa về cuối"
+                          aria-label="Tạo Phase mới"
+                        >
+                          <Plus size={16} />
+                        </button>
+                      )}
+
                       {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[110px]
                           giống tab thật) để tính visiblePhaseCount ở trên - không ảnh hưởng layout. */}
                       <div style={{ position: 'absolute', visibility: 'hidden', height: 0, overflow: 'hidden', whiteSpace: 'nowrap', pointerEvents: 'none' }} aria-hidden="true">
@@ -7920,38 +7964,6 @@ function ProjectDetailContent() {
                         ))}
                       </div>
                     </div>
-
-                    {/* "+" chỉ còn icon (không còn text "Thêm Phase") - sống ngoài
-                        phaseNavContainerRef nên không cần reserve width thủ công nữa.
-                        Cũng là drop-zone "kéo tới cuối" - thả Phase đang kéo vào đây
-                        để đưa nó về cuối danh sách Phase. */}
-                    {canManageProjectStructure(project) && (
-                      <button
-                        onClick={() => {
-                          setNewPhaseName('');
-                          setShowPhaseModal(true);
-                        }}
-                        onDragOver={(e) => {
-                          if (draggingPhaseId === null) return;
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = 'move';
-                          setPhaseDropTarget(null);
-                          setPhaseDropAtEnd(true);
-                        }}
-                        onDragLeave={() => setPhaseDropAtEnd(false)}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          if (draggingPhaseId !== null) commitPhaseReorder(draggingPhaseId, 'end');
-                          setDraggingPhaseId(null);
-                          setPhaseDropAtEnd(false);
-                        }}
-                        className={`w-8 h-8 rounded-[8px] text-[#0058be] hover:bg-slate-100 transition-all flex items-center justify-center active:scale-95 shrink-0 ${phaseDropAtEnd ? 'ring-2 ring-[#0058be] bg-[#eef5ff]' : ''}`}
-                        title="Tạo Phase mới · kéo Phase vào đây để đưa về cuối"
-                        aria-label="Tạo Phase mới"
-                      >
-                        <Plus size={16} />
-                      </button>
-                    )}
 
                     {/* "⋯" gom Áp dụng template / Xuất thành Template - trước đây là
                         2 nút luôn hiện, giờ là thao tác phụ nên chuyển vào đây. Dùng
@@ -8119,7 +8131,7 @@ function ProjectDetailContent() {
                       của table vẫn hoạt động bình thường. */}
                   <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
-                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0 max-h-[calc(100vh-300px)]">
+                  <div className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden min-h-0">
                     <div className="flex items-center px-3 pt-2 pb-1 border-b border-slate-100 shrink-0">
                       <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
                         <button
@@ -8468,7 +8480,7 @@ function ProjectDetailContent() {
                         onClick={closeLeaderReviewPanel}
                       />
                       <div
-                        className="w-[85vw] max-w-[360px] xl:w-[340px] xl:max-w-none shrink-0 bg-white border border-[#c2c6d6]/60 rounded-none xl:rounded-xl shadow-2xl xl:shadow-sm flex flex-col fixed xl:static top-0 xl:top-auto right-0 xl:right-auto h-full xl:h-auto xl:max-h-[calc(100vh-260px)] z-50 xl:z-auto overflow-hidden"
+                        className="w-[85vw] max-w-[360px] xl:w-[340px] xl:max-w-none shrink-0 bg-white border border-[#c2c6d6]/60 rounded-none xl:rounded-xl shadow-2xl xl:shadow-sm flex flex-col fixed xl:static top-0 xl:top-auto right-0 xl:right-auto h-full xl:h-auto z-50 xl:z-auto overflow-hidden"
                       >
                         {/* Header */}
                         <div className="px-4 py-3 border-b border-[#c2c6d6]/60 flex items-center justify-between shrink-0">

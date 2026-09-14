@@ -1345,9 +1345,16 @@ def move_phase_to_project(pid: int, phid: int, body: dict, db: Session = Depends
     insert_before_phase_id = body.get("insert_before_phase_id")
     insert_after_phase_id = body.get("insert_after_phase_id")
 
+    # Loại Phase "Master" thật khỏi danh sách đích: nó không phải là Phase
+    # user-facing để làm điểm neo before/after hay đầu/cuối danh sách - mọi
+    # nơi khác trong hệ thống (frontend) đều lọc Master theo cùng quy ước
+    # tên này, đây là lớp bảo vệ thứ hai ở backend.
     dest_phases = (
         db.query(Phase)
-        .filter(Phase.project_id == target_project_id)
+        .filter(
+            Phase.project_id == target_project_id,
+            sql_func.lower(sql_func.trim(Phase.name)) != "master",
+        )
         .order_by(Phase.sort_order, Phase.id)
         .all()
     )
