@@ -466,6 +466,32 @@ def _get_active_meeting(db: Session, id: int) -> Meeting:
     return m
 
 
+def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
+    """Push the meeting's current participant list to Google Calendar as
+    attendees (chốt 2026-09-14: Participant == Calendar Guest; organizer/Host
+    is NEVER included here — resolved separately via organizer_google_email
+    and stays the Calendar 'organizer', not an attendee). Call this after any
+    change to a meeting's MeetingMember rows (add/remove/replace) so Calendar
+    guests stay in sync with member_ids. Best-effort: never raises, matching
+    sync_google_meet_attendees' own swallow-and-log contract, so a Calendar
+    API hiccup can't block adding/removing a meeting member."""
+    if not m.google_event_id:
+        return
+    try:
+        from ..services.meeting_sync import sync_google_meet_attendees
+        emails = [
+            row[0] for row in db.query(Member.email)
+            .join(MeetingMember, MeetingMember.member_id == Member.id)
+            .filter(MeetingMember.meeting_id == m.id, Member.email.isnot(None), Member.email != "")
+            .distinct().all()
+        ]
+        meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+        workspace_id = workspace_id_for_project(db, meeting_proj)
+        sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
+    except Exception as e:
+        logger.warning(f"_sync_meeting_calendar_attendees failed for meeting {m.id} (non-fatal): {e}")
+
+
 # ─── LIST ───────────────────────────────────────────────
 @router.get("")
 def list_meetings(
@@ -1283,10 +1309,15 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
                 db.add(MeetingMember(meeting_id=m.id, member_id=mid, role="PARTICIPANT"))
         for mid in existing.keys() - wanted_ids:
             db.delete(existing[mid])
+        members_changed = True
+    else:
+        members_changed = False
 
     from ..services.meeting_score_engine import recalculate_meeting_score
     recalculate_meeting_score(m, db)
     db.commit()
+    if members_changed:
+        _sync_meeting_calendar_attendees(db, m)
     AuditService.record_diff(
         db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
         entity_id=m.id, old_dict=old_dict,
@@ -1435,6 +1466,7 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
         description=f"Thêm '{member.display_name}' vào cuộc họp '{m.title}' (vai trò {role})"
     )
     db.commit()
+    _sync_meeting_calendar_attendees(db, m)
 
     # Re-fetch full meeting
     m = db.query(Meeting).options(
@@ -1471,6 +1503,7 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
         description=f"Gỡ '{removed_member.display_name if removed_member else member_id}' khỏi cuộc họp '{m.title}'"
     )
     db.commit()
+    _sync_meeting_calendar_attendees(db, m)
 
     # Re-fetch full meeting
     m = db.query(Meeting).options(
@@ -2038,6 +2071,10 @@ def retry_meeting_link(id: int, db: Session = Depends(get_db), current_user = De
         description=f"Tạo lại link Google Meet, đổi organizer sang {new_organizer or '(không đổi)'}"
     )
     db.commit()
+    # New Calendar event starts with zero attendees (create_google_meet_link
+    # always creates with attendees_emails=[]) — re-apply the existing
+    # participant list as guests on this fresh event.
+    _sync_meeting_calendar_attendees(db, m)
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 
