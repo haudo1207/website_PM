@@ -571,6 +571,11 @@ def can_access_project(db: Session, user, project: Project) -> bool:
         # Full access only within their Chính (home) Workspace — a Phụ
         # (secondary) Workspace only grants access to projects they're
         # explicitly assigned to, matching project_query_for_user() above.
+        # Deliberately personal-only (NOT team-wide like
+        # project_query_for_user()/_broad()) — a report being a member of a
+        # Phụ project gives the Leader awareness (it can show up in their
+        # dashboard/list), not blanket entry into that project's full
+        # detail/backlog. Only the Leader's OWN membership unlocks that.
         primary_code = (getattr(user, "data_scope", None) or "").strip().lower()
         return (
             (project.data_scope == primary_code)

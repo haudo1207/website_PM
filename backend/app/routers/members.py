@@ -801,6 +801,7 @@ def get_member_account_prefill(
     
     return {
         "member_id": member.id,
+        "member_display_name": member.display_name or "",
         "email": member.email or "",
         "full_name": member.full_name or "",
         "position": member.position or "",

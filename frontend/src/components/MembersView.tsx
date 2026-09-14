@@ -44,11 +44,12 @@ const EMPTY_FORM = {
 
 interface Props {
   onFlash: (msg: string) => void;
+  onAccountCreated?: () => void;
 }
 
 
 
-export default function MembersView({ onFlash }: Props) {
+export default function MembersView({ onFlash, onAccountCreated }: Props) {
   const [members, setMembers] = useState<Member[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
@@ -71,6 +72,13 @@ export default function MembersView({ onFlash }: Props) {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
+  // Account creation modal
+  const [showAccountModal, setShowAccountModal] = useState(false);
+  const [accountPrefill, setAccountPrefill] = useState<any>(null);
+  const [accountForm, setAccountForm] = useState({ email: '', full_name: '', role: 'member', workspace_ids: [] as string[], member_id: 0 });
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+
   const handleSyncRecruitment = async () => {
     if (syncing) return;
     setSyncing(true);
@@ -88,31 +96,59 @@ export default function MembersView({ onFlash }: Props) {
 
   const handleOpenAccount = async (member: Member) => {
     try {
+      setAccountError(null);
       // Get pre-filled account data
       const prefill = await getMemberAccountPrefill(member.id);
       
-      // Prepare account creation data
-      const accountData = {
-        email: prefill.email,
-        full_name: prefill.full_name,
-        role: prefill.role,
+      // Prepare form with pre-filled data
+      const workspaceCodes = prefill.workspaces.map((w: any) => w.code);
+      setAccountPrefill(prefill);
+      setAccountForm({
+        email: prefill.email || '',
+        full_name: prefill.full_name || '',
+        role: prefill.role || 'member',
+        workspace_ids: workspaceCodes,
         member_id: prefill.member_id,
-        workspace_ids: prefill.workspaces.map((w: any) => w.id),
+      });
+      setShowAccountModal(true);
+    } catch (err: any) {
+      const errMsg = err.response?.data?.detail || err.message || 'Lỗi tải thông tin tạo tài khoản';
+      onFlash(`Lỗi: ${errMsg}`);
+    }
+  };
+
+  const handleCreateAccount = async () => {
+    if (!accountPrefill) return;
+    setCreatingAccount(true);
+    setAccountError(null);
+    try {
+      const workspaceCodes = accountForm.workspace_ids;
+      const accountData = {
+        email: accountForm.email,
+        full_name: accountForm.full_name,
+        role: accountForm.role,
+        member_id: accountForm.member_id,
+        workspace_ids: workspaceCodes,
+        data_scope: workspaceCodes[0] || '',
+        primary_workspace_code: workspaceCodes[0] || '',
       };
       
-      // Confirm with user
-      const workspaceNames = prefill.workspaces.map((w: any) => w.name || w.code).join(', ');
-      if (!confirm(`Tạo tài khoản cho ${member.full_name}?\n\nEmail: ${prefill.email}\nRole: ${prefill.role}\nWorkspace: ${workspaceNames}`)) {
-        return;
-      }
-      
-      // Create account
       await createAccount(accountData);
-      onFlash(`Đã tạo tài khoản cho ${member.full_name}`);
+      onFlash(`Đã tạo tài khoản cho ${accountForm.full_name}`);
+      setShowAccountModal(false);
+      setAccountPrefill(null);
+      setAccountError(null);
+      // Refresh Member Management
       loadMembers();
+      // Refresh Account Management if callback provided
+      if (onAccountCreated) {
+        onAccountCreated();
+      }
     } catch (err: any) {
       const errMsg = err.response?.data?.detail || err.message || 'Lỗi tạo tài khoản';
-      onFlash(`Lỗi: ${errMsg}`);
+      setAccountError(errMsg);
+    } finally {
+      setCreatingAccount(false);
     }
   };
 
@@ -405,8 +441,12 @@ export default function MembersView({ onFlash }: Props) {
                       return (
                         <button
                           onClick={() => handleOpenAccount(m)}
-                          className="text-blue-600 hover:text-blue-700 text-[10px] font-bold underline"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-md text-[10px] font-bold transition-all hover:shadow-sm"
+                          title="Tạo tài khoản cho thành viên này"
                         >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                          </svg>
                           Mở tài khoản
                         </button>
                       );
@@ -633,6 +673,116 @@ export default function MembersView({ onFlash }: Props) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ ACCOUNT CREATION MODAL ═══ */}
+      {showAccountModal && accountPrefill && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 w-full max-w-lg rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
+              <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider">Tạo tài khoản mới</h3>
+              <button onClick={() => { setShowAccountModal(false); setAccountError(null); }} className="text-slate-400 hover:text-slate-600">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Error Banner */}
+              {accountError && (
+                <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-xs flex items-start gap-2 font-semibold shadow-sm">
+                  <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                  </svg>
+                  <span className="flex-1">{accountError}</span>
+                  <button type="button" onClick={() => setAccountError(null)} className="text-red-400 hover:text-red-700 transition-colors" title="Đóng thông báo">✕</button>
+                </div>
+              )}
+
+              {/* Member Info */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-1">
+                <div className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Thông tin thành viên liên kết</div>
+                <div className="text-xs text-slate-700 space-y-0.5">
+                  <div><span className="font-semibold">Tên hiển thị:</span> {accountPrefill.member_display_name || accountForm.full_name}</div>
+                  <div><span className="font-semibold">Họ tên:</span> {accountForm.full_name}</div>
+                  {accountPrefill.team && <div><span className="font-semibold">Nhóm:</span> {accountPrefill.team}</div>}
+                  {accountPrefill.position && <div><span className="font-semibold">Chức vụ:</span> {accountPrefill.position}</div>}
+                  {accountPrefill.department && <div><span className="font-semibold">Phòng ban:</span> {accountPrefill.department}</div>}
+                </div>
+              </div>
+
+              {/* Email */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email <span className="text-red-500">*</span></label>
+                <input
+                  required
+                  type="email"
+                  value={accountForm.email}
+                  onChange={e => setAccountForm(f => ({ ...f, email: e.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  placeholder="user@company.com"
+                />
+              </div>
+
+              {/* Full Name */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Họ tên</label>
+                <input
+                  value={accountForm.full_name}
+                  onChange={e => setAccountForm(f => ({ ...f, full_name: e.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                  placeholder="Nguyễn Văn A"
+                />
+              </div>
+
+              {/* Role */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vai trò <span className="text-red-500">*</span></label>
+                <select
+                  value={accountForm.role}
+                  onChange={e => setAccountForm(f => ({ ...f, role: e.target.value }))}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-[#0f172a] outline-none focus:border-blue-500"
+                >
+                  <option value="member">Member — Thành viên, quản lý task</option>
+                  <option value="viewer">Viewer — Chỉ xem, không thao tác</option>
+                </select>
+                <p className="text-[10px] text-slate-400 italic">Tài khoản tạo từ thành viên mặc định là Member.</p>
+              </div>
+
+              {/* Workspace */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Phạm vi Workspace</label>
+                <div className="w-full bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-700 font-bold flex items-center gap-2">
+                  <span className="text-base">∞</span>
+                  {accountPrefill.workspaces.map((w: any) => w.name || w.code).join(', ')}
+                </div>
+                <p className="text-[10px] text-slate-400 italic">
+                  Workspace được tự động cấp theo quyền của người tạo.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+              <button 
+                onClick={() => { setShowAccountModal(false); setAccountError(null); }} 
+                className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-4 py-2 rounded-lg text-xs font-bold transition-all"
+                disabled={creatingAccount}
+              >
+                Hủy
+              </button>
+              <button 
+                onClick={handleCreateAccount} 
+                disabled={creatingAccount || !accountForm.email}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-60 flex items-center gap-2"
+              >
+                {creatingAccount && <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>}
+                Tạo tài khoản
+              </button>
+            </div>
           </div>
         </div>
       )}

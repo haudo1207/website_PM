@@ -28,7 +28,7 @@ const getCanonicalTaskKpi = (t: any, memberId: any): number => {
 };
 
 const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth, workspaceCode }: {
-  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string, memberId?: string | number) => void,
+  member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => void,
   initialYear: number, initialMonth: number, workspaceCode?: string | null,
 }) => {
   const [detailYear, setDetailYear] = useState<number>(initialYear);
@@ -310,7 +310,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
                       const taskKpi = getCanonicalTaskKpi(t, member.id);
                       const proj = projects.find((p: any) => String(p.id) === String(t.project_id));
                       return (
-                        <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id, memberName, member.id); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
+                        <tr key={t.id} onClick={() => { if (proj) { onClose(); onNavigate(proj.id, memberName, member.id, t.id); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
                           <td className="px-4 py-3">
                             <p className="font-bold text-[#0b1c30] text-xs">{t.name || t.detail || '-'}</p>
                           </td>
@@ -897,7 +897,7 @@ export default function KPIPage() {
                     tasks={allTasks}
                     projects={allProjects}
                     onClose={() => setSelectedMemberModal(null)}
-                    onNavigate={(projectId, memberName, memberId) => router.push(`/project/detail/tasks?id=${projectId}${memberName ? `&member=${encodeURIComponent(memberName)}` : ''}${memberId != null ? `&member_id=${encodeURIComponent(String(memberId))}` : ''}`)}
+                    onNavigate={(projectId, memberName, memberId, taskId) => router.push(`/project/detail/tasks?id=${projectId}${memberName ? `&member=${encodeURIComponent(memberName)}` : ''}${memberId != null ? `&member_id=${encodeURIComponent(String(memberId))}` : ''}${taskId != null ? `&highlightTask=${encodeURIComponent(String(taskId))}` : ''}`)}
                     initialYear={year ? parseInt(year) : new Date().getFullYear()}
                     initialMonth={month ? parseInt(month) : new Date().getMonth() + 1}
                     workspaceCode={effectiveWorkspaceCode}

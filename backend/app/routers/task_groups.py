@@ -194,16 +194,24 @@ def validate_manday_budget(gid: int, task_code: str, manday_est, db: Session, ex
 
 
 def validate_child_start_date(gid: int, task_code: str, start_date, db: Session):
-    """A subtask's Start Date must not fall after its direct parent Task's
+    """A subtask's Start Date must not fall after its direct parent's
     End Date EST — End Date EST = Start Date + CEIL(Manday EST) - 1 (see
     kpi_engine.calc_end_date_est: the start date itself counts as day 1, so
     e.g. parent Start 10/9 + Manday 5 => End Date EST 14/9, not a plain
-    10 + 5 = 15/9 addition). Reads the parent's already-computed
-    end_date_est column rather than recomputing, since recalculate_task
-    keeps it in sync on every create/update.
+    10 + 5 = 15/9 addition).
 
-    Skipped when there's no parent task (top-level task), or the parent has
-    no computed End Date EST yet (missing start_date/manday_est)."""
+    The "parent" is a Task with a matching code (get_parent_code) when one
+    exists (a nested subtask), same as before. A direct child of the Group
+    itself (e.g. task_code "1.1" under Group whose own code is "1") has no
+    such Task row — this used to just skip validation entirely, silently
+    letting a task start after the Group's own start_date_est + manday_est
+    window closed. Falls back to the TaskGroup's own end_date_est in that
+    case, mirroring the same Task-then-TaskGroup fallback
+    validate_manday_budget already uses for the sibling manday-sum check.
+
+    Skipped entirely when there's no computed End Date EST yet on whichever
+    of the two (parent Task or TaskGroup) applies — missing start_date/
+    manday_est means there's no window to enforce."""
     if not start_date or not task_code:
         return
 
@@ -215,14 +223,25 @@ def validate_child_start_date(gid: int, task_code: str, start_date, db: Session)
         Task.task_group_id == gid,
         Task.task_code == parent_code
     ).first()
-    if not parent_task or not parent_task.end_date_est:
+
+    if parent_task:
+        parent_label = f"task cha {parent_code}"
+        parent_end_date = parent_task.end_date_est
+    else:
+        tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+        if not tg:
+            return
+        parent_label = f"Task Group {tg.name}"
+        parent_end_date = tg.end_date_est
+
+    if not parent_end_date:
         return
 
-    if start_date > parent_task.end_date_est:
+    if start_date > parent_end_date:
         raise HTTPException(
             400,
             f"Ngày bắt đầu task con không được sau ngày kết thúc dự kiến của "
-            f"task cha {parent_code} ({parent_task.end_date_est.strftime('%d/%m/%Y')})."
+            f"{parent_label} ({parent_end_date.strftime('%d/%m/%Y')})."
         )
 
 
@@ -605,14 +624,19 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
         raise HTTPException(400, "Task group name is required.")
 
     manday_est = body.get("manday_est")
-    if manday_est is not None:
-        try:
-            manday_est = float(manday_est)
-        except (ValueError, TypeError):
-            raise HTTPException(400, "Manday EST must be a number.")
+    if manday_est is None:
+        raise HTTPException(400, "Manday EST là bắt buộc khi tạo Task Group.")
+    try:
+        manday_est = float(manday_est)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Manday EST must be a number.")
     validate_group_manday(manday_est)
 
-    assigned_ids = validate_member_ids_for_project(body.get("assigned_ids"), phase.project_id, db, "Người thực hiện")
+    # Người thực hiện (assigned_ids) của Task Group luôn là người tạo ra nó —
+    # tự động gán, không nhận giá trị từ client. SP (support_ids) vẫn chọn
+    # tự do như bình thường.
+    creator_member_id = getattr(current_user, "member_id", None)
+    assigned_ids = [creator_member_id] if creator_member_id is not None else []
     support_ids = validate_member_ids_for_project(body.get("support_ids"), phase.project_id, db, "SP")
 
     # Position the new group: at a specific spot if the caller supplied one
@@ -739,8 +763,10 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
         tg.end_date_actual_override = parse_date(body["end_date_actual_override"])
 
     project_id = tg.phase.project_id if tg.phase else None
-    if "assigned_ids" in body:
-        tg.assigned_ids = validate_member_ids_for_project(body["assigned_ids"], project_id, db, "Người thực hiện")
+    # Người thực hiện (assigned_ids) is fixed to whoever created the Group —
+    # not editable afterward, so any "assigned_ids" the client sends here is
+    # silently ignored rather than erroring (older clients/forms may still
+    # submit it as part of a broader payload). SP (support_ids) stays free.
     if "support_ids" in body:
         tg.support_ids = validate_member_ids_for_project(body["support_ids"], project_id, db, "SP")
 
@@ -1498,9 +1524,10 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     tg = sync_group_dates(tg, db, extra_start=task.start_date, extra_end=task.end_date_est)
     tg = sync_group_actual_dates(tg, db)
 
-    # This task's assigned/support member joins the group's roster too
-    # (additive, deduped — never removes an existing entry).
-    add_to_group_list(tg, "assigned_ids", task.assigned_id)
+    # This task's support member joins the group's SP roster too (additive,
+    # deduped — never removes an existing entry). assigned_ids is NOT synced
+    # here — the Group's "người thực hiện" is fixed to whoever created it,
+    # not an aggregate of its child tasks' assignees.
     add_to_group_list(tg, "support_ids", task.support_id)
 
     # Update group progress
@@ -1725,24 +1752,11 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     if "status" in body:
         new_status_l = (body["status"] or "").strip().lower()
         old_status_l = (old_dict["status"] or "").strip().lower()
-        # Members cannot set status to Done directly - must go through Review workflow
-        # Only Leaders/Super Admin can approve tasks (Review → Done)
-        is_leader_role = getattr(current_user, "role", None) == "leader"
-        if (
-            new_status_l in ("done", "completed")
-            and old_status_l not in ("done", "completed")
-            and not is_project_leader(db, current_user, project_id)
-            and not is_leader_role
-        ):
-            raise HTTPException(403, "Chỉ Leader mới có quyền chuyển task sang Done. Member cần chuyển task sang Review và chờ Leader duyệt.")
-        if (
-            "review" in old_status_l
-            and new_status_l == "done"
-            and (task.review_status == "pending")
-            and not is_project_leader(db, current_user, project_id)
-            and not is_leader_role
-        ):
-            raise HTTPException(403, "Task đang chờ review. Chỉ Leader mới có quyền duyệt sang Done.")
+        # Review is now optional, not mandatory: a Member can send a task
+        # straight to Done themself at any time, same as a Leader. The
+        # Review workflow (Leader approve/request-changes) below is still
+        # available for whoever wants to use it — it just no longer gates
+        # who is allowed to set Done directly.
         task.status = body["status"]
         # Review workflow sync - CHỈ khi status thực sự chuyển VÀO/RA khỏi 1
         # status chứa "review" (edge, không phải mọi save trong lúc status vẫn
@@ -1851,10 +1865,10 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     if task.assigned_id and task.support_id and task.assigned_id == task.support_id:
         raise HTTPException(400, "Support cannot be the same as Assigned.")
 
-    # This task's assigned/support member joins the parent group's roster
-    # too (additive, deduped) whenever either was actually touched.
-    if tg and ("assigned_id" in body or "support_id" in body):
-        add_to_group_list(tg, "assigned_ids", task.assigned_id)
+    # This task's support member joins the parent group's SP roster too
+    # (additive, deduped) whenever support_id was actually touched.
+    # assigned_ids is NOT synced — see create_task's comment above.
+    if tg and "support_id" in body:
         add_to_group_list(tg, "support_ids", task.support_id)
 
     # KPI Ratio
