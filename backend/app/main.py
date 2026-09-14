@@ -859,6 +859,11 @@ def apply_schema_updates():
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_review_checklist_items_task_id ON review_checklist_items (task_id)"))
 
+        # Member employment status (ON/OFF) synced from CV/Recruitment system
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS employment_status VARCHAR(20) DEFAULT 'ON'"
+        ))
+
 def init_db_defaults():
     from .database import SessionLocal
     from .models.user import User

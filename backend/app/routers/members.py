@@ -10,7 +10,7 @@ from ..models.member import Member, member_skills
 from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
-from ..utils.auth import require_admin, get_current_user
+from ..utils.auth import require_admin, require_manager, get_current_user
 from ..models.workspace_access import UserWorkspaceAccess
 from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE, ROLE_LEADER
 from ..utils.audit_service import AuditService
@@ -160,7 +160,10 @@ def member_to_dict(m: Member) -> dict:
         "skills": [
             {"id": s.id, "name": s.name}
             for s in m.skills
-        ]
+        ],
+        "employment_status": m.employment_status or "ON",
+        "has_account": m.user is not None,
+        "account_active": m.user.is_active if m.user else None,
     }
 
 
@@ -757,6 +760,57 @@ def list_leaders(db: Session = Depends(get_db), current_user=Depends(get_current
     return sorted(out, key=lambda x: x["name"])
 
 
+# ─── ACCOUNT CREATION PRE-FILL ──────────────────────────────────
+@router.get("/{member_id}/account-prefill")
+def get_member_account_prefill(
+    member_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_manager)
+):
+    """Get pre-filled account data for creating an account from a member."""
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(404, "Không tìm thấy thành viên")
+    
+    # Check if member already has an account
+    if member.user:
+        raise HTTPException(400, "Thành viên này đã có tài khoản")
+    
+    # Check if member is OFF
+    if member.employment_status == "OFF":
+        raise HTTPException(400, "Không thể tạo tài khoản cho thành viên đã nghỉ việc")
+    
+    # Determine workspaces based on caller's role
+    from ..models.workspace_access import UserWorkspaceAccess
+    from ..models.system_category import Workspace
+    
+    workspaces = []
+    if current_user.role == "super_admin":
+        # Super Admin gets all workspaces
+        all_workspaces = db.query(Workspace).all()
+        workspaces = [{"id": w.id, "code": w.code, "name": w.name} for w in all_workspaces]
+    elif current_user.role == "leader":
+        # Leader gets their authorized workspaces
+        leader_access = db.query(UserWorkspaceAccess).filter(
+            UserWorkspaceAccess.user_id == current_user.id
+        ).all()
+        for access in leader_access:
+            workspace = db.query(Workspace).filter(Workspace.id == access.workspace_id).first()
+            if workspace:
+                workspaces.append({"id": workspace.id, "code": workspace.code, "name": workspace.name})
+    
+    return {
+        "member_id": member.id,
+        "email": member.email or "",
+        "full_name": member.full_name or "",
+        "position": member.position or "",
+        "department": member.department or "",
+        "team": member.team or "",
+        "role": "member",  # Default role
+        "workspaces": workspaces,
+    }
+
+
 # ─── SYNC CANDIDATE ──────────────────────────────────────────
 @router.post("/sync-candidate")
 def sync_candidate(
@@ -963,15 +1017,26 @@ def sync_from_recruitment(
         "Authorization": f"Bearer {SUPABASE_KEY}"
     }
     
-    url = f"{SUPABASE_URL}/rest/v1/applications?status=eq.accepted"
+    # Fetch both accepted and resigned applications
+    accepted_url = f"{SUPABASE_URL}/rest/v1/applications?status=eq.accepted"
+    resigned_url = f"{SUPABASE_URL}/rest/v1/applications?status=eq.resigned"
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Lỗi kết nối API tuyển dụng: {response.text}")
-        candidates = response.json()
+        accepted_response = requests.get(accepted_url, headers=headers, timeout=15)
+        if accepted_response.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Lỗi kết nối API tuyển dụng (accepted): {accepted_response.text}")
+        accepted_candidates = accepted_response.json()
     except Exception as err:
-        raise HTTPException(status_code=502, detail=f"Không thể kết nối đến hệ thống tuyển dụng: {str(err)}")
+        raise HTTPException(status_code=502, detail=f"Không thể kết nối đến hệ thống tuyển dụng (accepted): {str(err)}")
+    
+    try:
+        resigned_response = requests.get(resigned_url, headers=headers, timeout=15)
+        if resigned_response.status_code != 200:
+            resigned_candidates = []
+        else:
+            resigned_candidates = resigned_response.json()
+    except Exception:
+        resigned_candidates = []
 
     # Fetch recruitment leaders
     leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders"
@@ -985,15 +1050,32 @@ def sync_from_recruitment(
         
     success_count = 0
     deleted_count = 0
+    locked_count = 0
+    unlocked_count = 0
     try:
-        # 1. Thu thập danh sách email và display name của ứng viên "đã nhận"
-        accepted_emails = set()
-        accepted_display_names = set()
-        for app_data in candidates:
+        # Build a map of email → application data, with accepted taking precedence over resigned
+        # This handles same-email multiple applications correctly
+        applications_by_email = {}
+        
+        # First, add all resigned applications
+        for app_data in resigned_candidates:
             email_val = str(app_data.get("email", "")).strip().lower()
-            full_name_val = str(app_data.get("full_name", "")).strip()
             if email_val:
-                accepted_emails.add(email_val)
+                applications_by_email[email_val] = {"data": app_data, "status": "resigned"}
+        
+        # Then, overwrite with accepted applications (accepted takes precedence)
+        for app_data in accepted_candidates:
+            email_val = str(app_data.get("email", "")).strip().lower()
+            if email_val:
+                applications_by_email[email_val] = {"data": app_data, "status": "accepted"}
+        
+        # Collect emails and display names for cleanup
+        active_emails = set()
+        active_display_names = set()
+        for email_val, app_info in applications_by_email.items():
+            active_emails.add(email_val)
+            app_data = app_info["data"]
+            full_name_val = str(app_data.get("full_name", "")).strip()
             if full_name_val:
                 words = [w for w in full_name_val.split() if w]
                 if len(words) <= 2:
@@ -1002,31 +1084,32 @@ def sync_from_recruitment(
                     abbr = ".".join([w[0].upper() for w in words[:-2]])
                     last_two = " ".join(words[-2:])
                     d_name = f"{abbr} {last_two}"
-                accepted_display_names.add(d_name.lower())
+                active_display_names.add(d_name.lower())
 
-        # 2. Xóa các ứng viên đã đồng bộ (được đánh dấu Recruitment) không còn trạng thái
-        # "đã nhận" (accepted) bên tuyển dụng. Provenance is tracked via the dedicated
-        # `is_recruitment_synced` flag (set when the sync creates a NEW Member), NOT
-        # by `cv_link` — attaching a CV to a manually-created Member no longer makes
-        # that Member eligible for the sync's cleanup step.
+        # 2. Xóa các ứng viên đã đồng bộ (được đánh dấu Recruitment) không còn trong hệ thống tuyển dụng
+        # Only delete if the member is not in ANY application list (neither accepted nor resigned)
         synced_members = db.query(Member).filter(Member.is_recruitment_synced.is_(True)).all()
         for m in synced_members:
             m_email = str(m.email or "").strip().lower()
             m_display = str(m.display_name or "").strip().lower()
 
-            is_still_accepted = False
-            if m_email and m_email in accepted_emails:
-                is_still_accepted = True
-            elif m_display and m_display in accepted_display_names:
-                is_still_accepted = True
+            is_still_in_system = False
+            if m_email and m_email in active_emails:
+                is_still_in_system = True
+            elif m_display and m_display in active_display_names:
+                is_still_in_system = True
 
-            if not is_still_accepted:
+            if not is_still_in_system:
                 db.delete(m)
                 deleted_count += 1
         
-        # 3. Đồng bộ/Cập nhật các ứng viên đã nhận hiện tại
+        # 3. Đồng bộ/Cập nhật các ứng viên từ tuyển dụng (cả accepted và resigned)
         used_display_names = set()
-        for app_data in candidates:
+        for email_key, app_info in applications_by_email.items():
+            app_data = app_info["data"]
+            cv_status = app_info["status"]  # "accepted" or "resigned"
+            employment_status = "ON" if cv_status == "accepted" else "OFF"
+            
             full_name = str(app_data.get("full_name", "")).strip()[:255]
             email = str(app_data.get("email", "")).strip().lower()[:255]
             phone = str(app_data.get("phone", "")).strip()[:20]
@@ -1121,6 +1204,21 @@ def sync_from_recruitment(
                     member.leader_name = leader_name
                 if leader_email:
                     member.leader_email = leader_email
+                
+                # Update employment status
+                old_status = member.employment_status
+                member.employment_status = employment_status
+                
+                # Handle account locking/unlocking based on status change
+                if member.user:
+                    if employment_status == "OFF" and member.user.is_active:
+                        # OFF status → lock the account
+                        member.user.is_active = False
+                        locked_count += 1
+                    elif employment_status == "ON" and old_status == "OFF" and not member.user.is_active:
+                        # OFF → ON rehire → unlock the account
+                        member.user.is_active = True
+                        unlocked_count += 1
             else:
                 member = Member(
                     display_name=final_display_name,
@@ -1135,14 +1233,8 @@ def sync_from_recruitment(
                     cv_link=cv_link or None,
                     leader_name=leader_name,
                     leader_email=leader_email,
-                    # Brand-new Member originating from a Recruitment accepted
-                    # candidate — stamp provenance so the cleanup step in step
-                    # 2 above can remove ONLY rows that came from this sync.
-                    # Existing manually-created Members matched by
-                    # email/display_name stay `is_recruitment_synced=False`
-                    # — they update in place but their provenance never
-                    # changes, so the cleanup step never deletes them.
                     is_recruitment_synced=True,
+                    employment_status=employment_status,
                 )
                 db.add(member)
                 
@@ -1151,11 +1243,15 @@ def sync_from_recruitment(
         db.commit()
         message = f"Đồng bộ thành công {success_count} ứng viên."
         if deleted_count > 0:
-            message += f" Đã gỡ bỏ {deleted_count} ứng viên không còn ở trạng thái đã nhận."
+            message += f" Đã gỡ bỏ {deleted_count} ứng viên không còn trong hệ thống tuyển dụng."
+        if locked_count > 0:
+            message += f" Đã khóa {locked_count} tài khoản (nghỉ việc)."
+        if unlocked_count > 0:
+            message += f" Đã mở khóa {unlocked_count} tài khoản (trở lại làm việc)."
         AuditService.record(
             db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
             entity_id=None, action="UPDATE",
-            description=f"Đồng bộ hàng loạt từ hệ thống tuyển dụng: {success_count} ứng viên cập nhật/tạo mới, {deleted_count} bị gỡ bỏ"
+            description=f"Đồng bộ hàng loạt từ hệ thống tuyển dụng: {success_count} ứng viên cập nhật/tạo mới, {deleted_count} bị gỡ bỏ, {locked_count} tài khoản khóa, {unlocked_count} tài khoản mở khóa"
         )
         db.commit()
         return {"status": "success", "count": success_count, "message": message}
