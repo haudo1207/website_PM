@@ -11416,6 +11416,19 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
     };
   }, [isOpen]);
 
+  // Same correction as the Skill dropdown below: `estimatedHeight` above is
+  // a guess, not the menu's real height — clamp against the actual rendered
+  // height once mounted so it can't fly off the top of a short viewport.
+  useLayoutEffect(() => {
+    if (!isOpen || !portalPos || !menuRef.current) return;
+    const menuHeight = menuRef.current.getBoundingClientRect().height;
+    const maxTop = Math.max(4, window.innerHeight - menuHeight - 4);
+    const clampedTop = Math.min(Math.max(portalPos.top, 4), maxTop);
+    if (Math.abs(clampedTop - portalPos.top) > 0.5) {
+      setPortalPos(prev => (prev ? { ...prev, top: clampedTop } : prev));
+    }
+  }, [isOpen, portalPos]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const insideContainer = containerRef.current && containerRef.current.contains(event.target as Node);
@@ -11599,6 +11612,23 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
       window.removeEventListener('resize', reposition);
     };
   }, [isOpen]);
+
+  // The flip-up decision above uses a fixed `estimatedHeight` guess, not the
+  // menu's real rendered height — on a short/narrow screen that guess can be
+  // way taller than the menu actually is, pushing `top` far above the anchor
+  // (even off the top of the viewport, rendering the dropdown up near the
+  // page header instead of next to the cell that opened it). Once the menu
+  // has actually rendered, clamp `top` to its real height so it always stays
+  // fully on-screen and as close to the anchor as it can.
+  useLayoutEffect(() => {
+    if (!isOpen || !portalPos || !menuRef.current) return;
+    const menuHeight = menuRef.current.getBoundingClientRect().height;
+    const maxTop = Math.max(4, window.innerHeight - menuHeight - 4);
+    const clampedTop = Math.min(Math.max(portalPos.top, 4), maxTop);
+    if (Math.abs(clampedTop - portalPos.top) > 0.5) {
+      setPortalPos(prev => (prev ? { ...prev, top: clampedTop } : prev));
+    }
+  }, [isOpen, portalPos]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
