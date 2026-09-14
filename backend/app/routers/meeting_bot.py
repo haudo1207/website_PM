@@ -31,8 +31,15 @@ router = APIRouter()
 
 # How far ahead the bot should be told about a meeting, so its browser
 # profile has time to open the join link and get admitted through before
-# the actual start time.
-LOOKAHEAD_MINUTES = 10
+# the actual start time. Tightened from 10 to 2 (chốt 2026-09-14, "Bot Join
+# window" rule): the bot should only ever be handed a meeting close to its
+# actual start, not one still ~10 minutes out. 2 minutes still leaves ~5-6
+# poll cycles (poll interval ~20s) to open the tab, load Meet, and get the
+# CDP join click to land before start_time. GRACE_MINUTES_AFTER_START below
+# is deliberately left untouched — it's a separate post-start catch-up net
+# (VPS restart / missed poll right at start), not the "how early can the bot
+# see this" gate this constant controls.
+LOOKAHEAD_MINUTES = 2
 # How long after start_time a meeting still counts as "join me" when it has
 # no end_time — covers meetings the bot missed picking up right at start
 # (VPS restart, etc.). Meetings that DO have an end_time are cut off there
