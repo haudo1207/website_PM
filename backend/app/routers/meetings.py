@@ -81,6 +81,23 @@ def compute_display_status(m: Meeting) -> str:
         return "ĐANG DIỄN RA" if now >= start_dt else "SẮP TỚI"
     return STATUS_DB_TO_FE.get(m.status, m.status)
 
+_SORT_EPOCH = datetime.datetime(1970, 1, 1)
+
+def _meeting_list_sort_key(m: Meeting):
+    """Chốt 2026-09-14: single flat list (no section headers), but two
+    logical groups within it. Not-yet-ended meetings (ĐANG DIỄN RA/SẮP TỚI)
+    sort start_time ASC — the soonest one is always on top, so the list
+    doesn't reshuffle every time "now" ticks past another meeting's start.
+    Ended meetings (ĐÃ KẾT THÚC/ĐÃ HỦY) sort start_time DESC — most recent
+    history on top of that group. Not-ended always comes before ended.
+    Uses plain timedelta-from-epoch arithmetic (not .timestamp()) so a
+    hypothetical missing meeting_date/start_time — required at creation, so
+    this is defensive only — can't raise on very old/naive datetimes."""
+    ended = compute_display_status(m) in ("ĐÃ KẾT THÚC", "ĐÃ HỦY")
+    dt = datetime.datetime.combine(m.meeting_date, m.start_time) if m.meeting_date and m.start_time else _SORT_EPOCH
+    seconds = (dt - _SORT_EPOCH).total_seconds()
+    return (1, -seconds) if ended else (0, seconds)
+
 def parse_time(time_str: str):
     if not time_str:
         return None
@@ -623,11 +640,16 @@ def list_meetings(
         td = parse_date(to_date)
         q = q.filter(Meeting.meeting_date <= td)
 
-    # Newest-created always first — meeting_date/start_time sort was confusing
-    # (a just-created meeting could land in the middle or bottom depending on
-    # its scheduled date relative to others). id is monotonic on insert, so
-    # this is also immune to clock skew.
-    meetings = q.order_by(Meeting.id.desc()).all()
+    # Sort rule (chốt 2026-09-14): see _meeting_list_sort_key's own docstring —
+    # not-ended meetings (soonest start_time first) always precede ended ones
+    # (most recent start_time first), one flat list, no section headers.
+    # Sorted in Python, not SQL: compute_display_status() is a live
+    # now()-vs-start_time computation, not a DB column, so there's nothing to
+    # ORDER BY server-side without duplicating that logic in a SQL CASE
+    # expression — sorting the already-fetched ORM rows is simpler and this
+    # endpoint's result set is never large enough for it to matter.
+    meetings = q.all()
+    meetings.sort(key=_meeting_list_sort_key)
     result = [meeting_to_dict(m, db=db, current_user=current_user) for m in meetings]
 
     if mine:
