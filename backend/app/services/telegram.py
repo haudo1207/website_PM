@@ -29,7 +29,7 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 
 # ── Low-level helpers ─────────────────────────────────────────
 def _bot_token() -> str:
-    return (settings.TELEGRAM_BOT_TOKEN or "").strip()
+    return (settings.TELEGRAM_BOT_TOKEN_LEAVEREQUEST or "").strip()
 
 
 def is_telegram_enabled() -> bool:

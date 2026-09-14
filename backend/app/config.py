@@ -125,6 +125,7 @@ class Settings(BaseSettings):
     N8N_MEETING_WEBHOOK_URL_DEFAULT: str = ""
 
     # Telegram Bot integration (Leave Request notifications)
+    TELEGRAM_BOT_TOKEN_LEAVEREQUEST: str = ""
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_SECRET: str = ""
     # Optional: a Telegram group/supergroup chat id (e.g. -1001234567890).
