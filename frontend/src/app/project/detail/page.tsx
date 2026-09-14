@@ -332,6 +332,29 @@ function ProjectDetailContent() {
 
   const isSavingRef = useRef(false);
 
+  // Task Table card height — measured directly instead of relying on the
+  // flex-1/min-h-0 chain up to h-screen (which reads as correct on paper
+  // but empirically still left the card sized to its own content: short on
+  // a project with few Groups/Tasks, with a big block of plain grey page
+  // showing below it instead of the card's own white background filling
+  // the rest of the viewport). Sets an explicit pixel height = distance
+  // from the card's own top to the bottom of the viewport, recomputed on
+  // resize, so it fills exactly to the screen edge on any screen size.
+  const taskTableCardRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (activeMainTab !== 'tasks') return;
+    const el = taskTableCardRef.current;
+    if (!el) return;
+    const resize = () => {
+      const top = el.getBoundingClientRect().top;
+      const height = Math.max(240, window.innerHeight - top - 16);
+      el.style.height = `${height}px`;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, [activeMainTab]);
+
   const [project, setProject] = useState<any>(null);
   const [loadingProject, setLoadingProject] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
@@ -8147,7 +8170,7 @@ function ProjectDetailContent() {
                       của table vẫn hoạt động bình thường. */}
                   <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
-                  <div className="flex-1 min-w-0 min-h-[65vh] bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
+                  <div ref={taskTableCardRef} className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
                     <div className="flex items-center px-3 pt-2 pb-1 border-b border-slate-100 shrink-0">
                       <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
                         <button
