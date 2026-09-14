@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin } from '@/lib/api';
+import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, getMe } from '@/lib/api';
 import { isAdmin, getEmail } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
@@ -125,6 +125,12 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+  // Own member_id — used below to keep a project I'm assigned to visible
+  // regardless of the Workspace tab, by numeric id rather than by email
+  // (see isAssignedToMe).
+  const { data: me } = useQuery({ queryKey: ['me-project-list'], queryFn: getMe, staleTime: 5 * 60_000 });
+  const myMemberId = me?.member_id ?? null;
 
   // Nhớ lựa chọn Lưới/Danh sách theo trình duyệt (không cần đồng bộ server).
   useEffect(() => {
@@ -342,8 +348,18 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       // A project I'm explicitly assigned to always stays visible under the
       // current Workspace tab, even if it belongs to a different Workspace
       // (mirrors the membership-overrides-Workspace rule on the backend).
-      const isAssignedToMe = !!myEmail && Array.isArray(p.members) &&
-        p.members.some((m: any) => (m?.email || '').toLowerCase() === myEmail);
+      // Matched by member_id, not email — Member.email is optional and
+      // often blank on real member records, which silently broke this
+      // exact escape hatch: a Member legitimately assigned (any role: PM/
+      // Leader/Sales/plain Member) to a project outside their home
+      // Workspace had that project hidden the moment the switcher wasn't
+      // on that Workspace's tab.
+      const isAssignedToMe = myMemberId != null && [
+        ...(Array.isArray(p.member_ids) ? p.member_ids : []),
+        ...(Array.isArray(p.pm_ids) ? p.pm_ids : []),
+        ...(Array.isArray(p.sales_ids) ? p.sales_ids : []),
+        ...(Array.isArray(p.technical_leader_ids) ? p.technical_leader_ids : []),
+      ].some((id: any) => Number(id) === Number(myMemberId));
       const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all') || isAssignedToMe;
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
