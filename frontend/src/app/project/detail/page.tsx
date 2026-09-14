@@ -343,16 +343,26 @@ function ProjectDetailContent() {
   const taskTableCardRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (activeMainTab !== 'tasks') return;
-    const el = taskTableCardRef.current;
-    if (!el) return;
-    const resize = () => {
+    const recompute = () => {
+      const el = taskTableCardRef.current;
+      // Bails out silently if the card hasn't mounted yet (e.g. still on a
+      // loading screen) — the ResizeObserver below re-fires as soon as
+      // project/task data finishes loading and the page's layout actually
+      // changes size, so this recovers on its own without needing to know
+      // exactly when that happens.
+      if (!el) return;
       const top = el.getBoundingClientRect().top;
       const height = Math.max(240, window.innerHeight - top - 16);
       el.style.height = `${height}px`;
     };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
+    recompute();
+    window.addEventListener('resize', recompute);
+    const observer = new ResizeObserver(recompute);
+    observer.observe(document.body);
+    return () => {
+      window.removeEventListener('resize', recompute);
+      observer.disconnect();
+    };
   }, [activeMainTab]);
 
   const [project, setProject] = useState<any>(null);
@@ -8170,7 +8180,7 @@ function ProjectDetailContent() {
                       của table vẫn hoạt động bình thường. */}
                   <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
-                  <div ref={taskTableCardRef} className="flex-1 min-w-0 bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
+                  <div ref={taskTableCardRef} className="flex-1 min-w-0 min-h-[65vh] bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
                     <div className="flex items-center px-3 pt-2 pb-1 border-b border-slate-100 shrink-0">
                       <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
                         <button
