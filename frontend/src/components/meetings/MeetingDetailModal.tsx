@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
@@ -58,6 +58,13 @@ export default function MeetingDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  // Manual-end fallback (chốt 2026-09-14): local override so the status
+  // badge/isDone flip immediately after marking DONE by hand, without
+  // waiting for the parent to refetch and pass a fresh `meeting` prop —
+  // same pattern as localScore below.
+  const [localStatus, setLocalStatus] = useState<string | null>(null);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [isEndingMeeting, setIsEndingMeeting] = useState(false);
 
   // Assign Project Modal State
   const [isAssignProjectOpen, setIsAssignProjectOpen] = useState(false);
@@ -169,6 +176,7 @@ export default function MeetingDetailModal({
   useEffect(() => {
     setLocalScore(null);
     setFeedbackChoice(null);
+    setLocalStatus(null);
   }, [meeting?.id]);
 
   if (!isOpen || !meeting) return null;
@@ -189,6 +197,29 @@ export default function MeetingDetailModal({
       console.error('Failed to recalculate meeting score', e);
     } finally {
       setIsRecalculatingScore(false);
+    }
+  };
+
+  // Manual-end fallback (chốt 2026-09-14): for when the Meeting Host Bot/VPS
+  // is down and a human ended the call by hand on Google Meet. Confirmed via
+  // the small inline dialog below rather than routing through a parent-page
+  // confirm flow (unlike onDelete) — this action doesn't navigate away or
+  // need list-level state, so a self-contained dialog avoids duplicating
+  // confirm UI across both pages that render this modal.
+  const handleManualEnd = async () => {
+    if (!meeting?.id) return;
+    setIsEndingMeeting(true);
+    try {
+      const res = await manualEndMeeting(meeting.id);
+      if (res?.success && res.data) {
+        setLocalStatus(res.data.status);
+        queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? { ...m, ...res.data } : m));
+      }
+      setShowEndConfirm(false);
+    } catch (e) {
+      console.error('Failed to manually end meeting', e);
+    } finally {
+      setIsEndingMeeting(false);
     }
   };
 
@@ -215,7 +246,7 @@ export default function MeetingDetailModal({
   const projectName = localProjectName || (typeof meeting.project === 'string' ? meeting.project : (meeting.project?.name || meeting.project_name || ''));
   const isUnassignedProject = !localProjectId && (!projectName || projectName === 'Dự án chung' || projectName === 'Chưa gán dự án');
 
-  const statusUpper = String(meeting.status || 'UPCOMING').toUpperCase();
+  const statusUpper = String(localStatus || meeting.status || 'UPCOMING').toUpperCase();
   const isDone = statusUpper === 'ĐÃ KẾT THÚC' || statusUpper === 'ĐÃ DIỄN RA' || statusUpper === 'DONE' || statusUpper === 'COMPLETED';
 
   // meeting_url in DB is SUPPOSED to always stay clean (used for copy/email
@@ -655,6 +686,15 @@ export default function MeetingDetailModal({
                     >
                       <span>📋 Sao chép link họp</span>
                     </button>
+                    {meeting?.can_manage && statusUpper.includes('DIỄN RA') && (
+                      <button
+                        onClick={() => { setShowMenu(false); setShowEndConfirm(true); }}
+                        className="w-full text-left px-3.5 py-2 hover:bg-amber-50 text-amber-700 flex items-center gap-2 border-t border-slate-100"
+                        title="Fallback khi Bot/VPS không tự động báo kết thúc được"
+                      >
+                        <span>✅ Đánh dấu đã kết thúc</span>
+                      </button>
+                    )}
                     {onDelete && (
                       <button
                         onClick={() => { setShowMenu(false); onDelete(meeting); }}
@@ -1646,6 +1686,34 @@ export default function MeetingDetailModal({
             <div className="flex justify-end pt-2">
               <button onClick={() => setIsAssignProjectOpen(false)} className="px-4 py-2 text-xs font-bold text-[#64748b] bg-white border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors">
                 Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual-end fallback confirm (chốt 2026-09-14) */}
+      {showEndConfirm && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
+            <h3 className="text-sm font-extrabold text-[#0b1c30]">Bạn có chắc cuộc họp đã kết thúc?</h3>
+            <p className="text-xs text-[#64748b] leading-relaxed">
+              Thao tác này sẽ chuyển trạng thái cuộc họp sang <b>Đã kết thúc</b>. Chỉ dùng khi Bot/VPS không tự động báo kết thúc được và bạn đã tự vào Google Meet để kết thúc cuộc gọi.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowEndConfirm(false)}
+                disabled={isEndingMeeting}
+                className="px-4 py-2 text-xs font-bold text-[#64748b] bg-white border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleManualEnd}
+                disabled={isEndingMeeting}
+                className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors disabled:opacity-50"
+              >
+                {isEndingMeeting ? 'Đang xử lý...' : 'Xác nhận đã kết thúc'}
               </button>
             </div>
           </div>

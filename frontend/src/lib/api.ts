@@ -645,6 +645,10 @@ export const generateMeetingLink = (data: { platform: string; title: string; dat
 // meeting_url/google_event_id/organizer_google_email server-side in one request.
 // Plain PUT /meetings/{id} no longer accepts organizer_google_email at all.
 export const retryMeetingLink = (id: number, data?: { host_workspace_id?: number | null }) => api.post(`/meetings/${id}/retry-link`, data).then(r => r.data);
+// Manual-end fallback (chốt 2026-09-14): for when the Meeting Host Bot/VPS
+// is down and a human ended the call by hand on Google Meet — marks the
+// meeting DONE without waiting for the Bot's own POST /meeting-bot/ended.
+export const manualEndMeeting = (id: number) => api.post(`/meetings/${id}/manual-ended`).then(r => r.data);
 // Overlap rule (chốt 2026-09-13): organizer is the source of truth, not
 // participants — this calls the EXACT SAME check create/update/retry-link
 // enforce server-side, so the frontend never shows "rảnh"/"trùng" out of

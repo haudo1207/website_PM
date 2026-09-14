@@ -1563,6 +1563,44 @@ def delete_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(
     db.commit()
     return {"message": "Đã xóa cuộc họp thành công"}
 
+# ─── MANUAL END (VPS/Bot crash fallback) ─────────────────
+@router.post("/{id}/manual-ended")
+def manual_end_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Chốt 2026-09-14: fallback for when the Meeting Host Bot/VPS is down —
+    a human joined as Host manually, actually ended the call on Google Meet,
+    and comes back to the PM to mark it DONE by hand. Does NOT touch or
+    replace POST /meeting-bot/ended (the Bot's own automated path) — both
+    converge on the same DONE state, this is purely a manual escape hatch
+    for when that automated path never fires.
+
+    Authorization: no per-endpoint check here on purpose — this router's
+    require_route_project_access dependency already gates every write on
+    this exact router to creator/PM-Leader/full-project-access (the same
+    "can_manage" condition meeting_to_dict computes for the UI), matching
+    every other mutating endpoint here (delete/update/retry-link). A
+    literal "is this caller the Host" check is not possible: Host accounts
+    (organizer_google_email) are shared operational Gmail mailboxes the Bot
+    logs into, not individual portal logins — no portal user's own email
+    could ever equal one, so that check would 403 everyone unconditionally.
+    """
+    m = _get_active_meeting(db, id)
+    if compute_display_status(m) != "ĐANG DIỄN RA":
+        raise HTTPException(
+            400,
+            f"Chỉ có thể đánh dấu kết thúc khi cuộc họp đang diễn ra "
+            f"(hiện tại: {compute_display_status(m)}).",
+        )
+    logger.warning(f"MEETING_STATUS_DONE source=manual_ended meeting_id={m.id} user_id={getattr(current_user, 'id', None)}")
+    m.status = "DONE"
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=id, action="UPDATE", project_id=m.project_id, resource_name=m.title,
+        description=f"Đánh dấu thủ công cuộc họp '{m.title}' đã kết thúc (fallback khi Bot/VPS không khả dụng)"
+    )
+    db.commit()
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
+
 # ─── ADD MEMBER ─────────────────────────────────────────
 @router.post("/{id}/members")
 def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
