@@ -210,6 +210,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         agenda: initialData.agenda || '',
         project_ids: openedProjectIds,
         duration: String(initialData.duration || 60),
+        // Explicit null, not left `undefined` (initialData never carries this
+        // field) — matches originalHostWorkspaceIdRef's null default so the
+        // change-detection comparison in handleSubmit can't false-positive
+        // before the async hosts-resolution effect below has run.
+        host_workspace_id: null,
         // Prefill from the meeting's real MeetingMember rows (member_id, not
         // the synthesized "Host" entry which has no member_id) so editing
         // doesn't silently drop everyone already added.
@@ -585,7 +590,23 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       // the whole submit on failure (old Host/link/DB untouched) rather than
       // partially applying other field changes with a stale Host.
       let freshLink = formData.link;
-      if (initialData?.id && formData.host_workspace_id !== originalHostWorkspaceIdRef.current) {
+      // Bug fix (found 2026-09-14, hours after shipping): this must be
+      // platform-gated AND null/undefined-normalized. Two real defects
+      // without both: (1) retry-link is a Google-Meet-only regeneration —
+      // calling it for a Zoom meeting would silently replace its real Zoom
+      // join link with a bogus Google Meet one; (2) formData.host_workspace_id
+      // starts as `undefined` (never in initialData) while
+      // originalHostWorkspaceIdRef.current starts as `null` — submitting
+      // before the async hosts-fetch effect resolves made `undefined !== null`
+      // look like a Host change on EVERY edit of EVERY platform, firing an
+      // unwanted retry-link that could fail (aborting the whole save, so an
+      // unrelated date/time edit silently never reached the PUT below) or
+      // succeed with the wrong account/link.
+      if (
+        initialData?.id &&
+        formData.platform === 'Google Meet' &&
+        (formData.host_workspace_id ?? null) !== (originalHostWorkspaceIdRef.current ?? null)
+      ) {
         const hostRes = await retryMeetingLink(initialData.id, { host_workspace_id: formData.host_workspace_id });
         if (!hostRes?.success || !hostRes.data?.link) {
           throw new Error('Không thể đổi Host cho cuộc họp');
@@ -852,7 +873,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                       Dự án thuộc Workspace khác — bấm để cập nhật Host theo Workspace mới ({hostsList.find(h => h.workspace_id === autoSuggestedWorkspaceId)?.google_email})
                     </button>
                   )}
-                  {initialData && formData.host_workspace_id !== originalHostWorkspaceIdRef.current && (
+                  {initialData && (formData.host_workspace_id ?? null) !== (originalHostWorkspaceIdRef.current ?? null) && (
                     <p className="text-[11px] text-amber-700 font-semibold mt-1.5">⚠ Đổi Host sẽ tạo lại link Google Meet mới (organizer cũ không còn hiệu lực).</p>
                   )}
                 </div>
