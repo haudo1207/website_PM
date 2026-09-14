@@ -2004,10 +2004,57 @@ export default function OverviewTab() {
                   <th className="px-4 py-3 text-center font-bold w-14 bg-slate-100">Hạng</th>
                   <th className="px-4 py-3 text-left font-bold bg-slate-100">Thành Viên</th>
                   <th className="px-4 py-3 text-center font-bold bg-slate-100">Xong / Giao</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Trễ / Đang Làm</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100">Manday HT / Giao</th>
-                  <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">KPI HT / Giao</th>
-                  <th className="px-4 py-3 text-left font-bold bg-slate-100 min-w-[170px]">Phân Bổ Workspace</th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">
+                    <span className="inline-flex items-center gap-1">
+                      Trễ / Đang Làm
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">Trễ / Đang Làm</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">Trễ = số task chưa Done và có days_late &gt; 0</p>
+                        <p className="text-white font-mono">Đang Làm = số task chưa Done (bao gồm cả Trễ)</p>
+                        <p className="text-white/60 mt-1.5">days_late = hôm nay - end_date_est (nếu task chưa Done/Cancel và đã quá hạn).</p>
+                        <p className="text-white/60 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn ở trên.</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100">
+                    <span className="inline-flex items-center gap-1">
+                      Manday HT / Giao
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">Manday HT / Giao</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">HT = Σ (manday_actual, hoặc manday_est nếu chưa có actual) của task member trong kỳ</p>
+                        <p className="text-white font-mono">Giao = Σ manday_est của task member trong kỳ</p>
+                        <p className="text-white/60 mt-1.5">Chỉ tính task mà member được giao (assigned hoặc support) trong kỳ đang chọn.</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">
+                    <span className="inline-flex items-center gap-1">
+                      KPI HT / Giao
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">KPI HT / Giao</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">HT = Σ kpi của task Done (có end_date_actual) trong kỳ</p>
+                        <p className="text-white font-mono">Giao = Σ kpi_potential của toàn bộ task trong kỳ (mọi trạng thái)</p>
+                        <p className="text-white/60 mt-1.5">KPI tính theo vai trò: assigned hoặc support, với tỷ lệ phân bổ (kpi_ratio_assign/support).</p>
+                        <p className="text-white/60 mt-1">Nếu task có cả assigned và support: kpi_assigned + kpi_support.</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left font-bold bg-slate-100 min-w-[170px]">
+                    <span className="inline-flex items-center gap-1">
+                      Phân Bổ Workspace
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">Phân Bổ Workspace</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">Tỷ lệ % = manday của workspace / tổng manday của member</p>
+                        <p className="text-white/60 mt-1.5">Thanh ngang hiển thị tỷ lệ phân bổ manday theo từng Workspace (Dev, Infra, Marketing...).</p>
+                        <p className="text-white/60 mt-1">Số bên phải là tỷ lệ % giữa các workspace.</p>
+                        <p className="text-white/60 mt-1">Danh sách bên dưới hiển thị tên workspace và số manday cụ thể.</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
                   <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">Tiến Độ</th>
                 </tr>
               </thead>
