@@ -760,6 +760,11 @@ def unlock_account(account_id: int, db: Session = Depends(get_db), caller=Depend
     account = require_account(db, account_id)
     _leader_guard(caller, account, "mở khóa")
     _leader_scope_guard(db, caller, account)
+    
+    # Prevent unlocking if member's employment status is OFF
+    if account.member and account.member.employment_status == "OFF":
+        raise HTTPException(400, "Không thể mở khóa tài khoản của thành viên đã nghỉ việc. Vui lòng đồng bộ lại từ hệ thống tuyển dụng.")
+    
     account.is_active = True
     db.commit()
     AuditService.record(

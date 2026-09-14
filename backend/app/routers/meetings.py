@@ -2160,6 +2160,14 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
             f"Chỉ có thể tạo lại link Google Meet khi cuộc họp chưa bắt đầu (SẮP TỚI) "
             f"(hiện tại: {compute_display_status(m)}).",
         )
+    # Platform guard (added 2026-09-14 after a real frontend bug briefly
+    # called this endpoint for a Zoom meeting): this endpoint only ever
+    # creates a Google Calendar event — calling it for a non-Google-Meet
+    # meeting would silently replace its real join link (e.g. a Zoom URL)
+    # with a bogus Google Meet one. Server-side backstop regardless of what
+    # any current or future frontend code does.
+    if (m.platform or "").strip().lower() not in ("google meet", "google"):
+        raise HTTPException(400, f"Không thể tạo lại link Google Meet cho nền tảng '{m.platform}'.")
     if not m.meeting_date or not m.start_time:
         raise HTTPException(400, "Cuộc họp cần có ngày và giờ bắt đầu trước khi tạo lại link")
 
