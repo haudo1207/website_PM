@@ -1784,6 +1784,7 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
             from ..models.task import Task
             from ..models.skill_master import Skill, Group
             from ..utils.kpi_engine import parse_date, calc_end_date_est, recalculate_task
+            from ..utils.skill_validation import validate_skill_area_consistency
 
             existing_count = db.query(Task).filter(Task.task_group_id == inbox_task.task_group_id).count()
             task_code = f"T{inbox_task.task_group_id}.{existing_count + 1}"
@@ -1799,9 +1800,12 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
             if not skill_solution_id:
                 fallback_group = db.query(Group).order_by(Group.id.asc()).first()
                 skill_solution_id = fallback_group.id if fallback_group else None
-            if not skill_vendor_id:
-                fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
+            if not skill_vendor_id and skill_solution_id:
+                # Fallback Skill phải thuộc đúng Group (kể cả Group cũng là
+                # fallback) ở trên, không phải Skill đầu tiên bất kỳ trong DB.
+                fallback_skill = db.query(Skill).filter(Skill.group_id == skill_solution_id).order_by(Skill.id.asc()).first()
                 skill_vendor_id = fallback_skill.id if fallback_skill else None
+            validate_skill_area_consistency(skill_solution_id, skill_vendor_id, db)
 
             new_task = Task(
                 task_group_id=inbox_task.task_group_id,

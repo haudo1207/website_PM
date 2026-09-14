@@ -28,6 +28,7 @@ from ..utils.kpi_engine import recalculate_task, parse_date, parse_datetime
 from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
+from ..utils.skill_validation import validate_skill_area_consistency
 from ..services.zalo_task_parser import notify_task_done_if_zalo_linked
 from ..services.document_storage import sync_task_link_documents, delete_task_link_documents
 # Đảm bảo có import date/datetime để tính ngày
@@ -1447,6 +1448,7 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
         body.get("kpi_ratio_assign", 100),
         body.get("kpi_ratio_support", 0),
     )
+    validate_skill_area_consistency(body.get("skill_solution_id"), body.get("skill_vendor_id"), db)
 
     task = Task(
         task_group_id=gid,
@@ -1869,6 +1871,8 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
         task.skill_solution_id = body["skill_solution_id"]
     if "skill_vendor_id" in body:
         task.skill_vendor_id = body["skill_vendor_id"]
+    if "skill_solution_id" in body or "skill_vendor_id" in body:
+        validate_skill_area_consistency(task.skill_solution_id, task.skill_vendor_id, db)
 
     # Other text fields
     for field in ["task_code", "ticket_id", "remark", "send", "notes"]:

@@ -303,6 +303,21 @@ export const updatePhase = (pid: number, phid: number, data: object) =>
   api.patch(`/projects/${pid}/phases/${phid}`, data).then(r => r.data);
 export const deletePhase = (pid: number, phid: number) =>
   api.delete(`/projects/${pid}/phases/${phid}`).then(r => r.data);
+// Bulk-reorders every real Phase in the project - order must include ALL
+// of them (backend rejects a partial list), Master is never part of this.
+export const reorderPhases = (pid: number, order: { phase_id: number; sort_order: number }[]) =>
+  api.patch(`/projects/${pid}/phases/reorder`, { order }).then(r => r.data);
+export const movePhaseToProject = (
+  pid: number,
+  phid: number,
+  targetProjectId: number,
+  position?: { insertBeforePhaseId?: number; insertAfterPhaseId?: number }
+) =>
+  api.post(`/projects/${pid}/phases/${phid}/move`, {
+    target_project_id: targetProjectId,
+    insert_before_phase_id: position?.insertBeforePhaseId || undefined,
+    insert_after_phase_id: position?.insertAfterPhaseId || undefined,
+  }).then(r => r.data);
 
 // Chat Groups (Project Links)
 export const getChatGroups = (pid: number) => api.get(`/projects/${pid}/chat-groups`).then(r => r.data);
