@@ -2477,7 +2477,16 @@ function ProjectDetailContent() {
       // của 2 Group khác nhau vào chung 1 kết quả filter.
       const matchSkillSolution = skillSolutionFilter === 'All' || String(item.skill_solution_id || '') === skillSolutionFilter;
       const matchSkillVendor = skillVendorFilter === 'All' || String(item.skill_vendor_id || '') === skillVendorFilter;
-      const matchMember = !memberFilterParam || (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam;
+      // Prefer matching by the numeric member_id (unambiguous) over the
+      // display name string — two different Members can share the exact
+      // same display name (across teams/workspaces, or just coincidentally),
+      // which made this drill-in from /kpi occasionally pull in another
+      // person's tasks too. Only falls back to name matching when no
+      // memberIdParam was passed (older links / name-only callers).
+      const matchMember = !memberFilterParam
+        || (memberIdParam
+          ? Number(item.assigned_id) === Number(memberIdParam) || Number(item.support_id) === Number(memberIdParam)
+          : (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam);
       return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
     });
 
@@ -11404,7 +11413,7 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
   // of inline.
   const anchorRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
   const lastSyncedEditValue = useRef<string>('');
 
   // Only resync searchTerm when editValue itself changes to a different member —
@@ -11441,13 +11450,23 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
     const reposition = () => {
       if (!anchorRef.current) return;
       const rect = anchorRef.current.getBoundingClientRect();
-      const estimatedHeight = 170;
-      const dropUp = window.innerHeight - rect.bottom < estimatedHeight && rect.top > window.innerHeight - rect.bottom;
-      setPortalPos({
-        top: Math.max(4, dropUp ? rect.top - estimatedHeight : rect.bottom + 4),
-        left: rect.left,
-        width: rect.width,
-      });
+      // Sizes the menu to whichever space is actually available instead of
+      // guessing its height and flipping to a position based on that guess
+      // — on a short/small screen (e.g. a 15" laptop vs. a 24" monitor) a
+      // wrong guess could push the menu's top far above the anchor just to
+      // fit, landing it up near the page header instead of next to the
+      // field that opened it. Prefer opening below (reads more naturally);
+      // only open above when below is cramped AND above genuinely has more
+      // room — and even then, cap the menu's own height to that available
+      // space (it already scrolls internally) rather than relocate it.
+      const GAP = 4;
+      const PAD = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - GAP - PAD;
+      const spaceAbove = rect.top - GAP - PAD;
+      const openBelow = spaceBelow >= 120 || spaceBelow >= spaceAbove;
+      setPortalPos(openBelow
+        ? { top: rect.bottom + GAP, left: rect.left, width: rect.width, maxHeight: Math.max(120, spaceBelow) }
+        : { top: PAD, left: rect.left, width: rect.width, maxHeight: Math.max(120, spaceAbove) });
     };
     reposition();
     window.addEventListener('scroll', reposition, true);
@@ -11457,19 +11476,6 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
       window.removeEventListener('resize', reposition);
     };
   }, [isOpen]);
-
-  // Same correction as the Skill dropdown below: `estimatedHeight` above is
-  // a guess, not the menu's real height — clamp against the actual rendered
-  // height once mounted so it can't fly off the top of a short viewport.
-  useLayoutEffect(() => {
-    if (!isOpen || !portalPos || !menuRef.current) return;
-    const menuHeight = menuRef.current.getBoundingClientRect().height;
-    const maxTop = Math.max(4, window.innerHeight - menuHeight - 4);
-    const clampedTop = Math.min(Math.max(portalPos.top, 4), maxTop);
-    if (Math.abs(clampedTop - portalPos.top) > 0.5) {
-      setPortalPos(prev => (prev ? { ...prev, top: clampedTop } : prev));
-    }
-  }, [isOpen, portalPos]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -11525,8 +11531,8 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
         {isOpen && portalPos && createPortal(
           <div
             ref={menuRef}
-            style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 200), zIndex: 9999 }}
-            className="max-h-[170px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-2xl py-1"
+            style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 200), maxHeight: portalPos.maxHeight, zIndex: 9999 }}
+            className="overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-2xl py-1"
           >
             <div
               onClick={() => onSaveWithAction('')}
@@ -11611,7 +11617,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
   // of inline.
   const anchorRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   useEffect(() => {
     const currentItem = items.find(m => String(m.id) === String(editValue));
@@ -11638,13 +11644,24 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
     const reposition = () => {
       if (!anchorRef.current) return;
       const rect = anchorRef.current.getBoundingClientRect();
-      const estimatedHeight = 380;
-      const dropUp = window.innerHeight - rect.bottom < estimatedHeight && rect.top > window.innerHeight - rect.bottom;
-      setPortalPos({
-        top: Math.max(4, dropUp ? rect.top - estimatedHeight : rect.bottom + 4),
-        left: rect.left,
-        width: rect.width,
-      });
+      // Sizes the panel to whichever space is actually available instead of
+      // guessing its height and flipping to a position based on that guess
+      // — on a short/small screen (e.g. a 15" laptop vs. a 24" monitor) a
+      // wrong guess could push the panel's top far above the anchor just to
+      // fit, landing it up near the page header instead of next to the
+      // field that opened it. Prefer opening below (reads more naturally);
+      // only open above when below is cramped AND above genuinely has more
+      // room — and even then, cap the panel's own height to that available
+      // space (its option list already scrolls internally) rather than
+      // relocate it far from the anchor.
+      const GAP = 4;
+      const PAD = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - GAP - PAD;
+      const spaceAbove = rect.top - GAP - PAD;
+      const openBelow = spaceBelow >= 200 || spaceBelow >= spaceAbove;
+      setPortalPos(openBelow
+        ? { top: rect.bottom + GAP, left: rect.left, width: rect.width, maxHeight: Math.max(160, spaceBelow) }
+        : { top: PAD, left: rect.left, width: rect.width, maxHeight: Math.max(160, spaceAbove) });
     };
     reposition();
     window.addEventListener('scroll', reposition, true);
@@ -11654,23 +11671,6 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
       window.removeEventListener('resize', reposition);
     };
   }, [isOpen]);
-
-  // The flip-up decision above uses a fixed `estimatedHeight` guess, not the
-  // menu's real rendered height — on a short/narrow screen that guess can be
-  // way taller than the menu actually is, pushing `top` far above the anchor
-  // (even off the top of the viewport, rendering the dropdown up near the
-  // page header instead of next to the cell that opened it). Once the menu
-  // has actually rendered, clamp `top` to its real height so it always stays
-  // fully on-screen and as close to the anchor as it can.
-  useLayoutEffect(() => {
-    if (!isOpen || !portalPos || !menuRef.current) return;
-    const menuHeight = menuRef.current.getBoundingClientRect().height;
-    const maxTop = Math.max(4, window.innerHeight - menuHeight - 4);
-    const clampedTop = Math.min(Math.max(portalPos.top, 4), maxTop);
-    if (Math.abs(clampedTop - portalPos.top) > 0.5) {
-      setPortalPos(prev => (prev ? { ...prev, top: clampedTop } : prev));
-    }
-  }, [isOpen, portalPos]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -11771,8 +11771,8 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
         {isOpen && portalPos && createPortal(
         <div
           ref={menuRef}
-          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 320), zIndex: 9999 }}
-          className="max-h-[26rem] bg-white border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden"
+          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 320), maxHeight: Math.min(portalPos.maxHeight, 416), zIndex: 9999 }}
+          className="bg-white border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden"
         >
           {!catalogMode ? (
             <>
