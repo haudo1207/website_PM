@@ -18,6 +18,7 @@ from ..models.task import Task
 from ..models.skill_master import Group, Skill
 from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloDemoRequest, ZaloConversationSummary
 from ..utils.auth import get_current_user, require_zalo_user
+from ..utils.skill_validation import validate_skill_area_consistency
 from ..config import settings
 from ..services import zalo as zalo_service
 from ..services import zalo_task_parser
@@ -1200,13 +1201,21 @@ def push_zalo_summary_tasks(
         skill_solution_id = item.get("skill_solution_id")
         skill_group = db.query(Group).filter(Group.id == skill_solution_id).first() if skill_solution_id else None
         if not skill_group:
-            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Skill Solution."})
+            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Skill Area."})
             continue
 
         skill_vendor_id = item.get("skill_vendor_id")
-        skill = db.query(Skill).filter(Skill.id == skill_vendor_id, Skill.group_id == skill_group.id).first() if skill_vendor_id else None
+        skill = db.query(Skill).filter(Skill.id == skill_vendor_id).first() if skill_vendor_id else None
         if not skill:
-            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Skill Vendor."})
+            results.append({"index": idx, "ok": False, "error": "Vui lòng chọn Skill."})
+            continue
+        try:
+            # Dùng chung 1 nguồn kiểm tra Skill↔Skill Area với mọi entry point
+            # ghi Task khác (task_groups.py, chat_ai.py, meetings.py,
+            # project_features.py, project_templates.py).
+            validate_skill_area_consistency(skill_solution_id, skill_vendor_id, db)
+        except HTTPException as exc:
+            results.append({"index": idx, "ok": False, "error": exc.detail})
             continue
 
         start_date_raw = str(item.get("start_date") or "").strip()

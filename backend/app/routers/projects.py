@@ -17,6 +17,8 @@ from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
 from ..models.audit_log import AuditLog
+from ..models.document import ProjectDocument
+from ..models.ai_task_inbox import AITaskInbox
 from ..utils.audit_service import AuditService
 from sqlalchemy import func as sql_func
 from ..utils.access import (
@@ -1172,6 +1174,58 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_us
     }
 
 
+@router.patch("/projects/{pid:int}/phases/reorder")
+def reorder_phases(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Body: {"order": [{"phase_id": 1, "sort_order": 0}, {"phase_id": 2, "sort_order": 1}, ...]}.
+    Bulk-reorders every real Phase in this project in one transaction —
+    "Master" (the frontend-only "ALL" tab, never a DB row) is never part of
+    this payload. Every phase_id must belong to pid and the payload must
+    cover EVERY Phase in the project (no partial reorder) — reject the
+    WHOLE request on any mismatch rather than silently skip unknown ids,
+    same standard as the rest of this file's write endpoints. Only ever
+    touches Phase.sort_order — Phase order does not feed task_code (that's
+    derived purely from TaskGroup rank within its own Phase, see
+    get_group_index() in task_groups.py), so TaskGroup/Task are never
+    queried or written here.
+
+    Registered BEFORE the PATCH/DELETE .../phases/{phid} routes below on
+    purpose — phid isn't typed :int there, so Starlette would otherwise
+    match the literal "reorder" segment as phid and 422 trying to convert
+    it to int (same fix already applied to task-groups/reorder and
+    tasks/reorder in task_groups.py)."""
+    items = body.get("order")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(400, "Body must include a non-empty 'order' list.")
+
+    phase_ids = []
+    sort_orders = []
+    for item in items:
+        if not isinstance(item, dict) or "phase_id" not in item or "sort_order" not in item:
+            raise HTTPException(400, "Each item must have phase_id and sort_order.")
+        phase_ids.append(item["phase_id"])
+        sort_orders.append(item["sort_order"])
+
+    if len(set(phase_ids)) != len(phase_ids):
+        raise HTTPException(400, "Duplicate phase_id in reorder payload.")
+    if len(set(sort_orders)) != len(sort_orders):
+        raise HTTPException(400, "Duplicate sort_order in reorder payload.")
+
+    project_phases = db.query(Phase).filter(Phase.project_id == pid).all()
+    project_phase_ids = {p.id for p in project_phases}
+    unknown_ids = [phid for phid in phase_ids if phid not in project_phase_ids]
+    if unknown_ids:
+        raise HTTPException(400, f"Phase id(s) {unknown_ids} do not belong to project {pid}.")
+    missing_ids = project_phase_ids - set(phase_ids)
+    if missing_ids:
+        raise HTTPException(400, f"Reorder payload is missing Phase id(s) {sorted(missing_ids)} from this project.")
+
+    phases_by_id = {p.id: p for p in project_phases}
+    for item in items:
+        phases_by_id[item["phase_id"]].sort_order = item["sort_order"]
+    db.commit()
+    return {"ok": True}
+
+
 @router.patch("/projects/{pid:int}/phases/{phid}")
 def update_phase(pid: int, phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
@@ -1245,6 +1299,139 @@ def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_use
     )
     db.commit()
     return {"ok": True, "deleted_group_count": deleted_group_count, "deleted_task_count": deleted_task_count}
+
+
+@router.post("/projects/{pid:int}/phases/{phid}/move")
+def move_phase_to_project(pid: int, phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Move a Phase to a different Project — optionally to a precise position
+    (insert_before_phase_id / insert_after_phase_id, the id of a sibling
+    Phase already in the DESTINATION project; before wins if both are given,
+    same convention as move_task_group_to_phase in task_groups.py). Defaults
+    to appending at the end of the destination project when no position is
+    given.
+
+    TaskGroup/Task are never written here — neither has its own project_id
+    (and Task has no phase_id at all), both are entirely implicit via the FK
+    chain through Phase, so they "follow" for free the instant
+    Phase.project_id changes. task_code is untouched too: it's derived from
+    a Group's rank within its own Phase, never from Phase order.
+
+    Refuses to move a Phase literally named "Master" — that name is reserved
+    for the frontend's synthetic "ALL phases" tab (never a real DB row), and
+    letting a real Phase share the name would create confusing semantics
+    once relocated into another project's tab bar. Rename/Delete of a
+    real Phase named "Master" is a separate, not-yet-decided concern —
+    intentionally out of scope here.
+
+    Assigned/Support membership on the moved Tasks is left untouched even
+    when a member doesn't belong to the destination project (deliberate —
+    no silent reassignment). The response's warning_count/warning_message
+    tell the caller how many Tasks now have an out-of-project
+    Assigned/Support so the UI can surface a non-blocking warning.
+    """
+    ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
+    if not ph:
+        raise HTTPException(404, "Phase not found.")
+    if ph.name.strip().lower() == "master":
+        raise HTTPException(400, "Không thể di chuyển Phase 'Master' sang project khác.")
+
+    target_project_id = body.get("target_project_id")
+    if not target_project_id:
+        raise HTTPException(400, "target_project_id is required.")
+    if target_project_id == pid:
+        raise HTTPException(400, "Phase đã thuộc project này.")
+    require_project(db, current_user, target_project_id)
+
+    insert_before_phase_id = body.get("insert_before_phase_id")
+    insert_after_phase_id = body.get("insert_after_phase_id")
+
+    dest_phases = (
+        db.query(Phase)
+        .filter(Phase.project_id == target_project_id)
+        .order_by(Phase.sort_order, Phase.id)
+        .all()
+    )
+
+    if insert_before_phase_id:
+        insert_idx = next((i for i, p in enumerate(dest_phases) if p.id == insert_before_phase_id), None)
+        if insert_idx is None:
+            raise HTTPException(400, "insert_before_phase_id was not found in the destination project.")
+    elif insert_after_phase_id:
+        anchor_idx = next((i for i, p in enumerate(dest_phases) if p.id == insert_after_phase_id), None)
+        if anchor_idx is None:
+            raise HTTPException(400, "insert_after_phase_id was not found in the destination project.")
+        insert_idx = anchor_idx + 1
+    else:
+        insert_idx = len(dest_phases)  # append at the end — default behavior
+
+    # Non-blocking warning: Tasks under this Phase whose Assigned/Support
+    # member won't belong to the destination project. Membership is
+    # intentionally left untouched (Mục 5 scope) — this is informational only.
+    group_ids = [g.id for g in db.query(TaskGroup).filter(TaskGroup.phase_id == phid).all()]
+    warning_count = 0
+    if group_ids:
+        dest_member_ids = {
+            r[0] for r in db.query(project_members.c.member_id)
+            .filter(project_members.c.project_id == target_project_id).all()
+        }
+        tasks_in_phase = db.query(Task.assigned_id, Task.support_id).filter(Task.task_group_id.in_(group_ids)).all()
+        warning_count = sum(
+            1 for assigned_id, support_id in tasks_in_phase
+            if assigned_id not in dest_member_ids or support_id not in dest_member_ids
+        )
+
+    source_name = db.query(Project.name).filter(Project.id == pid).scalar()
+    target_name = db.query(Project.name).filter(Project.id == target_project_id).scalar()
+
+    new_order = dest_phases[:insert_idx] + [ph] + dest_phases[insert_idx:]
+    for seq, p in enumerate(new_order, start=1):
+        p.sort_order = seq
+    ph.project_id = target_project_id
+    db.flush()
+
+    # Close the numbering gap left behind in the source project's remaining Phases.
+    source_remaining = (
+        db.query(Phase)
+        .filter(Phase.project_id == pid, Phase.id != phid)
+        .order_by(Phase.sort_order, Phase.id)
+        .all()
+    )
+    for seq, p in enumerate(source_remaining, start=1):
+        p.sort_order = seq
+
+    # These two tables store project_id independently of Phase (not derived
+    # via a join) — left un-synced they'd silently point at the old project.
+    db.query(ProjectDocument).filter(ProjectDocument.phase_id == phid).update(
+        {ProjectDocument.project_id: target_project_id}, synchronize_session=False
+    )
+    db.query(AITaskInbox).filter(AITaskInbox.phase_id == phid).update(
+        {AITaskInbox.project_id: target_project_id}, synchronize_session=False
+    )
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, f"Project đích đã có Phase tên '{ph.name}' — đổi tên Phase trước khi di chuyển.") from exc
+    db.refresh(ph)
+    AuditService.record(
+        db=db,
+        user_id=getattr(current_user, "id", None),
+        module="Phase",
+        entity_type="Phase",
+        entity_id=ph.id,
+        action="MOVE",
+        project_id=target_project_id,
+        severity="CRITICAL",
+        description=f"Đã di chuyển Phase '{ph.name}' từ project '{source_name}' sang '{target_name}'"
+    )
+    db.commit()
+
+    warning_message = (
+        f"{warning_count} Task có Assigned/Support không thuộc Project đích — đã giữ nguyên, cần rà soát thủ công."
+        if warning_count else None
+    )
+    return {**serialize_phase(ph, db), "warning_count": warning_count, "warning_message": warning_message}
 
 
 # ═══════════════════════════════════════════════════════════

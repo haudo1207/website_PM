@@ -16,11 +16,12 @@ from ..models.project_template import (
 from ..utils.auth import get_current_user, require_super_admin
 from ..utils.access import require_project_template_access
 from ..utils.audit_service import AuditService
+from ..utils.skill_validation import validate_skill_area_consistency
 
 router = APIRouter(tags=["project-templates"])
 
 
-def _validate_template_phases_payload(phases_payload):
+def _validate_template_phases_payload(phases_payload, db: Session):
     phase_names = [(p.get("name") or "").strip() for p in phases_payload]
     if len(phase_names) != len(set(phase_names)):
         raise HTTPException(400, "Template contains duplicated phase names")
@@ -30,12 +31,21 @@ def _validate_template_phases_payload(phases_payload):
         for group_payload in phase_payload.get("task_groups", []) or []:
             group_name = (group_payload.get("name") or "").strip()
             for task_payload in group_payload.get("tasks", []) or []:
-                if not task_payload.get("skill_solution_id") or not task_payload.get("skill_vendor_id"):
-                    task_detail = (task_payload.get("detail") or "").strip() or "(chưa đặt tên)"
+                skill_solution_id = task_payload.get("skill_solution_id")
+                skill_vendor_id = task_payload.get("skill_vendor_id")
+                task_detail = (task_payload.get("detail") or "").strip() or "(chưa đặt tên)"
+                if not skill_solution_id or not skill_vendor_id:
                     raise HTTPException(
                         400,
                         f"Task '{task_detail}' in group '{group_name}' (phase '{phase_name}') is missing "
-                        "skill_solution_id/skill_vendor_id — both are required."
+                        "Skill Area/Skill — both are required."
+                    )
+                try:
+                    validate_skill_area_consistency(skill_solution_id, skill_vendor_id, db)
+                except HTTPException as exc:
+                    raise HTTPException(
+                        400,
+                        f"Task '{task_detail}' in group '{group_name}' (phase '{phase_name}'): {exc.detail}"
                     )
 
 
@@ -105,7 +115,7 @@ def create_project_template(body: dict, db: Session = Depends(get_db), current_u
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Template name is required")
-    _validate_template_phases_payload(body.get("phases", []) or [])
+    _validate_template_phases_payload(body.get("phases", []) or [], db)
     template = ProjectTemplate(name=name, description=body.get("description"), is_active=body.get("is_active", True))
     db.add(template)
     db.flush()
@@ -170,7 +180,7 @@ def update_project_template(template_id: int, body: dict, db: Session = Depends(
         template.is_active = bool(body.get("is_active"))
 
     if "phases" in body:
-        _validate_template_phases_payload(body.get("phases", []) or [])
+        _validate_template_phases_payload(body.get("phases", []) or [], db)
         for existing in list(template.phases):
             db.delete(existing)
         db.flush()
@@ -295,7 +305,15 @@ def apply_project_template(
                     raise HTTPException(
                         400,
                         f"Cannot apply template: task '{task.detail}' in group '{group.name}' "
-                        f"(phase '{phase.name}') is missing Skill Solution / Skill Vendor."
+                        f"(phase '{phase.name}') is missing Skill Area / Skill."
+                    )
+                try:
+                    validate_skill_area_consistency(task.skill_solution_id, task.skill_vendor_id, db)
+                except HTTPException as exc:
+                    raise HTTPException(
+                        400,
+                        f"Cannot apply template: task '{task.detail}' in group '{group.name}' "
+                        f"(phase '{phase.name}'): {exc.detail}"
                     )
 
     # ── 2. Validate Project readiness — not a Template concern, a precondition of the
@@ -478,8 +496,16 @@ def export_project_to_template(
                     raise HTTPException(
                         400,
                         f"Task '{task.detail}' (group '{group.name}', phase '{phase.name}') is missing "
-                        "Skill Solution / Skill Vendor and cannot be exported. Add the missing skill in "
+                        "Skill Area / Skill and cannot be exported. Add the missing skill in "
                         "the project or deselect this task."
+                    )
+                try:
+                    validate_skill_area_consistency(task.skill_solution_id, task.skill_vendor_id, db)
+                except HTTPException as exc:
+                    raise HTTPException(
+                        400,
+                        f"Task '{task.detail}' (group '{group.name}', phase '{phase.name}') cannot be "
+                        f"exported: {exc.detail}"
                     )
             group_entries.append((group, tasks))
         export_tree.append((phase, group_entries))

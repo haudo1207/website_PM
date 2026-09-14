@@ -20,7 +20,7 @@ import {
   getChatGroups, createChatGroup, updateChatGroup, deleteChatGroup,
   getAITaskInbox, analyzeChatLogs, updateAITaskInbox, rejectAITaskInbox, importAITaskToProjectPlan, bulkImportAITasks, getChatSyncLogs, syncAITasksFromChat,
   getProjectTemplates, applyProjectTemplate,
-  getPhases, createPhase, updatePhase, deletePhase,
+  getPhases, createPhase, updatePhase, deletePhase, reorderPhases, movePhaseToProject,
   getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
@@ -559,6 +559,88 @@ function ProjectDetailContent() {
     }
   };
 
+  // Move Phase to a different Project — mirrors handleConfirmMoveGroup
+  // above, one level up: same before/after/end position modeling, but the
+  // "Phase đích" picker is a cross-project search (SearchableSelect over all
+  // accessible projects) instead of a same-project <select>, and the
+  // "Vị trí" picker's siblings come from a project the user isn't currently
+  // viewing, so they're fetched on demand rather than read off local state.
+  const [movingPhase, setMovingPhase] = useState<any>(null);
+  const [movePhaseTargetProjectId, setMovePhaseTargetProjectId] = useState<number | ''>('');
+  const [movePhasePositionMode, setMovePhasePositionMode] = useState<'start' | 'before' | 'after' | 'end'>('end');
+  const [movePhaseAnchorId, setMovePhaseAnchorId] = useState<number | ''>('');
+  const [savingMovePhase, setSavingMovePhase] = useState(false);
+  const [moveProjectOptions, setMoveProjectOptions] = useState<any[]>([]);
+  const [moveTargetPhases, setMoveTargetPhases] = useState<any[]>([]);
+  const [moveTargetPhasesLoading, setMoveTargetPhasesLoading] = useState(false);
+
+  const handleOpenMovePhaseModal = (phase: any) => {
+    setMovingPhase(phase);
+    setMovePhaseTargetProjectId('');
+    setMovePhasePositionMode('end');
+    setMovePhaseAnchorId('');
+    setMoveTargetPhases([]);
+    getProjects().then((res: any) => {
+      const list = res?.data || res || [];
+      setMoveProjectOptions(Array.isArray(list) ? list.filter((p: any) => p.id !== Number(id)) : []);
+    }).catch(() => {});
+  };
+
+  // Fetch the destination project's Phase list whenever it changes, to
+  // populate the Before/After anchor picker — this project's own `phases`
+  // state only covers the CURRENTLY loaded project. Reset position back to
+  // "end" on every target-project change since anchors from the previous
+  // target no longer apply.
+  useEffect(() => {
+    setMovePhasePositionMode('end');
+    setMovePhaseAnchorId('');
+    if (movePhaseTargetProjectId === '') {
+      setMoveTargetPhases([]);
+      return;
+    }
+    let cancelled = false;
+    setMoveTargetPhasesLoading(true);
+    getPhases(movePhaseTargetProjectId as number)
+      .then((res: any) => {
+        if (cancelled) return;
+        const list = res?.data || res || [];
+        setMoveTargetPhases(Array.isArray(list) ? [...list].sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)) : []);
+      })
+      .catch(() => { if (!cancelled) setMoveTargetPhases([]); })
+      .finally(() => { if (!cancelled) setMoveTargetPhasesLoading(false); });
+    return () => { cancelled = true; };
+  }, [movePhaseTargetProjectId]);
+
+  const handleConfirmMovePhase = async () => {
+    if (!movingPhase || movePhaseTargetProjectId === '') return;
+    if ((movePhasePositionMode === 'before' || movePhasePositionMode === 'after') && movePhaseAnchorId === '') return;
+    setSavingMovePhase(true);
+    try {
+      let position: { insertBeforePhaseId?: number; insertAfterPhaseId?: number } | undefined;
+      if (movePhasePositionMode === 'start') {
+        if (moveTargetPhases[0]) position = { insertBeforePhaseId: moveTargetPhases[0].id };
+      } else if (movePhasePositionMode === 'before') {
+        position = { insertBeforePhaseId: movePhaseAnchorId as number };
+      } else if (movePhasePositionMode === 'after') {
+        position = { insertAfterPhaseId: movePhaseAnchorId as number };
+      }
+      const targetProject = moveProjectOptions.find((p: any) => p.id === movePhaseTargetProjectId);
+      const result = await movePhaseToProject(Number(id), movingPhase.id, movePhaseTargetProjectId as number, position);
+      const baseMsg = `Đã di chuyển Phase "${movingPhase.label}" sang project "${targetProject?.name || ''}" thành công!`;
+      if (result?.warning_message) {
+        flash(`${baseMsg} ⚠️ ${result.warning_message}`);
+      } else {
+        flash(baseMsg);
+      }
+      setMovingPhase(null);
+      reloadAll();
+    } catch (err: any) {
+      flash('Lỗi di chuyển Phase: ' + getApiErrorMessage(err), true);
+    } finally {
+      setSavingMovePhase(false);
+    }
+  };
+
   // Cross-Phase Group drag drop — same-Phase drag reorder keeps using
   // reorderTaskGroups() (unchanged), this is only for when a Group is
   // dropped on a group/end-zone belonging to a DIFFERENT Phase.
@@ -671,11 +753,22 @@ function ProjectDetailContent() {
   // Phase navigation: overflow-to-dropdown (never wrap, never horizontal scroll)
   // Trần số Phase hiển thị - thuật toán bên dưới (visiblePhaseCount) đo width
   // thật của container + từng tab và TỰ ĐỘNG chỉ hiện bấy nhiêu Phase vừa 1
-  // hàng (không bao giờ v rớt dòng/che khuất "+ Thêm Phase"/"Áp dụng template"
-  // vì 2 nút này luôn được reserve width). Tăng trần lên 8 để tận dụng khoảng
-  // trống bên phải khi có nhiều Phase ngắn tên; khi phase dài/nhiều hơn 8,
-  // thuật toán tự co lại và đẩy phần dư vào "Phase khác".
+  // hàng. "+"/"⋯"/"+ Task" sống NGOÀI container này (shrink-0, sibling của
+  // container flex-1) nên trình duyệt tự trừ width của chúng qua flexbox -
+  // không cần ước lượng/reserve thủ công cho 3 cái đó nữa, chỉ Master và
+  // "Phase khác (N)" là vẫn ở trong container nên vẫn cần hằng số ước lượng.
+  // Tăng trần lên 8 để tận dụng khoảng trống bên phải khi có nhiều Phase
+  // ngắn tên; khi phase dài/nhiều hơn 8, thuật toán tự co lại và đẩy phần dư
+  // vào "Phase khác".
   const MAX_VISIBLE_REAL_PHASES = 8;
+  // Kéo-thả đổi thứ tự Phase tab (chuột trái, HTML5 DnD) - Master không bao
+  // giờ tham gia (không draggable, không phải drop target) vì nó không phải
+  // Phase thật. reorderingPhaseId chỉ để disable tương tác trong lúc đang gọi
+  // API, tránh double-drop.
+  const [draggingPhaseId, setDraggingPhaseId] = useState<number | null>(null);
+  const [phaseDropTarget, setPhaseDropTarget] = useState<{ id: number; side: 'before' | 'after' } | null>(null);
+  const [phaseDropAtEnd, setPhaseDropAtEnd] = useState(false);
+  const [reorderingPhaseId, setReorderingPhaseId] = useState<number | null>(null);
   const [pinnedPhaseIds, setPinnedPhaseIds] = useState<number[]>([]);
   const [phaseOverflowOpen, setPhaseOverflowOpen] = useState(false);
   const [phaseOverflowSearch, setPhaseOverflowSearch] = useState('');
@@ -684,11 +777,10 @@ function ProjectDetailContent() {
   const phaseNavContainerRef = useRef<HTMLDivElement>(null);
   const [phaseTabWidths, setPhaseTabWidths] = useState<Record<string, number>>({});
   const phaseTabMeasureRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  // Width của Master / "Phase khác (N)" / "+ Thêm Phase" / "Áp dụng template" là
-  // text cố định (không phụ thuộc dữ liệu user) nên dùng hằng số ước lượng rộng
-  // rãi thay vì đo DOM - chỉ label Phase (tên do user đặt, có thể rất dài) mới
-  // cần đo thật.
-  const PHASE_CHROME_WIDTHS = { master: 76, overflow: 140, addPhase: 112, template: 152 } as const;
+  // Width của Master / "Phase khác (N)" là text cố định (không phụ thuộc dữ
+  // liệu user) nên dùng hằng số ước lượng rộng rãi thay vì đo DOM - chỉ label
+  // Phase (tên do user đặt, có thể rất dài) mới cần đo thật.
+  const PHASE_CHROME_WIDTHS = { master: 76, overflow: 140 } as const;
   const [addingTaskBelowId, setAddingTaskBelowId] = useState<number | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
@@ -792,6 +884,7 @@ function ProjectDetailContent() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [drawerForm, setDrawerForm] = useState<Record<string, any>>({});
   const [drawerSaving, setDrawerSaving] = useState(false);
+  const [drawerLinkDraft, setDrawerLinkDraft] = useState('');
   const [importingInboxId, setImportingInboxId] = useState<number | null>(null);
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [pasteSelectedGroupId, setPasteSelectedGroupId] = useState<string>('manual');
@@ -810,6 +903,12 @@ function ProjectDetailContent() {
   const [newSkillGroupName, setNewSkillGroupName] = useState('');
   const [newSkillGroupCategoryId, setNewSkillGroupCategoryId] = useState<string>('');
   const [newSkillVendorName, setNewSkillVendorName] = useState('');
+  // Which caller opened showCreateSkillGroupModal (Drawer's own "+" button,
+  // or a table cell's quick-add) gets told the new Group's id once created -
+  // every entry point now goes through this ONE modal (explicit Category
+  // picker, same as the Drawer always had) instead of the table cell
+  // silently defaulting to the first active Category with no user input.
+  const [skillGroupCreatedCallback, setSkillGroupCreatedCallback] = useState<((groupId: number) => void) | null>(null);
 
   // Mapping & AI Rules State
   const [selectedMappingGroup, setSelectedMappingGroup] = useState<string>('all');
@@ -1471,7 +1570,7 @@ function ProjectDetailContent() {
     const GAP = 16;
     for (let n = cap; n >= minN; n--) {
       const hasOverflow = n < total;
-      let width = PHASE_CHROME_WIDTHS.master + GAP + PHASE_CHROME_WIDTHS.addPhase + GAP + PHASE_CHROME_WIDTHS.template + GAP;
+      let width = PHASE_CHROME_WIDTHS.master + GAP;
       for (let i = 0; i < n; i++) {
         width += (phaseTabWidths[phaseSelectionPriorityOrder[i].key] || 90) + GAP;
       }
@@ -2216,6 +2315,35 @@ function ProjectDetailContent() {
     }
   };
 
+  // Kéo-thả đổi thứ tự Phase. `realPhases` giữ đúng thứ tự sort_order hiện
+  // tại (never re-sorted for display priority - xem comment ở khai báo
+  // realPhases), nên tính order mới dựa thẳng trên nó là đủ, không cần lo
+  // lệch với Phase đang bị ẩn vào "Phase khác" (chúng vẫn có mặt trong
+  // realPhases, chỉ không hiện thành tab). Gửi lên FULL danh sách vì backend
+  // từ chối reorder thiếu Phase.
+  const commitPhaseReorder = async (draggedId: number, targetId: number | 'end', side?: 'before' | 'after') => {
+    if (targetId !== 'end' && draggedId === targetId) return;
+    const currentOrder = realPhases.map((p: any) => p.id as number);
+    const withoutDragged = currentOrder.filter((pid: number) => pid !== draggedId);
+    let insertAt: number;
+    if (targetId === 'end') {
+      insertAt = withoutDragged.length;
+    } else {
+      const targetIdx = withoutDragged.indexOf(targetId);
+      insertAt = side === 'before' ? targetIdx : targetIdx + 1;
+    }
+    const newOrder = [...withoutDragged.slice(0, insertAt), draggedId, ...withoutDragged.slice(insertAt)];
+    setReorderingPhaseId(draggedId);
+    try {
+      await reorderPhases(Number(id), newOrder.map((phaseId: number, idx: number) => ({ phase_id: phaseId, sort_order: idx })));
+      await reloadAll(true);
+    } catch (err: any) {
+      flash('Lỗi sắp xếp Phase: ' + getApiErrorMessage(err), true);
+    } finally {
+      setReorderingPhaseId(null);
+    }
+  };
+
   const handleConfirmDeleteGroup = async () => {
     if (!groupToDelete || deletingGroup) return;
     setDeletingGroup(true);
@@ -2298,8 +2426,11 @@ function ProjectDetailContent() {
       const matchStatus = statusFilter === 'All' || item.status === statusFilter;
       const matchAssigned = assignedFilter === 'All' || (item.assigned_name || '') === assignedFilter;
       const matchSupport = supportFilter === 'All' || (item.support_name || '') === supportFilter;
-      const matchSkillSolution = skillSolutionFilter === 'All' || (item.skill_solution_name || '') === skillSolutionFilter;
-      const matchSkillVendor = skillVendorFilter === 'All' || (item.skill_vendor_name || '') === skillVendorFilter;
+      // Match theo ID, không phải tên hiển thị — 2 Skill Area (Group) khác
+      // Category vẫn có thể trùng tên nhau, match theo tên sẽ gộp nhầm task
+      // của 2 Group khác nhau vào chung 1 kết quả filter.
+      const matchSkillSolution = skillSolutionFilter === 'All' || String(item.skill_solution_id || '') === skillSolutionFilter;
+      const matchSkillVendor = skillVendorFilter === 'All' || String(item.skill_vendor_id || '') === skillVendorFilter;
       const matchMember = !memberFilterParam || (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam;
       return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
     });
@@ -2347,6 +2478,48 @@ function ProjectDetailContent() {
     // 4. Return in original order
     return baseItems.filter(item => allTasksToShow.has(item));
   }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode, myMemberId]);
+
+  // Skill Area/Skill filter dropdown options - value is the real ID (never
+  // the display name, which is NOT unique across Categories/Groups), label
+  // gets a disambiguating "(parent name)" suffix only when 2+ distinct IDs
+  // in the current task list happen to share the same display name.
+  const buildSkillAreaFilterOptions = () => {
+    const nameById = new Map<number, string>();
+    items.forEach((t: any) => { if (t.skill_solution_id) nameById.set(t.skill_solution_id, t.skill_solution_name || ''); });
+    const nameCounts = new Map<string, number>();
+    nameById.forEach(name => nameCounts.set(name, (nameCounts.get(name) || 0) + 1));
+    const categoryNameByGroupId = new Map<number, string>();
+    categories.forEach((c: any) => (c.groups || []).forEach((g: any) => categoryNameByGroupId.set(g.id, c.name)));
+    return [
+      { value: 'All', label: 'All' },
+      ...Array.from(nameById.entries())
+        .map(([id, name]) => {
+          const dup = (nameCounts.get(name) || 0) > 1;
+          const catName = categoryNameByGroupId.get(id);
+          return { value: String(id), label: dup && catName ? `${name} (${catName})` : name };
+        })
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ];
+  };
+
+  const buildSkillFilterOptions = () => {
+    const nameById = new Map<number, string>();
+    items.forEach((t: any) => { if (t.skill_vendor_id) nameById.set(t.skill_vendor_id, t.skill_vendor_name || ''); });
+    const nameCounts = new Map<string, number>();
+    nameById.forEach(name => nameCounts.set(name, (nameCounts.get(name) || 0) + 1));
+    const groupNameBySkillId = new Map<number, string>();
+    categories.forEach((c: any) => (c.groups || []).forEach((g: any) => (g.skills || []).forEach((s: any) => groupNameBySkillId.set(s.id, g.name))));
+    return [
+      { value: 'All', label: 'All' },
+      ...Array.from(nameById.entries())
+        .map(([id, name]) => {
+          const dup = (nameCounts.get(name) || 0) > 1;
+          const grpName = groupNameBySkillId.get(id);
+          return { value: String(id), label: dup && grpName ? `${name} (${grpName})` : name };
+        })
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ];
+  };
 
   const getFilteredTasks = () => {
     if (activePhase === 'ALL') {
@@ -3617,24 +3790,12 @@ function ProjectDetailContent() {
               });
             }}
             onCancel={() => {}}
-            onQuickCreate={async (name) => {
-              const defaultCategory = categories.find((c: any) => c.is_active);
-              if (!defaultCategory) {
-                flash('Chưa có Category nào để gán Skill Area mới vào.', true);
-                return null;
-              }
-              try {
-                await createGroup({ name, category_id: defaultCategory.id });
-                const fresh = await refetchCategories();
-                const created = fresh
-                  .flatMap((c: any) => c.groups || [])
-                  .find((g: any) => g.name === name && Number(g.category_id) === defaultCategory.id);
-                if (created) flash(`Đã tạo Skill Area "${name}"!`);
-                return created ? { id: created.id } : null;
-              } catch (err: any) {
-                flash('Lỗi tạo Skill Area: ' + getApiErrorMessage(err), true);
-                return null;
-              }
+            onRequestAreaCreate={(name) => {
+              const vendorCol = getDynamicColumns().find(c => c.toUpperCase().trim() === 'SKILL') || 'SKILL';
+              openSkillGroupCreateModal(name, newForm[col], (groupId) => {
+                setNewForm((prev: any) => ({ ...prev, [col]: String(groupId), [vendorCol]: '' }));
+                flash(`Đã tạo Skill Area "${name}"!`);
+              });
             }}
           />
         );
@@ -3912,11 +4073,15 @@ function ProjectDetailContent() {
         manday_actual: selectedTask.manday_actual != null ? String(selectedTask.manday_actual) : '',
         notes: selectedTask.notes || '',
         remark: selectedTask.remark || '',
-        ticket_id: selectedTask.ticket_id || '',
+        ticket_id: selectedTask.link || selectedTask.ticket_id || '',
+        send: selectedTask.send || '',
         kpi_ratio: selectedTask.kpi_ratio_assign !== undefined ? `${selectedTask.kpi_ratio_assign}/${selectedTask.kpi_ratio_support || 0}` : '90/10',
         skill_solution_id: selectedTask.skill_solution_id ? String(selectedTask.skill_solution_id) : '',
         skill_vendor_id: selectedTask.skill_vendor_id ? String(selectedTask.skill_vendor_id) : '',
       });
+      // Ô nhập link mới trong Drawer là state cục bộ (giống editValue của
+      // bảng) - reset mỗi khi mở task khác để không dính draft của task cũ.
+      setDrawerLinkDraft('');
     }
   }, [selectedTask]);
 
@@ -3948,11 +4113,24 @@ function ProjectDetailContent() {
 
   const handleDrawerSave = async () => {
     if (!selectedTask || drawerSaving) return;
+
+    // Đổi Status sang giá trị chứa "block" (task chưa bị chặn) phải đi qua
+    // cùng modal bắt lý do thật như ở bảng (xem handleCellSave/STATUS) -
+    // không cho PATCH thẳng status, tránh né workflow blockTask/lý do thật.
+    const sBlockCheck = (drawerForm.status || '').trim().toLowerCase();
+    const wasBlockedStatus = selectedTask.is_blocked || (selectedTask.status || '').trim().toLowerCase().includes('block');
+    const enteringBlockStatus = sBlockCheck.includes('block') && !wasBlockedStatus && drawerForm.status !== selectedTask.status;
+
     setDrawerSaving(true);
     try {
+      // Nếu đang chuyển sang status "block", giữ nguyên status cũ ở lần lưu
+      // này - status "block" thật sẽ được set sau khi xác nhận lý do (bên
+      // dưới), để không mất các field khác đang chỉnh trong drawer.
+      const statusToSave = enteringBlockStatus ? selectedTask.status : drawerForm.status;
+
       const payload: Record<string, any> = {
         detail: drawerForm.detail,
-        status: drawerForm.status,
+        status: statusToSave,
         priority: drawerForm.priority,
         assigned_id: drawerForm.assigned_id ? parseInt(drawerForm.assigned_id, 10) : null,
         support_id: drawerForm.support_id ? parseInt(drawerForm.support_id, 10) : null,
@@ -3963,6 +4141,7 @@ function ProjectDetailContent() {
         notes: drawerForm.notes || null,
         remark: drawerForm.remark || null,
         ticket_id: drawerForm.ticket_id || null,
+        send: drawerForm.send || null,
       };
 
       const kpiRatio = drawerForm.kpi_ratio || '90/10';
@@ -3972,17 +4151,34 @@ function ProjectDetailContent() {
       payload.skill_solution_id = drawerForm.skill_solution_id ? parseInt(drawerForm.skill_solution_id, 10) : null;
       payload.skill_vendor_id = drawerForm.skill_vendor_id ? parseInt(drawerForm.skill_vendor_id, 10) : null;
 
+      // Support đổi mà KPI Ratio chưa bị chỉnh tay trong phiên này thì
+      // auto-set giống hệt bảng (100/0 khi bỏ Support, 90/10 khi gán Support
+      // từ baseline 100/0) - tránh 2 nơi cho ra 2 kết quả KPI khác nhau.
+      const supportChanged = (drawerForm.support_id || '') !== (selectedTask.support_id ? String(selectedTask.support_id) : '');
+      const originalKpiRatio = selectedTask.kpi_ratio_assign !== undefined
+        ? `${selectedTask.kpi_ratio_assign}/${selectedTask.kpi_ratio_support || 0}`
+        : '90/10';
+      if (supportChanged && kpiRatio === originalKpiRatio) {
+        if (!drawerForm.support_id) {
+          payload.kpi_ratio_assign = 100;
+          payload.kpi_ratio_support = 0;
+        } else if (!selectedTask.support_id && selectedTask.kpi_ratio_assign === 100 && selectedTask.kpi_ratio_support === 0) {
+          payload.kpi_ratio_assign = 90;
+          payload.kpi_ratio_support = 10;
+        }
+      }
+
       const wasDone = selectedTask.status && (
         selectedTask.status.toLowerCase() === 'done' ||
         selectedTask.status.toLowerCase() === 'completed' ||
         selectedTask.status.toLowerCase().includes('hoàn') ||
         selectedTask.status.toLowerCase().includes('finish')
       );
-      const isNowDone = drawerForm.status && (
-        drawerForm.status.toLowerCase() === 'done' ||
-        drawerForm.status.toLowerCase() === 'completed' ||
-        drawerForm.status.toLowerCase().includes('hoàn') ||
-        drawerForm.status.toLowerCase().includes('finish')
+      const isNowDone = statusToSave && (
+        statusToSave.toLowerCase() === 'done' ||
+        statusToSave.toLowerCase() === 'completed' ||
+        statusToSave.toLowerCase().includes('hoàn') ||
+        statusToSave.toLowerCase().includes('finish')
       );
 
       if (isNowDone && !wasDone) {
@@ -3999,7 +4195,17 @@ function ProjectDetailContent() {
       await updateTask(selectedTask.task_group_id, selectedTask.id, payload);
       flash('Đã cập nhật task thành công!');
       await reloadAll(true);
-      setSelectedTask(null);
+
+      if (enteringBlockStatus) {
+        // Các field khác đã lưu xong; giờ bắt lý do rồi mới set status
+        // "block" thật qua đúng blockTask API (không đóng drawer, chờ xác
+        // nhận - giống hệt luồng "Đánh dấu bị chặn" và cột STATUS trên bảng).
+        setBlockReason('');
+        setBlockDependencyTaskId('');
+        setBlockPrompt({ taskId: selectedTask.id, statusValue: drawerForm.status });
+      } else {
+        setSelectedTask(null);
+      }
     } catch (err: any) {
       flash('Lỗi cập nhật task: ' + getApiErrorMessage(err), true);
     } finally {
@@ -4050,21 +4256,36 @@ function ProjectDetailContent() {
         .flatMap((c: any) => c.groups || [])
         .find((g: any) => g.name === name && Number(g.category_id) === categoryId);
       if (created) {
-        setDrawerForm((prev: any) => ({
-          ...prev,
-          skill_solution_id: String(created.id),
-          skill_vendor_id: '',
-        }));
+        skillGroupCreatedCallback?.(created.id);
       }
       flash('Đã tạo Group mới!');
       setShowCreateSkillGroupModal(false);
       setNewSkillGroupName('');
       setNewSkillGroupCategoryId('');
+      setSkillGroupCreatedCallback(null);
     } catch (err: any) {
       flash('Lỗi tạo Group: ' + getApiErrorMessage(err), true);
     } finally {
       setCreatingSkillGroup(false);
     }
+  };
+
+  // Shared opener for showCreateSkillGroupModal - every entry point (Drawer's
+  // "+" button, table cell quick-add on an existing row, table quick-add on
+  // the "add new task" row) calls this so the Category picker + pre-fill
+  // logic lives in exactly one place. `onCreated` receives the new Group's
+  // id once the modal's Save succeeds.
+  const openSkillGroupCreateModal = (prefillName: string, currentSkillSolutionId: string | number | null | undefined, onCreated: (groupId: number) => void) => {
+    setNewSkillGroupName(prefillName);
+    const currentCatId = currentSkillSolutionId
+      ? (categories
+          .flatMap((c: any) => c.groups || [])
+          .find((g: any) => String(g.id) === String(currentSkillSolutionId)) as any)?.category_id
+      : null;
+    const fallback = (categories.find((c: any) => c.is_active) as any)?.id;
+    setNewSkillGroupCategoryId(currentCatId ? String(currentCatId) : (fallback ? String(fallback) : ''));
+    setSkillGroupCreatedCallback(() => onCreated);
+    setShowCreateSkillGroupModal(true);
   };
 
   // SKILL `+` handler: creates a new Skill under the currently
@@ -4887,29 +5108,14 @@ function ProjectDetailContent() {
                   catalogAreas={catalogAreas}
                   onSaveWithAction={(val, act) => handleCellSave(task.id, col, val, act)}
                   onCancel={() => setEditingCell(null)}
-                  onQuickCreate={async (name) => {
-                    // No Category picker in this compact cell (unlike the
-                    // Task Detail drawer's dedicated + modal) — Category is
-                    // an internal grouping never surfaced elsewhere in the
-                    // Tasks UI, so default to the first active one to keep
-                    // this a true one-field "type a name, done" quick-add.
-                    const defaultCategory = categories.find((c: any) => c.is_active);
-                    if (!defaultCategory) {
-                      flash('Chưa có Category nào để gán Skill Area mới vào.', true);
-                      return null;
-                    }
-                    try {
-                      await createGroup({ name, category_id: defaultCategory.id });
-                      const fresh = await refetchCategories();
-                      const created = fresh
-                        .flatMap((c: any) => c.groups || [])
-                        .find((g: any) => g.name === name && Number(g.category_id) === defaultCategory.id);
-                      if (created) flash(`Đã tạo Skill Area "${name}"!`);
-                      return created ? { id: created.id } : null;
-                    } catch (err: any) {
-                      flash('Lỗi tạo Skill Area: ' + getApiErrorMessage(err), true);
-                      return null;
-                    }
+                  onRequestAreaCreate={(name) => {
+                    // Category picker is mandatory here too now, same modal
+                    // the Task Detail Drawer's "+" button uses - no more
+                    // silently defaulting to the first active Category.
+                    openSkillGroupCreateModal(name, task.skill_solution_id, (groupId) => {
+                      handleCellSave(task.id, col, String(groupId));
+                      flash(`Đã tạo Skill Area "${name}"!`);
+                    });
                   }}
                 />
               );
@@ -5006,92 +5212,32 @@ function ProjectDetailContent() {
             }
 
             if (colUpper === 'LINK') {
-              const currentLinks = (task.link || task.ticket_id || '').split('\n').filter(Boolean);
-
-              const handleAddLink = (rawLink: string) => {
-                const newLink = rawLink.trim();
-                if (!newLink) {
+              const commitLink = (raw: string) => {
+                if (!raw.trim()) {
                   setEditingCell(null);
                   return;
                 }
-                // Auto-prepend https:// for bare domains (e.g. "docs.google.com/..."),
-                // leave non-URL text (ticket IDs, etc.) untouched.
-                const normalizedLink = !/^https?:\/\//i.test(newLink) && /^[a-zA-Z0-9-]+\./.test(newLink)
-                  ? 'https://' + newLink
-                  : newLink;
-                const newLinks = [...currentLinks, normalizedLink];
-                handleCellSave(task.id, col, newLinks.join('\n'));
+                handleCellSave(task.id, col, appendLinkValue(task.link || task.ticket_id || '', raw));
               };
 
               return (
                 <td key={col} className="px-2 py-1 min-w-[320px]">
-                  <div className="flex flex-col gap-1.5">
-                    {currentLinks.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 items-center">
-                        {currentLinks.map((link: string, idx: number) => {
-                          const isUrl = /^https?:\/\//i.test(link);
-                          let label = link;
-                          if (isUrl) {
-                            try {
-                              const u = new URL(link);
-                              const host = u.hostname.replace('www.', '');
-                              if (host.includes('docs.google.com')) label = 'Google Docs';
-                              else if (host.includes('figma.com')) label = 'Figma Design';
-                              else if (host.includes('drive.google.com')) label = 'Google Drive';
-                              else if (host.includes('github.com')) label = 'GitHub';
-                              else if (host.includes('jira')) label = 'Jira Ticket';
-                              else if (host.includes('notion')) label = 'Notion Page';
-                              else if (host.includes('confluence')) label = 'Confluence';
-                              else label = host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
-                            } catch { }
-                          }
-                          return (
-                            <div key={idx} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden opacity-75">
-                              <span className="px-2 py-0.5 max-w-[160px] truncate" title={link}>
-                                🔗 {label}
-                              </span>
-                              <button
-                                type="button"
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  const newLinks = currentLinks.filter((_: string, i: number) => i !== idx);
-                                  handleCellSave(task.id, col, newLinks.join('\n'));
-                                }}
-                                className="px-1 py-0.5 hover:bg-blue-200 text-blue-500 transition-colors"
-                                title="Xóa link"
-                              >
-                                &times;
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <input
-                      type="text"
-                      value={editValue}
-                      autoFocus
-                      onChange={e => setEditValue(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddLink(editValue);
-                        } else if (e.key === 'Escape') {
-                          setEditingCell(null);
-                        }
-                      }}
-                      onBlur={() => {
-                        if (editValue.trim()) {
-                          handleAddLink(editValue);
-                        } else {
-                          setEditingCell(null);
-                        }
-                      }}
-                      className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none"
-                      placeholder="Dán link mới và nhấn Enter..."
-                    />
-                  </div>
+                  <LinkChipsEditor
+                    value={task.link || task.ticket_id || ''}
+                    onChange={(next) => handleCellSave(task.id, col, next)}
+                    inputValue={editValue}
+                    onInputChange={setEditValue}
+                    autoFocus
+                    onInputKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitLink(editValue);
+                      } else if (e.key === 'Escape') {
+                        setEditingCell(null);
+                      }
+                    }}
+                    onInputBlur={() => commitLink(editValue)}
+                  />
                 </td>
               );
             }
@@ -5380,7 +5526,13 @@ function ProjectDetailContent() {
 
           const SYSTEM_COLS = [
             'TASK ID', 'END DATE EST', 'MD ACTUAL', 'DAYS LATE',
-            'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID', 'SOLUTION'
+            'KPI BASE', 'KPI PERFORM', 'KPI OVERTIME', 'KPI FINAL', 'SUB ID', 'SOLUTION',
+            // DEADLINE chỉ là alias hiển thị của END DATE EST (đã read-only ở
+            // trên); HEALTH chưa có field/logic backing (getCellValue luôn trả
+            // rỗng) - cả 2 trước đây vẫn cho click sửa nhưng handleCellSave
+            // không có case xử lý nên PATCH đi với payload rỗng, vẫn báo
+            // "thành công" dù không lưu gì - đánh dấu read-only cho đúng thực tế.
+            'DEADLINE', 'HEALTH'
           ];
           const isReadOnly = SYSTEM_COLS.includes(colUpper);
 
@@ -6568,8 +6720,8 @@ function ProjectDetailContent() {
                   { label: 'Status', value: statusFilter, set: setStatusFilter, options: ['All', 'Waiting', 'Process', 'Done', 'Rework', 'Cancel'] },
                   { label: 'Assigned', value: assignedFilter, set: setAssignedFilter, options: ['All', ...Array.from(new Set(items.map(t => t.assigned_name).filter(Boolean))).sort()] },
                   { label: 'Support', value: supportFilter, set: setSupportFilter, options: ['All', ...Array.from(new Set(items.map(t => t.support_name).filter(Boolean))).sort()] },
-                  { label: 'Skill Area', value: skillSolutionFilter, set: setSkillSolutionFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()] },
-                  { label: 'Skill', value: skillVendorFilter, set: setSkillVendorFilter, options: ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()] },
+                  { label: 'Skill Area', value: skillSolutionFilter, set: setSkillSolutionFilter, options: buildSkillAreaFilterOptions() },
+                  { label: 'Skill', value: skillVendorFilter, set: setSkillVendorFilter, options: buildSkillFilterOptions() },
                 ].map(f => (
                   <div key={f.label} className="px-3.5 py-1.5 flex items-center justify-between gap-2">
                     <span className="text-[12.5px] font-medium text-[#0b1c30]">{f.label}</span>
@@ -6578,7 +6730,10 @@ function ProjectDetailContent() {
                       onChange={e => f.set(e.target.value)}
                       className="text-[12px] border border-slate-200 rounded-md px-2 py-1 outline-none focus:border-[#0058be] bg-white text-[#0b1c30] max-w-[140px]"
                     >
-                      {f.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                      {f.options.map(opt => {
+                        const o = typeof opt === 'string' ? { value: opt, label: opt } : opt;
+                        return <option key={o.value} value={o.value}>{o.label}</option>;
+                      })}
                     </select>
                   </div>
                 ))}
@@ -6684,111 +6839,34 @@ function ProjectDetailContent() {
               </FloatingDropdown>
             </div>
 
-            {/* + Tạo task mới (split button: main = thêm task, dropdown = thêm task / thêm group task) */}
-            {canEditTask(project) && (
-            <div className="relative flex">
-              <button
-                onClick={() => {
-                  const currentPhaseGroups = activePhase === 'ALL'
-                    ? taskGroups
-                    : taskGroups.filter(g => {
-                      const ph = phases.find(p => p.id === g.phase_id);
-                      return ph && ph.name === activePhase;
-                    });
-                  if (currentPhaseGroups.length === 0) {
-                    flash('Hãy tạo ít nhất một Task Group trước khi thêm Task!', true);
-                    return;
-                  }
-                  const targetGroup = currentPhaseGroups[0];
-                  setAddingTaskGroupId(targetGroup.id);
-                  setAddingTaskParentCode(null);
-                  setAddingTaskAfterCode(null);
-                  setAddingTaskBeforeCode(null);
-                  const dynamicCols = getDynamicColumns();
-                  const initialForm: Record<string, string> = {};
-                  dynamicCols.forEach(col => { initialForm[col] = ''; });
-                  const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                  if (statusCol) initialForm[statusCol] = 'Waiting';
-                  setNewForm(initialForm);
-                }}
-                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-semibold text-[13px] h-9 pl-4 pr-5 ml-1 rounded-l-[8px] shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
-              >
-                <Plus size={16} />
-                Tạo task mới
-              </button>
-              <button
-                ref={addTaskMenuBtnRef}
-                onClick={() => setAddTaskMenuOpen(!addTaskMenuOpen)}
-                className="bg-[#0058be] hover:bg-[#0058be]/95 text-white h-9 w-9 flex items-center justify-center rounded-r-[8px] shadow-sm transition-all border-l border-white/20 active:scale-95"
-                title="Thêm task / Thêm Group Task"
-              >
-                <ChevronDown size={16} />
-              </button>
-              <FloatingDropdown
-                anchorEl={addTaskMenuBtnRef.current}
-                open={addTaskMenuOpen}
-                onClose={() => setAddTaskMenuOpen(false)}
-                align="right"
-                className="bg-white border border-slate-200 rounded-lg shadow-lg w-[200px] py-1"
-              >
-                  <button
-                    onClick={() => {
-                      setAddTaskMenuOpen(false);
-                      const currentPhaseGroups = activePhase === 'ALL'
-                        ? taskGroups
-                        : taskGroups.filter(g => {
-                          const ph = phases.find(p => p.id === g.phase_id);
-                          return ph && ph.name === activePhase;
-                        });
-                      if (currentPhaseGroups.length === 0) {
-                        flash('Hãy tạo ít nhất một Task Group trước khi thêm Task!', true);
-                        return;
-                      }
-                      const targetGroup = currentPhaseGroups[0];
-                      setAddingTaskGroupId(targetGroup.id);
-                      setAddingTaskParentCode(null);
-                      setAddingTaskAfterCode(null);
-                      setAddingTaskBeforeCode(null);
-                      const dynamicCols = getDynamicColumns();
-                      const initialForm: Record<string, string> = {};
-                      dynamicCols.forEach(col => { initialForm[col] = ''; });
-                      const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
-                      if (statusCol) initialForm[statusCol] = 'Waiting';
-                      setNewForm(initialForm);
-                    }}
-                    className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
-                  >
-                    <Plus size={16} className="text-[#0058be]" />
-                    Thêm task
-                  </button>
-                  {canManageProjectStructure(project) && (
-                  <button
-                    onClick={() => {
-                      setAddTaskMenuOpen(false);
-                      let defaultPhaseId: number = 0;
-                      if (activePhase !== 'ALL') {
-                        const curPhase = phases.find(p => p.name === activePhase);
-                        if (curPhase) defaultPhaseId = curPhase.id;
-                      }
-                      if (!defaultPhaseId && phases.length > 0) {
-                        const nonMaster = phases.filter(p => !p.is_master);
-                        if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
-                      }
-                      if (!defaultPhaseId) {
-                        flash('Vui lòng tạo Phase trước!', true);
-                        return;
-                      }
-                      setAddingTaskGroupPhaseId(defaultPhaseId);
-                      setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
-                    }}
-                    className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
-                  >
-                    <FolderPlus size={16} className="text-indigo-600" />
-                    Thêm Group Task
-                  </button>
-                  )}
-              </FloatingDropdown>
-            </div>
+            {/* Leader Review - attention queue (overdue/blocked/unassigned/need
+                review), mở panel Leader Review bên phải. Chỉ Super Admin / Leader
+                mới thấy. Chuyển lên toolbar phía trên (hàng Tab Navigation) thay vì
+                nằm trong hàng Phase - "+ Tạo task mới" dời xuống cuối hàng Phase
+                để đổi chỗ, xem block đó bên dưới. */}
+            {!isMember() && (
+            <button
+              onClick={() => {
+                if (leaderReviewOpen) closeLeaderReviewPanel();
+                else setLeaderReviewOpen(true);
+              }}
+              className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap shrink-0 ${
+                leaderReviewOpen
+                  ? 'bg-amber-100 border-amber-300 text-amber-800'
+                  : attentionTasks.length > 0
+                    ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                    : 'bg-white border-[#D9DEE7] text-[#8b93a3] hover:bg-slate-50'
+              }`}
+              title="Leader Review - việc cần chú ý"
+            >
+              <AlertTriangle size={15} />
+              Leader Review
+              {attentionTasks.length > 0 && (
+                <span className="bg-amber-600 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                  {attentionTasks.length}
+                </span>
+              )}
+            </button>
             )}
           </div>
           )}
@@ -7619,7 +7697,59 @@ function ProjectDetailContent() {
                         </button>
                       </div>
                       {visibleRealPhaseTabs.map(p => (
-                        <div key={p.key} className="relative group/phase flex items-center gap-1 shrink-0 h-9">
+                        <div
+                          key={p.key}
+                          className={`relative group/phase flex items-center gap-1 shrink-0 h-9 ${draggingPhaseId === p.id ? 'opacity-40' : ''}`}
+                          draggable={canManageProjectStructure(project) && reorderingPhaseId === null}
+                          onDragStart={(e) => {
+                            setDraggingPhaseId(p.id!);
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', String(p.id));
+                          }}
+                          onDragOver={(e) => {
+                            if (draggingPhaseId === null || draggingPhaseId === p.id) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const side = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+                            setPhaseDropAtEnd(false);
+                            setPhaseDropTarget({ id: p.id!, side });
+                          }}
+                          onDragLeave={() => {
+                            setPhaseDropTarget(prev => (prev?.id === p.id ? null : prev));
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const target = phaseDropTarget;
+                            if (draggingPhaseId !== null && target && target.id === p.id) {
+                              commitPhaseReorder(draggingPhaseId, p.id!, target.side);
+                            }
+                            setDraggingPhaseId(null);
+                            setPhaseDropTarget(null);
+                          }}
+                          onDragEnd={() => {
+                            setDraggingPhaseId(null);
+                            setPhaseDropTarget(null);
+                            setPhaseDropAtEnd(false);
+                          }}
+                        >
+                          {phaseDropTarget && phaseDropTarget.id === p.id && (
+                            <span
+                              className="absolute top-1 bottom-1 w-[3px] rounded-full bg-[#0058be] z-10"
+                              style={phaseDropTarget.side === 'before' ? { left: -6 } : { right: -6 }}
+                              aria-hidden="true"
+                            />
+                          )}
+                          {/* Drag grip - chỉ hiện khi hover, không chiếm chỗ lúc bình thường */}
+                          {canManageProjectStructure(project) && (
+                            <span
+                              className="opacity-0 group-hover/phase:opacity-100 transition-opacity text-slate-300 cursor-grab select-none text-[11px] -mr-1 tracking-[-2px]"
+                              title="Kéo để đổi vị trí Phase"
+                              aria-hidden="true"
+                            >
+                              ⋮⋮
+                            </span>
+                          )}
                           <button onClick={() => setActivePhase(p.key)}
                             title={p.label}
                             className={`h-9 max-w-[110px] truncate text-[13px] transition-all whitespace-nowrap border-b-2 ${activePhase === p.key
@@ -7669,6 +7799,15 @@ function ProjectDetailContent() {
                                   >
                                     <Pencil size={15} className="text-slate-500" />
                                     Chỉnh sửa
+                                  </button>
+                                )}
+                                {canManageProjectStructure(project) && (
+                                  <button
+                                    onClick={() => { setOpenHeaderMenu(null); handleOpenMovePhaseModal(p); }}
+                                    className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                                  >
+                                    <ArrowRightLeft size={15} className="text-slate-500" />
+                                    Chuyển Project khác
                                   </button>
                                 )}
                                 {canManageProjectStructure(project) && <div className="my-1 border-t border-slate-100" />}
@@ -7748,46 +7887,6 @@ function ProjectDetailContent() {
                         </div>
                       )}
 
-                      {/* + Thêm Phase / Áp dụng template LUÔN hiện ngoài thanh, không bao giờ
-                          rơi vào dropdown "Phase khác" - width của chúng luôn được reserve
-                          trong visiblePhaseCount ở trên. */}
-                      {canManageProjectStructure(project) && (
-                        <button
-                          onClick={() => {
-                            setNewPhaseName('');
-                            setShowPhaseModal(true);
-                          }}
-                          className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-[#0058be] hover:bg-slate-100 transition-all flex items-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
-                          title="Tạo Phase mới"
-                        >
-                          <Plus size={14} />
-                          Thêm Phase
-                        </button>
-                      )}
-                      <div className="w-px h-5 bg-slate-200 mx-1 shrink-0" />
-                      {canApplyProjectTemplate(project) && (
-                        <button
-                          onClick={handleOpenTemplateModal}
-                          className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                          title="Thay cấu trúc Phase và Task hiện tại bằng Project Template"
-                          aria-label="Áp dụng template — thay cấu trúc Phase và Task hiện tại bằng Project Template"
-                        >
-                          <LayoutTemplate size={14} />
-                          Áp dụng template
-                        </button>
-                      )}
-                      {isSuperAdmin() && (
-                        <button
-                          onClick={() => setShowExportTemplateModal(true)}
-                          className="h-7 px-2 rounded-[8px] text-[12.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                          title="Chọn Phase/Task Group/Task muốn tái sử dụng và tạo Project Template mới từ dự án này"
-                          aria-label="Xuất thành Template — tạo Project Template mới từ cấu trúc dự án này"
-                        >
-                          <FileOutput size={14} />
-                          Xuất thành Template
-                        </button>
-                      )}
-
                       {/* Lớp đo ẩn: đo width thật của từng Phase label (bị giới hạn max-w-[110px]
                           giống tab thật) để tính visiblePhaseCount ở trên - không ảnh hưởng layout. */}
                       <div style={{ position: 'absolute', visibility: 'hidden', height: 0, overflow: 'hidden', whiteSpace: 'nowrap', pointerEvents: 'none' }} aria-hidden="true">
@@ -7804,31 +7903,194 @@ function ProjectDetailContent() {
                       </div>
                     </div>
 
-                    {/* Leader Review - attention queue (overdue/blocked/unassigned/need
-                        review), mở panel Leader Review bên phải. Chỉ Super Admin / Leader mới thấy. */}
-                    {!isMember() && (
-                    <button
-                      onClick={() => {
-                        if (leaderReviewOpen) closeLeaderReviewPanel();
-                        else setLeaderReviewOpen(true);
-                      }}
-                      className={`h-9 px-3 rounded-[8px] text-[13px] font-semibold border transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap shrink-0 ${
-                        leaderReviewOpen
-                          ? 'bg-amber-100 border-amber-300 text-amber-800'
-                          : attentionTasks.length > 0
-                            ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
-                            : 'bg-white border-[#D9DEE7] text-[#8b93a3] hover:bg-slate-50'
-                      }`}
-                      title="Leader Review - việc cần chú ý"
-                    >
-                      <AlertTriangle size={15} />
-                      Leader Review
-                      {attentionTasks.length > 0 && (
-                        <span className="bg-amber-600 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
-                          {attentionTasks.length}
-                        </span>
-                      )}
-                    </button>
+                    {/* "+" chỉ còn icon (không còn text "Thêm Phase") - sống ngoài
+                        phaseNavContainerRef nên không cần reserve width thủ công nữa.
+                        Cũng là drop-zone "kéo tới cuối" - thả Phase đang kéo vào đây
+                        để đưa nó về cuối danh sách Phase. */}
+                    {canManageProjectStructure(project) && (
+                      <button
+                        onClick={() => {
+                          setNewPhaseName('');
+                          setShowPhaseModal(true);
+                        }}
+                        onDragOver={(e) => {
+                          if (draggingPhaseId === null) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                          setPhaseDropTarget(null);
+                          setPhaseDropAtEnd(true);
+                        }}
+                        onDragLeave={() => setPhaseDropAtEnd(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          if (draggingPhaseId !== null) commitPhaseReorder(draggingPhaseId, 'end');
+                          setDraggingPhaseId(null);
+                          setPhaseDropAtEnd(false);
+                        }}
+                        className={`w-8 h-8 rounded-[8px] text-[#0058be] hover:bg-slate-100 transition-all flex items-center justify-center active:scale-95 shrink-0 ${phaseDropAtEnd ? 'ring-2 ring-[#0058be] bg-[#eef5ff]' : ''}`}
+                        title="Tạo Phase mới · kéo Phase vào đây để đưa về cuối"
+                        aria-label="Tạo Phase mới"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    )}
+
+                    {/* "⋯" gom Áp dụng template / Xuất thành Template - trước đây là
+                        2 nút luôn hiện, giờ là thao tác phụ nên chuyển vào đây. Dùng
+                        chung cơ chế openHeaderMenu/headerMenuAnchorEl với menu per-phase
+                        và per-column, key riêng 'phase-toolbar'. */}
+                    {(canApplyProjectTemplate(project) || isSuperAdmin()) && (
+                      <div className="relative shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            setHeaderMenuAnchorEl(e.currentTarget);
+                            setOpenHeaderMenu(openHeaderMenu === 'phase-toolbar' ? null : 'phase-toolbar');
+                          }}
+                          className={`w-8 h-8 rounded-[8px] flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all active:scale-95 ${openHeaderMenu === 'phase-toolbar' ? 'bg-slate-100 text-slate-700' : ''}`}
+                          title="Thao tác Template"
+                          aria-label="Thao tác Template"
+                        >
+                          <MoreHorizontal size={16} />
+                        </button>
+                        <FloatingDropdown
+                          anchorEl={headerMenuAnchorEl}
+                          open={openHeaderMenu === 'phase-toolbar'}
+                          onClose={() => setOpenHeaderMenu(null)}
+                          align="right"
+                          className="bg-white border border-slate-200 rounded-lg shadow-lg w-[240px] py-1"
+                        >
+                          {canApplyProjectTemplate(project) && (
+                            <button
+                              onClick={() => { setOpenHeaderMenu(null); handleOpenTemplateModal(); }}
+                              className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                              title="Thay cấu trúc Phase và Task hiện tại bằng Project Template"
+                            >
+                              <LayoutTemplate size={15} className="text-slate-500" />
+                              Áp dụng template
+                            </button>
+                          )}
+                          {isSuperAdmin() && (
+                            <button
+                              onClick={() => { setOpenHeaderMenu(null); setShowExportTemplateModal(true); }}
+                              className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                              title="Chọn Phase/Task Group/Task muốn tái sử dụng và tạo Project Template mới từ dự án này"
+                            >
+                              <FileOutput size={15} className="text-slate-500" />
+                              Xuất thành Template
+                            </button>
+                          )}
+                        </FloatingDropdown>
+                      </div>
+                    )}
+
+                    {/* + Tạo task mới (split button: main = thêm task, dropdown = thêm
+                        task / thêm group task) - dời xuống cuối hàng Phase (trước đây
+                        ở hàng Tab Navigation); "Leader Review/Cần chú ý" đổi chỗ lên đó. */}
+                    {canEditTask(project) && (
+                    <div className="relative flex shrink-0">
+                      <button
+                        onClick={() => {
+                          const currentPhaseGroups = activePhase === 'ALL'
+                            ? taskGroups
+                            : taskGroups.filter(g => {
+                              const ph = phases.find(p => p.id === g.phase_id);
+                              return ph && ph.name === activePhase;
+                            });
+                          if (currentPhaseGroups.length === 0) {
+                            flash('Hãy tạo ít nhất một Task Group trước khi thêm Task!', true);
+                            return;
+                          }
+                          const targetGroup = currentPhaseGroups[0];
+                          setAddingTaskGroupId(targetGroup.id);
+                          setAddingTaskParentCode(null);
+                          setAddingTaskAfterCode(null);
+                          setAddingTaskBeforeCode(null);
+                          const dynamicCols = getDynamicColumns();
+                          const initialForm: Record<string, string> = {};
+                          dynamicCols.forEach(col => { initialForm[col] = ''; });
+                          const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                          if (statusCol) initialForm[statusCol] = 'Waiting';
+                          setNewForm(initialForm);
+                        }}
+                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white font-semibold text-[13px] h-9 pl-4 pr-5 rounded-l-[8px] shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
+                      >
+                        <Plus size={16} />
+                        Tạo task mới
+                      </button>
+                      <button
+                        ref={addTaskMenuBtnRef}
+                        onClick={() => setAddTaskMenuOpen(!addTaskMenuOpen)}
+                        className="bg-[#0058be] hover:bg-[#0058be]/95 text-white h-9 w-9 flex items-center justify-center rounded-r-[8px] shadow-sm transition-all border-l border-white/20 active:scale-95"
+                        title="Thêm task / Thêm Group Task"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                      <FloatingDropdown
+                        anchorEl={addTaskMenuBtnRef.current}
+                        open={addTaskMenuOpen}
+                        onClose={() => setAddTaskMenuOpen(false)}
+                        align="right"
+                        className="bg-white border border-slate-200 rounded-lg shadow-lg w-[200px] py-1"
+                      >
+                          <button
+                            onClick={() => {
+                              setAddTaskMenuOpen(false);
+                              const currentPhaseGroups = activePhase === 'ALL'
+                                ? taskGroups
+                                : taskGroups.filter(g => {
+                                  const ph = phases.find(p => p.id === g.phase_id);
+                                  return ph && ph.name === activePhase;
+                                });
+                              if (currentPhaseGroups.length === 0) {
+                                flash('Hãy tạo ít nhất một Task Group trước khi thêm Task!', true);
+                                return;
+                              }
+                              const targetGroup = currentPhaseGroups[0];
+                              setAddingTaskGroupId(targetGroup.id);
+                              setAddingTaskParentCode(null);
+                              setAddingTaskAfterCode(null);
+                              setAddingTaskBeforeCode(null);
+                              const dynamicCols = getDynamicColumns();
+                              const initialForm: Record<string, string> = {};
+                              dynamicCols.forEach(col => { initialForm[col] = ''; });
+                              const statusCol = dynamicCols.find(c => c.toUpperCase() === 'STATUS');
+                              if (statusCol) initialForm[statusCol] = 'Waiting';
+                              setNewForm(initialForm);
+                            }}
+                            className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
+                          >
+                            <Plus size={16} className="text-[#0058be]" />
+                            Thêm task
+                          </button>
+                          {canManageProjectStructure(project) && (
+                          <button
+                            onClick={() => {
+                              setAddTaskMenuOpen(false);
+                              let defaultPhaseId: number = 0;
+                              if (activePhase !== 'ALL') {
+                                const curPhase = phases.find(p => p.name === activePhase);
+                                if (curPhase) defaultPhaseId = curPhase.id;
+                              }
+                              if (!defaultPhaseId && phases.length > 0) {
+                                const nonMaster = phases.filter(p => !p.is_master);
+                                if (nonMaster.length > 0) defaultPhaseId = nonMaster[0].id;
+                              }
+                              if (!defaultPhaseId) {
+                                flash('Vui lòng tạo Phase trước!', true);
+                                return;
+                              }
+                              setAddingTaskGroupPhaseId(defaultPhaseId);
+                              setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                            }}
+                            className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
+                          >
+                            <FolderPlus size={16} className="text-indigo-600" />
+                            Thêm Group Task
+                          </button>
+                          )}
+                      </FloatingDropdown>
+                    </div>
                     )}
                   </div>
 
@@ -8063,7 +8325,7 @@ function ProjectDetailContent() {
                                       );
                                     })()}
                                     {colUpper === 'SKILL AREA' && (() => {
-                                      const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_solution_name).filter(Boolean))).sort()];
+                                      const opts = buildSkillAreaFilterOptions();
                                       return (
                                         <div className="relative" ref={skillSolutionFilterRef}>
                                           <button onClick={() => setSkillSolutionDropdownOpen(!skillSolutionDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${skillSolutionFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}>
@@ -8077,9 +8339,9 @@ function ProjectDetailContent() {
                                             className="bg-white border border-slate-200 rounded-md shadow-lg w-48 max-h-60 overflow-y-auto"
                                           >
                                             {opts.map(opt => (
-                                              <button key={opt} onClick={() => { setSkillSolutionFilter(opt); setSkillSolutionDropdownOpen(false); }}
-                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillSolutionFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
-                                                {opt}
+                                              <button key={opt.value} onClick={() => { setSkillSolutionFilter(opt.value); setSkillSolutionDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillSolutionFilter === opt.value ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                {opt.label}
                                               </button>
                                             ))}
                                           </FloatingDropdown>
@@ -8087,7 +8349,7 @@ function ProjectDetailContent() {
                                       );
                                     })()}
                                     {colUpper === 'SKILL' && (() => {
-                                      const opts = ['All', ...Array.from(new Set(items.map(t => t.skill_vendor_name).filter(Boolean))).sort()];
+                                      const opts = buildSkillFilterOptions();
                                       return (
                                         <div className="relative" ref={skillVendorFilterRef}>
                                           <button onClick={() => setSkillVendorDropdownOpen(!skillVendorDropdownOpen)} className={`p-1 rounded-md hover:bg-slate-200 transition-opacity ${skillVendorFilter !== 'All' ? 'opacity-100 bg-blue-100 text-blue-700' : 'opacity-0 group-hover/th:opacity-100 text-slate-500'}`}>
@@ -8101,9 +8363,9 @@ function ProjectDetailContent() {
                                             className="bg-white border border-slate-200 rounded-md shadow-lg w-48 max-h-60 overflow-y-auto"
                                           >
                                             {opts.map(opt => (
-                                              <button key={opt} onClick={() => { setSkillVendorFilter(opt); setSkillVendorDropdownOpen(false); }}
-                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillVendorFilter === opt ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
-                                                {opt}
+                                              <button key={opt.value} onClick={() => { setSkillVendorFilter(opt.value); setSkillVendorDropdownOpen(false); }}
+                                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 truncate ${skillVendorFilter === opt.value ? 'font-bold text-blue-700 bg-blue-50' : ''}`}>
+                                                {opt.label}
                                               </button>
                                             ))}
                                           </FloatingDropdown>
@@ -9749,32 +10011,23 @@ function ProjectDetailContent() {
                   {isMemberOrAbove() && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setNewSkillGroupName('');
-                        // Pre-select the current Solution's parent Category so the
-                        // user is usually only filling in the Group name. Fall
-                        // back to the first active Category if none is selected.
-                        const currentCatId = drawerForm.skill_solution_id
-                          ? (categories
-                              .flatMap((c: any) => c.groups || [])
-                              .find((g: any) => String(g.id) === String(drawerForm.skill_solution_id)) as any)?.category_id
-                          : null;
-                        const fallback = (categories.find((c: any) => c.is_active) as any)?.id;
-                        setNewSkillGroupCategoryId(
-                          currentCatId ? String(currentCatId) : (fallback ? String(fallback) : '')
-                        );
-                        setShowCreateSkillGroupModal(true);
-                      }}
+                      onClick={() => openSkillGroupCreateModal('', drawerForm.skill_solution_id, (groupId) => {
+                        setDrawerForm((prev: any) => ({
+                          ...prev,
+                          skill_solution_id: String(groupId),
+                          skill_vendor_id: '',
+                        }));
+                      })}
                       className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-slate-500 hover:border-[#0058be] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors"
-                      title="Tạo Group/Solution mới"
-                      aria-label="Tạo Group/Solution mới"
+                      title="Tạo Skill Area mới"
+                      aria-label="Tạo Skill Area mới"
                     >
                       <Plus size={14} strokeWidth={2.5} />
                     </button>
                   )}
                 </div>
                 <SearchableSelect
-                  label="Solution Group"
+                  label="Skill Area"
                   icon=""
                   options={categories
                     .filter(c => c.is_active)
@@ -9789,7 +10042,7 @@ function ProjectDetailContent() {
                       skill_vendor_id: ''
                     });
                   }}
-                  placeholder="Tìm Solution Group..."
+                  placeholder="Tìm Skill Area..."
                   className="w-full"
                 />
               </div>
@@ -9803,7 +10056,7 @@ function ProjectDetailContent() {
                       type="button"
                       onClick={() => {
                         if (!drawerForm.skill_solution_id) {
-                          flash('Vui lòng chọn SKILL AREA trước khi tạo Vendor.', true);
+                          flash('Vui lòng chọn Skill Area trước khi tạo Skill.', true);
                           return;
                         }
                         setNewSkillVendorName('');
@@ -9846,6 +10099,60 @@ function ProjectDetailContent() {
                 })()}
               </div>
 
+              {/* Link - dùng chung LinkChipsEditor với cột LINK trên bảng
+                  (nhiều link dạng chip, nối bằng "\n" trong cùng 1 field
+                  ticket_id) để tránh 1 input text thường làm mất xuống dòng
+                  và hỏng các link đã lưu trước đó. */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Link</label>
+                <LinkChipsEditor
+                  value={drawerForm.ticket_id || ''}
+                  onChange={(next) => setDrawerForm(prev => ({ ...prev, ticket_id: next }))}
+                  inputValue={drawerLinkDraft}
+                  onInputChange={setDrawerLinkDraft}
+                  onInputKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      setDrawerForm(prev => ({ ...prev, ticket_id: appendLinkValue(prev.ticket_id || '', drawerLinkDraft) }));
+                      setDrawerLinkDraft('');
+                    }
+                  }}
+                  onInputBlur={() => {
+                    if (drawerLinkDraft.trim()) {
+                      setDrawerForm(prev => ({ ...prev, ticket_id: appendLinkValue(prev.ticket_id || '', drawerLinkDraft) }));
+                      setDrawerLinkDraft('');
+                    }
+                  }}
+                />
+              </div>
+
+              {/* Remark - dùng chung RemarkMultiSelectInput với bảng (gắn
+                  performanceSettings, ảnh hưởng KPI Final) thay vì text input
+                  tự do để không tạo ra giá trị Remark không khớp danh mục. */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Remark</label>
+                <RemarkMultiSelectInput
+                  value={drawerForm.remark || ''}
+                  performanceSettings={performanceSettings}
+                  onChange={(next) => setDrawerForm({ ...drawerForm, remark: next })}
+                  placeholder="Chọn Remark..."
+                />
+              </div>
+
+              {/* Send */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Send</label>
+                <select
+                  value={drawerForm.send || ''}
+                  onChange={e => setDrawerForm({ ...drawerForm, send: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                >
+                  <option value="">-- Chọn --</option>
+                  <option value="gửi">gửi</option>
+                  <option value="đã gửi">đã gửi</option>
+                </select>
+              </div>
+
               {/* Notes */}
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Notes</label>
@@ -9856,7 +10163,6 @@ function ProjectDetailContent() {
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none"
                 />
               </div>
-
             </div>
             {/* Save button footer */}
             <div className="px-6 py-4 border-t border-slate-200 bg-white">
@@ -10069,15 +10375,16 @@ function ProjectDetailContent() {
         );
       })()}
 
-      {/* Task Detail → SKILL AREA `+` modal: creates a new Group
-          (Solution) under an existing Category. Reuses POST
-          /api/skills/groups and the existing `categories` tree. Auto-
-          selects the new Group on success. */}
+      {/* Skill Area `+` modal, shared by every quick-add entry point
+          (Task Detail Drawer's own "+" button, and table-cell quick-add via
+          openSkillGroupCreateModal/onRequestAreaCreate) — creates a new
+          Group under an explicitly chosen Category. Reuses POST
+          /api/skills/groups and the existing `categories` tree. */}
       {showCreateSkillGroupModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
-              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Group/Solution mới</h3>
+              <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill Area mới</h3>
               <button
                 type="button"
                 onClick={() => {
@@ -10181,7 +10488,7 @@ function ProjectDetailContent() {
                     return grpObj ? grpObj.name : '—';
                   })()}
                 </div>
-                <p className="text-[10.5px] text-slate-400 mt-1">Skill mới sẽ được gắn vào Solution đang chọn.</p>
+                <p className="text-[10.5px] text-slate-400 mt-1">Skill mới sẽ được gắn vào Skill Area đang chọn.</p>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Tên Skill <span className="text-red-500">*</span></label>
@@ -10564,6 +10871,112 @@ function ProjectDetailContent() {
                 className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm disabled:opacity-50"
               >
                 {savingMoveGroup ? 'Đang di chuyển...' : 'Di chuyển'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {movingPhase !== null && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-[#0b1c30]">Chuyển Phase sang Project khác</h3>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">
+                  {movingPhase.label} · {taskGroups.filter((g: any) => g.phase_id === movingPhase.id).length} Task Group
+                </p>
+              </div>
+              <button
+                onClick={() => setMovingPhase(null)}
+                className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Project đích</label>
+                <SearchableSelect
+                  label="Project"
+                  icon="📁"
+                  usePortal
+                  options={moveProjectOptions.map((p: any) => ({ id: p.id, name: p.name }))}
+                  value={movePhaseTargetProjectId}
+                  onChange={(v: any) => setMovePhaseTargetProjectId((typeof v === 'string' && v.toLowerCase() === 'all') || v === '' ? '' : Number(v))}
+                  placeholder="Tìm project..."
+                />
+              </div>
+              {movePhaseTargetProjectId !== '' && (() => {
+                const groupCount = taskGroups.filter((g: any) => g.phase_id === movingPhase.id).length;
+                const taskCount = items.filter((t: any) => {
+                  const g = taskGroups.find((gg: any) => gg.id === t.task_group_id);
+                  return g && g.phase_id === movingPhase.id;
+                }).length;
+                const targetProject = moveProjectOptions.find((p: any) => p.id === movePhaseTargetProjectId);
+                return (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] text-amber-800 leading-relaxed">
+                    <div className="font-semibold">
+                      Di chuyển "{movingPhase.label}" từ <strong>{project?.name || 'project hiện tại'}</strong> → <strong>{targetProject?.name || ''}</strong>
+                    </div>
+                    <div className="mt-0.5">{groupCount} Task Group · {taskCount} Task sẽ được chuyển theo cùng Phase.</div>
+                    <div className="mt-0.5">Assigned/Support không thuộc project đích sẽ được giữ nguyên (không tự đổi).</div>
+                  </div>
+                );
+              })()}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Vị trí</label>
+                <select
+                  value={movePhasePositionMode}
+                  onChange={(e) => {
+                    setMovePhasePositionMode(e.target.value as typeof movePhasePositionMode);
+                    setMovePhaseAnchorId('');
+                  }}
+                  disabled={movePhaseTargetProjectId === '' || moveTargetPhasesLoading}
+                  className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors disabled:opacity-50"
+                >
+                  {moveTargetPhases.length > 0 && <option value="start">Đầu Project</option>}
+                  {moveTargetPhases.length > 0 && <option value="before">Trước Phase...</option>}
+                  {moveTargetPhases.length > 0 && <option value="after">Sau Phase...</option>}
+                  <option value="end">Cuối Project</option>
+                </select>
+              </div>
+              {(movePhasePositionMode === 'before' || movePhasePositionMode === 'after') && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">
+                    {movePhasePositionMode === 'before' ? 'Trước Phase' : 'Sau Phase'}
+                  </label>
+                  <select
+                    value={movePhaseAnchorId}
+                    onChange={(e) => setMovePhaseAnchorId(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                    className="w-full bg-white border border-[#c2c6d6] rounded-lg px-3 py-2 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  >
+                    <option value="">-- Chọn Phase --</option>
+                    {moveTargetPhases.map((p: any) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                onClick={() => setMovingPhase(null)}
+                disabled={savingMovePhase}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleConfirmMovePhase}
+                disabled={
+                  savingMovePhase ||
+                  movePhaseTargetProjectId === '' ||
+                  ((movePhasePositionMode === 'before' || movePhasePositionMode === 'after') && movePhaseAnchorId === '')
+                }
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#0058be]/90 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {savingMovePhase ? 'Đang di chuyển...' : 'Di chuyển'}
               </button>
             </div>
           </div>
@@ -11017,6 +11430,11 @@ interface CategorySearchCellProps {
   // lý danh mục" panel's per-Area "+ Skill" (adds to THAT area, not
   // necessarily the task's current one).
   onQuickCreate?: (name: string, areaIdOverride?: number) => Promise<{ id: number | string } | null>;
+  // kind='area' only — when provided, the quick-add button opens the shared
+  // Category-picker modal (openSkillGroupCreateModal) instead of calling
+  // onQuickCreate directly, so creating a Skill Area from this cell always
+  // requires an explicit Category choice, same as the Task Detail Drawer.
+  onRequestAreaCreate?: (name: string) => void;
   // kind='skill' only — name of the Skill Area currently filtering `items`
   // (task already has one chosen), empty string when searching the whole
   // catalog because none is chosen yet.
@@ -11033,7 +11451,7 @@ interface CategorySearchCellProps {
   autoFocus?: boolean;
 }
 
-function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, contextAreaName, catalogAreas, autoFocus = true }: CategorySearchCellProps) {
+function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWithAction, onCancel, onQuickCreate, onRequestAreaCreate, contextAreaName, catalogAreas, autoFocus = true }: CategorySearchCellProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [creating, setCreating] = useState(false);
   const [isOpen, setIsOpen] = useState(autoFocus);
@@ -11075,9 +11493,17 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
 
   const trimmedSearch = searchTerm.trim();
   const hasExactMatch = trimmedSearch !== '' && items.some(m => (m.name || '').toLowerCase() === trimmedSearch.toLowerCase());
-  const canQuickCreate = Boolean(onQuickCreate) && trimmedSearch.length >= 2 && !hasExactMatch;
+  const canQuickCreate = (Boolean(onQuickCreate) || Boolean(onRequestAreaCreate)) && trimmedSearch.length >= 2 && !hasExactMatch;
 
   const handleQuickCreate = async () => {
+    if (kind === 'area' && onRequestAreaCreate) {
+      // Hand off to the shared Category-picker modal instead of creating
+      // inline - this cell's job ends here, the modal calls onSaveWithAction
+      // for us once the user actually picks a Category and saves.
+      onRequestAreaCreate(trimmedSearch);
+      setIsOpen(false);
+      return;
+    }
     if (!onQuickCreate || !trimmedSearch || creating) return;
     setCreating(true);
     try {
@@ -11189,7 +11615,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
                   </div>
                   <div className="text-[10px] text-slate-500 mt-0.5 mb-2 leading-snug">
                     {kind === 'area'
-                      ? 'Area mới được tạo và chọn ngay cho task hiện tại. Hệ thống kiểm tra trùng tên trước khi thêm.'
+                      ? 'Bước tiếp theo sẽ hỏi Skill Area này thuộc Category nào trước khi tạo, để không rơi nhầm Category.'
                       : contextAreaName
                         ? <>Skill sẽ được thêm vào Skill Area <b>{contextAreaName}</b> và chọn ngay.</>
                         : 'Chọn Skill Area cha để danh mục luôn có cấu trúc rõ ràng, tránh tạo skill rời rạc.'}
@@ -11200,7 +11626,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
                     disabled={creating}
                     className="w-full h-7 rounded-md text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
                   >
-                    {creating ? 'Đang tạo...' : `+ Thêm "${trimmedSearch}"`}
+                    {creating ? 'Đang tạo...' : kind === 'area' ? `Chọn Category cho "${trimmedSearch}"` : `+ Thêm "${trimmedSearch}"`}
                   </button>
                 </div>
               )}
@@ -11355,6 +11781,95 @@ function renderRemarkTags(remarkVal: string, settings: any[]) {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+// Link chips - dùng chung giữa cột LINK trên bảng và field Link trong Task
+// Detail Drawer. Nhiều link được lưu chung 1 field bằng cách nối "\n" - tách
+// thành component riêng để 2 nơi luôn hiển thị/parse/ghi đúng 1 kiểu, tránh
+// một input text thường làm mất ký tự xuống dòng và hỏng các link đã lưu.
+function normalizeLinkValue(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  // Auto-prepend https:// cho domain trần (vd "docs.google.com/..."), giữ
+  // nguyên text không phải URL (mã ticket, v.v.).
+  return !/^https?:\/\//i.test(trimmed) && /^[a-zA-Z0-9-]+\./.test(trimmed) ? 'https://' + trimmed : trimmed;
+}
+
+function appendLinkValue(existing: string, rawInput: string): string {
+  const normalized = normalizeLinkValue(rawInput);
+  if (!normalized) return existing;
+  const links = (existing || '').split('\n').filter(Boolean);
+  return [...links, normalized].join('\n');
+}
+
+function linkChipLabel(link: string): string {
+  if (!/^https?:\/\//i.test(link)) return link;
+  try {
+    const u = new URL(link);
+    const host = u.hostname.replace('www.', '');
+    if (host.includes('docs.google.com')) return 'Google Docs';
+    if (host.includes('figma.com')) return 'Figma Design';
+    if (host.includes('drive.google.com')) return 'Google Drive';
+    if (host.includes('github.com')) return 'GitHub';
+    if (host.includes('jira')) return 'Jira Ticket';
+    if (host.includes('notion')) return 'Notion Page';
+    if (host.includes('confluence')) return 'Confluence';
+    return host + (u.pathname.length > 15 ? u.pathname.substring(0, 15) + '...' : u.pathname);
+  } catch {
+    return link;
+  }
+}
+
+interface LinkChipsEditorProps {
+  value: string;
+  onChange: (next: string) => void;
+  inputValue: string;
+  onInputChange: (v: string) => void;
+  onInputKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  onInputBlur?: () => void;
+  autoFocus?: boolean;
+  placeholder?: string;
+}
+
+function LinkChipsEditor({ value, onChange, inputValue, onInputChange, onInputKeyDown, onInputBlur, autoFocus, placeholder }: LinkChipsEditorProps) {
+  const links = (value || '').split('\n').filter(Boolean);
+  return (
+    <div className="flex flex-col gap-1.5">
+      {links.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 items-center">
+          {links.map((link, idx) => (
+            <div key={idx} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden opacity-75">
+              <span className="px-2 py-0.5 max-w-[160px] truncate" title={link}>
+                🔗 {linkChipLabel(link)}
+              </span>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onChange(links.filter((_, i) => i !== idx).join('\n'));
+                }}
+                className="px-1 py-0.5 hover:bg-blue-200 text-blue-500 transition-colors"
+                title="Xóa link"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <input
+        type="text"
+        value={inputValue}
+        autoFocus={autoFocus}
+        onChange={e => onInputChange(e.target.value)}
+        onKeyDown={onInputKeyDown}
+        onBlur={onInputBlur}
+        className="w-full bg-white border border-[#0058be] rounded px-1.5 py-1 text-xs text-[#0b1c30] focus:outline-none"
+        placeholder={placeholder || 'Dán link mới và nhấn Enter...'}
+      />
     </div>
   );
 }

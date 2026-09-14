@@ -14,6 +14,7 @@ from ..models.member import Member
 from ..utils.access import require_route_project_access, require_project
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
+from ..utils.skill_validation import validate_skill_area_consistency
 
 logger = logging.getLogger("project_features")
 
@@ -549,9 +550,12 @@ def push_log_tasks(pid: int, lid: int, body: dict, db: Session = Depends(get_db)
                 if not skill_solution_id:
                     fallback_group = db.query(Group).order_by(Group.id.asc()).first()
                     skill_solution_id = fallback_group.id if fallback_group else None
-                if not skill_vendor_id:
-                    fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
+                if not skill_vendor_id and skill_solution_id:
+                    # Fallback Skill must belong to the (possibly also-fallback)
+                    # Group above, not just any Skill in the DB.
+                    fallback_skill = db.query(Skill).filter(Skill.group_id == skill_solution_id).order_by(Skill.id.asc()).first()
                     skill_vendor_id = fallback_skill.id if fallback_skill else None
+                validate_skill_area_consistency(skill_solution_id, skill_vendor_id, db)
 
                 # AI-proposed tasks rarely include a start_date (the prompt
                 # doesn't ask for one) — Task.start_date is NOT NULL, so

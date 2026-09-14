@@ -20,6 +20,7 @@ from ..models.task_group import TaskGroup
 from ..models.task import Task
 from ..models.member import Member
 from ..models.ai_task_inbox import AITaskInbox, ChatSyncLog
+from ..utils.skill_validation import validate_skill_area_consistency
 
 
 
@@ -556,9 +557,14 @@ def import_inbox_task_to_project_plan(
     if not skill_solution_id:
         fallback_group = db.query(Group).order_by(Group.id.asc()).first()
         skill_solution_id = fallback_group.id if fallback_group else None
-    if not skill_vendor_id:
-        fallback_skill = db.query(Skill).order_by(Skill.id.asc()).first()
+    if not skill_vendor_id and skill_solution_id:
+        # Fallback Skill must belong to the (possibly also-fallback) Group
+        # above - picking the globally-first Skill regardless of its Group
+        # would almost certainly mismatch and get rejected by the
+        # consistency check right below.
+        fallback_skill = db.query(Skill).filter(Skill.group_id == skill_solution_id).order_by(Skill.id.asc()).first()
         skill_vendor_id = fallback_skill.id if fallback_skill else None
+    validate_skill_area_consistency(skill_solution_id, skill_vendor_id, db)
 
     # Create real task in tasks_v2 with ALL fields matched
     new_task = Task(
