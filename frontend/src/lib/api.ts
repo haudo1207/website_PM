@@ -637,7 +637,7 @@ export const updateTranscript = (id: number, transcript: string) => api.post(`/m
 export const addMeetingMember = (id: number, memberId: number, role?: string) => api.post(`/meetings/${id}/members`, { member_id: memberId, role }).then(r => r.data);
 export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);
 export const syncMeeting = (id: number) => api.post(`/meetings/${id}/sync`).then(r => r.data);
-export const generateMeetingLink = (data: { platform: string; title: string; date?: string; time?: string; duration?: string | number; project_id?: number }) =>
+export const generateMeetingLink = (data: { platform: string; title: string; date?: string; time?: string; duration?: string | number; project_id?: number; host_workspace_id?: number | null }) =>
   api.post('/meetings/generate-link', data).then(r => r.data);
 // Organizer rule (chốt 2026-09-13): the ONLY way to reassign organizer_google_email
 // on an EXISTING meeting — atomically generates a new Google Meet link and persists
@@ -648,8 +648,13 @@ export const retryMeetingLink = (id: number) => api.post(`/meetings/${id}/retry-
 // participants — this calls the EXACT SAME check create/update/retry-link
 // enforce server-side, so the frontend never shows "rảnh"/"trùng" out of
 // sync with what submitting will actually do.
-export const checkMeetingConflict = (data: { project_id?: number; meeting_date?: string; date?: string; start_time?: string; time?: string; end_time?: string; duration?: string | number; exclude_meeting_id?: number }) =>
+export const checkMeetingConflict = (data: { project_id?: number; meeting_date?: string; date?: string; start_time?: string; time?: string; end_time?: string; duration?: string | number; exclude_meeting_id?: number; host_workspace_id?: number | null }) =>
   api.post('/meetings/check-conflict', data).then(r => r.data);
+// HOST * field (chốt 2026-09-14): available Host accounts (Workspace's
+// connected Google account, devv.szone@gmail.com excluded server-side while
+// broken) + which one to auto-select for a given set of chosen projects.
+export const getMeetingHosts = (projectIds?: number[]) =>
+  api.get('/meetings/hosts', { params: projectIds && projectIds.length ? { project_ids: projectIds.join(',') } : undefined }).then(r => r.data);
 export const getGoogleStatus = (workspace?: string) => api.get('/meetings/google/status', { params: workspace ? { workspace } : undefined }).then(r => r.data);
 export const getGoogleAuthUrl = (workspace?: string) => api.get('/meetings/google/auth', { params: workspace ? { workspace } : undefined }).then(r => r.data);
 export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);

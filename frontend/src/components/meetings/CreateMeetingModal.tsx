@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Clipboard } from 'lucide-react';
-import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getApiErrorMessage } from '@/lib/api';
+import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getMeetingHosts, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect, { SearchableSelectHandle } from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
@@ -23,6 +23,12 @@ interface MeetingFormData {
   // being non-empty by then makes create_meeting skip its own creation path).
   google_event_id?: string;
   organizer_google_email?: string;
+  // HOST * field (chốt 2026-09-14): which Workspace's Google account
+  // organizes this meeting — independent of the project's own Workspace,
+  // so a broken/unavailable account can be worked around at creation time.
+  // Immutable after creation (not sent/used on edit — see retryMeetingLink
+  // for the only path allowed to reassign the organizer post-creation).
+  host_workspace_id?: number | null;
   transcript?: string;
   auto_summarize?: boolean;
   objective?: string;
@@ -146,6 +152,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   });
   const [projectsList, setProjectsList] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
+  const [hostsList, setHostsList] = useState<{ workspace_id: number; workspace_name: string; google_email: string }[]>([]);
+  // Tracks whether the user picked a Host by hand — once true, the
+  // auto-select-by-project-Workspace effect below stops overwriting it
+  // (same "don't clobber a manual choice" pattern as manualTitleEdit).
+  const [hostManuallySet, setHostManuallySet] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   // Ref, not state: reads/writes happen synchronously so rapid repeated
   // clicks within the same render tick still see the lock (state would be
@@ -221,6 +232,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       setManualTitleEdit(false);
     }
     prevProjectIdsRef.current = openedProjectIds;
+    setHostManuallySet(false);
     setError('');
   }, [initialData, isOpen]);
 
@@ -235,6 +247,25 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       if (Array.isArray(items)) setMembersList(items);
     }).catch(() => {});
   }, [isOpen]);
+
+  // HOST * field (chốt 2026-09-14): auto-select the Host by the chosen
+  // project(s)' Workspace, re-resolved every time project_ids changes.
+  // Create-only — editing an existing meeting shows its frozen Host
+  // read-only instead (Rule 4: "Host không tự đổi sau khi tạo").
+  useEffect(() => {
+    if (!isOpen || initialData) return;
+    let cancelled = false;
+    getMeetingHosts(formData.project_ids).then((res: any) => {
+      if (cancelled) return;
+      const hosts = Array.isArray(res?.hosts) ? res.hosts : [];
+      setHostsList(hosts);
+      if (!hostManuallySet) {
+        setFormData(prev => ({ ...prev, host_workspace_id: res?.auto_selected_workspace_id ?? null }));
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialData, formData.project_ids.join(','), hostManuallySet]);
 
   // Bỏ chọn 1 dự án -> tự bỏ luôn các thành viên CHỈ thuộc dự án đó (thành
   // viên nào vẫn còn thuộc 1 dự án khác đang được chọn thì giữ nguyên).
@@ -330,6 +361,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           time,
           duration: formData.duration,
           exclude_meeting_id: initialData?.id,
+          host_workspace_id: formData.host_workspace_id,
         });
         const res = await check(formData.time);
         if (cancelled) return;
@@ -357,7 +389,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       }
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [isOpen, formData.date, formData.time, formData.duration, formData.project_ids.join(','), initialData?.id]);
+  }, [isOpen, formData.date, formData.time, formData.duration, formData.project_ids.join(','), formData.host_workspace_id, initialData?.id]);
 
   if (!isOpen) return null;
 
@@ -406,13 +438,18 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         }
         return;
       }
+      if (formData.platform === 'Google Meet' && !formData.host_workspace_id) {
+        setError('Vui lòng chọn Host trước khi tạo link Google Meet');
+        return;
+      }
       const data = await generateMeetingLink({
         platform: formData.platform,
         title: formData.title,
         date: formData.date,
         time: formData.time,
         duration: formData.duration,
-        project_id: formData.project_ids[0]
+        project_id: formData.project_ids[0],
+        host_workspace_id: formData.host_workspace_id,
       });
       if (data.success && data.join_url) {
         const fullUrl = data.join_url.startsWith('http') ? data.join_url : `https://${data.join_url}`;
@@ -475,6 +512,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     // title/time fix on any of them until someone first backfills participants.
     if (!initialData && formData.member_ids.length === 0) {
       setError('Vui lòng chọn ít nhất một thành viên tham gia cuộc họp');
+      isSubmittingRef.current = false;
+      return;
+    }
+    // HOST * field (chốt 2026-09-14): required on create, only for Google
+    // Meet — Zoom's organizer comes from ZOOM_ACCOUNT_ID, not a per-Workspace
+    // Google account, so Host has no meaning there. Not enforced on edit:
+    // Host is immutable after creation (Rule 4), this form never changes it.
+    if (!initialData && formData.platform === 'Google Meet' && !formData.host_workspace_id) {
+      setError('Vui lòng chọn Host cho cuộc họp');
       isSubmittingRef.current = false;
       return;
     }
@@ -632,7 +678,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
             {/* 3. Người tham gia & thời gian */}
             <SectionLabel n={3} label="Người tham gia & thời gian" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Thành viên tham gia *</label>
@@ -696,6 +742,36 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 )}
                 <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bắt buộc chọn ít nhất 1 thành viên tham gia cuộc họp. Bấm <b>“+ Cả team”</b> để thêm nhanh toàn bộ thành viên của dự án đã chọn.</p>
               </div>
+
+              {/* HOST * (chốt 2026-09-14): auto-selected by project's Workspace,
+                  manual override always available — placed full-width here so
+                  it reads as its own decision, not squeezed beside time/duration. */}
+              {initialData ? (
+                <div>
+                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Host</label>
+                  <div className="w-full px-3 py-2.5 border border-[#e2e8f0] rounded-lg text-xs text-[#565e74] bg-[#f8f9fb]">
+                    {initialData.host_google_email || initialData.organizer_google_email || 'Không xác định'}
+                  </div>
+                  <p className="text-[11px] text-[#94a3b8] mt-1.5">Host cố định từ lúc tạo cuộc họp — dùng "🔄 Tạo lại link" nếu cần đổi sang tài khoản khác.</p>
+                </div>
+              ) : formData.platform === 'Google Meet' && (
+                <div>
+                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Host *</label>
+                  <select
+                    value={formData.host_workspace_id ?? ''}
+                    onChange={e => {
+                      setHostManuallySet(true);
+                      setFormData(prev => ({ ...prev, host_workspace_id: e.target.value ? Number(e.target.value) : null }));
+                    }}
+                    className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                  >
+                    <option value="">— Chọn tài khoản Host —</option>
+                    {hostsList.map(h => (
+                      <option key={h.workspace_id} value={h.workspace_id}>{h.google_email}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <div className="grid grid-cols-2 gap-2">

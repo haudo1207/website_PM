@@ -13,6 +13,7 @@ import logging
 import requests
 from typing import Optional
 from zoneinfo import ZoneInfo
+from sqlalchemy import func
 
 from ..config import settings
 from ..models.google_token import GoogleToken
@@ -1626,10 +1627,40 @@ TRANSCRIPT:
 # AUTOMATED BACKGROUND SYNC WORKER
 # ═══════════════════════════════════════════════════════════
 
+def resolve_workspace_id_by_google_email(db, google_email: Optional[str]) -> Optional[int]:
+    """Reverse of the project->workspace lookup: given a Google mailbox, which
+    Workspace actually owns it (WorkspaceGoogleAccount's connected override
+    preferred, falling back to Workspace.expected_google_email as a display
+    hint). Canonical implementation — meeting_bot.py's /queue re-exports this
+    under its old private name rather than keeping its own copy.
+
+    This is the resolver every Calendar-mutating operation on an EXISTING
+    meeting must use (chốt 2026-09-14 'HOST *' field): once a meeting's Host
+    can be chosen independent of its project's own Workspace,
+    workspace_id_for_project(meeting.project) no longer reliably points at
+    the account that actually organizes the Calendar event — only
+    organizer_google_email does. Project-based resolution stays correct only
+    for CREATE-time and retry-link's fresh-account assignment, which
+    legitimately follow the project's own Workspace rules instead."""
+    if not google_email:
+        return None
+    email = google_email.strip().lower()
+    wga = db.query(WorkspaceGoogleAccount).filter(
+        func.lower(WorkspaceGoogleAccount.google_email) == email
+    ).first()
+    if wga:
+        return wga.workspace_id
+    ws = db.query(Workspace).filter(func.lower(Workspace.expected_google_email) == email).first()
+    return ws.id if ws else None
+
+
 def _resolve_meeting_workspace_id(db, meeting) -> Optional[int]:
     """Resolve which Workspace a meeting belongs to via its project (reusing the same
     workspace_id_for_project() lookup used elsewhere for data scoping), so the
-    background auto-sync loop can pick the right Google account override, if any."""
+    background auto-sync loop can pick the right Google account override, if any.
+    Legacy-data fallback only — prefer resolve_workspace_id_by_google_email()
+    against the meeting's own organizer_google_email first wherever a Meeting
+    row (not just a project) is available; see that function's docstring."""
     if not meeting or not getattr(meeting, "project_id", None):
         return None
     try:
@@ -1703,7 +1734,7 @@ def auto_sync_all_ended_meetings(db):
                     result = sync_zoom_meeting(m.meeting_url, meeting_info)
                 elif ("google" in platform or "meet" in platform) and m.meeting_url:
                     user_id = m.created_by or 1
-                    workspace_id = _resolve_meeting_workspace_id(db, m)
+                    workspace_id = resolve_workspace_id_by_google_email(db, m.organizer_google_email) or _resolve_meeting_workspace_id(db, m)
                     result = sync_google_meet(db, user_id, m.meeting_url, meeting_info, workspace_id)
                 elif m.transcript and m.transcript.strip():
                     summary = summarize_with_ai(m.transcript, meeting_info)

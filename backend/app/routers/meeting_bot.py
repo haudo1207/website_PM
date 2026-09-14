@@ -15,7 +15,6 @@ from typing import Optional
 
 import requests
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -23,7 +22,7 @@ from ..database import get_db
 from ..models.meeting import Meeting
 from ..models.system_category import Workspace
 from ..models.workspace_google_account import WorkspaceGoogleAccount
-from ..services.meeting_sync import _resolve_meeting_workspace_id, get_workspace_google_access_token
+from ..services.meeting_sync import _resolve_meeting_workspace_id, get_workspace_google_access_token, resolve_workspace_id_by_google_email
 from ..utils.timezone import VN_TZ as _VN_TZ
 
 logger = logging.getLogger("meeting_bot")
@@ -160,25 +159,17 @@ def get_bot_queue(
     return {"due": due}
 
 
-def _resolve_workspace_id_by_email(db: Session, google_email: Optional[str]) -> Optional[int]:
-    """Reverse of _workspace_google_email: given a mailbox, which workspace's
-    Drive should own the upload — prefers the connected OAuth override,
-    falls back to the display hint. A meeting's organizer_google_email is
-    frozen at creation time and is very often the ONLY signal available
-    (project_id can be None — "company-wide" meetings, or test rows), so
-    this must be tried before the project→workspace path, matching the
-    same priority /queue already uses for the reverse direction.
-    """
-    if not google_email:
-        return None
-    email = google_email.strip().lower()
-    wga = db.query(WorkspaceGoogleAccount).filter(
-        func.lower(WorkspaceGoogleAccount.google_email) == email
-    ).first()
-    if wga:
-        return wga.workspace_id
-    ws = db.query(Workspace).filter(func.lower(Workspace.expected_google_email) == email).first()
-    return ws.id if ws else None
+# Reverse of _workspace_google_email: given a mailbox, which workspace's
+# Drive should own the upload — prefers the connected OAuth override, falls
+# back to the display hint. A meeting's organizer_google_email is frozen at
+# creation time and is very often the ONLY signal available (project_id can
+# be None — "company-wide" meetings, or test rows), so this must be tried
+# before the project→workspace path, matching the same priority /queue
+# already uses for the reverse direction. Canonical implementation now lives
+# in meeting_sync.py (chốt 2026-09-14, shared with meetings.py's Host-field
+# work) — re-exported under this name so existing call sites below don't
+# need to change.
+_resolve_workspace_id_by_email = resolve_workspace_id_by_google_email
 
 
 # Fixed name, not configurable per workspace — every workspace gets its own
