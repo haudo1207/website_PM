@@ -1941,22 +1941,57 @@ export default function OverviewTab() {
           {/* Summary strip — matches the reference prototype's 4-card .summary-grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 border-b border-slate-100 bg-slate-50/60">
             <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
-              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">KPI Team</span>
+              <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
+                KPI Team
+                <FormulaTooltip align="left">
+                  <p className="font-bold text-white/90 mb-1">KPI Team (HT / Giao)</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">HT = Σ kpi_base các task Done trong kỳ</p>
+                  <p className="text-white font-mono">Giao = Σ kpi_base toàn bộ task trong kỳ (mọi trạng thái)</p>
+                  <p className="text-white/60 mt-1.5">Chỉ tính KPI phát sinh tại team (task của member trong team đang xem), không cộng dồn KPI của task ở ngoài team.</p>
+                </FormulaTooltip>
+              </span>
               <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.kpi.toFixed(1)} / {pmStats.kpiPlanned.toFixed(1)}</strong>
               <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Chỉ tính KPI phát sinh tại team, không double-count KPI ngoài team</small>
             </div>
             <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
-              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">Manday Team</span>
+              <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
+                Manday Team
+                <FormulaTooltip align="left">
+                  <p className="font-bold text-white/90 mb-1">Manday Team (HT / Giao)</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">HT = Σ (manday_actual, hoặc manday_est nếu chưa có actual) của mọi task trong kỳ</p>
+                  <p className="text-white font-mono">Giao = Σ manday_est của mọi task trong kỳ</p>
+                  <p className="text-white/60 mt-1.5">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn ở trên.</p>
+                </FormulaTooltip>
+              </span>
               <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.manday.toFixed(1)} / {pmStats.mandayPlanned.toFixed(1)} MD</strong>
               <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Actual / Planned trong kỳ đang chọn</small>
             </div>
             <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
-              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">Cross-workspace</span>
+              <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
+                Cross-workspace
+                <FormulaTooltip align="left">
+                  <p className="font-bold text-white/90 mb-1">Cross-workspace Manday</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">Σ manday (actual/est) mà member trong team log trên project KHÔNG thuộc Workspace Chính của team</p>
+                  <p className="text-white/60 mt-1.5">Member count = số member trong team đang có ít nhất 1 manday như vậy (đang tham gia đóng góp ở Workspace khác).</p>
+                </FormulaTooltip>
+              </span>
               <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{crossWsManday.toFixed(1)} MD</strong>
               <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug"><span className="text-indigo-600 font-black">{crossWsMemberCount} member</span> đang tham gia workspace khác</small>
             </div>
             <div className="px-4 py-3">
-              <span className="block text-[9px] uppercase tracking-wide font-black text-slate-400">Task Team</span>
+              <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
+                Task Team
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">Task Team (Done / Tổng)</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">Done = số task status = Done trong kỳ</p>
+                  <p className="text-white font-mono">Tổng = tổng số task của team trong kỳ (mọi trạng thái)</p>
+                  <p className="text-white/60 mt-1.5">Đang làm = task chưa Done. Trễ = task chưa Done và đã quá hạn (days late &gt; 0).</p>
+                </FormulaTooltip>
+              </span>
               <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.done} / {pmStats.total}</strong>
               <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug"><b className="text-slate-600">{pmStats.inProgress}</b> task đang làm · <b className="text-red-500">{pmStats.overdue}</b> task trễ</small>
             </div>
