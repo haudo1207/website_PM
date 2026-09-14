@@ -602,6 +602,36 @@ def rename_google_meet_event_tag(db, google_event_id: str, meeting_id: int, titl
         logger.warning(f"rename_google_meet_event_tag failed (non-fatal): {e}")
 
 
+def sync_google_meet_attendees(db, google_event_id: str, attendee_emails: list, workspace_id: int = None) -> None:
+    """
+    Replace a Calendar event's attendees with the current participant list
+    (chốt 2026-09-14: Participant == Calendar Guest — organizer/Host must
+    never be passed in attendee_emails here, callers are responsible for
+    excluding it). Calendar's events.patch replaces the WHOLE attendees
+    array with whatever is sent (arrays are not merged), so passing the full
+    current participant email list on every membership change is sufficient
+    — Google itself computes the add/remove diff. Best-effort, same pattern
+    as rename_google_meet_event_tag/cancel_google_meet_event: any failure is
+    logged and swallowed, never raised, so a Calendar API hiccup can't block
+    adding/removing a meeting member.
+    """
+    if not google_event_id:
+        return
+    try:
+        token = get_workspace_google_access_token(db, workspace_id)
+        resp = requests.patch(
+            f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}",
+            params={"sendUpdates": "none"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"attendees": [{"email": e} for e in attendee_emails if e]},
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning(f"sync_google_meet_attendees failed (non-fatal): {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.warning(f"sync_google_meet_attendees failed (non-fatal): {e}")
+
+
 def cancel_google_meet_event(db, google_event_id: str, workspace_id: int = None) -> None:
     """Cancel a Calendar event when its Meeting is soft-deleted while still
     UPCOMING (chốt 2026-09-13's Delete Meeting design) — best-effort, same
