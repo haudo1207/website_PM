@@ -673,7 +673,7 @@ export default function AccountsPage() {
           )}
 
           {activeTab === 'members' && (
-            <MembersView onFlash={flash} />
+            <MembersView onFlash={flash} onAccountCreated={() => reload()} />
           )}
         </div>
       </div>

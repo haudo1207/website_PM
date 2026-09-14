@@ -11,6 +11,7 @@ from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
 from ..models.project import Project
 from ..models.member import Member
+from ..models.user import User
 from ..models.system_category import Workspace
 from ..models.workspace_google_account import WorkspaceGoogleAccount
 from ..utils.auth import get_current_user
@@ -505,12 +506,19 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
         return
     try:
         from ..services.meeting_sync import sync_google_meet_attendees
-        emails = [
-            row[0] for row in db.query(Member.email)
+        # Member.email is the primary source, but a roster entry with no
+        # email on file still often has a linked login Account (User) with
+        # its own email — fall back to that rather than silently dropping
+        # the participant from the Calendar guest list entirely. Additive
+        # only: a Member with its own email is unaffected either way.
+        rows = (
+            db.query(Member.email, User.email)
             .join(MeetingMember, MeetingMember.member_id == Member.id)
-            .filter(MeetingMember.meeting_id == m.id, Member.email.isnot(None), Member.email != "")
+            .outerjoin(User, User.member_id == Member.id)
+            .filter(MeetingMember.meeting_id == m.id)
             .distinct().all()
-        ]
+        )
+        emails = list({(member_email or user_email) for member_email, user_email in rows if (member_email or user_email)})
         workspace_id = _host_workspace_id_for_meeting(db, m)
         sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
     except Exception as e:
