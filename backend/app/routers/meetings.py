@@ -506,11 +506,12 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
         return
     try:
         from ..services.meeting_sync import sync_google_meet_attendees
-        # Member.email is the primary source, but a roster entry with no
-        # email on file still often has a linked login Account (User) with
-        # its own email — fall back to that rather than silently dropping
-        # the participant from the Calendar guest list entirely. Additive
-        # only: a Member with its own email is unaffected either way.
+        # Account (User) email is the primary source (chốt 2026-09-15) — it's
+        # what the person actually logs in with, often their real Google
+        # account (google_sub-linked), which is exactly what needs to be a
+        # Calendar attendee for the invite to land in their own Calendar.
+        # Member.email (HR roster contact) is only a fallback for a Member
+        # with no linked login Account, or whose Account has no email set.
         rows = (
             db.query(Member.email, User.email)
             .join(MeetingMember, MeetingMember.member_id == Member.id)
@@ -518,7 +519,7 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
             .filter(MeetingMember.meeting_id == m.id)
             .distinct().all()
         )
-        emails = list({(member_email or user_email) for member_email, user_email in rows if (member_email or user_email)})
+        emails = list({(user_email or member_email) for member_email, user_email in rows if (member_email or user_email)})
         workspace_id = _host_workspace_id_for_meeting(db, m)
         sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
     except Exception as e:
