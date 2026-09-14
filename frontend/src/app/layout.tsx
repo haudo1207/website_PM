@@ -3,6 +3,17 @@ import './globals.css'
 import { brand } from '@/lib/brand'
 import Providers from './providers'
 
+// Every page here is a 'use client' page driven by client-side state/query
+// params and client-fetched data — Next.js has no server-side signal that
+// any of them are dynamic, so it was fully static-optimizing them and
+// serving `Cache-Control: s-maxage=31536000` (1 year) app-wide. That let
+// the browser (and any proxy in between) keep replaying an old build's
+// HTML shell for up to a year after a new deploy, regardless of which JS
+// bundle actually got fetched — a real, reproduced cause of "I rebuilt but
+// the UI still looks like the old version" reports. Forcing the whole app
+// dynamic here (root layout, applies to every nested route) stops it.
+export const dynamic = 'force-dynamic';
+
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
