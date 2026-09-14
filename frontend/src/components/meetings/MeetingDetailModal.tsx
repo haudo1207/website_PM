@@ -765,12 +765,12 @@ export default function MeetingDetailModal({
                     </div>
 
                     <div>
-                      <span className="text-[#64748b] block mb-1">Người tạo / Host</span>
+                      <span className="text-[#64748b] block mb-1">Host</span>
                       <div className="flex items-center gap-2">
                         <div className="w-6 h-6 rounded-full bg-slate-200 text-[#475569] font-bold text-[10px] flex items-center justify-center">
-                          {creatorName[0]}
+                          {hostGoogleEmail[0]?.toUpperCase()}
                         </div>
-                        <span className="font-bold text-[#0b1c30]">{creatorName}</span>
+                        <span className="font-bold text-[#0b1c30]">{hostGoogleEmail}</span>
                       </div>
                     </div>
 
