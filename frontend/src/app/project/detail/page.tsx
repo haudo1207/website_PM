@@ -6586,9 +6586,16 @@ function ProjectDetailContent() {
         </>
         )}
 
-        {/* MAIN CONTAINER — all tabs use overflow-y-auto for normal page scrolling.
-            The task table has its own internal scroll for task data. */}
-        <div className={`flex-1 min-w-0 p-4 md:p-6 ${activeMainTab === 'tasks' ? 'flex flex-col overflow-y-auto space-y-0' : 'overflow-y-auto space-y-6'}`}>
+        {/* MAIN CONTAINER — non-Task tabs use overflow-y-auto here for normal
+            whole-panel page scrolling. The Tasks tab is the exception: this
+            container must NOT scroll itself (no overflow-y-auto, min-h-0 +
+            overflow-hidden instead) so it stays exactly h-screen-bounded and
+            delegates ALL scrolling to the innermost task-table-scroll region
+            further down - otherwise this div (which spans nearly the full
+            viewport below the header) becomes its own competing scrollbar,
+            dragging Tab Navigation + Phase toolbar along with it instead of
+            keeping them pinned. */}
+        <div className={`flex-1 min-w-0 p-4 md:p-6 ${activeMainTab === 'tasks' ? 'flex flex-col overflow-hidden min-h-0 space-y-0' : 'overflow-y-auto space-y-6'}`}>
           {msg && (
             // z-[1000] - PHẢI cao hơn mọi drawer full-screen (Task Edit/Leader
             // Review Detail/AI Review đều z-50) VÀ mọi modal (z-[999], vd
