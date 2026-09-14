@@ -996,7 +996,19 @@ export default function OverviewTab() {
     // someone on their team) is personally on a given project.
     const drilledPersonId: number | null = showsLeaderCards
       ? (selectedLeader !== 'all' ? (visibleLeaders.find((l: any) => l.name === selectedLeader)?.member_id ?? null) : null)
-      : (selectedMemberId !== 'all' ? Number(selectedMemberId) : null);
+      : (selectedMemberId !== 'all'
+        ? Number(selectedMemberId)
+        // Leader viewing their own "Toàn bộ team" (not drilled into one
+        // Member) still has a definite person to gate access for: the
+        // Leader themself. Falling through to null here used to read as
+        // "nobody to check, default unlocked" — meant for Admin viewing
+        // literally everyone with no team in focus — but for a Leader's
+        // own session it incorrectly unlocked "Mở dự án" on Phụ-Workspace
+        // projects where only a report (not the Leader) is actually a
+        // project_members row, leading straight to a 404 once clicked
+        // (backend's can_access_project is intentionally personal-only,
+        // see access.py).
+        : (typeof currentUser?.member_id === 'number' ? currentUser.member_id : null));
     const taskSourceForDrill = (currentUserRole === 'leader' || isDrilledIntoPerson) ? rawTasksAll : rawTasks;
     let fTasks = taskSourceForDrill.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));

@@ -612,7 +612,11 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
             raise HTTPException(400, "Manday EST must be a number.")
     validate_group_manday(manday_est)
 
-    assigned_ids = validate_member_ids_for_project(body.get("assigned_ids"), phase.project_id, db, "Người thực hiện")
+    # Người thực hiện (assigned_ids) của Task Group luôn là người tạo ra nó —
+    # tự động gán, không nhận giá trị từ client. SP (support_ids) vẫn chọn
+    # tự do như bình thường.
+    creator_member_id = getattr(current_user, "member_id", None)
+    assigned_ids = [creator_member_id] if creator_member_id is not None else []
     support_ids = validate_member_ids_for_project(body.get("support_ids"), phase.project_id, db, "SP")
 
     # Position the new group: at a specific spot if the caller supplied one
@@ -739,8 +743,10 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
         tg.end_date_actual_override = parse_date(body["end_date_actual_override"])
 
     project_id = tg.phase.project_id if tg.phase else None
-    if "assigned_ids" in body:
-        tg.assigned_ids = validate_member_ids_for_project(body["assigned_ids"], project_id, db, "Người thực hiện")
+    # Người thực hiện (assigned_ids) is fixed to whoever created the Group —
+    # not editable afterward, so any "assigned_ids" the client sends here is
+    # silently ignored rather than erroring (older clients/forms may still
+    # submit it as part of a broader payload). SP (support_ids) stays free.
     if "support_ids" in body:
         tg.support_ids = validate_member_ids_for_project(body["support_ids"], project_id, db, "SP")
 
@@ -1498,9 +1504,10 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     tg = sync_group_dates(tg, db, extra_start=task.start_date, extra_end=task.end_date_est)
     tg = sync_group_actual_dates(tg, db)
 
-    # This task's assigned/support member joins the group's roster too
-    # (additive, deduped — never removes an existing entry).
-    add_to_group_list(tg, "assigned_ids", task.assigned_id)
+    # This task's support member joins the group's SP roster too (additive,
+    # deduped — never removes an existing entry). assigned_ids is NOT synced
+    # here — the Group's "người thực hiện" is fixed to whoever created it,
+    # not an aggregate of its child tasks' assignees.
     add_to_group_list(tg, "support_ids", task.support_id)
 
     # Update group progress
@@ -1851,10 +1858,10 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     if task.assigned_id and task.support_id and task.assigned_id == task.support_id:
         raise HTTPException(400, "Support cannot be the same as Assigned.")
 
-    # This task's assigned/support member joins the parent group's roster
-    # too (additive, deduped) whenever either was actually touched.
-    if tg and ("assigned_id" in body or "support_id" in body):
-        add_to_group_list(tg, "assigned_ids", task.assigned_id)
+    # This task's support member joins the parent group's SP roster too
+    # (additive, deduped) whenever support_id was actually touched.
+    # assigned_ids is NOT synced — see create_task's comment above.
+    if tg and "support_id" in body:
         add_to_group_list(tg, "support_ids", task.support_id)
 
     # KPI Ratio

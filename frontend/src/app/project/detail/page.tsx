@@ -6017,13 +6017,25 @@ function ProjectDetailContent() {
                 );
               }
 
-              // Roster of Assigned/Support member ids on the group itself —
-              // additive-synced from child Tasks, and manually editable via
-              // a multi-select (dedup'd, never auto-removed).
-              if (colUpper === 'ASSIGNED' || colUpper === 'SUPPORT') {
-                const field: 'assigned_ids' | 'support_ids' = colUpper === 'ASSIGNED' ? 'assigned_ids' : 'support_ids';
-                const names: string[] = colUpper === 'ASSIGNED' ? (group.assigned_names || []) : (group.support_names || []);
-                const ids: number[] = colUpper === 'ASSIGNED' ? (group.assigned_ids || []) : (group.support_ids || []);
+              // ASSIGNED (người thực hiện) on a Group row is fixed to
+              // whoever created it — read-only here, backend silently
+              // ignores any attempt to change it via PATCH. SUPPORT (SP)
+              // stays a freely-editable multi-select roster, additive-
+              // synced from child Tasks, same as before.
+              if (colUpper === 'ASSIGNED') {
+                const names: string[] = group.assigned_names || [];
+                return (
+                  <td key={col} className="px-2 py-2 text-xs" title="Người thực hiện Group = người tạo, không thể chỉnh sửa">
+                    <span className="truncate min-w-0 font-semibold text-[#1e293b]">
+                      {names.length > 0 ? names.join(', ') : <span className="text-slate-300 font-normal">—</span>}
+                    </span>
+                  </td>
+                );
+              }
+              if (colUpper === 'SUPPORT') {
+                const field: 'assigned_ids' | 'support_ids' = 'support_ids';
+                const names: string[] = group.support_names || [];
+                const ids: number[] = group.support_ids || [];
                 const isEditingPeople = editingGroupPeople?.groupId === group.id && editingGroupPeople?.field === field;
 
                 if (isEditingPeople) {
