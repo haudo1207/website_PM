@@ -42,6 +42,7 @@ class Member(Base):
     # Existing rows default to FALSE so the deployment never enters a state
     # where existing manual Members are misclassified.
     is_recruitment_synced = Column(Boolean, nullable=False, default=False, server_default="false")
+    employment_status = Column(String(20), nullable=True, server_default="ON")
     leader_name     = Column(String(100), nullable=True)
     leader_email    = Column(String(255), nullable=True)
     leader_member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)

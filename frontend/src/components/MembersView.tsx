@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   getMembers, createMember, updateMember, deleteMember,
   getTeams, getPositions, getDepartments, getCategories,
-  syncFromRecruitment, getLeaders
+  syncFromRecruitment, getLeaders, getMemberAccountPrefill, createAccount
 } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import SearchableSelect from './common/SearchableSelect';
@@ -29,6 +29,10 @@ interface Member {
   leader_email?: string;
   skill_ids: number[];
   skills: Skill[];
+  user_id?: number;
+  employment_status?: string;
+  has_account?: boolean;
+  account_active?: boolean;
 }
 
 const EMPTY_FORM = {
@@ -79,6 +83,36 @@ export default function MembersView({ onFlash }: Props) {
       onFlash(`Lỗi đồng bộ: ${errMsg}`);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleOpenAccount = async (member: Member) => {
+    try {
+      // Get pre-filled account data
+      const prefill = await getMemberAccountPrefill(member.id);
+      
+      // Prepare account creation data
+      const accountData = {
+        email: prefill.email,
+        full_name: prefill.full_name,
+        role: prefill.role,
+        member_id: prefill.member_id,
+        workspace_ids: prefill.workspaces.map((w: any) => w.id),
+      };
+      
+      // Confirm with user
+      const workspaceNames = prefill.workspaces.map((w: any) => w.name || w.code).join(', ');
+      if (!confirm(`Tạo tài khoản cho ${member.full_name}?\n\nEmail: ${prefill.email}\nRole: ${prefill.role}\nWorkspace: ${workspaceNames}`)) {
+        return;
+      }
+      
+      // Create account
+      await createAccount(accountData);
+      onFlash(`Đã tạo tài khoản cho ${member.full_name}`);
+      loadMembers();
+    } catch (err: any) {
+      const errMsg = err.response?.data?.detail || err.message || 'Lỗi tạo tài khoản';
+      onFlash(`Lỗi: ${errMsg}`);
     }
   };
 
@@ -302,6 +336,9 @@ export default function MembersView({ onFlash }: Props) {
                 <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telegram</th>
                 <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
                 <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Leader</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tài Khoản</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cấp quyền</th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 w-16"></th>
               </tr>
             </thead>
@@ -345,6 +382,46 @@ export default function MembersView({ onFlash }: Props) {
                     {m.leader_name || <span className="text-slate-300">–</span>}
                   </td>
                   <td className="px-4 py-3">
+                    {(() => {
+                      const status = m.employment_status || 'ON';
+                      if (status === 'OFF') {
+                        return <span className="text-slate-400 text-[10px] font-medium">OFF</span>;
+                      }
+                      if (m.has_account) {
+                        return <span className="text-emerald-600 text-[10px] font-bold">Có</span>;
+                      }
+                      return <span className="text-amber-600 text-[10px] font-medium">Chưa có</span>;
+                    })()}
+                  </td>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const status = m.employment_status || 'ON';
+                      if (status === 'OFF') {
+                        return <span className="text-slate-400 text-[10px] font-medium">OFF</span>;
+                      }
+                      if (m.has_account) {
+                        return <span className="text-slate-400 text-[10px] font-medium italic">Đã có</span>;
+                      }
+                      return (
+                        <button
+                          onClick={() => handleOpenAccount(m)}
+                          className="text-blue-600 hover:text-blue-700 text-[10px] font-bold underline"
+                        >
+                          Mở tài khoản
+                        </button>
+                      );
+                    })()}
+                  </td>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const status = m.employment_status || 'ON';
+                      if (status === 'OFF') {
+                        return <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold">OFF</span>;
+                      }
+                      return <span className="bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded text-[10px] font-bold">ON</span>;
+                    })()}
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="flex items-center gap-2 justify-end">
                       <button onClick={() => openEdit(m)}
                         className="text-blue-600 hover:text-blue-700 font-semibold text-[11px]">Sửa</button>
@@ -356,7 +433,7 @@ export default function MembersView({ onFlash }: Props) {
               ))}
               {members.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center py-16 text-slate-400 font-medium">
+                  <td colSpan={13} className="text-center py-16 text-slate-400 font-medium">
                     Không tìm thấy thành viên nào
                   </td>
                 </tr>
