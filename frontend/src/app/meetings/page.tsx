@@ -3,17 +3,19 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Sparkles, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Sparkles, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, ChevronRight, Info } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal';
 import PromptSettingsModal from '@/components/meetings/PromptSettingsModal';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import ScoreModelExplainer from '@/components/meetings/ScoreModelExplainer';
 import MeetingPlaybook from '@/components/meetings/MeetingPlaybook';
+import MeetingGuideModal from '@/components/meetings/MeetingGuideModal';
 import KpiCard from '@/components/dashboard/KpiCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
-import { getMeetings, createMeeting, updateMeeting, deleteMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting } from '@/lib/api';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting, getGoogleStatus, getMeetingInsights, addMeetingMember, getMeeting, getMeetingAttendanceSummary } from '@/lib/api';
+import MemberAttendanceDrawer from '@/components/meetings/MemberAttendanceDrawer';
 import { isAdmin, getRole } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
@@ -94,6 +96,7 @@ function MeetingsPageContent() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<any>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailMeeting, setDetailMeeting] = useState<any>(null);
   const [lastHandledId, setLastHandledId] = useState<string | null>(null);
@@ -238,6 +241,42 @@ function MeetingsPageContent() {
     (insightsData?.top_people || []).forEach((p: any) => { if (p.hours > 8) names.add(p.name); });
     return names;
   }, [insightsData]);
+
+  // "Nhân sự & Tham gia" card (chốt 2026-09-15): reuses the page's EXISTING
+  // Dự án + Tháng/Năm filters (no new time-range preset UI) — converts
+  // monthFilter ("YYYY-MM") to a from/to date range the backend already
+  // understands (same from_date/to_date shape as GET /meetings).
+  const attendanceDateRange = useMemo(() => {
+    if (monthFilter === 'All' || !monthFilter) return { from_date: undefined, to_date: undefined };
+    const [y, m] = monthFilter.split('-').map(Number);
+    if (!y || !m) return { from_date: undefined, to_date: undefined };
+    const lastDay = new Date(y, m, 0).getDate();
+    return {
+      from_date: `${monthFilter}-01`,
+      to_date: `${monthFilter}-${String(lastDay).padStart(2, '0')}`,
+    };
+  }, [monthFilter]);
+
+  const { data: attendanceSummaryData } = useQuery({
+    queryKey: ['meeting-attendance-summary', workspaceCode, projectFilter, attendanceDateRange.from_date, attendanceDateRange.to_date],
+    queryFn: async () => {
+      const data = await getMeetingAttendanceSummary({
+        workspace: workspaceCode || undefined,
+        project: projectFilter !== 'All' ? projectFilter : undefined,
+        from_date: attendanceDateRange.from_date,
+        to_date: attendanceDateRange.to_date,
+      });
+      return Array.isArray(data?.data) ? data.data : [];
+    },
+    staleTime: 2 * 60_000,
+  });
+  const attendanceByMemberId = useMemo(() => {
+    const map = new Map<number, any>();
+    (attendanceSummaryData || []).forEach((s: any) => map.set(s.member_id, s));
+    return map;
+  }, [attendanceSummaryData]);
+
+  const [attendanceDrawerMember, setAttendanceDrawerMember] = useState<any>(null);
 
   // Switching Workspace changes which projects/people/platforms even exist in
   // `meetings` — a project/person/platform filter picked under the old
@@ -389,15 +428,21 @@ function MeetingsPageContent() {
   const filteredTopPeople = useMemo(() => {
     const hoursByName = new Map<string, number>();
     const meetingsByName = new Map<string, number>();
+    // member_id per name (chốt 2026-09-15, attendance join) — a free-text
+    // custom_members guest has no real member_id, so this stays undefined
+    // for them and the attendance lookup below just finds nothing, same as
+    // a real member with zero recorded attendance.
+    const memberIdByName = new Map<string, number | undefined>();
     filteredMeetings.forEach(m => {
       const h = typeof m.duration === 'number' ? m.duration / 60 : 1;
       getMeetingParticipants(m).forEach(p => {
         hoursByName.set(p.name, (hoursByName.get(p.name) || 0) + h);
         meetingsByName.set(p.name, (meetingsByName.get(p.name) || 0) + 1);
+        if (!memberIdByName.has(p.name) && /^\d+$/.test(p.key)) memberIdByName.set(p.name, Number(p.key));
       });
     });
     return Array.from(hoursByName.entries())
-      .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10, meetings: meetingsByName.get(name) || 0 }))
+      .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10, meetings: meetingsByName.get(name) || 0, memberId: memberIdByName.get(name) }))
       .sort((a, b) => b.hours - a.hours);
   }, [filteredMeetings]);
 
@@ -650,6 +695,14 @@ function MeetingsPageContent() {
           <div className="flex items-center gap-3">
             <CalendarIcon className="text-[#6366f1]" size={20} />
             <h1 className="text-base font-extrabold text-[#0b1c30]">Quản lý Meetings</h1>
+            <button
+              type="button"
+              onClick={() => setIsGuideOpen(true)}
+              className="flex items-center gap-1 text-[11px] font-bold text-[#64748b] hover:text-[#6366f1] transition-colors"
+            >
+              <Info size={13} />
+              <span>Hướng dẫn sử dụng</span>
+            </button>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
@@ -1007,21 +1060,44 @@ function MeetingsPageContent() {
                   )}
                 </div>
                 <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-4">
-                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Nhân sự theo giờ họp</h3>
+                  <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Nhân sự &amp; Tham gia</h3>
                   {filteredTopPeople.length === 0 ? (
                     <p className="text-[11px] text-[#94a3b8]">Chưa có dữ liệu.</p>
                   ) : (
                     <>
                       <div className={`space-y-2 ${showAllPeople ? 'max-h-[320px] overflow-y-auto pr-1 custom-scrollbar' : ''}`}>
-                        {filteredTopPeople.slice(0, showAllPeople ? undefined : 5).map((p: any) => (
-                          <div key={p.name} className="flex items-center justify-between py-1.5 border-b border-[#edf1f6] last:border-0">
-                            <div>
-                              <p className="text-[11px] font-bold text-[#0b1c30]">{p.name}</p>
+                        {filteredTopPeople.slice(0, showAllPeople ? undefined : 5).map((p: any) => {
+                          // Attendance is supplementary info, not the card's
+                          // sort criterion (chốt 2026-09-15) — hours/meetings
+                          // above are unchanged; undefined (no summary entry
+                          // at all) means never recorded, which must read
+                          // differently from a real recorded zero.
+                          const att = p.memberId != null ? attendanceByMemberId.get(p.memberId) : undefined;
+                          return (
+                            <div key={p.name} className="py-1.5 border-b border-[#edf1f6] last:border-0">
+                              <div className="flex items-center justify-between">
+                                <button
+                                  type="button"
+                                  onClick={() => p.memberId != null && setAttendanceDrawerMember({ member_id: p.memberId, display_name: p.name, hours: p.hours, meetings: p.meetings })}
+                                  disabled={p.memberId == null}
+                                  className={`text-[11px] font-bold text-left ${p.memberId != null ? 'text-[#0b1c30] hover:text-[#6366f1] hover:underline' : 'text-[#0b1c30] cursor-default'}`}
+                                >
+                                  {p.name}
+                                </button>
+                                <span className={`text-xs font-extrabold ${p.hours > 8 ? 'text-red-600' : p.hours > 6 ? 'text-amber-600' : 'text-[#0b1c30]'}`}>{p.hours}h</span>
+                              </div>
                               <p className="text-[10px] text-[#8492a6]">{p.meetings} cuộc họp</p>
+                              {att ? (
+                                <p className="text-[10px] mt-0.5 flex items-center gap-2.5">
+                                  <span className="text-amber-600 font-semibold">🟠 Trễ {att.late_count} cuộc · {att.late_minutes_total} phút</span>
+                                  <span className="text-red-600 font-semibold">🔴 Vắng {att.no_show_count} cuộc</span>
+                                </p>
+                              ) : (
+                                <p className="text-[10px] mt-0.5 text-[#c2c9d6] italic">Chưa có dữ liệu tham gia</p>
+                              )}
                             </div>
-                            <span className={`text-xs font-extrabold ${p.hours > 8 ? 'text-red-600' : p.hours > 6 ? 'text-amber-600' : 'text-[#0b1c30]'}`}>{p.hours}h</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       {filteredTopPeople.length > 5 && (
                         <button
@@ -1186,14 +1262,23 @@ function MeetingsPageContent() {
       </div>
 
       {/* Modals */}
-      {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} />}
+      {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} workspaceCode={workspaceCode} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
+      <MeetingGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
       <MeetingDetailModal
         isOpen={isDetailOpen}
         onClose={handleCloseDetail}
         meeting={detailMeeting}
         onEdit={detailMeeting?.can_manage ? handleOpenEditFromDetail : undefined}
         onDelete={detailMeeting?.can_manage && isMeetingDeletable(detailMeeting?.status) ? (m => { handleCloseDetail(); setDeleteConfirmId(String(m.id)); }) : undefined}
+      />
+
+      {/* "Nhân sự & Tham gia" detail drawer (chốt 2026-09-15) */}
+      <MemberAttendanceDrawer
+        isOpen={!!attendanceDrawerMember}
+        onClose={() => setAttendanceDrawerMember(null)}
+        member={attendanceDrawerMember}
+        summary={attendanceDrawerMember?.member_id != null ? attendanceByMemberId.get(attendanceDrawerMember.member_id) : undefined}
       />
 
       {/* Delete Confirm Modal */}

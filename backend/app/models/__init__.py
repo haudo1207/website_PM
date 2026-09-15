@@ -10,6 +10,7 @@ from .ai_task_inbox import AITaskInbox, ChatSyncLog
 from .project_template import ProjectTemplate, ProjectTemplatePhase, ProjectTemplateTaskGroup, ProjectTemplateTask
 from .meeting import Meeting, MeetingMember
 from .meeting_feedback import MeetingFeedback
+from .meeting_attendance import MeetingAttendance
 from .meeting_project import MeetingProject
 from .document import ProjectDocument
 from .project_feature import ProjectFeature, ProjectFeatureLog

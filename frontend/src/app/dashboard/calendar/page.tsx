@@ -15,7 +15,7 @@ import { getCalendarTasks, getCalendarMeetings, updateTask, CalendarTask, Calend
 import CalendarToolbar, { EventTypeFilter } from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import { TaskBlockContent } from '@/components/calendar/TaskBlock';
-import TaskDetailDrawer from '@/components/calendar/TaskDetailDrawer';
+import TaskEditDrawer from '@/components/tasks/TaskEditDrawer';
 import QuickCreateDrawer, { QuickCreatePrefill } from '@/components/calendar/QuickCreateDrawer';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import {
@@ -265,7 +265,12 @@ export default function CalendarPage() {
         )}
       </DragOverlay>
 
-      <TaskDetailDrawer task={detailTask} onClose={() => setDetailTask(null)} onToggleDone={handleToggleDone} />
+      {/* Click Task → edit directly, no separate Calendar-only edit UI — same
+          fields/PATCH endpoint the Tasks tab drawer uses (2026-09 "Click
+          Task → cho phép chỉnh sửa luôn" chốt). Save invalidates
+          calendar-tasks itself; refetch() here is just the immediate,
+          same-page feedback on top of that. */}
+      <TaskEditDrawer task={detailTask} onClose={() => setDetailTask(null)} onSaved={() => refetch()} />
 
       {/* Reuses the EXISTING Meeting Detail as-is — no separate Calendar-only
           Meeting Detail (see "Click Meeting → mở Meeting Detail hiện có").
