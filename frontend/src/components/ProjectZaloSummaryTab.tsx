@@ -7,10 +7,10 @@ import {
   getProjectZaloSummary, deleteZaloSummary, unlinkZaloConversationFromProject,
   getZaloSummaryConfig, updateZaloSummaryConfig,
   getZaloAvailableGroups, trackZaloGroup, linkZaloConversationToProject,
-  getZaloConversationMessages,
-  ZaloConversationSummary, ZaloProjectGroupSummary, ZaloAvailableGroup, ZaloMessage,
+  ZaloConversationSummary, ZaloProjectGroupSummary, ZaloAvailableGroup,
 } from '@/lib/api';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
+import ZaloConversationPane from '@/components/zalo/ZaloConversationPane';
 import { isAdmin } from '@/lib/auth';
 
 // Picks the ONE Zalo group for this project — a project only ever needs a
@@ -91,37 +91,6 @@ function GroupPicker({ projectId, onLinked }: { projectId: number; onLinked: () 
   );
 }
 
-// Read-only raw message history for the project's linked Zalo group — the
-// "Log chat" sub-tab, sitting alongside the AI daily-summary sub-tab below.
-function GroupChatLog({ conversationId }: { conversationId: number }) {
-  const { data: messages = [], isLoading } = useQuery({
-    queryKey: ['zalo-conversation-messages', conversationId],
-    queryFn: () => getZaloConversationMessages(conversationId),
-    refetchInterval: 15_000,
-  });
-
-  if (isLoading) {
-    return <div className="text-sm text-slate-400 text-center py-16">Đang tải…</div>;
-  }
-
-  return (
-    <div className="bg-[#FAFBFD] border border-slate-200 rounded-xl p-4 space-y-2.5 max-h-[560px] overflow-y-auto">
-      {messages.length === 0 && (
-        <div className="text-sm text-slate-400 text-center py-10">Chưa có tin nhắn.</div>
-      )}
-      {messages.map((m: ZaloMessage) => (
-        <div key={m.id} className={`flex ${m.is_outgoing ? 'justify-end' : 'justify-start'}`}>
-          <div className={`max-w-[70%] rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${m.is_outgoing ? 'bg-[#0058be] text-white rounded-br-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-sm'}`}>
-            {!m.is_outgoing && m.sender_name && (
-              <div className="text-[11px] font-bold opacity-70 mb-0.5">{m.sender_name}</div>
-            )}
-            <span className="whitespace-pre-wrap">{m.content}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 // Vietnam has no DST, so a fixed Asia/Ho_Chi_Minh format is exact for
 // bucketing a summary's period_end into "which calendar day is this" —
@@ -403,7 +372,7 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
 
           <div className="p-4">
             {subTab === 'log' ? (
-              <GroupChatLog conversationId={g.conversation_id} />
+              <ZaloConversationPane conversationId={g.conversation_id} />
             ) : (
             <GroupSummaryDays
               summaries={g.summaries}

@@ -11466,7 +11466,14 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
       const openBelow = spaceBelow >= 120 || spaceBelow >= spaceAbove;
       setPortalPos(openBelow
         ? { top: rect.bottom + GAP, left: rect.left, width: rect.width, maxHeight: Math.max(120, spaceBelow) }
-        : { top: PAD, left: rect.left, width: rect.width, maxHeight: Math.max(120, spaceAbove) });
+        // Initial guess only — a row near the BOTTOM of the viewport (the
+        // common case this branch is for) has very little room below, so
+        // opening above is right, but pinning `top` at the very top of the
+        // screen here (like this used to) made even a short 2-item menu
+        // render up near the page header instead of hugging the anchor —
+        // the correction effect below fixes `top` using the menu's real
+        // height as soon as it's mounted.
+        : { top: Math.max(PAD, rect.top - Math.min(spaceAbove, 300) - GAP), left: rect.left, width: rect.width, maxHeight: Math.max(120, spaceAbove) });
     };
     reposition();
     window.addEventListener('scroll', reposition, true);
@@ -11476,6 +11483,25 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
       window.removeEventListener('resize', reposition);
     };
   }, [isOpen]);
+
+  // Corrects `top` for the "open above" case using the menu's ACTUAL
+  // rendered height instead of the guess above, so it hugs the anchor
+  // (bottom edge right above the field) instead of sitting whereever the
+  // guess landed. Below-the-anchor placement never needs this — its `top`
+  // is already exact (rect.bottom + GAP) regardless of height.
+  useLayoutEffect(() => {
+    if (!isOpen || !portalPos || !anchorRef.current || !menuRef.current) return;
+    const anchorRect = anchorRef.current.getBoundingClientRect();
+    const isAboveAnchor = portalPos.top < anchorRect.top;
+    if (!isAboveAnchor) return;
+    const menuHeight = menuRef.current.getBoundingClientRect().height;
+    const GAP = 4;
+    const PAD = 8;
+    const correctedTop = Math.max(PAD, anchorRect.top - menuHeight - GAP);
+    if (Math.abs(correctedTop - portalPos.top) > 0.5) {
+      setPortalPos(prev => (prev ? { ...prev, top: correctedTop } : prev));
+    }
+  }, [isOpen, portalPos]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -11661,7 +11687,11 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
       const openBelow = spaceBelow >= 200 || spaceBelow >= spaceAbove;
       setPortalPos(openBelow
         ? { top: rect.bottom + GAP, left: rect.left, width: rect.width, maxHeight: Math.max(160, spaceBelow) }
-        : { top: PAD, left: rect.left, width: rect.width, maxHeight: Math.max(160, spaceAbove) });
+        // Initial guess only — corrected below once the panel's real height
+        // is known, so a row near the bottom of the viewport doesn't get its
+        // panel pinned up near the page header regardless of how tall the
+        // panel's actual content turns out to be.
+        : { top: Math.max(PAD, rect.top - Math.min(spaceAbove, 416) - GAP), left: rect.left, width: rect.width, maxHeight: Math.max(160, spaceAbove) });
     };
     reposition();
     window.addEventListener('scroll', reposition, true);
@@ -11671,6 +11701,23 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
       window.removeEventListener('resize', reposition);
     };
   }, [isOpen]);
+
+  // Corrects `top` for the "open above" case using the panel's ACTUAL
+  // rendered height so it hugs the anchor (bottom edge right above the
+  // field) instead of sitting wherever the initial guess landed.
+  useLayoutEffect(() => {
+    if (!isOpen || !portalPos || !anchorRef.current || !menuRef.current) return;
+    const anchorRect = anchorRef.current.getBoundingClientRect();
+    const isAboveAnchor = portalPos.top < anchorRect.top;
+    if (!isAboveAnchor) return;
+    const menuHeight = menuRef.current.getBoundingClientRect().height;
+    const GAP = 4;
+    const PAD = 8;
+    const correctedTop = Math.max(PAD, anchorRect.top - menuHeight - GAP);
+    if (Math.abs(correctedTop - portalPos.top) > 0.5) {
+      setPortalPos(prev => (prev ? { ...prev, top: correctedTop } : prev));
+    }
+  }, [isOpen, portalPos]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
