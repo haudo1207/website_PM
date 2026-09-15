@@ -1016,6 +1016,96 @@ def list_available_hosts(
     return {"hosts": hosts, "auto_selected_workspace_id": auto_selected_workspace_id}
 
 
+# ─── ATTENDANCE SUMMARY (chốt 2026-09-15, "Nhân sự & Tham gia" card) ──
+@router.get("/attendance-summary")
+def get_meeting_attendance_summary(
+    project: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    workspace: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Per-member attendance aggregate for the Meetings page's "Nhân sự &
+    Tham gia" card (chốt 2026-09-15). Only counts Meeting rows that are DONE
+    AND have at least one recorded MeetingAttendance row — never inferred
+    from Google Calendar responseStatus. `project`/`from_date`/`to_date`
+    mirror the page's EXISTING filters (chốt: reuse them as-is, no new
+    time-range preset UI) — `project` is a name (this page's project filter
+    has no id to send, unlike GET /meetings' project_id), resolved the same
+    way create_meeting's legacy project-name path does."""
+    from ..models.meeting_project import MeetingProject
+    q = (
+        db.query(MeetingAttendance, Meeting, Member)
+        .join(Meeting, MeetingAttendance.meeting_id == Meeting.id)
+        .join(Member, MeetingAttendance.member_id == Member.id)
+        .filter(Meeting.status == "DONE", Meeting.deleted_at.is_(None))
+    )
+    if user_scope(current_user) != ALL_SCOPE:
+        allowed_projects = project_query_for_user(db, current_user).with_entities(Project.id)
+        meetings_via_extra = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id.in_(allowed_projects))
+        q = q.filter(or_(
+            Meeting.project_id.is_(None),
+            Meeting.project_id.in_(allowed_projects),
+            Meeting.id.in_(meetings_via_extra),
+        ))
+    if workspace and workspace.lower() != ALL_SCOPE and user_scope(current_user) == ALL_SCOPE:
+        ws_projects = db.query(Project.id).filter(or_(*project_belongs_to_workspace(db, {workspace})))
+        meetings_via_extra_ws = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id.in_(ws_projects))
+        q = q.filter(or_(
+            Meeting.project_id.is_(None),
+            Meeting.project_id.in_(ws_projects),
+            Meeting.id.in_(meetings_via_extra_ws),
+        ))
+    if project and project != "All":
+        proj = db.query(Project).filter(Project.name.ilike(project.strip())).first()
+        if not proj:
+            return {"success": True, "data": []}
+        meetings_via_extra_pid = db.query(MeetingProject.meeting_id).filter(MeetingProject.project_id == proj.id)
+        q = q.filter(or_(Meeting.project_id == proj.id, Meeting.id.in_(meetings_via_extra_pid)))
+    if from_date:
+        fd = parse_date(from_date)
+        if fd:
+            q = q.filter(Meeting.meeting_date >= fd)
+    if to_date:
+        td = parse_date(to_date)
+        if td:
+            q = q.filter(Meeting.meeting_date <= td)
+
+    summary: dict = {}
+    for att, m, member in q.all():
+        s = summary.setdefault(member.id, {
+            "member_id": member.id,
+            "display_name": member.display_name,
+            "on_time_count": 0,
+            "late_count": 0,
+            "late_minutes_total": 0,
+            "no_show_count": 0,
+            "history": [],
+        })
+        if att.status == "ON_TIME":
+            s["on_time_count"] += 1
+        elif att.status == "LATE":
+            s["late_count"] += 1
+            s["late_minutes_total"] += att.late_minutes or 0
+        elif att.status == "NO_SHOW":
+            s["no_show_count"] += 1
+        s["history"].append({
+            "meeting_id": m.id,
+            "title": m.title,
+            "date": m.meeting_date.isoformat() if m.meeting_date else None,
+            "status": att.status,
+            "late_minutes": att.late_minutes,
+        })
+
+    result = list(summary.values())
+    for s in result:
+        s["total_recorded"] = s["on_time_count"] + s["late_count"] + s["no_show_count"]
+        s["history"].sort(key=lambda h: h["date"] or "", reverse=True)
+    result.sort(key=lambda s: s["total_recorded"], reverse=True)
+    return {"success": True, "data": result}
+
+
 # ─── GET ONE ─────────────────────────────────────────────
 @router.get("/{id}")
 def get_meeting(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):

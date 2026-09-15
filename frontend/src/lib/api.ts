@@ -659,6 +659,11 @@ export const manualEndMeeting = (id: number) => api.post(`/meetings/${id}/manual
 export const getMeetingAttendance = (id: number) => api.get(`/meetings/${id}/attendance`).then(r => r.data);
 export const saveMeetingAttendance = (id: number, records: { member_id: number; status: 'ON_TIME' | 'LATE' | 'NO_SHOW'; joined_at?: string | null }[]) =>
   api.post(`/meetings/${id}/attendance`, { records }).then(r => r.data);
+// "Nhân sự & Tham gia" card (chốt 2026-09-15) — per-member aggregate across
+// DONE + recorded meetings only. `project` is a NAME (this page's project
+// filter has no id), `from_date`/`to_date` mirror the existing month filter.
+export const getMeetingAttendanceSummary = (params?: { project?: string; from_date?: string; to_date?: string; workspace?: string }) =>
+  api.get('/meetings/attendance-summary', { params }).then(r => r.data);
 // Overlap rule (chốt 2026-09-13): organizer is the source of truth, not
 // participants — this calls the EXACT SAME check create/update/retry-link
 // enforce server-side, so the frontend never shows "rảnh"/"trùng" out of
