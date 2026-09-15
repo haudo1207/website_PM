@@ -7,6 +7,7 @@ import {
   getProjects, getPhases, getTaskGroups, getProjectMembers, getCategories, getMe, createTask, getApiErrorMessage,
   getCalendarProjectColors, setCalendarProjectColor, getPriorities, getStatuses, createPhase, createTaskGroup,
 } from '@/lib/api';
+import { LinkChipsEditor, appendLinkValue } from '@/components/LinkChipsEditor';
 import { toApiDate, toApiDateTime, parseApiDate, combineDateAndTime } from './dateUtils';
 import { PROJECT_COLOR_PRESETS, DEFAULT_PROJECT_COLOR, isValidHexColor } from './colorPalette';
 
@@ -25,14 +26,14 @@ export interface QuickCreatePrefill {
   minutes: number;
 }
 
-// Note → Link auto-fill (§ "Chốt flow Link + Note"): only suggests a value
-// for an EMPTY Link field, never overwrites something the user already
-// typed there themselves. Link is still its own real field on submit —
-// this just saves a copy-paste step when the URL is already in the Note.
-const URL_PATTERN = /https?:\/\/\S+/;
-function extractFirstUrl(text: string): string | null {
-  const match = text.match(URL_PATTERN);
-  return match ? match[0] : null;
+// Note → Link auto-fill: every URL found in Note gets added as its own
+// chip, except ones already present in Link — never duplicates, never
+// overwrites/removes a link the user added themselves (manually or from an
+// earlier Note edit). Link is still its own real field (Task.ticket_id) on
+// submit, just kept in sync with whatever URLs Note currently contains.
+const URL_PATTERN = /https?:\/\/\S+/g;
+function extractUrls(text: string): string[] {
+  return text.match(URL_PATTERN) || [];
 }
 
 const labelCls = 'text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider block mb-1';
@@ -321,7 +322,8 @@ export default function QuickCreateDrawer({
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [skillGroupId, setSkillGroupId] = useState<number | ''>(''); // -> skill_solution_id
   const [skillId, setSkillId] = useState<number | ''>(''); // -> skill_vendor_id
-  const [link, setLink] = useState('');
+  const [link, setLink] = useState(''); // newline-joined, same shape as Task.ticket_id
+  const [linkDraft, setLinkDraft] = useState(''); // "paste link and press Enter" input
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -366,7 +368,7 @@ export default function QuickCreateDrawer({
     if (!isOpen) return;
     setProjectId(''); setPhaseId(''); setTaskGroupId('');
     setDetail(''); setAssignedId(''); setSupportId(''); setPriority(''); setStatus('');
-    setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId(''); setLink(''); setNote('');
+    setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId(''); setLink(''); setLinkDraft(''); setNote('');
     if (prefill) {
       setWtDate(toApiDate(prefill.day));
       setWtHour(String(prefill.hours).padStart(2, '0'));
@@ -680,18 +682,33 @@ export default function QuickCreateDrawer({
               </div>
             </div>
 
-            {/* Nhóm: Link & Note — đặt cuối form. Link ghi vào Task.ticket_id
-                (field Link thật của Task, cùng field Tasks tab / Task Detail
-                đang dùng) — không phải field riêng cho Quick Create. Note
-                lưu thẳng vào Task.notes, §11. */}
+            {/* Nhóm: Link & Note — đặt cuối form. Link dùng chung
+                LinkChipsEditor với cột LINK trên bảng và Task Detail drawer,
+                ghi vào Task.ticket_id (field Link thật của Task) — không
+                phải field riêng cho Quick Create. Note lưu thẳng vào
+                Task.notes, §11. */}
             <div className="space-y-3">
               <h4 className="text-[10.5px] font-extrabold text-[#0058be] uppercase tracking-wider">🔗 Link & Note</h4>
               <div>
                 <label className={labelCls}>Link</label>
-                <input
-                  className={inputCls}
-                  value={link} onChange={e => setLink(e.target.value)}
-                  placeholder="https://docs.google.com/..."
+                <LinkChipsEditor
+                  value={link}
+                  onChange={setLink}
+                  inputValue={linkDraft}
+                  onInputChange={setLinkDraft}
+                  onInputKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      setLink(prev => appendLinkValue(prev, linkDraft));
+                      setLinkDraft('');
+                    }
+                  }}
+                  onInputBlur={() => {
+                    if (linkDraft.trim()) {
+                      setLink(prev => appendLinkValue(prev, linkDraft));
+                      setLinkDraft('');
+                    }
+                  }}
                 />
               </div>
               <div>
@@ -702,12 +719,16 @@ export default function QuickCreateDrawer({
                   onChange={e => {
                     const v = e.target.value;
                     setNote(v);
-                    // Auto-fill Link from the first URL found in Note — only
-                    // when Link is still empty, never overwriting a value
-                    // the user typed there themselves.
-                    if (!link.trim()) {
-                      const found = extractFirstUrl(v);
-                      if (found) setLink(found);
+                    // Auto-add every URL found in Note as its own Link chip
+                    // — skips ones already in Link, never removes/overwrites
+                    // a link the user added themselves.
+                    const found = extractUrls(v);
+                    if (found.length) {
+                      setLink(prev => {
+                        const existing = new Set((prev || '').split('\n').filter(Boolean));
+                        const toAdd = found.filter(u => !existing.has(u));
+                        return toAdd.reduce((acc, u) => appendLinkValue(acc, u), prev);
+                      });
                     }
                   }}
                   placeholder="Nhập ghi chú cho Task..."
