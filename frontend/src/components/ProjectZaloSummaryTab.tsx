@@ -2,14 +2,99 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle, Trash2, Unlink, Clock } from 'lucide-react';
+import { MessageCircle, Trash2, Unlink, Clock, List } from 'lucide-react';
 import {
   getProjectZaloSummary, deleteZaloSummary, unlinkZaloConversationFromProject,
   getZaloSummaryConfig, updateZaloSummaryConfig,
-  ZaloConversationSummary, ZaloProjectGroupSummary,
+  getZaloAvailableGroups, trackZaloGroup, linkZaloConversationToProject,
+  ZaloConversationSummary, ZaloProjectGroupSummary, ZaloAvailableGroup,
 } from '@/lib/api';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
+import ZaloConversationPane from '@/components/zalo/ZaloConversationPane';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import { isAdmin } from '@/lib/auth';
+
+// Picks the ONE Zalo group for this project — a project only ever needs a
+// single group, so this is a plain dropdown + "Chọn" button instead of the
+// full conversation browser on the /zalo-account page (that page is now
+// just for connecting the Zalo session itself; picking which group belongs
+// to which project happens here, right where the log/summary are read).
+function GroupPicker({ projectId, onLinked }: { projectId: number; onLinked: () => void }) {
+  const { data: groups, isLoading, error } = useQuery({
+    queryKey: ['zalo-available-groups'],
+    queryFn: getZaloAvailableGroups,
+    retry: false,
+  });
+  const [threadId, setThreadId] = useState('');
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState('');
+
+  const handleLink = async () => {
+    const group = (groups || []).find(g => g.thread_id === threadId);
+    if (!group) return;
+    setLinking(true);
+    setLinkError('');
+    try {
+      const tracked = await trackZaloGroup(group.thread_id, group.name);
+      await linkZaloConversationToProject(tracked.conversation_id, projectId);
+      onLinked();
+    } catch (err: any) {
+      setLinkError(err.response?.data?.detail || 'Lỗi gán nhóm vào dự án.');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
+        <MessageCircle className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+        <p className="text-sm font-semibold text-slate-600">Bạn chưa kết nối tài khoản Zalo.</p>
+        <p className="text-xs text-slate-400 mt-1.5">
+          Vào <a href="/zalo-account" className="text-[#0058be] font-semibold hover:underline">Tài khoản Zalo giao task</a> để kết nối trước, rồi quay lại đây chọn nhóm.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-6">
+      <div className="flex items-center gap-2 mb-1">
+        <MessageCircle className="w-5 h-5 text-[#0058be]" />
+        <p className="text-sm font-bold text-slate-700">Chọn nhóm Zalo cho dự án này</p>
+      </div>
+      <p className="text-xs text-slate-400 mb-4">Mỗi dự án chỉ gán 1 nhóm — chọn xong là xong, không cần vào trang Zalo riêng nữa.</p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex-1 min-w-[220px]">
+          <SearchableSelect
+            label="nhóm Zalo"
+            icon=""
+            options={(groups || []).map((g: ZaloAvailableGroup) => ({
+              id: g.thread_id,
+              name: g.name,
+              badge: g.already_tracked ? 'Đã theo dõi' : undefined,
+            }))}
+            value={threadId}
+            onChange={(val: any) => setThreadId(val || '')}
+            placeholder={isLoading ? 'Đang tải danh sách nhóm…' : 'Tìm nhóm Zalo...'}
+            disabled={isLoading}
+            className="w-full text-sm"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={handleLink}
+          disabled={!threadId || linking}
+          className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-[#0058be] hover:bg-[#0058be]/90 disabled:opacity-50 transition-colors"
+        >
+          {linking ? 'Đang gán…' : 'Chọn'}
+        </button>
+      </div>
+      {linkError && <p className="text-xs text-red-600 mt-2 font-semibold">{linkError}</p>}
+    </div>
+  );
+}
+
 
 // Vietnam has no DST, so a fixed Asia/Ho_Chi_Minh format is exact for
 // bucketing a summary's period_end into "which calendar day is this" —
@@ -127,6 +212,9 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
     queryKey,
     queryFn: () => getProjectZaloSummary(projectId),
   });
+  // "Log chat" (raw messages) vs "Tóm tắt" (AI daily digest, the original
+  // view this tab always had) — two sub-tabs instead of two separate pages.
+  const [subTab, setSubTab] = useState<'log' | 'summary'>('log');
 
   const handleDeleted = (conversationId: number, summaryId: number) => {
     queryClient.setQueryData<ZaloProjectGroupSummary[]>(queryKey, (old) =>
@@ -234,18 +322,14 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
     return (
       <div className="space-y-5">
         {dailyAtBar}
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-          <MessageCircle className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-          <p className="text-sm font-semibold text-slate-600">Chưa có nhóm Zalo nào gán vào dự án này.</p>
-          <p className="text-xs text-slate-400 mt-1.5">
-            Vào <a href="/zalo-account" className="text-[#0058be] font-semibold hover:underline">Tài khoản Zalo giao task</a> để
-            chọn 1 hội thoại nhóm và gán vào dự án này.
-          </p>
-        </div>
+        <GroupPicker projectId={projectId} onLinked={() => queryClient.invalidateQueries({ queryKey })} />
       </div>
     );
   }
 
+  // A project only ever has ONE Zalo group (see GroupPicker) — the .map
+  // below is kept only so an already-linked-twice edge case (from before
+  // this was enforced) still renders instead of silently dropping data.
   return (
     <div className="space-y-5">
       {dailyAtBar}
@@ -273,13 +357,34 @@ export default function ProjectZaloSummaryTab({ projectId }: { projectId: number
             </div>
           </div>
 
+          <div className="px-4 pt-3 flex items-center gap-1 border-b border-slate-100">
+            <button
+              type="button"
+              onClick={() => setSubTab('log')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-t-lg border-b-2 transition-colors flex items-center gap-1.5 ${subTab === 'log' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+            >
+              <MessageCircle size={13} /> Log chat
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubTab('summary')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-t-lg border-b-2 transition-colors flex items-center gap-1.5 ${subTab === 'summary' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+            >
+              <List size={13} /> Tóm tắt
+            </button>
+          </div>
+
           <div className="p-4">
+            {subTab === 'log' ? (
+              <ZaloConversationPane conversationId={g.conversation_id} />
+            ) : (
             <GroupSummaryDays
               summaries={g.summaries}
               onDeleted={(summaryId) => handleDeleted(g.conversation_id, summaryId)}
               onUpdated={(updated) => handleSummaryUpdated(g.conversation_id, updated)}
               projectId={projectId}
             />
+            )}
           </div>
         </div>
       ))}
