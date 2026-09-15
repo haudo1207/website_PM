@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting, getMeetingAttendance, saveMeetingAttendance } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
@@ -48,7 +48,7 @@ export default function MeetingDetailModal({
 }: MeetingDetailModalProps) {
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'tasks' | 'transcript' | 'score'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'attendance' | 'summary' | 'tasks' | 'transcript' | 'score'>('overview');
   const [isRecalculatingScore, setIsRecalculatingScore] = useState(false);
   const [localScore, setLocalScore] = useState<any>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
@@ -65,6 +65,14 @@ export default function MeetingDetailModal({
   const [localStatus, setLocalStatus] = useState<string | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isEndingMeeting, setIsEndingMeeting] = useState(false);
+
+  // Manual Attendance Phase 1 (chốt 2026-09-15)
+  const [attendanceRecorded, setAttendanceRecorded] = useState(false);
+  const [attendanceRows, setAttendanceRows] = useState<any[]>([]);
+  const [isLoadingAttendance, setIsLoadingAttendance] = useState(false);
+  const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+  const [attendanceDraft, setAttendanceDraft] = useState<Record<number, { status: string; joined_at: string }>>({});
+  const [isSavingAttendance, setIsSavingAttendance] = useState(false);
 
   // Assign Project Modal State
   const [isAssignProjectOpen, setIsAssignProjectOpen] = useState(false);
@@ -179,6 +187,22 @@ export default function MeetingDetailModal({
     setLocalStatus(null);
   }, [meeting?.id]);
 
+  // Manual Attendance Phase 1 (chốt 2026-09-15): recorded=false from the
+  // backend (no MeetingAttendance rows yet) is what drives the empty-state
+  // prompt vs the stats+table view — not the meeting's own status, since a
+  // DONE meeting can sit unrecorded indefinitely until someone acts on it.
+  useEffect(() => {
+    if (!meeting?.id) return;
+    let cancelled = false;
+    setIsLoadingAttendance(true);
+    getMeetingAttendance(meeting.id).then((res: any) => {
+      if (cancelled) return;
+      setAttendanceRecorded(!!res?.recorded);
+      setAttendanceRows(Array.isArray(res?.data) ? res.data : []);
+    }).catch(() => {}).finally(() => { if (!cancelled) setIsLoadingAttendance(false); });
+    return () => { cancelled = true; };
+  }, [meeting?.id]);
+
   if (!isOpen || !meeting) return null;
 
   const score = localScore || meeting;
@@ -290,6 +314,59 @@ export default function MeetingDetailModal({
   const summaryWeekLabel = getIsoWeekNumber(meeting.date || meeting.meeting_date);
   const isAutoCreated: boolean = Boolean(meeting.is_auto_created ?? meeting.ai_summary?.is_auto_created);
   const membersList: any[] = localMembers;
+
+  // Manual Attendance Phase 1 (chốt 2026-09-15): only real MeetingMember rows
+  // (member_id set) can be tracked — free-text custom_members guests have no
+  // member_id to attach a MeetingAttendance row to.
+  const attendanceMembers: any[] = membersList.filter((mb: any) => mb.member_id != null);
+
+  function computeLatePreview(joinedAt: string, startTime: string): string {
+    if (!joinedAt || !startTime) return '';
+    const [jh, jm] = joinedAt.split(':').map(Number);
+    const [sh, sm] = startTime.split(':').map(Number);
+    if ([jh, jm, sh, sm].some(n => Number.isNaN(n))) return '';
+    const diff = (jh * 60 + jm) - (sh * 60 + sm);
+    return diff > 0 ? `Trễ ${diff} phút` : diff === 0 ? 'Đúng giờ' : '';
+  }
+
+  const handleOpenAttendanceModal = () => {
+    const draft: Record<number, { status: string; joined_at: string }> = {};
+    attendanceMembers.forEach((mb: any) => {
+      const existing = attendanceRows.find((a: any) => a.member_id === mb.member_id);
+      draft[mb.member_id] = {
+        status: existing?.status || 'ON_TIME',
+        joined_at: existing?.joined_at || '',
+      };
+    });
+    setAttendanceDraft(draft);
+    setShowAttendanceModal(true);
+  };
+
+  const handleSaveAttendance = async () => {
+    if (!meeting?.id) return;
+    setIsSavingAttendance(true);
+    try {
+      const records = attendanceMembers.map((mb: any) => {
+        const d = attendanceDraft[mb.member_id] || { status: 'ON_TIME', joined_at: '' };
+        return {
+          member_id: mb.member_id as number,
+          status: d.status as 'ON_TIME' | 'LATE' | 'NO_SHOW',
+          joined_at: d.status === 'LATE' ? (d.joined_at || null) : null,
+        };
+      });
+      const res = await saveMeetingAttendance(meeting.id, records);
+      if (res?.success) {
+        setAttendanceRows(Array.isArray(res.data) ? res.data : []);
+        setAttendanceRecorded(true);
+        setShowAttendanceModal(false);
+      }
+    } catch (e) {
+      console.error('Failed to save meeting attendance', e);
+    } finally {
+      setIsSavingAttendance(false);
+    }
+  };
+
   const rawTranscript = meeting.transcript || meeting.ai_summary?.transcript || '';
 
   const isN8nSource = meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata;
@@ -730,6 +807,12 @@ export default function MeetingDetailModal({
               Tổng quan
             </button>
             <button
+              onClick={() => setActiveTab('attendance')}
+              className={`pb-2 border-b-2 transition-colors ${activeTab === 'attendance' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
+            >
+              Tham gia
+            </button>
+            <button
               onClick={() => setActiveTab('summary')}
               className={`pb-2 border-b-2 transition-colors ${activeTab === 'summary' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent hover:text-[#0b1c30]'}`}
             >
@@ -932,133 +1015,163 @@ export default function MeetingDetailModal({
 
               </div>
 
-              {/* Right Column: AI TÓM TẮT Widget (5 Cols ~ 40%) */}
+              {/* Right Column: NỘI DUNG CUỘC HỌP Widget (5 Cols ~ 40%) */}
               <div className="lg:col-span-5">
                 <div className="bg-white rounded-2xl p-5 border border-[#e0e7ff] shadow-sm space-y-4 sticky top-4">
-                  
+
                   {/* Widget Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-[#6366f1]">
-                      <Sparkles size={16} />
-                      <h3 className="text-xs font-extrabold uppercase tracking-wider">AI TÓM TẮT</h3>
-                    </div>
+                  <div className="flex items-center gap-1.5 text-[#6366f1]">
+                    <FileText size={16} />
+                    <h3 className="text-xs font-extrabold uppercase tracking-wider">Nội dung cuộc họp</h3>
                   </div>
 
-                  {/* Section 1: TÓM TẮT ĐIỀU HÀNH */}
+                  {/* Section 1: MỤC TIÊU & KẾT QUẢ MONG ĐỢI */}
                   <div className="space-y-1.5">
                     <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-[#6366f1]"></span>
-                      Tóm tắt điều hành
+                      Mục tiêu & kết quả mong đợi
                     </h4>
-                    {execSummary ? (
-                      <p className="text-xs text-[#334155] leading-relaxed font-normal bg-[#f8f6ff] p-3 rounded-xl border border-[#eee9fe]">
-                        {execSummary}
+                    {meeting.objective ? (
+                      <p className="text-xs text-[#334155] leading-relaxed font-normal bg-[#f8f6ff] p-3 rounded-xl border border-[#eee9fe] whitespace-pre-wrap">
+                        {meeting.objective}
                       </p>
                     ) : (
                       <p className="text-xs text-[#94a3b8] italic bg-slate-50 p-3 rounded-xl border border-slate-200">
-                        Chưa có bản tóm tắt. Bạn có thể nhấn 'Dán / Chạy AI' để tạo tóm tắt tự động.
+                        Chưa nhập mục tiêu cho cuộc họp này.
                       </p>
                     )}
                   </div>
 
-                  {/* Section 2b: VẤN ĐỀ & RỦI RO */}
-                  {issuesList.length > 0 && (
-                    <div className="space-y-1.5">
-                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                        Vấn đề & rủi ro
-                      </h4>
-                      <div className="space-y-1.5">
-                        {issuesList.map((it: string, idx: number) => (
-                          <div key={idx} className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-2">
-                            <span className="text-amber-600 shrink-0 leading-4">⚠</span>
-                            <span>{it}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Section 2c: BƯỚC TIẾP THEO */}
-                  {nextStepsList.length > 0 && (
-                    <div className="space-y-1.5">
-                      <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#6366f1]"></span>
-                        Bước tiếp theo
-                      </h4>
-                      <div className="space-y-1.5">
-                        {nextStepsList.map((it: string, idx: number) => (
-                          <div key={idx} className="flex items-start gap-2 text-xs text-[#4338ca] bg-[#f5f3ff] border border-[#eee9fe] rounded-lg px-2.5 py-2">
-                            <span className="shrink-0 leading-4">→</span>
-                            <span>{it}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Section 3: TASK ĐỀ XUẤT */}
-                  {tasksList.length > 0 && (
-                    <div className="space-y-1.5 pt-1 border-t border-slate-100">
-                      <div className="flex items-center justify-between pt-3">
-                        <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                          Task đề xuất
-                        </h4>
-                        <span className="px-2 py-0.5 bg-[#f1f5f9] text-[#475569] text-[10px] font-bold rounded-full">
-                          {tasksList.length} tasks
-                        </span>
-                      </div>
-
-                      <div className="space-y-2">
-                        {tasksList.map((t: any, idx: number) => {
-                          const priority = t.priority || 'Normal';
-                          const pColor = priority === 'High' || priority === 'Critical' 
-                            ? 'bg-red-500' 
-                            : priority === 'Medium' 
-                            ? 'bg-blue-500' 
-                            : 'bg-emerald-500';
-
-                          return (
-                            <div key={idx} className="p-3 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl flex items-center justify-between gap-3 text-xs">
-                              <div className="space-y-1 min-w-0 flex-1">
-                                <div className="flex items-center gap-2">
-                                  <span className={`w-2 h-2 rounded-full ${pColor}`}></span>
-                                  <span className="text-[11px] font-bold text-slate-600">{priority}</span>
-                                  <p className="font-bold text-[#0b1c30] truncate">{t.detail_task || t.title || t.name}</p>
-                                </div>
-                                <div className="flex items-center gap-3 text-[11px] text-[#64748b] font-medium pl-4">
-                                  <span>👤 {t.owner || t.assigned_name || creatorName}</span>
-                                  {t.deadline && <span>📅 {t.deadline}</span>}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <div className="pt-2">
-                        <button
-                          type="button"
-                          onClick={handlePushTasks}
-                          disabled={isPushing}
-                          className="w-full py-3 bg-[#6366f1] hover:bg-[#4f46e5] disabled:bg-slate-300 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-                        >
-                          {isPushing ? (
-                            <span>Đang push task...</span>
-                          ) : pushedSuccess ? (
-                            <span>✓ Đã push task thành công!</span>
-                          ) : (
-                            <span>📥 Đẩy task vào dự án</span>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {/* Section 2: AGENDA / VẤN ĐỀ CẦN XỬ LÝ */}
+                  <div className="space-y-1.5">
+                    <h4 className="text-[11px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                      Agenda / vấn đề cần xử lý
+                    </h4>
+                    {meeting.agenda ? (
+                      <p className="text-xs text-[#334155] leading-relaxed font-normal bg-[#f8fafc] p-3 rounded-xl border border-[#e2e8f0] whitespace-pre-wrap">
+                        {meeting.agenda}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-[#94a3b8] italic bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        Chưa nhập agenda cho cuộc họp này.
+                      </p>
+                    )}
+                  </div>
 
                 </div>
               </div>
 
+            </div>
+          )}
+
+          {/* TAB: THAM GIA (Manual Attendance Phase 1, chốt 2026-09-15) */}
+          {activeTab === 'attendance' && (
+            <div className="bg-white rounded-2xl p-6 border border-[#e2e8f0] shadow-2xs">
+              {statusUpper.includes('SẮP TỚI') ? (
+                <div className="text-center py-12">
+                  <Users size={40} className="mx-auto text-[#cbd5e1] mb-3" />
+                  <p className="text-sm font-bold text-[#0b1c30]">Cuộc họp chưa diễn ra</p>
+                  <p className="text-xs text-[#94a3b8] mt-1">Sẽ có thể ghi nhận tham gia sau khi cuộc họp kết thúc.</p>
+                </div>
+              ) : statusUpper.includes('DIỄN RA') ? (
+                <div className="text-center py-12">
+                  <Users size={40} className="mx-auto text-[#cbd5e1] mb-3" />
+                  <p className="text-sm font-bold text-[#0b1c30]">Cuộc họp chưa kết thúc</p>
+                  <p className="text-xs text-[#94a3b8] mt-1">Chưa thể ghi nhận tham gia khi cuộc họp đang diễn ra.</p>
+                </div>
+              ) : statusUpper.includes('HỦY') ? (
+                <div className="text-center py-12">
+                  <Users size={40} className="mx-auto text-[#cbd5e1] mb-3" />
+                  <p className="text-sm font-bold text-[#0b1c30]">Cuộc họp đã hủy</p>
+                  <p className="text-xs text-[#94a3b8] mt-1">Không áp dụng ghi nhận tham gia cho cuộc họp đã hủy.</p>
+                </div>
+              ) : isLoadingAttendance ? (
+                <p className="text-xs text-[#94a3b8] text-center py-12">Đang tải...</p>
+              ) : attendanceMembers.length === 0 ? (
+                <div className="text-center py-12">
+                  <p className="text-xs text-[#94a3b8]">Không có thành viên nào để ghi nhận tham gia.</p>
+                </div>
+              ) : !attendanceRecorded ? (
+                <div className="text-center py-12">
+                  <Users size={40} className="mx-auto text-[#6366f1] mb-3" />
+                  <p className="text-sm font-extrabold text-[#0b1c30] tracking-wide">GHI NHẬN THAM GIA</p>
+                  <p className="text-xs text-[#64748b] mt-2 max-w-sm mx-auto leading-relaxed">
+                    Cuộc họp đã kết thúc. Hãy ghi nhận tình trạng tham gia của các thành viên.
+                  </p>
+                  <p className="text-xs font-bold text-[#0b1c30] mt-3">{attendanceMembers.length} thành viên cần ghi nhận</p>
+                  {meeting?.can_manage && (
+                    <button
+                      onClick={handleOpenAttendanceModal}
+                      className="mt-4 px-5 py-2.5 bg-[#6366f1] text-white text-xs font-bold rounded-xl hover:bg-[#4f46e5] transition-colors"
+                    >
+                      Ghi nhận tham gia
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xs font-extrabold text-[#0b1c30] uppercase tracking-wider">Tình hình tham gia</h3>
+                    {meeting?.can_manage && (
+                      <button onClick={handleOpenAttendanceModal} className="text-[11px] font-bold text-[#6366f1] hover:underline">
+                        Chỉnh sửa
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-3 mb-5">
+                    <div className="p-3 bg-slate-50 rounded-xl text-center">
+                      <p className="text-lg font-extrabold text-[#0b1c30]">{attendanceRows.length}</p>
+                      <p className="text-[10px] text-[#64748b] mt-0.5">Thành viên</p>
+                    </div>
+                    <div className="p-3 bg-emerald-50 rounded-xl text-center">
+                      <p className="text-lg font-extrabold text-emerald-700">{attendanceRows.filter((a: any) => a.status === 'ON_TIME').length}</p>
+                      <p className="text-[10px] text-emerald-700 mt-0.5">Đúng giờ</p>
+                    </div>
+                    <div className="p-3 bg-amber-50 rounded-xl text-center">
+                      <p className="text-lg font-extrabold text-amber-700">{attendanceRows.filter((a: any) => a.status === 'LATE').length}</p>
+                      <p className="text-[10px] text-amber-700 mt-0.5">Tham gia trễ</p>
+                    </div>
+                    <div className="p-3 bg-red-50 rounded-xl text-center">
+                      <p className="text-lg font-extrabold text-red-700">{attendanceRows.filter((a: any) => a.status === 'NO_SHOW').length}</p>
+                      <p className="text-[10px] text-red-700 mt-0.5">Không tham gia</p>
+                    </div>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-[#94a3b8] border-b border-[#e2e8f0]">
+                        <th className="pb-2 font-bold">Thành viên</th>
+                        <th className="pb-2 font-bold">Thời gian tham gia</th>
+                        <th className="pb-2 font-bold">Trạng thái</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attendanceMembers.map((mb: any) => {
+                        const rec = attendanceRows.find((a: any) => a.member_id === mb.member_id);
+                        const name = mb.display_name || 'Thành viên';
+                        const label = rec?.status === 'ON_TIME' ? 'Đúng giờ'
+                          : rec?.status === 'LATE' ? (rec.late_minutes != null ? `Trễ ${rec.late_minutes} phút` : 'Tham gia trễ')
+                          : 'Không tham gia';
+                        const dotColor = rec?.status === 'ON_TIME' ? 'bg-emerald-500' : rec?.status === 'LATE' ? 'bg-amber-500' : 'bg-red-500';
+                        const textColor = rec?.status === 'ON_TIME' ? 'text-emerald-700' : rec?.status === 'LATE' ? 'text-amber-700' : 'text-red-700';
+                        const timeDisplay = rec?.status === 'NO_SHOW' ? '—' : (rec?.joined_at || (rec?.status === 'ON_TIME' ? (meeting.time || meeting.start_time || '—') : '—'));
+                        return (
+                          <tr key={mb.member_id} className="border-b border-[#f1f5f9] last:border-0">
+                            <td className="py-2.5 font-bold text-[#0b1c30]">{name}</td>
+                            <td className="py-2.5 text-[#64748b]">{timeDisplay}</td>
+                            <td className="py-2.5">
+                              <span className={`inline-flex items-center gap-1.5 font-bold ${textColor}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></span>
+                                {label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
@@ -1714,6 +1827,68 @@ export default function MeetingDetailModal({
                 className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors disabled:opacity-50"
               >
                 {isEndingMeeting ? 'Đang xử lý...' : 'Xác nhận đã kết thúc'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ghi nhận tham gia (Manual Attendance Phase 1, chốt 2026-09-15) */}
+      {showAttendanceModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <h3 className="text-sm font-extrabold text-[#0b1c30]">Ghi nhận tham gia</h3>
+              <button onClick={() => setShowAttendanceModal(false)} className="text-[#94a3b8] hover:text-[#0b1c30] text-xs font-bold p-1">✕</button>
+            </div>
+            <div className="space-y-3 overflow-y-auto flex-1">
+              {attendanceMembers.map((mb: any) => {
+                const draft = attendanceDraft[mb.member_id] || { status: 'ON_TIME', joined_at: '' };
+                const name = mb.display_name || 'Thành viên';
+                const latePreview = draft.status === 'LATE' ? computeLatePreview(draft.joined_at, meeting.time || meeting.start_time || '') : '';
+                return (
+                  <div key={mb.member_id} className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-bold text-[#0b1c30] flex-1 min-w-0 truncate">{name}</span>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <select
+                        value={draft.status}
+                        onChange={e => setAttendanceDraft(prev => ({ ...prev, [mb.member_id]: { ...draft, status: e.target.value } }))}
+                        className="px-2.5 py-1.5 border border-[#c2c6d6] rounded-lg text-[11px] font-bold bg-white focus:outline-none focus:border-[#6366f1]"
+                      >
+                        <option value="ON_TIME">🟢 Đúng giờ</option>
+                        <option value="LATE">🟠 Tham gia trễ</option>
+                        <option value="NO_SHOW">🔴 Không tham gia</option>
+                      </select>
+                      {draft.status === 'LATE' && (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="time"
+                            value={draft.joined_at}
+                            onChange={e => setAttendanceDraft(prev => ({ ...prev, [mb.member_id]: { ...draft, joined_at: e.target.value } }))}
+                            className="px-2 py-1 border border-[#c2c6d6] rounded-lg text-[11px]"
+                          />
+                          {latePreview && <span className="text-[10px] text-amber-700 font-bold whitespace-nowrap">{latePreview}</span>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 shrink-0">
+              <button
+                onClick={() => setShowAttendanceModal(false)}
+                disabled={isSavingAttendance}
+                className="px-4 py-2 text-xs font-bold text-[#64748b] bg-white border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveAttendance}
+                disabled={isSavingAttendance}
+                className="px-4 py-2 text-xs font-bold text-white bg-[#6366f1] hover:bg-[#4f46e5] rounded-xl transition-colors disabled:opacity-50"
+              >
+                {isSavingAttendance ? 'Đang lưu...' : 'Lưu ghi nhận'}
               </button>
             </div>
           </div>
