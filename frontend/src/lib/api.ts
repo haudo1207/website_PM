@@ -654,6 +654,11 @@ export const retryMeetingLink = (id: number, data?: { host_workspace_id?: number
 // is down and a human ended the call by hand on Google Meet — marks the
 // meeting DONE without waiting for the Bot's own POST /meeting-bot/ended.
 export const manualEndMeeting = (id: number) => api.post(`/meetings/${id}/manual-ended`).then(r => r.data);
+// Manual Attendance Phase 1 (chốt 2026-09-15): recorded only after a meeting
+// reaches DONE, never inferred from Calendar RSVP status.
+export const getMeetingAttendance = (id: number) => api.get(`/meetings/${id}/attendance`).then(r => r.data);
+export const saveMeetingAttendance = (id: number, records: { member_id: number; status: 'ON_TIME' | 'LATE' | 'NO_SHOW'; joined_at?: string | null }[]) =>
+  api.post(`/meetings/${id}/attendance`, { records }).then(r => r.data);
 // Overlap rule (chốt 2026-09-13): organizer is the source of truth, not
 // participants — this calls the EXACT SAME check create/update/retry-link
 // enforce server-side, so the frontend never shows "rảnh"/"trùng" out of

@@ -9,6 +9,7 @@ import re
 
 from ..database import get_db
 from ..models.meeting import Meeting, MeetingMember
+from ..models.meeting_attendance import MeetingAttendance
 from ..models.project import Project
 from ..models.member import Member
 from ..models.user import User
@@ -1609,6 +1610,112 @@ def manual_end_meeting(id: int, db: Session = Depends(get_db), current_user=Depe
     )
     db.commit()
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
+
+# ─── ATTENDANCE (chốt 2026-09-15) ─────────────────────────
+ATTENDANCE_STATUSES = {"ON_TIME", "LATE", "NO_SHOW"}
+
+
+def _attendance_to_dict(a: MeetingAttendance) -> dict:
+    return {
+        "member_id": a.member_id,
+        "status": a.status,
+        "joined_at": a.joined_at.strftime("%H:%M") if a.joined_at else None,
+        "late_minutes": a.late_minutes,
+        "recorded_by": a.recorded_by,
+        "recorded_at": a.recorded_at.isoformat() if a.recorded_at else None,
+    }
+
+
+@router.get("/{id}/attendance")
+def get_meeting_attendance(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Phase 1 Manual Attendance (chốt 2026-09-15). `recorded=False` means no
+    MeetingAttendance rows exist yet for this meeting — the frontend uses
+    that (not the meeting's own status) to decide between the empty-state
+    "Ghi nhận tham gia" prompt and the stats+table view."""
+    m = _get_active_meeting(db, id)
+    rows = db.query(MeetingAttendance).filter(MeetingAttendance.meeting_id == id).all()
+    return {
+        "success": True,
+        "recorded": len(rows) > 0,
+        "data": [_attendance_to_dict(a) for a in rows],
+    }
+
+
+@router.post("/{id}/attendance")
+def save_meeting_attendance(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Bulk upsert — the whole form is submitted as one request (chốt
+    2026-09-15: "Mỗi thành viên bắt buộc phải được chọn một trong 3 trạng
+    thái"), so this requires exactly the meeting's CURRENT member_ids, no
+    more/fewer. Only allowed once the meeting has genuinely ended (real
+    persisted status, not the live display value — a meeting that's merely
+    ĐANG DIỄN RA could still have someone walk in late) — deliberately not
+    reusing the ONGOING-lock's compute_display_status check, since that
+    check exists to protect Host/time/participant fields, not this one.
+    Never inferred from Google Calendar responseStatus — an RSVP says
+    nothing about who actually showed up."""
+    m = _get_active_meeting(db, id)
+    if m.status != "DONE":
+        raise HTTPException(400, f"Chỉ có thể ghi nhận tham gia khi cuộc họp đã kết thúc (hiện tại: {compute_display_status(m)}).")
+
+    records = body.get("records")
+    if not isinstance(records, list) or not records:
+        raise HTTPException(400, "Danh sách ghi nhận không được để trống")
+
+    valid_member_ids = {mm.member_id for mm in m.members}
+    submitted_ids = set()
+    parsed = []
+    for rec in records:
+        member_id = rec.get("member_id")
+        try:
+            member_id = int(member_id)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "member_id không hợp lệ")
+        if member_id not in valid_member_ids:
+            raise HTTPException(400, f"member_id {member_id} không thuộc danh sách tham gia của cuộc họp này")
+        status = str(rec.get("status", "")).upper()
+        if status not in ATTENDANCE_STATUSES:
+            raise HTTPException(400, f"Trạng thái không hợp lệ: {rec.get('status')}")
+        submitted_ids.add(member_id)
+
+        joined_at = None
+        late_minutes = None
+        joined_at_str = rec.get("joined_at")
+        if status == "LATE" and joined_at_str:
+            joined_at = parse_time(joined_at_str)
+            if joined_at and m.start_time:
+                start_mins = m.start_time.hour * 60 + m.start_time.minute
+                joined_mins = joined_at.hour * 60 + joined_at.minute
+                late_minutes = max(joined_mins - start_mins, 0)
+        parsed.append({"member_id": member_id, "status": status, "joined_at": joined_at, "late_minutes": late_minutes})
+
+    if submitted_ids != valid_member_ids:
+        missing = valid_member_ids - submitted_ids
+        raise HTTPException(400, f"Thiếu ghi nhận cho {len(missing)} thành viên (member_id: {sorted(missing)})")
+
+    existing_by_member = {a.member_id: a for a in db.query(MeetingAttendance).filter(MeetingAttendance.meeting_id == id).all()}
+    for rec in parsed:
+        row = existing_by_member.get(rec["member_id"])
+        if row:
+            row.status = rec["status"]
+            row.joined_at = rec["joined_at"]
+            row.late_minutes = rec["late_minutes"]
+            row.recorded_by = getattr(current_user, "id", None)
+        else:
+            db.add(MeetingAttendance(
+                meeting_id=id, member_id=rec["member_id"], status=rec["status"],
+                joined_at=rec["joined_at"], late_minutes=rec["late_minutes"],
+                recorded_by=getattr(current_user, "id", None),
+            ))
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=id, action="UPDATE", project_id=m.project_id, resource_name=m.title,
+        description=f"Ghi nhận tham gia cho {len(parsed)} thành viên của cuộc họp '{m.title}'"
+    )
+    db.commit()
+
+    rows = db.query(MeetingAttendance).filter(MeetingAttendance.meeting_id == id).all()
+    return {"success": True, "data": [_attendance_to_dict(a) for a in rows]}
 
 # ─── ADD MEMBER ─────────────────────────────────────────
 @router.post("/{id}/members")
