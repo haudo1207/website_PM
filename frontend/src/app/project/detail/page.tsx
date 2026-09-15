@@ -2863,6 +2863,9 @@ function ProjectDetailContent() {
     try {
       // 1. Update the task that was changed
       await updateTask(task.task_group_id, taskId, payload);
+      // See the Task Detail drawer's save handler for why this is needed —
+      // same inline-cell path for START DATE, same stale-Calendar risk.
+      queryClient.invalidateQueries({ queryKey: ['calendar-tasks'] });
       flash('Đã cập nhật task thành công!');
 
       // 2. If the status was changed, check and update the parent Task Group
@@ -4253,6 +4256,13 @@ function ProjectDetailContent() {
         payload.end_date_actual = null;
       }
       await updateTask(selectedTask.task_group_id, selectedTask.id, payload);
+      // Personal Calendar reads Task via its own react-query cache
+      // (['calendar-tasks', from, to]) with a 30s staleTime — this page's
+      // reloadAll() only refreshes local component state, so a start_date
+      // edit here (which flips which Calendar row/day a task renders in)
+      // would otherwise sit stale until that cache naturally expires. Same
+      // invalidation QuickCreateDrawer already fires on task creation.
+      queryClient.invalidateQueries({ queryKey: ['calendar-tasks'] });
       flash('Đã cập nhật task thành công!');
       await reloadAll(true);
 
