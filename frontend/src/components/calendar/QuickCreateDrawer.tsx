@@ -25,6 +25,16 @@ export interface QuickCreatePrefill {
   minutes: number;
 }
 
+// Note → Link auto-fill (§ "Chốt flow Link + Note"): only suggests a value
+// for an EMPTY Link field, never overwrites something the user already
+// typed there themselves. Link is still its own real field on submit —
+// this just saves a copy-paste step when the URL is already in the Note.
+const URL_PATTERN = /https?:\/\/\S+/;
+function extractFirstUrl(text: string): string | null {
+  const match = text.match(URL_PATTERN);
+  return match ? match[0] : null;
+}
+
 const labelCls = 'text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider block mb-1';
 const selectCls = 'w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-[12.5px] text-[#0b1c30] focus:border-[#0058be] outline-none disabled:bg-slate-50 disabled:text-slate-400';
 const inputCls = selectCls;
@@ -311,6 +321,7 @@ export default function QuickCreateDrawer({
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [skillGroupId, setSkillGroupId] = useState<number | ''>(''); // -> skill_solution_id
   const [skillId, setSkillId] = useState<number | ''>(''); // -> skill_vendor_id
+  const [link, setLink] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -355,7 +366,7 @@ export default function QuickCreateDrawer({
     if (!isOpen) return;
     setProjectId(''); setPhaseId(''); setTaskGroupId('');
     setDetail(''); setAssignedId(''); setSupportId(''); setPriority(''); setStatus('');
-    setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId(''); setNote('');
+    setMandayEst(''); setCategoryId(''); setSkillGroupId(''); setSkillId(''); setLink(''); setNote('');
     if (prefill) {
       setWtDate(toApiDate(prefill.day));
       setWtHour(String(prefill.hours).padStart(2, '0'));
@@ -464,6 +475,10 @@ export default function QuickCreateDrawer({
         skill_solution_id: skillGroupId,
         skill_vendor_id: skillId,
         scheduled_at: scheduledAt,
+        // Task's real Link field — same ticket_id column the Tasks tab and
+        // Task Detail drawer already read/write via LinkChipsEditor. No
+        // separate "quick create link" field.
+        ticket_id: link.trim() || null,
         notes: note.trim() || null,
         // No KPI Ratio field in Quick Create (MVP) — send the same 90/10
         // default the Tasks-tab form falls back to, instead of letting
@@ -665,15 +680,36 @@ export default function QuickCreateDrawer({
               </div>
             </div>
 
-            {/* Nhóm: Note — bổ sung, đặt cuối form; lưu thẳng vào Task.notes,
-                cùng cột Note hiển thị ở Tasks tab, §11. */}
+            {/* Nhóm: Link & Note — đặt cuối form. Link ghi vào Task.ticket_id
+                (field Link thật của Task, cùng field Tasks tab / Task Detail
+                đang dùng) — không phải field riêng cho Quick Create. Note
+                lưu thẳng vào Task.notes, §11. */}
             <div className="space-y-3">
-              <h4 className="text-[10.5px] font-extrabold text-[#0058be] uppercase tracking-wider">🗒️ Note</h4>
+              <h4 className="text-[10.5px] font-extrabold text-[#0058be] uppercase tracking-wider">🔗 Link & Note</h4>
+              <div>
+                <label className={labelCls}>Link</label>
+                <input
+                  className={inputCls}
+                  value={link} onChange={e => setLink(e.target.value)}
+                  placeholder="https://docs.google.com/..."
+                />
+              </div>
               <div>
                 <label className={labelCls}>Note</label>
                 <textarea
                   className={inputCls} rows={2}
-                  value={note} onChange={e => setNote(e.target.value)}
+                  value={note}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setNote(v);
+                    // Auto-fill Link from the first URL found in Note — only
+                    // when Link is still empty, never overwriting a value
+                    // the user typed there themselves.
+                    if (!link.trim()) {
+                      const found = extractFirstUrl(v);
+                      if (found) setLink(found);
+                    }
+                  }}
                   placeholder="Nhập ghi chú cho Task..."
                 />
               </div>

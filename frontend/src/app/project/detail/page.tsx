@@ -12055,9 +12055,15 @@ function LinkChipsEditor({ value, onChange, inputValue, onInputChange, onInputKe
     <div className="flex flex-col gap-1.5">
       {links.length > 0 && (
         <div className="flex flex-wrap gap-1.5 items-center">
-          {links.map((link, idx) => (
+          {links.map((link, idx) => {
+            const isUrl = /^https?:\/\//i.test(link);
+            return (
             <div key={idx} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-semibold text-blue-700 shadow-sm overflow-hidden opacity-75">
-              <span className="px-2 py-0.5 max-w-[160px] truncate" title={link}>
+              <span
+                className={`px-2 py-0.5 max-w-[160px] truncate ${isUrl ? 'cursor-pointer hover:bg-blue-100 transition-colors' : ''}`}
+                title={link}
+                onClick={() => { if (isUrl) window.open(link, '_blank', 'noopener,noreferrer'); }}
+              >
                 🔗 {linkChipLabel(link)}
               </span>
               <button
@@ -12073,7 +12079,8 @@ function LinkChipsEditor({ value, onChange, inputValue, onInputChange, onInputKe
                 &times;
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <input
