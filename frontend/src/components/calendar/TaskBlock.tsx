@@ -2,10 +2,13 @@
 
 import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { CalendarTask } from '@/lib/api';
-import { EVENT_HEIGHT } from './dateUtils';
+import { useQuery } from '@tanstack/react-query';
+import { CalendarTask, getPriorities } from '@/lib/api';
+import { EVENT_HEIGHT, parseScheduledAt } from './dateUtils';
 
 export const FALLBACK_COLOR = '#565e74';
+
+interface PriorityItem { id: number; name: string; kpi_base: number; color: string }
 
 export function hexToRgba(hex: string | null | undefined, alpha: number): string {
   const h = (hex || FALLBACK_COLOR).replace('#', '');
@@ -33,17 +36,27 @@ export function TaskBlockContent({
   // normal weight. Never used to pick a color.
   const isCritical = (task.priority || '').toLowerCase() === 'critical';
 
+  // scheduled_at has a time; a date-only task (Date-only row) doesn't —
+  // "Nếu Task không có giờ → Date-only row nên không hiện giờ" falls out
+  // naturally here since DateOnlyChip renders this same content and its
+  // tasks always have scheduled_at === null.
+  const scheduledDate = task.scheduled_at ? parseScheduledAt(task.scheduled_at) : null;
+  const timeLabel = scheduledDate
+    ? `${String(scheduledDate.getHours()).padStart(2, '0')}:${String(scheduledDate.getMinutes()).padStart(2, '0')}`
+    : null;
+
+  // Priority badge color comes from system config (Settings → Priority
+  // Configuration), same source Quick Create's Priority select reads —
+  // never hard-coded per priority name here. React Query dedupes this
+  // query key across every card on the grid into one request.
+  const prioritiesQuery = useQuery({ queryKey: ['calendar-priorities'], queryFn: getPriorities, staleTime: 5 * 60_000 });
+  const priorities: PriorityItem[] = prioritiesQuery.data || [];
+  const priorityMeta = priorities.find(p => p.name.toLowerCase() === (task.priority || '').toLowerCase());
+  const priorityColor = priorityMeta?.color || FALLBACK_COLOR;
+
   return (
     <>
-      {task.calendar_role === 'support' && (
-        <span
-          className="absolute top-1 right-1 text-[8px] font-extrabold uppercase tracking-wide px-1 rounded-full leading-[13px] shrink-0"
-          style={{ color, background: hexToRgba(color, 0.18) }}
-        >
-          SP
-        </span>
-      )}
-      <div className={`flex items-start gap-1.5 min-w-0 ${task.calendar_role === 'support' ? 'pr-5' : ''}`}>
+      <div className="flex items-start gap-1.5 min-w-0">
         {canToggle ? (
           <button
             type="button"
@@ -65,8 +78,29 @@ export function TaskBlockContent({
           {task.detail}
         </span>
       </div>
-      <div className="text-[10px] font-semibold truncate mt-0.5" style={{ color }}>
-        {task.project_name}
+      <div className="flex items-center justify-between gap-1 mt-0.5 min-w-0">
+        <span className="text-[10px] font-semibold truncate" style={{ color }}>
+          {timeLabel ? `${timeLabel} · ${task.project_name}` : task.project_name}
+        </span>
+        <span className="flex items-center gap-1 shrink-0">
+          {task.calendar_role === 'support' && (
+            <span
+              className="text-[8px] font-extrabold uppercase tracking-wide px-1 rounded-full leading-[13px]"
+              style={{ color, background: hexToRgba(color, 0.18) }}
+            >
+              SP
+            </span>
+          )}
+          {!!task.priority && (
+            <span
+              className="text-[8px] font-extrabold uppercase tracking-wide px-1 rounded-full leading-[13px] truncate max-w-[62px]"
+              style={{ color: priorityColor, background: hexToRgba(priorityColor, 0.18) }}
+              title={task.priority}
+            >
+              {task.priority}
+            </span>
+          )}
+        </span>
       </div>
     </>
   );

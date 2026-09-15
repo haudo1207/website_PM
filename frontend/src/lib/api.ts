@@ -449,6 +449,11 @@ export interface CalendarTask {
   kpi_base: number;
   kpi_perform: number;
   kpi_final: number;
+  kpi_ratio_assign: number;
+  kpi_ratio_support: number;
+  skill_solution_id: number | null;
+  skill_vendor_id: number | null;
+  ticket_id: string | null; // Task's real Link field — LinkChipsEditor's chip storage
   notes: string | null;
   project_id: number;
   project_name: string;
