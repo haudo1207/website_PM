@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { CalendarTask, CalendarMeeting } from '@/lib/api';
 import TaskBlock, { DateOnlyChip } from './TaskBlock';
@@ -49,6 +50,12 @@ function DayHeaderCell({ day, isToday }: { day: Date; isToday: boolean }) {
 // (start_date) but no time (scheduled_at IS NULL) land here instead of the
 // Unscheduled Tray, on whichever day column matches their start_date. See
 // the 2026-09 "Task đã chọn ngày nhưng chưa chọn giờ" design note.
+//
+// Chốt UX (2026-09-15): this row must stay compact so it never pushes the
+// Timeline down — only the FIRST task (already Assigned-before-Support
+// sorted upstream, in page.tsx) shows by default, with a "+N task" toggle
+// to expand/collapse the rest. Collapse state is local per day column
+// (uncontrolled) — nothing about it needs to survive a day-range change.
 function DateOnlyCell({
   day,
   tasks,
@@ -60,11 +67,24 @@ function DateOnlyCell({
   onToggleDone: (task: CalendarTask) => void;
   onOpenDetail: (task: CalendarTask) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleTasks = expanded ? tasks : tasks.slice(0, 1);
+  const hiddenCount = tasks.length - 1;
+
   return (
     <div className="border-r border-b border-slate-100 last:border-r-0 px-1.5 py-1.5 min-h-[34px]">
-      {tasks.map(task => (
+      {visibleTasks.map(task => (
         <DateOnlyChip key={task.id} task={task} onToggleDone={onToggleDone} onOpenDetail={onOpenDetail} />
       ))}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+          className="text-[10px] font-semibold text-slate-400 hover:text-[#0058be] px-0.5"
+        >
+          {expanded ? 'Thu gọn ▲' : `+ ${hiddenCount} task`}
+        </button>
+      )}
     </div>
   );
 }
