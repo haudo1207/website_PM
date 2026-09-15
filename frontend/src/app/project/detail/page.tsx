@@ -343,7 +343,17 @@ function ProjectDetailContent() {
   const taskTableCardRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (activeMainTab !== 'tasks') return;
+    // rAF-batched: observing document.body means ANY layout shift anywhere
+    // on the page (a dropdown opening, a row expanding, etc.) re-fires this,
+    // and writing style.height on every single callback — without checking
+    // whether it actually changed — was retriggering the observer on its own
+    // output, flooding the main thread with reflows and making scrolling the
+    // table feel laggy/stuck. Coalescing bursts into one recompute per frame
+    // and skipping the DOM write when the height hasn't actually changed
+    // breaks that self-triggering cycle.
+    let rafId: number | null = null;
     const recompute = () => {
+      rafId = null;
       const el = taskTableCardRef.current;
       // Bails out silently if the card hasn't mounted yet (e.g. still on a
       // loading screen) — the ResizeObserver below re-fires as soon as
@@ -353,15 +363,22 @@ function ProjectDetailContent() {
       if (!el) return;
       const top = el.getBoundingClientRect().top;
       const height = Math.max(240, window.innerHeight - top - 16);
+      const current = parseFloat(el.style.height || '0');
+      if (Math.abs(current - height) < 1) return;
       el.style.height = `${height}px`;
     };
-    recompute();
-    window.addEventListener('resize', recompute);
-    const observer = new ResizeObserver(recompute);
+    const scheduleRecompute = () => {
+      if (rafId != null) return;
+      rafId = requestAnimationFrame(recompute);
+    };
+    scheduleRecompute();
+    window.addEventListener('resize', scheduleRecompute);
+    const observer = new ResizeObserver(scheduleRecompute);
     observer.observe(document.body);
     return () => {
-      window.removeEventListener('resize', recompute);
+      window.removeEventListener('resize', scheduleRecompute);
       observer.disconnect();
+      if (rafId != null) cancelAnimationFrame(rafId);
     };
   }, [activeMainTab]);
 

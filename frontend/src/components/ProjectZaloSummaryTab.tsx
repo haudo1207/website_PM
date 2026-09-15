@@ -11,6 +11,7 @@ import {
 } from '@/lib/api';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
 import ZaloConversationPane from '@/components/zalo/ZaloConversationPane';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import { isAdmin } from '@/lib/auth';
 
 // Picks the ONE Zalo group for this project — a project only ever needs a
@@ -64,19 +65,22 @@ function GroupPicker({ projectId, onLinked }: { projectId: number; onLinked: () 
       </div>
       <p className="text-xs text-slate-400 mb-4">Mỗi dự án chỉ gán 1 nhóm — chọn xong là xong, không cần vào trang Zalo riêng nữa.</p>
       <div className="flex items-center gap-2 flex-wrap">
-        <select
-          value={threadId}
-          onChange={e => setThreadId(e.target.value)}
-          disabled={isLoading}
-          className="flex-1 min-w-[220px] bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0058be]"
-        >
-          <option value="">{isLoading ? 'Đang tải danh sách nhóm…' : '-- Chọn nhóm --'}</option>
-          {(groups || []).map((g: ZaloAvailableGroup) => (
-            <option key={g.thread_id} value={g.thread_id}>
-              {g.name}{g.already_tracked ? ' (đã theo dõi)' : ''}
-            </option>
-          ))}
-        </select>
+        <div className="flex-1 min-w-[220px]">
+          <SearchableSelect
+            label="nhóm Zalo"
+            icon=""
+            options={(groups || []).map((g: ZaloAvailableGroup) => ({
+              id: g.thread_id,
+              name: g.name,
+              badge: g.already_tracked ? 'Đã theo dõi' : undefined,
+            }))}
+            value={threadId}
+            onChange={(val: any) => setThreadId(val || '')}
+            placeholder={isLoading ? 'Đang tải danh sách nhóm…' : 'Tìm nhóm Zalo...'}
+            disabled={isLoading}
+            className="w-full text-sm"
+          />
+        </div>
         <button
           type="button"
           onClick={handleLink}
