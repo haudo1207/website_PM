@@ -1549,8 +1549,16 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
         for mid in wanted_ids - existing.keys():
             if db.query(Member).filter(Member.id == mid).first():
                 db.add(MeetingMember(meeting_id=m.id, member_id=mid, role="PARTICIPANT"))
-        for mid in existing.keys() - wanted_ids:
+        removed_mids = existing.keys() - wanted_ids
+        for mid in removed_mids:
             db.delete(existing[mid])
+        if removed_mids:
+            # Same attendance-cleanup invariant as remove_meeting_member
+            # (chốt 2026-09-15) — a no-op today since this whole endpoint
+            # already requires UPCOMING, kept as the same defensive safety net.
+            db.query(MeetingAttendance).filter(
+                MeetingAttendance.meeting_id == m.id, MeetingAttendance.member_id.in_(removed_mids)
+            ).delete(synchronize_session=False)
         members_changed = True
     else:
         members_changed = False
@@ -1881,6 +1889,17 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
 
     removed_member = db.query(Member).filter(Member.id == member_id).first()
     db.delete(mm)
+    # Attendance must stay in sync with the meeting's current member list
+    # (chốt 2026-09-15): a removed member's MeetingAttendance row, if any,
+    # is deleted with them — re-adding the same member later never restores
+    # it, they'd need to be recorded again from scratch on a DONE meeting.
+    # In practice this is a no-op today (this endpoint only runs while
+    # UPCOMING, and attendance can only be recorded once DONE, so the two
+    # can never coexist for the same meeting) — kept as a defensive
+    # safety net in case that guard relationship ever changes.
+    db.query(MeetingAttendance).filter(
+        MeetingAttendance.meeting_id == id, MeetingAttendance.member_id == member_id
+    ).delete()
     db.commit()
     AuditService.record(
         db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
