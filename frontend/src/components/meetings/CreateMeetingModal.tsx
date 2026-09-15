@@ -8,6 +8,11 @@ interface CreateMeetingModalProps {
   onClose: () => void;
   onSave: (meeting: any) => void | Promise<void>;
   initialData?: any;
+  // Workspace→Project filter (chốt 2026-09-15): the caller's currently-active
+  // Navbar Workspace switcher value (useWorkspaceFilter's workspaceCode), so
+  // a multi-Workspace admin picking a project for a NEW meeting only sees
+  // one Workspace's projects at a time instead of everything mixed together.
+  workspaceCode?: string | null;
 }
 
 interface MeetingFormData {
@@ -133,7 +138,7 @@ function SectionLabel({ n, label }: { n: number; label: string }) {
   );
 }
 
-export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData }: CreateMeetingModalProps) {
+export default function CreateMeetingModal({ isOpen, onClose, onSave, initialData, workspaceCode }: CreateMeetingModalProps) {
   const [formData, setFormData] = useState<MeetingFormData>({
     title: '',
     platform: 'Google Meet',
@@ -263,7 +268,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
   useEffect(() => {
     if (!isOpen) return;
-    getProjects().then((res: any) => {
+    // Workspace→Project filter (chốt 2026-09-15): only narrows the picker on
+    // CREATE. Never applied on EDIT — an already-assigned project must never
+    // disappear from the dropdown just because the caller's Workspace switcher
+    // happens to be pointed elsewhere right now (rule: "Không được làm mất
+    // Project hiện tại chỉ vì FE filter sai"). `business_unit` already OR's
+    // the user's own assigned projects back in regardless of Workspace
+    // (backend/app/routers/projects.py), so this never hides a project a
+    // restricted member/leader is genuinely assigned to.
+    getProjects(!initialData && workspaceCode ? { business_unit: workspaceCode } : undefined).then((res: any) => {
       const items = res?.data || res || [];
       if (Array.isArray(items)) setProjectsList(items);
     }).catch(() => {});
@@ -271,7 +284,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       const items = res?.data || res || [];
       if (Array.isArray(items)) setMembersList(items);
     }).catch(() => {});
-  }, [isOpen]);
+  }, [isOpen, initialData, workspaceCode]);
 
   // HOST * field (chốt 2026-09-14): fetch available accounts + the
   // project-Workspace-derived suggestion, re-resolved every time

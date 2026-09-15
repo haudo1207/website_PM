@@ -1262,7 +1262,7 @@ function MeetingsPageContent() {
       </div>
 
       {/* Modals */}
-      {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} />}
+      {canCreate && <CreateMeetingModal isOpen={isModalOpen} onClose={handleCloseEditModal} onSave={handleSaveMeeting} initialData={editingMeeting} workspaceCode={workspaceCode} />}
       {canManage && <PromptSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />}
       <MeetingGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
       <MeetingDetailModal
