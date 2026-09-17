@@ -31,6 +31,7 @@ import {
   parseHHMM,
   formatRangeLabel,
   topToTimeOfDay,
+  minutesToTop,
   combineDateAndTime,
   startOfWeekMonday,
   addDays,
@@ -319,11 +320,36 @@ export default function CalendarPage() {
     setTimeout(() => { suppressClickRef.current = false; }, 150);
 
     if (typeof over.id === 'string' && over.id.startsWith('day:')) {
-      const activeRect = active.rect.current.translated;
-      if (!activeRect) return;
-      const relativeTop = activeRect.top - over.rect.top;
-      const { hours, minutes } = topToTimeOfDay(relativeTop);
       const [y, m, d] = over.id.slice(4).split('-').map(Number);
+      let hours: number, minutes: number;
+      if (task.scheduled_at) {
+        // Already-scheduled task: anchor on its KNOWN time-of-day (via
+        // minutesToTop, derived from data — not a DOM rect) plus how far
+        // the dragged element itself actually moved (translated - initial
+        // rect, both measured by dnd-kit at the same instant, in the same
+        // viewport coordinate space). This is immune to the drift a
+        // scrolled-timeline drag showed when computed from `over.rect`
+        // instead: dragging 14:00 by a clean +120px (2h) landed at 17:00
+        // instead of 16:00 once the timeline had been scrolled first —
+        // confirmed via a live pixel-delta test, not assumed. Using the
+        // dragged element's own before/after rect sidesteps that class of
+        // bug entirely, since it never depends on the drop column's rect
+        // for the vertical/time component (only for which day, below).
+        const original = parseScheduledAt(task.scheduled_at);
+        const originalTop = original ? minutesToTop(original.getHours(), original.getMinutes()) : 0;
+        const initialRect = active.rect.current.initial;
+        const translatedRect = active.rect.current.translated;
+        if (!initialRect || !translatedRect) return;
+        const elementMovement = translatedRect.top - initialRect.top;
+        ({ hours, minutes } = topToTimeOfDay(originalTop + elementMovement));
+      } else {
+        // Date-only task has no time-of-day origin to anchor from — still
+        // needs the drop column's rect to place it on the timeline at all.
+        const activeRect = active.rect.current.translated;
+        if (!activeRect) return;
+        const relativeTop = activeRect.top - over.rect.top;
+        ({ hours, minutes } = topToTimeOfDay(relativeTop));
+      }
       const newDate = combineDateAndTime(new Date(y, m - 1, d), hours, minutes);
       applyScheduledAtChange(task, toApiDateTime(newDate));
     }
