@@ -449,9 +449,18 @@ export interface CalendarTask {
   support_name: string | null;
   kpi_base: number;
   kpi_perform: number;
+  kpi_ot: number;
   kpi_final: number;
   kpi_ratio_assign: number;
   kpi_ratio_support: number;
+  // Blocking workflow — separate boolean layer, not part of `status` (see
+  // backend/app/routers/task_groups.py update_task). Reused as-is by
+  // components/tasks/TaskEditDrawer's own block/unblock UI.
+  is_blocked: boolean;
+  blocked_reason: string | null;
+  blocked_by_name: string | null;
+  blocked_at: string | null;
+  blocked_by_task: { task_code: string | null; detail: string } | null;
   skill_solution_id: number | null;
   skill_vendor_id: number | null;
   ticket_id: string | null; // Task's real Link field — LinkChipsEditor's chip storage
