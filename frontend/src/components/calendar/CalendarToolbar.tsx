@@ -36,7 +36,7 @@ function FilterDropdown({
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="text-[12.5px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-3 py-1.5 rounded-lg hover:bg-slate-50 flex items-center gap-1.5"
+        className="h-8 text-[12.5px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-3 rounded-lg hover:bg-slate-50 flex items-center gap-1.5"
       >
         Lọc
         {!allChecked && <span className="w-1.5 h-1.5 rounded-full bg-[#0058be]" aria-hidden />}
@@ -88,6 +88,8 @@ export default function CalendarToolbar({
   onPickDate,
   filters,
   onFiltersChange,
+  searchQuery,
+  onSearchQueryChange,
   onQuickCreate,
 }: {
   rangeLabel: string;
@@ -100,15 +102,22 @@ export default function CalendarToolbar({
   onPickDate: (dateStr: string) => void;
   filters: Set<EventTypeFilter>;
   onFiltersChange: (next: Set<EventTypeFilter>) => void;
+  searchQuery: string;
+  onSearchQueryChange: (q: string) => void;
   onQuickCreate: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-5 py-3 flex-wrap">
-      <div className="flex items-center gap-2">
+    // Compact UI pass (2026-09): one row on desktop instead of two — date
+    // nav + picker on the left, search/filter/view-mode/+Tạo task on the
+    // right. Fixed h-12 (48px) so Summary(44-48px) + Toolbar(48px) +
+    // date header(40-44px) leaves the timeline the rest of the box's
+    // height via flex-1 (see page.tsx). No behavior change, layout only.
+    <div className="flex items-center justify-between gap-3 px-4 h-12 flex-wrap shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
           onClick={onToday}
-          className="text-[12.5px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-3 py-1.5 rounded-lg hover:bg-slate-50"
+          className="h-8 text-[12.5px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-3 rounded-lg hover:bg-slate-50"
         >
           Hôm nay
         </button>
@@ -116,7 +125,7 @@ export default function CalendarToolbar({
           type="button"
           onClick={onPrev}
           aria-label="Khoảng trước"
-          className="w-7 h-7 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
+          className="w-8 h-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
         >
           ‹
         </button>
@@ -124,12 +133,11 @@ export default function CalendarToolbar({
           type="button"
           onClick={onNext}
           aria-label="Khoảng sau"
-          className="w-7 h-7 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
+          className="w-8 h-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
         >
           ›
         </button>
-        <span className="text-[14.5px] font-bold text-[#0b1c30] ml-1">{rangeLabel}</span>
-        <label className="flex items-center gap-1.5 border border-slate-200 bg-white pl-2.5 pr-2 py-1.5 rounded-lg ml-1 cursor-pointer hover:bg-slate-50">
+        <label className="flex items-center gap-1.5 h-8 border border-slate-200 bg-white pl-2.5 pr-2 rounded-lg cursor-pointer hover:bg-slate-50">
           <span className="text-[13px] leading-none" aria-hidden>📅</span>
           <input
             type="date"
@@ -139,11 +147,41 @@ export default function CalendarToolbar({
             className="text-[12.5px] font-semibold text-[#0b1c30] outline-none bg-transparent cursor-pointer"
           />
         </label>
+        {/* Day/4-day/Tuần use the date picker itself as the anchor — no
+            redundant "Tháng 9, 2026" title next to it. Month view has no
+            other anchor indicator, so it keeps its own title (spec: "Bỏ
+            title tháng khỏi toolbar ... Month view mới hiển thị title
+            tháng khi cần"). */}
+        {viewMode === 'month' && (
+          <span className="text-[14.5px] font-bold text-[#0b1c30] ml-1">{rangeLabel}</span>
+        )}
       </div>
 
-      {/* Chốt: Lọc nằm ngay bên trái 4 ngày / 7 ngày (không đặt cạnh Date
-          Picker ở khu bên trái). */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
+        {/* Client-side only — never triggers a new /calendar/tasks or
+            /calendar/meetings request. Filters whatever's already loaded
+            for the current date range (spec: "Search hoàn toàn là
+            presentation/filter layer"). */}
+        <div className="relative w-[280px]">
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-slate-400 pointer-events-none" aria-hidden>🔍</span>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => onSearchQueryChange(e.target.value)}
+            placeholder="Tìm kiếm task, meeting..."
+            className="w-full h-9 text-[12.5px] text-[#0b1c30] border border-slate-200 bg-white rounded-lg pl-7 pr-7 outline-none focus:border-[#0058be]"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => onSearchQueryChange('')}
+              aria-label="Xoá tìm kiếm"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[13px] leading-none"
+            >
+              ×
+            </button>
+          )}
+        </div>
         <FilterDropdown filters={filters} onFiltersChange={onFiltersChange} />
         <div className="inline-flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
           {VIEW_MODE_OPTIONS.map(opt => (
@@ -151,7 +189,7 @@ export default function CalendarToolbar({
               key={opt.key}
               type="button"
               onClick={() => onViewModeChange(opt.key)}
-              className={`text-[12px] font-semibold px-3 py-1.5 rounded-md transition-colors ${
+              className={`h-8 text-[12px] font-semibold px-3 rounded-md transition-colors ${
                 viewMode === opt.key ? 'bg-white text-[#0058be] shadow-sm' : 'text-slate-500 hover:text-[#0b1c30]'
               }`}
             >
@@ -162,7 +200,7 @@ export default function CalendarToolbar({
         <button
           type="button"
           onClick={onQuickCreate}
-          className="text-[12.5px] font-bold text-white bg-[#0058be] px-3.5 py-2 rounded-lg flex items-center gap-1.5 hover:bg-[#00459a]"
+          className="h-9 text-[12.5px] font-bold text-white bg-[#0058be] px-3.5 rounded-lg flex items-center gap-1.5 hover:bg-[#00459a]"
         >
           <span className="text-[15px] leading-none">+</span> Tạo task
         </button>
