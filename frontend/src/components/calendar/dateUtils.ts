@@ -110,8 +110,14 @@ export function topToTimeOfDay(topPx: number): { hours: number; minutes: number 
   const maxTop = (HOUR_END - HOUR_START) * HOUR_HEIGHT;
   const clamped = Math.max(0, Math.min(topPx, maxTop));
   const snapped = snapTopToHalfHour(clamped);
-  const maxMin = (HOUR_END - HOUR_START) * 60;
-  const totalMin = Math.min(HOUR_START * 60 + (snapped / HOUR_HEIGHT) * 60, maxMin);
+  // Bug fix (2026-09): this used to re-clamp against (HOUR_END-HOUR_START)*60
+  // — a DURATION (1020min/17h), not an absolute minutes-since-midnight cap.
+  // Since `clamped` already bounds topPx to [0, maxTop], the true cap here
+  // is HOUR_END*60 (1380min/23:00) — the same one topToQuarterHour already
+  // uses correctly. The old formula silently clamped every drag targeting
+  // ~17:00 or later down to exactly 17:00, which looked like "snapping to
+  // a fixed nearby point" (drop-a-Task-at-19:00 landed at 17:00 every time).
+  const totalMin = Math.min(HOUR_START * 60 + (snapped / HOUR_HEIGHT) * 60, HOUR_END * 60);
   return { hours: Math.floor(totalMin / 60), minutes: totalMin % 60 };
 }
 
