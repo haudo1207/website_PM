@@ -180,6 +180,19 @@ export function parseApiDate(value: string): Date | null {
   return new Date(Number(y), Number(mo) - 1, Number(da));
 }
 
+// All day-cells to render for Month view, including the padding days from
+// the adjacent months needed to fill complete Mon→Sun weeks (same week-start
+// convention as the 7-day/Tuần view — startOfWeekMonday). Always a multiple
+// of 7 (typically 35 or 42 days / 5-6 weeks).
+export function buildMonthGridDays(anchor: Date): Date[] {
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const last = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+  const gridStart = startOfWeekMonday(first);
+  const gridEnd = addDays(startOfWeekMonday(last), 6);
+  const totalDays = Math.round((gridEnd.getTime() - gridStart.getTime()) / 86400000) + 1;
+  return Array.from({ length: totalDays }, (_, i) => addDays(gridStart, i));
+}
+
 export interface PositionedTask {
   task: CalendarTask;
   date: Date;

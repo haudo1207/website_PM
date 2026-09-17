@@ -69,10 +69,18 @@ function FilterDropdown({
   );
 }
 
+export type CalendarViewMode = 'day' | '4day' | '7day' | 'month';
+const VIEW_MODE_OPTIONS: { key: CalendarViewMode; label: string }[] = [
+  { key: 'day', label: 'Ngày' },
+  { key: '4day', label: '4 ngày' },
+  { key: '7day', label: 'Tuần' },
+  { key: 'month', label: 'Tháng' },
+];
+
 export default function CalendarToolbar({
   rangeLabel,
-  rangeDays,
-  onRangeDaysChange,
+  viewMode,
+  onViewModeChange,
   onPrev,
   onNext,
   onToday,
@@ -83,8 +91,8 @@ export default function CalendarToolbar({
   onQuickCreate,
 }: {
   rangeLabel: string;
-  rangeDays: 4 | 7;
-  onRangeDaysChange: (n: 4 | 7) => void;
+  viewMode: CalendarViewMode;
+  onViewModeChange: (m: CalendarViewMode) => void;
   onPrev: () => void;
   onNext: () => void;
   onToday: () => void;
@@ -138,16 +146,16 @@ export default function CalendarToolbar({
       <div className="flex items-center gap-2">
         <FilterDropdown filters={filters} onFiltersChange={onFiltersChange} />
         <div className="inline-flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
-          {([4, 7] as const).map(n => (
+          {VIEW_MODE_OPTIONS.map(opt => (
             <button
-              key={n}
+              key={opt.key}
               type="button"
-              onClick={() => onRangeDaysChange(n)}
+              onClick={() => onViewModeChange(opt.key)}
               className={`text-[12px] font-semibold px-3 py-1.5 rounded-md transition-colors ${
-                rangeDays === n ? 'bg-white text-[#0058be] shadow-sm' : 'text-slate-500 hover:text-[#0b1c30]'
+                viewMode === opt.key ? 'bg-white text-[#0058be] shadow-sm' : 'text-slate-500 hover:text-[#0b1c30]'
               }`}
             >
-              {n} ngày
+              {opt.label}
             </button>
           ))}
         </div>
