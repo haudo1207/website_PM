@@ -12,17 +12,21 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { getCalendarTasks, getCalendarMeetings, updateTask, CalendarTask, CalendarMeeting, getApiErrorMessage } from '@/lib/api';
-import CalendarToolbar, { EventTypeFilter } from '@/components/calendar/CalendarToolbar';
+import CalendarToolbar, { EventTypeFilter, CalendarViewMode } from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
+import MonthGrid, { MonthItem } from '@/components/calendar/MonthGrid';
 import { TaskBlockContent } from '@/components/calendar/TaskBlock';
 import TaskEditDrawer from '@/components/tasks/TaskEditDrawer';
 import QuickCreateDrawer, { QuickCreatePrefill } from '@/components/calendar/QuickCreateDrawer';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
 import {
   buildRangeDays,
+  buildMonthGridDays,
   toApiDate,
   toApiDateTime,
   parseApiDate,
+  parseScheduledAt,
+  parseHHMM,
   formatRangeLabel,
   topToTimeOfDay,
   combineDateAndTime,
@@ -33,7 +37,7 @@ import {
 
 export default function CalendarPage() {
   const [anchorDate, setAnchorDate] = useState(() => new Date());
-  const [rangeDays, setRangeDays] = useState<4 | 7>(4);
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('4day');
   // Task id -> scheduled_at override applied instantly on drop, while the
   // PATCH is in flight. Cleared on success (refetch already landed the real
   // value by then) or on failure (falls back to the untouched server data —
@@ -61,17 +65,32 @@ export default function CalendarPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  // 4-day mode: rolling window starting at the picked date. 7-day mode:
-  // always the full Mon→Sun calendar week containing the picked date — never
-  // a rolling 7-day window (chốt: "7 ngày = luôn là một tuần lịch chuẩn Thứ 2
-  // → Chủ nhật"). The picked date itself (anchorDate) is never snapped to
-  // Monday — only the displayed range is derived from it.
-  const days = useMemo(
-    () => (rangeDays === 7 ? buildRangeDays(startOfWeekMonday(anchorDate), 7) : buildRangeDays(anchorDate, 4)),
-    [anchorDate, rangeDays]
-  );
+  // Day: single day (buildRangeDays(anchor,1) — same engine as 4-day/7-day,
+  // just length 1, no new rendering code). 4-day: rolling window from the
+  // picked date. 7-day (Tuần): always the full Mon→Sun calendar week
+  // containing the picked date — never a rolling 7-day window (chốt: "7
+  // ngày = luôn là một tuần lịch chuẩn Thứ 2 → Chủ nhật"). Month: full
+  // weeks covering the picked date's month, including prev/next-month
+  // padding days (buildMonthGridDays) — rendered by the separate MonthGrid,
+  // not the hourly CalendarGrid. anchorDate itself is never snapped — only
+  // the displayed range is derived from it.
+  const days = useMemo(() => {
+    if (viewMode === 'day') return buildRangeDays(anchorDate, 1);
+    if (viewMode === '7day') return buildRangeDays(startOfWeekMonday(anchorDate), 7);
+    if (viewMode === 'month') return buildMonthGridDays(anchorDate);
+    return buildRangeDays(anchorDate, 4);
+  }, [anchorDate, viewMode]);
   const from = toApiDate(days[0]);
   const to = toApiDate(days[days.length - 1]);
+  const rangeLabel = useMemo(() => {
+    if (viewMode === 'day') {
+      return anchorDate.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+    if (viewMode === 'month') {
+      return `Tháng ${anchorDate.getMonth() + 1}, ${anchorDate.getFullYear()}`;
+    }
+    return formatRangeLabel(days);
+  }, [viewMode, anchorDate, days]);
 
   const { data: tasks, isFetching, error, refetch } = useQuery({
     queryKey: ['calendar-tasks', from, to],
@@ -126,15 +145,59 @@ export default function CalendarPage() {
     return map;
   }, [roleFilteredTasks, visibleDateKeys]);
 
+  // Month view merges Task + Meeting into ONE flat per-day list (no
+  // timeline to split scheduled-vs-date-only across, unlike the week
+  // views) — a task's day is scheduled_at's date if it has one, else
+  // start_date (same fallback rule, just not rendered as a separate row
+  // here). Sorted by time; date-only tasks (no time) sort last within
+  // their day. Only computed in Month mode.
+  const monthItemsByDay = useMemo(() => {
+    const map = new Map<string, MonthItem[]>();
+    if (viewMode !== 'month') return map;
+    for (const t of roleFilteredTasks) {
+      const scheduled = t.scheduled_at ? parseScheduledAt(t.scheduled_at) : null;
+      const key = scheduled ? toApiDate(scheduled) : (t.start_date ? t.start_date.slice(0, 10) : null);
+      if (!key) continue;
+      const timeLabel = scheduled ? `${String(scheduled.getHours()).padStart(2, '0')}:${String(scheduled.getMinutes()).padStart(2, '0')}` : null;
+      const sortMin = scheduled ? scheduled.getHours() * 60 + scheduled.getMinutes() : 24 * 60;
+      map.set(key, [...(map.get(key) || []), { kind: 'task', task: t, timeLabel, sortMin }]);
+    }
+    for (const m of filteredMeetings) {
+      if (!m.date) continue;
+      const t = parseHHMM(m.time);
+      const timeLabel = t ? `${String(t.hours).padStart(2, '0')}:${String(t.minutes).padStart(2, '0')}` : null;
+      const sortMin = t ? t.hours * 60 + t.minutes : 24 * 60;
+      map.set(m.date, [...(map.get(m.date) || []), { kind: 'meeting', meeting: m, timeLabel, sortMin }]);
+    }
+    map.forEach((list, key) => map.set(key, [...list].sort((a, b) => a.sortMin - b.sortMin)));
+    return map;
+  }, [viewMode, roleFilteredTasks, filteredMeetings]);
+
   const goToday = () => setAnchorDate(new Date());
-  // 4-day mode: ±4 days. 7-day mode: ±7 days (a full week) — since
-  // startOfWeekMonday derives the displayed range from anchorDate, shifting
-  // by exactly 7 keeps the same weekday and lands on the prev/next week.
-  const goPrev = () => setAnchorDate(d => addDays(d, -rangeDays));
-  const goNext = () => setAnchorDate(d => addDays(d, rangeDays));
+  // Day: ±1. 4-day: ±4. 7-day (Tuần): ±7 (a full week — startOfWeekMonday
+  // derives the displayed range from anchorDate, so shifting by exactly 7
+  // keeps the same weekday and lands on the prev/next week). Month: ±1
+  // calendar month (not ±days), landing on the same day-of-month.
+  const goPrev = () => {
+    if (viewMode === 'month') { setAnchorDate(d => new Date(d.getFullYear(), d.getMonth() - 1, d.getDate())); return; }
+    const step = viewMode === 'day' ? 1 : viewMode === '7day' ? 7 : 4;
+    setAnchorDate(d => addDays(d, -step));
+  };
+  const goNext = () => {
+    if (viewMode === 'month') { setAnchorDate(d => new Date(d.getFullYear(), d.getMonth() + 1, d.getDate())); return; }
+    const step = viewMode === 'day' ? 1 : viewMode === '7day' ? 7 : 4;
+    setAnchorDate(d => addDays(d, step));
+  };
   const goPickDate = (dateStr: string) => {
     const picked = parseApiDate(dateStr);
     if (picked) setAnchorDate(picked);
+  };
+  // Month view's "+N nữa" / click a day cell — jumps straight into Day view
+  // for that date instead of a second popover UI, reusing the same hourly
+  // timeline engine Day/4-day/Tuần already render with.
+  const goToDay = (day: Date) => {
+    setAnchorDate(day);
+    setViewMode('day');
   };
 
   const handleToggleDone = async (task: CalendarTask) => {
@@ -218,9 +281,9 @@ export default function CalendarPage() {
         <div className="flex-1 min-h-0 p-4 md:p-6">
           <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden h-full flex flex-col">
             <CalendarToolbar
-              rangeLabel={formatRangeLabel(days)}
-              rangeDays={rangeDays}
-              onRangeDaysChange={setRangeDays}
+              rangeLabel={rangeLabel}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
               onPrev={goPrev}
               onNext={goNext}
               onToday={goToday}
@@ -234,6 +297,15 @@ export default function CalendarPage() {
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-t border-slate-100">
               {error ? (
                 <p className="p-6 text-[13px] text-rose-600">{getApiErrorMessage(error, 'Không tải được lịch.')}</p>
+              ) : viewMode === 'month' ? (
+                <MonthGrid
+                  days={days}
+                  monthAnchor={anchorDate}
+                  itemsByDay={monthItemsByDay}
+                  onOpenDetail={handleOpenDetail}
+                  onOpenMeetingDetail={handleOpenMeetingDetail}
+                  onGoToDay={goToDay}
+                />
               ) : (
                 <CalendarGrid
                   days={days}
