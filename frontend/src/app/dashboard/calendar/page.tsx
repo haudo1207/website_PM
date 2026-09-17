@@ -129,23 +129,45 @@ export default function CalendarPage() {
   );
   const filteredMeetings = useMemo(() => (filters.has('meeting') ? meetings || [] : []), [meetings, filters]);
 
+  // A task "belongs" to the visible range the same way the Grid already
+  // decides it does: scheduled tasks by scheduled_at's date, date-only
+  // tasks by start_date (both checked against `days` — Day/4-day/Tuần's
+  // own days, or Month's full grid including its padding days, whichever
+  // is actually on screen), tasks with neither never belong anywhere (same
+  // "not shown at all" rule as the date-only row). GET /calendar/tasks
+  // itself only date-bounds scheduled_at server-side — every unscheduled
+  // task in scope comes back regardless of range — so this local filter is
+  // what actually keeps Summary in sync with what the Grid renders.
+  const visibleDateKeys = useMemo(() => new Set(days.map(toApiDate)), [days]);
+  const isTaskInVisibleRange = (t: CalendarTask): boolean => {
+    if (t.scheduled_at) {
+      const d = parseScheduledAt(t.scheduled_at);
+      return !!d && visibleDateKeys.has(toApiDate(d));
+    }
+    if (t.start_date) return visibleDateKeys.has(t.start_date.slice(0, 10));
+    return false;
+  };
+
   // Calendar Summary — scoped like the rest of the page (current user via
-  // /calendar/tasks, current date range, current event-type Filter) but
-  // deliberately built from roleFilteredTasks, NOT searchedTasks: search
-  // must never make "Tổng công việc" jump around (spec §Phase 3 "search
-  // CRM không làm card Tổng công việc nhảy ... khó hiểu"). Task only —
-  // Meeting has no Done/Overdue concept so it doesn't fit these 4 cards.
+  // /calendar/tasks, current visible date range, current event-type
+  // Filter) but deliberately built from roleFilteredTasks, NOT
+  // searchedTasks: search must never make "Tổng công việc" jump around
+  // (spec §Phase 3 "search CRM không làm card Tổng công việc nhảy ...
+  // khó hiểu"). Task only — Meeting has no Done/Overdue concept so it
+  // doesn't fit these 4 cards.
   const summaryStats: CalendarSummaryStats = useMemo(() => {
-    const total = roleFilteredTasks.length;
+    const visible = roleFilteredTasks.filter(isTaskInVisibleRange);
+    const total = visible.length;
     let done = 0;
     let overdue = 0;
-    for (const t of roleFilteredTasks) {
+    for (const t of visible) {
       const status = (t.status || '').toLowerCase();
       if (status === 'done') { done++; continue; }
       if (calculateDaysLate(t) > 0) overdue++;
     }
     return { total, done, overdue, inProgress: Math.max(0, total - done - overdue) };
-  }, [roleFilteredTasks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roleFilteredTasks, visibleDateKeys]);
 
   // Search applies on top of the event-type Filter, same dataset already
   // in memory — task.detail / task.task_code / task.project_name for
@@ -177,7 +199,7 @@ export default function CalendarPage() {
   // 2026-09 "Bỏ Task chưa xếp lịch" chốt). Within each day, Assigned always
   // sorts before Support, each group keeping its existing relative order
   // (Array.sort is stable) — 2026-09 "Thứ tự Task chỉ có ngày" chốt.
-  const visibleDateKeys = useMemo(() => new Set(days.map(toApiDate)), [days]);
+  // (visibleDateKeys is declared earlier, above summaryStats — shared here.)
   const dateOnlyTasksByDay = useMemo(() => {
     const map = new Map<string, CalendarTask[]>();
     for (const t of searchedTasks) {
