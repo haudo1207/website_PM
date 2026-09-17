@@ -441,6 +441,7 @@ export interface CalendarTask {
   status: string;
   manday_est: number | null;
   start_date: string | null;
+  end_date_est: string | null; // Overdue rule reuses calculateDaysLate() (dashboard/constants.ts), which reads this
   scheduled_at: string | null; // null = unscheduled (shows in the tray)
   assigned_id: number | null;
   assigned_name: string | null;

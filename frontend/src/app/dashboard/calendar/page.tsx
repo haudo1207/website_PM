@@ -19,6 +19,8 @@ import { TaskBlockContent } from '@/components/calendar/TaskBlock';
 import TaskEditDrawer from '@/components/tasks/TaskEditDrawer';
 import QuickCreateDrawer, { QuickCreatePrefill } from '@/components/calendar/QuickCreateDrawer';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
+import SummaryCards, { CalendarSummaryStats } from '@/components/calendar/SummaryCards';
+import { calculateDaysLate } from '@/app/dashboard/constants';
 import {
   buildRangeDays,
   buildMonthGridDays,
@@ -126,6 +128,24 @@ export default function CalendarPage() {
     [displayTasks, filters]
   );
   const filteredMeetings = useMemo(() => (filters.has('meeting') ? meetings || [] : []), [meetings, filters]);
+
+  // Calendar Summary — scoped like the rest of the page (current user via
+  // /calendar/tasks, current date range, current event-type Filter) but
+  // deliberately built from roleFilteredTasks, NOT searchedTasks: search
+  // must never make "Tổng công việc" jump around (spec §Phase 3 "search
+  // CRM không làm card Tổng công việc nhảy ... khó hiểu"). Task only —
+  // Meeting has no Done/Overdue concept so it doesn't fit these 4 cards.
+  const summaryStats: CalendarSummaryStats = useMemo(() => {
+    const total = roleFilteredTasks.length;
+    let done = 0;
+    let overdue = 0;
+    for (const t of roleFilteredTasks) {
+      const status = (t.status || '').toLowerCase();
+      if (status === 'done') { done++; continue; }
+      if (calculateDaysLate(t) > 0) overdue++;
+    }
+    return { total, done, overdue, inProgress: Math.max(0, total - done - overdue) };
+  }, [roleFilteredTasks]);
 
   // Search applies on top of the event-type Filter, same dataset already
   // in memory — task.detail / task.task_code / task.project_name for
@@ -305,8 +325,9 @@ export default function CalendarPage() {
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-full">
-        <div className="flex-1 min-h-0 p-4 md:p-6">
-          <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden h-full flex flex-col">
+        <div className="flex-1 min-h-0 p-4 md:p-6 flex flex-col">
+          <SummaryCards stats={summaryStats} />
+          <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
             <CalendarToolbar
               rangeLabel={rangeLabel}
               viewMode={viewMode}
