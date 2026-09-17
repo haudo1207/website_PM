@@ -30,13 +30,16 @@ const CARDS: { key: keyof CalendarSummaryStats; label: string; accent: string }[
   { key: 'overdue', label: 'Trễ hạn', accent: 'text-rose-600' },
 ];
 
+// Compact UI pass (2026-09): one 44px horizontal bar instead of 4 separate
+// cards — same 4 metrics, same colors, same numbers (summaryStats'
+// calculation in page.tsx is untouched), layout only.
 export default function SummaryCards({ stats }: { stats: CalendarSummaryStats }) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+    <div className="h-11 bg-white rounded-xl border border-[#c2c6d6]/60 shadow-sm flex items-center divide-x divide-slate-100 mb-3 shrink-0">
       {CARDS.map(c => (
-        <div key={c.key} className="bg-white rounded-xl border border-[#c2c6d6]/60 shadow-sm px-4 py-3">
-          <div className="text-[10.5px] font-extrabold text-slate-400 uppercase tracking-wider">{c.label}</div>
-          <div className={`text-2xl font-extrabold mt-1 ${c.accent}`}>{stats[c.key]}</div>
+        <div key={c.key} className="flex-1 h-full flex items-center justify-center gap-2 px-3 min-w-0">
+          <span className="text-[10.5px] font-extrabold text-slate-400 uppercase tracking-wider truncate">{c.label}</span>
+          <span className={`text-base font-extrabold shrink-0 ${c.accent}`}>{stats[c.key]}</span>
         </div>
       ))}
     </div>

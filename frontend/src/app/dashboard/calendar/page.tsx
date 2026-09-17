@@ -325,7 +325,11 @@ export default function CalendarPage() {
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-full">
-        <div className="flex-1 min-h-0 p-4 md:p-6 flex flex-col">
+        {/* Compact UI pass (2026-09): outer padding ~12px (was p-4 md:p-6) —
+            Calendar is a workspace, not a modal/card that needs generous
+            breathing room; the height it frees up goes straight to the
+            timeline via flex-1 below. */}
+        <div className="flex-1 min-h-0 p-3 flex flex-col">
           <SummaryCards stats={summaryStats} />
           <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
             <CalendarToolbar

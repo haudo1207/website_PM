@@ -39,7 +39,7 @@ const gridColsStyle = (n: number) => ({ gridTemplateColumns: `repeat(${n}, minma
 function DayHeaderCell({ day, isToday }: { day: Date; isToday: boolean }) {
   const { dow, dom } = formatDayLabel(day);
   return (
-    <div className={`h-9 flex flex-col justify-center px-3 border-r border-slate-100 last:border-r-0 ${isToday ? 'bg-[#eaf2fc]' : ''}`}>
+    <div className={`h-10 flex flex-col justify-center px-3 border-r border-slate-100 last:border-r-0 ${isToday ? 'bg-[#eaf2fc]' : ''}`}>
       <span className="text-[9.5px] font-bold tracking-wider text-slate-400">{dow}</span>
       <span className={`text-[13px] font-bold leading-tight ${isToday ? 'text-[#0058be]' : 'text-[#0b1c30]'}`}>{dom}</span>
     </div>
