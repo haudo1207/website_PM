@@ -55,6 +55,12 @@ export default function CalendarPage() {
   // on by default so the default view is unchanged from before this filter
   // existed.
   const [filters, setFilters] = useState<Set<EventTypeFilter>>(new Set<EventTypeFilter>(['meeting', 'assigned', 'support']));
+  // Client-side only (spec: "Search hoàn toàn là presentation/filter
+  // layer") — filters whatever's already loaded for the current date
+  // range, same as the event-type Filter above. Never triggers a new
+  // /calendar/tasks or /calendar/meetings request; switching date range
+  // still fetches exactly as before.
+  const [searchQuery, setSearchQuery] = useState('');
   // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
   // browser still fires a native click on the same element right after a
   // real drag-and-drop. Suppress that one synthetic click so finishing a
@@ -120,7 +126,28 @@ export default function CalendarPage() {
     [displayTasks, filters]
   );
   const filteredMeetings = useMemo(() => (filters.has('meeting') ? meetings || [] : []), [meetings, filters]);
-  const scheduledTasks = useMemo(() => roleFilteredTasks.filter(t => !!t.scheduled_at), [roleFilteredTasks]);
+
+  // Search applies on top of the event-type Filter, same dataset already
+  // in memory — task.detail / task.task_code / task.project_name for
+  // Task, meeting.title / project name for Meeting. Case-insensitive,
+  // trims whitespace. Clearing the query (empty string) returns the exact
+  // pre-search arrays, not a re-filtered copy.
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const searchedTasks = useMemo(() => {
+    if (!normalizedQuery) return roleFilteredTasks;
+    return roleFilteredTasks.filter(task =>
+      [task.detail, task.task_code, task.project_name].some(value => value?.toLowerCase().includes(normalizedQuery))
+    );
+  }, [roleFilteredTasks, normalizedQuery]);
+  const searchedMeetings = useMemo(() => {
+    if (!normalizedQuery) return filteredMeetings;
+    return filteredMeetings.filter(meeting =>
+      [meeting.title, meeting.project_name].some(value => value?.toLowerCase().includes(normalizedQuery))
+    );
+  }, [filteredMeetings, normalizedQuery]);
+  const isSearchEmpty = !!normalizedQuery && searchedTasks.length === 0 && searchedMeetings.length === 0;
+
+  const scheduledTasks = useMemo(() => searchedTasks.filter(t => !!t.scheduled_at), [searchedTasks]);
   // Has a date (start_date) but no time (scheduled_at IS NULL) — shows in
   // the fixed row under that day's header. Only when its start_date
   // actually falls within the days currently on screen (there's no column
@@ -133,7 +160,7 @@ export default function CalendarPage() {
   const visibleDateKeys = useMemo(() => new Set(days.map(toApiDate)), [days]);
   const dateOnlyTasksByDay = useMemo(() => {
     const map = new Map<string, CalendarTask[]>();
-    for (const t of roleFilteredTasks) {
+    for (const t of searchedTasks) {
       if (t.scheduled_at || !t.start_date) continue;
       const key = t.start_date.slice(0, 10);
       if (!visibleDateKeys.has(key)) continue;
@@ -143,7 +170,7 @@ export default function CalendarPage() {
       map.set(key, [...list].sort((a, b) => (a.calendar_role === 'assigned' ? 0 : 1) - (b.calendar_role === 'assigned' ? 0 : 1)));
     });
     return map;
-  }, [roleFilteredTasks, visibleDateKeys]);
+  }, [searchedTasks, visibleDateKeys]);
 
   // Month view merges Task + Meeting into ONE flat per-day list (no
   // timeline to split scheduled-vs-date-only across, unlike the week
@@ -154,7 +181,7 @@ export default function CalendarPage() {
   const monthItemsByDay = useMemo(() => {
     const map = new Map<string, MonthItem[]>();
     if (viewMode !== 'month') return map;
-    for (const t of roleFilteredTasks) {
+    for (const t of searchedTasks) {
       const scheduled = t.scheduled_at ? parseScheduledAt(t.scheduled_at) : null;
       const key = scheduled ? toApiDate(scheduled) : (t.start_date ? t.start_date.slice(0, 10) : null);
       if (!key) continue;
@@ -162,7 +189,7 @@ export default function CalendarPage() {
       const sortMin = scheduled ? scheduled.getHours() * 60 + scheduled.getMinutes() : 24 * 60;
       map.set(key, [...(map.get(key) || []), { kind: 'task', task: t, timeLabel, sortMin }]);
     }
-    for (const m of filteredMeetings) {
+    for (const m of searchedMeetings) {
       if (!m.date) continue;
       const t = parseHHMM(m.time);
       const timeLabel = t ? `${String(t.hours).padStart(2, '0')}:${String(t.minutes).padStart(2, '0')}` : null;
@@ -171,7 +198,7 @@ export default function CalendarPage() {
     }
     map.forEach((list, key) => map.set(key, [...list].sort((a, b) => a.sortMin - b.sortMin)));
     return map;
-  }, [viewMode, roleFilteredTasks, filteredMeetings]);
+  }, [viewMode, searchedTasks, searchedMeetings]);
 
   const goToday = () => setAnchorDate(new Date());
   // Day: ±1. 4-day: ±4. 7-day (Tuần): ±7 (a full week — startOfWeekMonday
@@ -291,12 +318,22 @@ export default function CalendarPage() {
               onPickDate={goPickDate}
               filters={filters}
               onFiltersChange={setFilters}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
               onQuickCreate={() => { setQuickCreatePrefill(null); setQuickCreateOpen(true); }}
             />
 
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-t border-slate-100">
               {error ? (
                 <p className="p-6 text-[13px] text-rose-600">{getApiErrorMessage(error, 'Không tải được lịch.')}</p>
+              ) : isSearchEmpty ? (
+                // Distinct from "Calendar trống" — the data still exists,
+                // it just doesn't match the current search (spec: "Không
+                // nên hiện empty state kiểu Calendar trống").
+                <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-400">
+                  <span className="text-2xl" aria-hidden>🔍</span>
+                  <p className="text-[13px] font-semibold">Không tìm thấy task hoặc meeting phù hợp</p>
+                </div>
               ) : viewMode === 'month' ? (
                 <MonthGrid
                   days={days}
@@ -310,7 +347,7 @@ export default function CalendarPage() {
                 <CalendarGrid
                   days={days}
                   tasks={scheduledTasks}
-                  meetings={filteredMeetings}
+                  meetings={searchedMeetings}
                   dateOnlyTasksByDay={dateOnlyTasksByDay}
                   onToggleDone={handleToggleDone}
                   onOpenDetail={handleOpenDetail}

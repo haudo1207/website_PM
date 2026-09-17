@@ -88,6 +88,8 @@ export default function CalendarToolbar({
   onPickDate,
   filters,
   onFiltersChange,
+  searchQuery,
+  onSearchQueryChange,
   onQuickCreate,
 }: {
   rangeLabel: string;
@@ -100,72 +102,103 @@ export default function CalendarToolbar({
   onPickDate: (dateStr: string) => void;
   filters: Set<EventTypeFilter>;
   onFiltersChange: (next: Set<EventTypeFilter>) => void;
+  searchQuery: string;
+  onSearchQueryChange: (q: string) => void;
   onQuickCreate: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-5 py-3 flex-wrap">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onToday}
-          className="text-[12.5px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-3 py-1.5 rounded-lg hover:bg-slate-50"
-        >
-          Hôm nay
-        </button>
-        <button
-          type="button"
-          onClick={onPrev}
-          aria-label="Khoảng trước"
-          className="w-7 h-7 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
-        >
-          ‹
-        </button>
-        <button
-          type="button"
-          onClick={onNext}
-          aria-label="Khoảng sau"
-          className="w-7 h-7 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
-        >
-          ›
-        </button>
-        <span className="text-[14.5px] font-bold text-[#0b1c30] ml-1">{rangeLabel}</span>
-        <label className="flex items-center gap-1.5 border border-slate-200 bg-white pl-2.5 pr-2 py-1.5 rounded-lg ml-1 cursor-pointer hover:bg-slate-50">
-          <span className="text-[13px] leading-none" aria-hidden>📅</span>
-          <input
-            type="date"
-            aria-label="Lọc ngày"
-            value={toApiDate(anchorDate)}
-            onChange={e => e.target.value && onPickDate(e.target.value)}
-            className="text-[12.5px] font-semibold text-[#0b1c30] outline-none bg-transparent cursor-pointer"
-          />
-        </label>
+    <div className="flex flex-col gap-2 px-5 py-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onToday}
+            className="text-[12.5px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-3 py-1.5 rounded-lg hover:bg-slate-50"
+          >
+            Hôm nay
+          </button>
+          <button
+            type="button"
+            onClick={onPrev}
+            aria-label="Khoảng trước"
+            className="w-7 h-7 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={onNext}
+            aria-label="Khoảng sau"
+            className="w-7 h-7 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:bg-slate-50"
+          >
+            ›
+          </button>
+          <span className="text-[14.5px] font-bold text-[#0b1c30] ml-1">{rangeLabel}</span>
+          <label className="flex items-center gap-1.5 border border-slate-200 bg-white pl-2.5 pr-2 py-1.5 rounded-lg ml-1 cursor-pointer hover:bg-slate-50">
+            <span className="text-[13px] leading-none" aria-hidden>📅</span>
+            <input
+              type="date"
+              aria-label="Lọc ngày"
+              value={toApiDate(anchorDate)}
+              onChange={e => e.target.value && onPickDate(e.target.value)}
+              className="text-[12.5px] font-semibold text-[#0b1c30] outline-none bg-transparent cursor-pointer"
+            />
+          </label>
+        </div>
+
+        {/* Chốt: Lọc nằm ngay bên trái 4 ngày / 7 ngày (không đặt cạnh Date
+            Picker ở khu bên trái). */}
+        <div className="flex items-center gap-2">
+          <FilterDropdown filters={filters} onFiltersChange={onFiltersChange} />
+          <div className="inline-flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
+            {VIEW_MODE_OPTIONS.map(opt => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => onViewModeChange(opt.key)}
+                className={`text-[12px] font-semibold px-3 py-1.5 rounded-md transition-colors ${
+                  viewMode === opt.key ? 'bg-white text-[#0058be] shadow-sm' : 'text-slate-500 hover:text-[#0b1c30]'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onQuickCreate}
+            className="text-[12.5px] font-bold text-white bg-[#0058be] px-3.5 py-2 rounded-lg flex items-center gap-1.5 hover:bg-[#00459a]"
+          >
+            <span className="text-[15px] leading-none">+</span> Tạo task
+          </button>
+        </div>
       </div>
 
-      {/* Chốt: Lọc nằm ngay bên trái 4 ngày / 7 ngày (không đặt cạnh Date
-          Picker ở khu bên trái). */}
-      <div className="flex items-center gap-2">
-        <FilterDropdown filters={filters} onFiltersChange={onFiltersChange} />
-        <div className="inline-flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
-          {VIEW_MODE_OPTIONS.map(opt => (
+      {/* Client-side only — never triggers a new /calendar/tasks or
+          /calendar/meetings request. Filters whatever's already loaded for
+          the current date range; switching range still fetches exactly as
+          before (spec: "Search hoàn toàn là presentation/filter layer"). */}
+      <div className="flex justify-end">
+        <div className="relative w-full max-w-xs">
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-slate-400 pointer-events-none" aria-hidden>🔍</span>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => onSearchQueryChange(e.target.value)}
+            placeholder="Tìm kiếm task, meeting..."
+            className="w-full text-[12.5px] text-[#0b1c30] border border-slate-200 bg-white rounded-lg pl-7 pr-7 py-1.5 outline-none focus:border-[#0058be]"
+          />
+          {searchQuery && (
             <button
-              key={opt.key}
               type="button"
-              onClick={() => onViewModeChange(opt.key)}
-              className={`text-[12px] font-semibold px-3 py-1.5 rounded-md transition-colors ${
-                viewMode === opt.key ? 'bg-white text-[#0058be] shadow-sm' : 'text-slate-500 hover:text-[#0b1c30]'
-              }`}
+              onClick={() => onSearchQueryChange('')}
+              aria-label="Xoá tìm kiếm"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[13px] leading-none"
             >
-              {opt.label}
+              ×
             </button>
-          ))}
+          )}
         </div>
-        <button
-          type="button"
-          onClick={onQuickCreate}
-          className="text-[12.5px] font-bold text-white bg-[#0058be] px-3.5 py-2 rounded-lg flex items-center gap-1.5 hover:bg-[#00459a]"
-        >
-          <span className="text-[15px] leading-none">+</span> Tạo task
-        </button>
       </div>
     </div>
   );
