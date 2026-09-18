@@ -865,8 +865,18 @@ def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db), curren
     deleted_task_count = len(tasks_in_group)
     if tasks_in_group:
         delete_task_link_documents(db, [t.id for t in tasks_in_group])
+        # See delete_task()'s same detach-before-delete — notifications.task_id
+        # has no ON DELETE cascade, so a Task with a Notification (e.g. Done +
+        # Zalo-linked project) would otherwise fail this cascade with a raw FK
+        # IntegrityError (500).
+        db.query(Notification).filter(
+            Notification.task_id.in_([t.id for t in tasks_in_group])
+        ).update({"task_id": None}, synchronize_session=False)
         db.execute(delete(Task).where(Task.task_group_id == gid))
 
+    db.query(Notification).filter(Notification.task_group_id == gid).update(
+        {"task_group_id": None}, synchronize_session=False
+    )
     db.delete(tg)
     db.flush()
 
@@ -2532,6 +2542,14 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=
         task_desc += f" (kèm {descendant_count} task con)"
 
     delete_task_link_documents(db, [tid] + [d.id for d in descendants])
+    # notifications.task_id has no ON DELETE cascade — a Task that already
+    # triggered a Notification (e.g. Done + Zalo-linked project) fails this
+    # delete with a raw FK IntegrityError (500) otherwise. Detach instead of
+    # deleting the Notification itself so its message/history survives.
+    deleted_task_ids = [tid] + [d.id for d in descendants]
+    db.query(Notification).filter(Notification.task_id.in_(deleted_task_ids)).update(
+        {"task_id": None}, synchronize_session=False
+    )
     db.delete(task)
     db.flush()
 
