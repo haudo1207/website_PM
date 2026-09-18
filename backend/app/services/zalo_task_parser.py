@@ -321,29 +321,42 @@ def notify_task_done_if_zalo_linked(db: Session, task: Task, project_id: Optiona
     Zalo feature itself (see require_manager, isAdmin())."""
     if not project_id:
         return
-    conv = db.query(ZaloConversation).filter(ZaloConversation.project_id == project_id).first()
-    if not conv:
-        return
+    # Best-effort: the task's own status transition has already been
+    # committed by the caller by the time this runs — a failure here (bad
+    # data on some legacy row, a transient DB hiccup, whatever) must never
+    # surface as a 500 on what the user experiences as "mark task Done",
+    # since that part already succeeded. Same defensive pattern as
+    # _notify_assignee() in task_groups.py.
+    try:
+        conv = db.query(ZaloConversation).filter(ZaloConversation.project_id == project_id).first()
+        if not conv:
+            return
 
-    recipients = db.query(User).filter(User.role.in_(["super_admin", "leader"])).all()
-    if not recipients:
-        return
+        recipients = db.query(User).filter(User.role.in_(["super_admin", "leader"])).all()
+        if not recipients:
+            return
 
-    project = db.query(Project).filter(Project.id == project_id).first()
-    assigned = db.query(Member).filter(Member.id == task.assigned_id).first()
-    assignee_label = (assigned.full_name if assigned else None) or "?"
-    message = (
-        f"✅ Task [{task.task_code}] \"{(task.detail or '')[:80]}\" ({assignee_label}) đã Done — "
-        f"dự án \"{project.name if project else project_id}\" đã gắn hội thoại Zalo, có thể yêu cầu xem demo."
-    )
-    for user in recipients:
-        db.add(Notification(
-            recipient_id=user.id,
-            task_id=task.id,
-            project_id=project_id,
-            zalo_conversation_id=conv.id,
-            message=message,
-            notification_type="zalo_demo_ready",
-            is_read=False,
-        ))
-    db.commit()
+        project = db.query(Project).filter(Project.id == project_id).first()
+        assigned = db.query(Member).filter(Member.id == task.assigned_id).first()
+        assignee_label = (assigned.full_name if assigned else None) or "?"
+        message = (
+            f"✅ Task [{task.task_code}] \"{(task.detail or '')[:80]}\" ({assignee_label}) đã Done — "
+            f"dự án \"{project.name if project else project_id}\" đã gắn hội thoại Zalo, có thể yêu cầu xem demo."
+        )
+        for user in recipients:
+            db.add(Notification(
+                recipient_id=user.id,
+                task_id=task.id,
+                project_id=project_id,
+                zalo_conversation_id=conv.id,
+                message=message,
+                notification_type="zalo_demo_ready",
+                is_read=False,
+            ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "notify_task_done_if_zalo_linked failed for task_id=%s project_id=%s — Done transition already committed, notification skipped.",
+            getattr(task, "id", None), project_id,
+        )
