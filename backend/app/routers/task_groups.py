@@ -70,7 +70,17 @@ def calc_group_progress(task_group_id: int, db: Session) -> float:
 def recalculate_task_group_dates(tg, db):
     """Auto-calculate end_date_est from start_date_est + manday_est."""
     if tg.start_date_est and tg.manday_est:
-        days = int(math.ceil(float(tg.manday_est))) - 1
+        manday_float = float(tg.manday_est)
+        # Postgres NUMERIC can hold NaN/Infinity (unlike most numeric types),
+        # and some legacy row could have one stored in manday_est from a bad
+        # import/calculation — math.ceil() raises ValueError/OverflowError on
+        # those, which would otherwise 500 every save touching this Group
+        # (sync_group_dates calls this on every child task create/update).
+        # Treat it the same as "no manday set" instead of crashing.
+        if not math.isfinite(manday_float):
+            tg.end_date_est = None
+            return tg
+        days = int(math.ceil(manday_float)) - 1
         tg.end_date_est = tg.start_date_est + timedelta(days=max(days, 0))
     elif not tg.manday_est:
         tg.end_date_est = None
@@ -127,7 +137,15 @@ def get_parent_code(task_code: str):
 def decimal_or_zero(value) -> Decimal:
     if value is None:
         return Decimal("0")
-    return Decimal(str(value))
+    d = Decimal(str(value))
+    # Postgres NUMERIC can hold NaN/Infinity (unlike most numeric types), and
+    # some legacy manday_est row can have one from a bad import/calculation.
+    # Comparing a NaN Decimal (e.g. `d <= 0`) raises decimal.InvalidOperation
+    # — an unhandled 500 on every budget check involving that Group/Task —
+    # so treat it as "no value" the same way None already is.
+    if not d.is_finite():
+        return Decimal("0")
+    return d
 
 
 def format_decimal(value: Decimal) -> str:
