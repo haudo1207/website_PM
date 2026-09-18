@@ -12,19 +12,26 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { getCalendarTasks, getCalendarMeetings, updateTask, CalendarTask, CalendarMeeting, getApiErrorMessage } from '@/lib/api';
-import CalendarToolbar, { EventTypeFilter } from '@/components/calendar/CalendarToolbar';
+import CalendarToolbar, { EventTypeFilter, CalendarViewMode } from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
+import MonthGrid, { MonthItem } from '@/components/calendar/MonthGrid';
 import { TaskBlockContent } from '@/components/calendar/TaskBlock';
 import TaskEditDrawer from '@/components/tasks/TaskEditDrawer';
 import QuickCreateDrawer, { QuickCreatePrefill } from '@/components/calendar/QuickCreateDrawer';
 import MeetingDetailModal from '@/components/meetings/MeetingDetailModal';
+import SummaryCards, { CalendarSummaryStats } from '@/components/calendar/SummaryCards';
+import { calculateDaysLate } from '@/app/dashboard/constants';
 import {
   buildRangeDays,
+  buildMonthGridDays,
   toApiDate,
   toApiDateTime,
   parseApiDate,
+  parseScheduledAt,
+  parseHHMM,
   formatRangeLabel,
   topToTimeOfDay,
+  minutesToTop,
   combineDateAndTime,
   startOfWeekMonday,
   addDays,
@@ -33,7 +40,7 @@ import {
 
 export default function CalendarPage() {
   const [anchorDate, setAnchorDate] = useState(() => new Date());
-  const [rangeDays, setRangeDays] = useState<4 | 7>(4);
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('4day');
   // Task id -> scheduled_at override applied instantly on drop, while the
   // PATCH is in flight. Cleared on success (refetch already landed the real
   // value by then) or on failure (falls back to the untouched server data —
@@ -51,6 +58,12 @@ export default function CalendarPage() {
   // on by default so the default view is unchanged from before this filter
   // existed.
   const [filters, setFilters] = useState<Set<EventTypeFilter>>(new Set<EventTypeFilter>(['meeting', 'assigned', 'support']));
+  // Client-side only (spec: "Search hoàn toàn là presentation/filter
+  // layer") — filters whatever's already loaded for the current date
+  // range, same as the event-type Filter above. Never triggers a new
+  // /calendar/tasks or /calendar/meetings request; switching date range
+  // still fetches exactly as before.
+  const [searchQuery, setSearchQuery] = useState('');
   // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
   // browser still fires a native click on the same element right after a
   // real drag-and-drop. Suppress that one synthetic click so finishing a
@@ -61,17 +74,32 @@ export default function CalendarPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  // 4-day mode: rolling window starting at the picked date. 7-day mode:
-  // always the full Mon→Sun calendar week containing the picked date — never
-  // a rolling 7-day window (chốt: "7 ngày = luôn là một tuần lịch chuẩn Thứ 2
-  // → Chủ nhật"). The picked date itself (anchorDate) is never snapped to
-  // Monday — only the displayed range is derived from it.
-  const days = useMemo(
-    () => (rangeDays === 7 ? buildRangeDays(startOfWeekMonday(anchorDate), 7) : buildRangeDays(anchorDate, 4)),
-    [anchorDate, rangeDays]
-  );
+  // Day: single day (buildRangeDays(anchor,1) — same engine as 4-day/7-day,
+  // just length 1, no new rendering code). 4-day: rolling window from the
+  // picked date. 7-day (Tuần): always the full Mon→Sun calendar week
+  // containing the picked date — never a rolling 7-day window (chốt: "7
+  // ngày = luôn là một tuần lịch chuẩn Thứ 2 → Chủ nhật"). Month: full
+  // weeks covering the picked date's month, including prev/next-month
+  // padding days (buildMonthGridDays) — rendered by the separate MonthGrid,
+  // not the hourly CalendarGrid. anchorDate itself is never snapped — only
+  // the displayed range is derived from it.
+  const days = useMemo(() => {
+    if (viewMode === 'day') return buildRangeDays(anchorDate, 1);
+    if (viewMode === '7day') return buildRangeDays(startOfWeekMonday(anchorDate), 7);
+    if (viewMode === 'month') return buildMonthGridDays(anchorDate);
+    return buildRangeDays(anchorDate, 4);
+  }, [anchorDate, viewMode]);
   const from = toApiDate(days[0]);
   const to = toApiDate(days[days.length - 1]);
+  const rangeLabel = useMemo(() => {
+    if (viewMode === 'day') {
+      return anchorDate.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+    if (viewMode === 'month') {
+      return `Tháng ${anchorDate.getMonth() + 1}, ${anchorDate.getFullYear()}`;
+    }
+    return formatRangeLabel(days);
+  }, [viewMode, anchorDate, days]);
 
   const { data: tasks, isFetching, error, refetch } = useQuery({
     queryKey: ['calendar-tasks', from, to],
@@ -101,7 +129,68 @@ export default function CalendarPage() {
     [displayTasks, filters]
   );
   const filteredMeetings = useMemo(() => (filters.has('meeting') ? meetings || [] : []), [meetings, filters]);
-  const scheduledTasks = useMemo(() => roleFilteredTasks.filter(t => !!t.scheduled_at), [roleFilteredTasks]);
+
+  // A task "belongs" to the visible range the same way the Grid already
+  // decides it does: scheduled tasks by scheduled_at's date, date-only
+  // tasks by start_date (both checked against `days` — Day/4-day/Tuần's
+  // own days, or Month's full grid including its padding days, whichever
+  // is actually on screen), tasks with neither never belong anywhere (same
+  // "not shown at all" rule as the date-only row). GET /calendar/tasks
+  // itself only date-bounds scheduled_at server-side — every unscheduled
+  // task in scope comes back regardless of range — so this local filter is
+  // what actually keeps Summary in sync with what the Grid renders.
+  const visibleDateKeys = useMemo(() => new Set(days.map(toApiDate)), [days]);
+  const isTaskInVisibleRange = (t: CalendarTask): boolean => {
+    if (t.scheduled_at) {
+      const d = parseScheduledAt(t.scheduled_at);
+      return !!d && visibleDateKeys.has(toApiDate(d));
+    }
+    if (t.start_date) return visibleDateKeys.has(t.start_date.slice(0, 10));
+    return false;
+  };
+
+  // Calendar Summary — scoped like the rest of the page (current user via
+  // /calendar/tasks, current visible date range, current event-type
+  // Filter) but deliberately built from roleFilteredTasks, NOT
+  // searchedTasks: search must never make "Tổng công việc" jump around
+  // (spec §Phase 3 "search CRM không làm card Tổng công việc nhảy ...
+  // khó hiểu"). Task only — Meeting has no Done/Overdue concept so it
+  // doesn't fit these 4 cards.
+  const summaryStats: CalendarSummaryStats = useMemo(() => {
+    const visible = roleFilteredTasks.filter(isTaskInVisibleRange);
+    const total = visible.length;
+    let done = 0;
+    let overdue = 0;
+    for (const t of visible) {
+      const status = (t.status || '').toLowerCase();
+      if (status === 'done') { done++; continue; }
+      if (calculateDaysLate(t) > 0) overdue++;
+    }
+    return { total, done, overdue, inProgress: Math.max(0, total - done - overdue) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roleFilteredTasks, visibleDateKeys]);
+
+  // Search applies on top of the event-type Filter, same dataset already
+  // in memory — task.detail / task.task_code / task.project_name for
+  // Task, meeting.title / project name for Meeting. Case-insensitive,
+  // trims whitespace. Clearing the query (empty string) returns the exact
+  // pre-search arrays, not a re-filtered copy.
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const searchedTasks = useMemo(() => {
+    if (!normalizedQuery) return roleFilteredTasks;
+    return roleFilteredTasks.filter(task =>
+      [task.detail, task.task_code, task.project_name].some(value => value?.toLowerCase().includes(normalizedQuery))
+    );
+  }, [roleFilteredTasks, normalizedQuery]);
+  const searchedMeetings = useMemo(() => {
+    if (!normalizedQuery) return filteredMeetings;
+    return filteredMeetings.filter(meeting =>
+      [meeting.title, meeting.project_name].some(value => value?.toLowerCase().includes(normalizedQuery))
+    );
+  }, [filteredMeetings, normalizedQuery]);
+  const isSearchEmpty = !!normalizedQuery && searchedTasks.length === 0 && searchedMeetings.length === 0;
+
+  const scheduledTasks = useMemo(() => searchedTasks.filter(t => !!t.scheduled_at), [searchedTasks]);
   // Has a date (start_date) but no time (scheduled_at IS NULL) — shows in
   // the fixed row under that day's header. Only when its start_date
   // actually falls within the days currently on screen (there's no column
@@ -111,10 +200,10 @@ export default function CalendarPage() {
   // 2026-09 "Bỏ Task chưa xếp lịch" chốt). Within each day, Assigned always
   // sorts before Support, each group keeping its existing relative order
   // (Array.sort is stable) — 2026-09 "Thứ tự Task chỉ có ngày" chốt.
-  const visibleDateKeys = useMemo(() => new Set(days.map(toApiDate)), [days]);
+  // (visibleDateKeys is declared earlier, above summaryStats — shared here.)
   const dateOnlyTasksByDay = useMemo(() => {
     const map = new Map<string, CalendarTask[]>();
-    for (const t of roleFilteredTasks) {
+    for (const t of searchedTasks) {
       if (t.scheduled_at || !t.start_date) continue;
       const key = t.start_date.slice(0, 10);
       if (!visibleDateKeys.has(key)) continue;
@@ -124,17 +213,61 @@ export default function CalendarPage() {
       map.set(key, [...list].sort((a, b) => (a.calendar_role === 'assigned' ? 0 : 1) - (b.calendar_role === 'assigned' ? 0 : 1)));
     });
     return map;
-  }, [roleFilteredTasks, visibleDateKeys]);
+  }, [searchedTasks, visibleDateKeys]);
+
+  // Month view merges Task + Meeting into ONE flat per-day list (no
+  // timeline to split scheduled-vs-date-only across, unlike the week
+  // views) — a task's day is scheduled_at's date if it has one, else
+  // start_date (same fallback rule, just not rendered as a separate row
+  // here). Sorted by time; date-only tasks (no time) sort last within
+  // their day. Only computed in Month mode.
+  const monthItemsByDay = useMemo(() => {
+    const map = new Map<string, MonthItem[]>();
+    if (viewMode !== 'month') return map;
+    for (const t of searchedTasks) {
+      const scheduled = t.scheduled_at ? parseScheduledAt(t.scheduled_at) : null;
+      const key = scheduled ? toApiDate(scheduled) : (t.start_date ? t.start_date.slice(0, 10) : null);
+      if (!key) continue;
+      const timeLabel = scheduled ? `${String(scheduled.getHours()).padStart(2, '0')}:${String(scheduled.getMinutes()).padStart(2, '0')}` : null;
+      const sortMin = scheduled ? scheduled.getHours() * 60 + scheduled.getMinutes() : 24 * 60;
+      map.set(key, [...(map.get(key) || []), { kind: 'task', task: t, timeLabel, sortMin }]);
+    }
+    for (const m of searchedMeetings) {
+      if (!m.date) continue;
+      const t = parseHHMM(m.time);
+      const timeLabel = t ? `${String(t.hours).padStart(2, '0')}:${String(t.minutes).padStart(2, '0')}` : null;
+      const sortMin = t ? t.hours * 60 + t.minutes : 24 * 60;
+      map.set(m.date, [...(map.get(m.date) || []), { kind: 'meeting', meeting: m, timeLabel, sortMin }]);
+    }
+    map.forEach((list, key) => map.set(key, [...list].sort((a, b) => a.sortMin - b.sortMin)));
+    return map;
+  }, [viewMode, searchedTasks, searchedMeetings]);
 
   const goToday = () => setAnchorDate(new Date());
-  // 4-day mode: ±4 days. 7-day mode: ±7 days (a full week) — since
-  // startOfWeekMonday derives the displayed range from anchorDate, shifting
-  // by exactly 7 keeps the same weekday and lands on the prev/next week.
-  const goPrev = () => setAnchorDate(d => addDays(d, -rangeDays));
-  const goNext = () => setAnchorDate(d => addDays(d, rangeDays));
+  // Day: ±1. 4-day: ±4. 7-day (Tuần): ±7 (a full week — startOfWeekMonday
+  // derives the displayed range from anchorDate, so shifting by exactly 7
+  // keeps the same weekday and lands on the prev/next week). Month: ±1
+  // calendar month (not ±days), landing on the same day-of-month.
+  const goPrev = () => {
+    if (viewMode === 'month') { setAnchorDate(d => new Date(d.getFullYear(), d.getMonth() - 1, d.getDate())); return; }
+    const step = viewMode === 'day' ? 1 : viewMode === '7day' ? 7 : 4;
+    setAnchorDate(d => addDays(d, -step));
+  };
+  const goNext = () => {
+    if (viewMode === 'month') { setAnchorDate(d => new Date(d.getFullYear(), d.getMonth() + 1, d.getDate())); return; }
+    const step = viewMode === 'day' ? 1 : viewMode === '7day' ? 7 : 4;
+    setAnchorDate(d => addDays(d, step));
+  };
   const goPickDate = (dateStr: string) => {
     const picked = parseApiDate(dateStr);
     if (picked) setAnchorDate(picked);
+  };
+  // Month view's "+N nữa" / click a day cell — jumps straight into Day view
+  // for that date instead of a second popover UI, reusing the same hourly
+  // timeline engine Day/4-day/Tuần already render with.
+  const goToDay = (day: Date) => {
+    setAnchorDate(day);
+    setViewMode('day');
   };
 
   const handleToggleDone = async (task: CalendarTask) => {
@@ -187,11 +320,36 @@ export default function CalendarPage() {
     setTimeout(() => { suppressClickRef.current = false; }, 150);
 
     if (typeof over.id === 'string' && over.id.startsWith('day:')) {
-      const activeRect = active.rect.current.translated;
-      if (!activeRect) return;
-      const relativeTop = activeRect.top - over.rect.top;
-      const { hours, minutes } = topToTimeOfDay(relativeTop);
       const [y, m, d] = over.id.slice(4).split('-').map(Number);
+      let hours: number, minutes: number;
+      if (task.scheduled_at) {
+        // Already-scheduled task: anchor on its KNOWN time-of-day (via
+        // minutesToTop, derived from data — not a DOM rect) plus how far
+        // the dragged element itself actually moved (translated - initial
+        // rect, both measured by dnd-kit at the same instant, in the same
+        // viewport coordinate space). This is immune to the drift a
+        // scrolled-timeline drag showed when computed from `over.rect`
+        // instead: dragging 14:00 by a clean +120px (2h) landed at 17:00
+        // instead of 16:00 once the timeline had been scrolled first —
+        // confirmed via a live pixel-delta test, not assumed. Using the
+        // dragged element's own before/after rect sidesteps that class of
+        // bug entirely, since it never depends on the drop column's rect
+        // for the vertical/time component (only for which day, below).
+        const original = parseScheduledAt(task.scheduled_at);
+        const originalTop = original ? minutesToTop(original.getHours(), original.getMinutes()) : 0;
+        const initialRect = active.rect.current.initial;
+        const translatedRect = active.rect.current.translated;
+        if (!initialRect || !translatedRect) return;
+        const elementMovement = translatedRect.top - initialRect.top;
+        ({ hours, minutes } = topToTimeOfDay(originalTop + elementMovement));
+      } else {
+        // Date-only task has no time-of-day origin to anchor from — still
+        // needs the drop column's rect to place it on the timeline at all.
+        const activeRect = active.rect.current.translated;
+        if (!activeRect) return;
+        const relativeTop = activeRect.top - over.rect.top;
+        ({ hours, minutes } = topToTimeOfDay(relativeTop));
+      }
       const newDate = combineDateAndTime(new Date(y, m - 1, d), hours, minutes);
       applyScheduledAtChange(task, toApiDateTime(newDate));
     }
@@ -215,12 +373,17 @@ export default function CalendarPage() {
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-full">
-        <div className="flex-1 min-h-0 p-4 md:p-6">
-          <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden h-full flex flex-col">
+        {/* Compact UI pass (2026-09): outer padding ~12px (was p-4 md:p-6) —
+            Calendar is a workspace, not a modal/card that needs generous
+            breathing room; the height it frees up goes straight to the
+            timeline via flex-1 below. */}
+        <div className="flex-1 min-h-0 p-3 flex flex-col">
+          <SummaryCards stats={summaryStats} />
+          <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
             <CalendarToolbar
-              rangeLabel={formatRangeLabel(days)}
-              rangeDays={rangeDays}
-              onRangeDaysChange={setRangeDays}
+              rangeLabel={rangeLabel}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
               onPrev={goPrev}
               onNext={goNext}
               onToday={goToday}
@@ -228,17 +391,36 @@ export default function CalendarPage() {
               onPickDate={goPickDate}
               filters={filters}
               onFiltersChange={setFilters}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
               onQuickCreate={() => { setQuickCreatePrefill(null); setQuickCreateOpen(true); }}
             />
 
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-t border-slate-100">
               {error ? (
                 <p className="p-6 text-[13px] text-rose-600">{getApiErrorMessage(error, 'Không tải được lịch.')}</p>
+              ) : isSearchEmpty ? (
+                // Distinct from "Calendar trống" — the data still exists,
+                // it just doesn't match the current search (spec: "Không
+                // nên hiện empty state kiểu Calendar trống").
+                <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-400">
+                  <span className="text-2xl" aria-hidden>🔍</span>
+                  <p className="text-[13px] font-semibold">Không tìm thấy task hoặc meeting phù hợp</p>
+                </div>
+              ) : viewMode === 'month' ? (
+                <MonthGrid
+                  days={days}
+                  monthAnchor={anchorDate}
+                  itemsByDay={monthItemsByDay}
+                  onOpenDetail={handleOpenDetail}
+                  onOpenMeetingDetail={handleOpenMeetingDetail}
+                  onGoToDay={goToDay}
+                />
               ) : (
                 <CalendarGrid
                   days={days}
                   tasks={scheduledTasks}
-                  meetings={filteredMeetings}
+                  meetings={searchedMeetings}
                   dateOnlyTasksByDay={dateOnlyTasksByDay}
                   onToggleDone={handleToggleDone}
                   onOpenDetail={handleOpenDetail}

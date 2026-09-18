@@ -110,8 +110,14 @@ export function topToTimeOfDay(topPx: number): { hours: number; minutes: number 
   const maxTop = (HOUR_END - HOUR_START) * HOUR_HEIGHT;
   const clamped = Math.max(0, Math.min(topPx, maxTop));
   const snapped = snapTopToHalfHour(clamped);
-  const maxMin = (HOUR_END - HOUR_START) * 60;
-  const totalMin = Math.min(HOUR_START * 60 + (snapped / HOUR_HEIGHT) * 60, maxMin);
+  // Bug fix (2026-09): this used to re-clamp against (HOUR_END-HOUR_START)*60
+  // — a DURATION (1020min/17h), not an absolute minutes-since-midnight cap.
+  // Since `clamped` already bounds topPx to [0, maxTop], the true cap here
+  // is HOUR_END*60 (1380min/23:00) — the same one topToQuarterHour already
+  // uses correctly. The old formula silently clamped every drag targeting
+  // ~17:00 or later down to exactly 17:00, which looked like "snapping to
+  // a fixed nearby point" (drop-a-Task-at-19:00 landed at 17:00 every time).
+  const totalMin = Math.min(HOUR_START * 60 + (snapped / HOUR_HEIGHT) * 60, HOUR_END * 60);
   return { hours: Math.floor(totalMin / 60), minutes: totalMin % 60 };
 }
 
@@ -178,6 +184,19 @@ export function parseApiDate(value: string): Date | null {
   if (!m) return null;
   const [, y, mo, da] = m;
   return new Date(Number(y), Number(mo) - 1, Number(da));
+}
+
+// All day-cells to render for Month view, including the padding days from
+// the adjacent months needed to fill complete Mon→Sun weeks (same week-start
+// convention as the 7-day/Tuần view — startOfWeekMonday). Always a multiple
+// of 7 (typically 35 or 42 days / 5-6 weeks).
+export function buildMonthGridDays(anchor: Date): Date[] {
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const last = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+  const gridStart = startOfWeekMonday(first);
+  const gridEnd = addDays(startOfWeekMonday(last), 6);
+  const totalDays = Math.round((gridEnd.getTime() - gridStart.getTime()) / 86400000) + 1;
+  return Array.from({ length: totalDays }, (_, i) => addDays(gridStart, i));
 }
 
 export interface PositionedTask {

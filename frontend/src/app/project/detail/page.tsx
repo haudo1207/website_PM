@@ -2146,6 +2146,13 @@ function ProjectDetailContent() {
       if (myWorkspaceIds.includes('all') || myWorkspaceIds.includes(scope) || project.business === 'All') {
         return true;
       }
+      // Leader added onto a project outside their own Workspace(s) still gets
+      // full rights on that one project as long as they're an assigned
+      // member — regardless of their project-role tag (that tag is what the
+      // plain-member escalation check below keys off, not this one).
+      if (myMemberId != null && projectMembers.some((m: any) => Number(m.id) === Number(myMemberId))) {
+        return true;
+      }
     }
     if (myMemberId == null) return false;
     return projectMembers.some(
