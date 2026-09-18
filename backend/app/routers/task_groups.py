@@ -81,7 +81,20 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
     """Sync TaskGroup start_date_est (min) and end_date_est (max) from child tasks.
     extra_start: start_date of a newly added/modified task not yet committed.
     extra_end: end_date_est of a newly added/modified task not yet committed.
+
+    A Group with its own authoritative window — start_date_est + manday_est,
+    both mandatory as of the Group-creation rules — must NOT have that window
+    silently overwritten by whichever child tasks happen to be scheduled: a
+    Group's END DATE EST is always start_date_est + CEIL(manday_est) - 1
+    (recalculate_task_group_dates), and a child finishing earlier than that
+    (e.g. Group manday=10 but its first child only spans 2 days) used to drag
+    the Group's own end date down to match the child instead of the child
+    simply being one piece scheduled somewhere inside the Group's window.
+    Only fall back to deriving dates FROM children for legacy/incomplete
+    groups that don't have their own start_date_est + manday_est set yet.
     """
+    if tg.start_date_est and tg.manday_est:
+        return recalculate_task_group_dates(tg, db)
     rows = db.query(Task.start_date, Task.end_date_est).filter(
         Task.task_group_id == tg.id
     ).all()
@@ -852,8 +865,18 @@ def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db), curren
     deleted_task_count = len(tasks_in_group)
     if tasks_in_group:
         delete_task_link_documents(db, [t.id for t in tasks_in_group])
+        # See delete_task()'s same detach-before-delete — notifications.task_id
+        # has no ON DELETE cascade, so a Task with a Notification (e.g. Done +
+        # Zalo-linked project) would otherwise fail this cascade with a raw FK
+        # IntegrityError (500).
+        db.query(Notification).filter(
+            Notification.task_id.in_([t.id for t in tasks_in_group])
+        ).update({"task_id": None}, synchronize_session=False)
         db.execute(delete(Task).where(Task.task_group_id == gid))
 
+    db.query(Notification).filter(Notification.task_group_id == gid).update(
+        {"task_group_id": None}, synchronize_session=False
+    )
     db.delete(tg)
     db.flush()
 
@@ -2519,6 +2542,14 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=
         task_desc += f" (kèm {descendant_count} task con)"
 
     delete_task_link_documents(db, [tid] + [d.id for d in descendants])
+    # notifications.task_id has no ON DELETE cascade — a Task that already
+    # triggered a Notification (e.g. Done + Zalo-linked project) fails this
+    # delete with a raw FK IntegrityError (500) otherwise. Detach instead of
+    # deleting the Notification itself so its message/history survives.
+    deleted_task_ids = [tid] + [d.id for d in descendants]
+    db.query(Notification).filter(Notification.task_id.in_(deleted_task_ids)).update(
+        {"task_id": None}, synchronize_session=False
+    )
     db.delete(task)
     db.flush()
 
