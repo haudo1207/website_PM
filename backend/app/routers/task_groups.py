@@ -81,7 +81,20 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
     """Sync TaskGroup start_date_est (min) and end_date_est (max) from child tasks.
     extra_start: start_date of a newly added/modified task not yet committed.
     extra_end: end_date_est of a newly added/modified task not yet committed.
+
+    A Group with its own authoritative window — start_date_est + manday_est,
+    both mandatory as of the Group-creation rules — must NOT have that window
+    silently overwritten by whichever child tasks happen to be scheduled: a
+    Group's END DATE EST is always start_date_est + CEIL(manday_est) - 1
+    (recalculate_task_group_dates), and a child finishing earlier than that
+    (e.g. Group manday=10 but its first child only spans 2 days) used to drag
+    the Group's own end date down to match the child instead of the child
+    simply being one piece scheduled somewhere inside the Group's window.
+    Only fall back to deriving dates FROM children for legacy/incomplete
+    groups that don't have their own start_date_est + manday_est set yet.
     """
+    if tg.start_date_est and tg.manday_est:
+        return recalculate_task_group_dates(tg, db)
     rows = db.query(Task.start_date, Task.end_date_est).filter(
         Task.task_group_id == tg.id
     ).all()
